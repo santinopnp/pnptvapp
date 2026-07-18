@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const EmailService = require('./emailService');
+const EmailService = require('./emailservice');
 const PaymentHistoryService = require('./paymentHistoryService');
 const MembershipCleanupService = require('./membershipCleanupService');
 const MessageTemplates = require('./messageTemplates');

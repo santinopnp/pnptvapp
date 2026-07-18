@@ -1951,7 +1951,7 @@ class CreatorService {
 
         // ── 3. Email ─────────────────────────────────────────────────────────
         if (user.email && user.email.includes('@')) {
-          const emailService = require('./emailService');
+          const emailService = require('./emailservice');
           await emailService.sendCreatorActivatedEmail({
             to: user.email,
             name,

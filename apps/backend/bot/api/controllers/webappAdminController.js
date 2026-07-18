@@ -1018,7 +1018,7 @@ const sendPushNotification = async (req, res) => {
     // ── Email channel ─────────────────────────────────────────────────────────
     let emailSent = 0;
     if (doEmail && targetUsers.length > 0) {
-      const emailService = require('../../../services/emailService');
+      const emailService = require('../../../services/emailservice');
       const usersWithEmail = targetUsers.filter((u) => u.email);
 
       const appUrl = process.env.APP_PUBLIC_URL || 'https://pnptv.app';

@@ -1,10 +1,14 @@
 const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
+const sanitizeHtml = require('sanitize-html');
 
 /**
  * Email Service - Handles sending emails from multiple domains
- * - pnptv.app for invoices/billing
- * - pnptv.app for welcome/instructions
+ * - easybots.store for invoices/billing
+ * - pnptv.app for welcome/instructions/notifications
+ *
+ * Canonical file (merged 2026-07-18 from the diverged emailService.js /
+ * emailservice.js pair — see .design-sync-free note in commit message).
  */
 class EmailService {
   constructor() {
@@ -65,6 +69,123 @@ class EmailService {
       logger.error('Error initializing email transporters:', error);
     }
   }
+
+  // ── Security / utility helpers ────────────────────────────────────────
+
+  /**
+   * Escape HTML special characters to prevent injection in email templates
+   */
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /**
+   * Validate email address to prevent nodemailer parsing vulnerabilities.
+   * Rejects quoted local-parts that could cause misrouting (CVE-style attack).
+   * @param {string} email - Email address to validate
+   * @returns {boolean} True if safe, false if potentially malicious
+   */
+  isEmailSafe(email) {
+    if (!email || typeof email !== 'string') {
+      return false;
+    }
+
+    // Reject emails with quoted local-parts containing @ (parsing vulnerability)
+    // Pattern: "anything@something"@domain
+    if (/^"[^"]*@[^"]*"@/.test(email)) {
+      return false;
+    }
+
+    // Basic email format validation
+    const basicEmailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return basicEmailRegex.test(email);
+  }
+
+  /**
+   * Strip HTML tags from string (used for plaintext fallback)
+   * @param {string} html - HTML string
+   * @returns {string} Plain text
+   */
+  stripHtml(html) {
+    return sanitizeHtml(html, { allowedTags: [], allowedAttributes: {} });
+  }
+
+  /**
+   * Generic send — used for one-off transactional emails (password resets,
+   * account deletion, broadcasts, reactivation, recording-ready notices).
+   * Defaults to the pnptv transporter.
+   * @param {Object} options - Email options
+   * @returns {Promise<Object>} Send result
+   */
+  async send(options) {
+    const {
+      to,
+      subject,
+      html,
+      text,
+      from = process.env.PNPTV_FROM_EMAIL || process.env.EMAIL_FROM || 'PNPtv! <noreply@pnptv.app>',
+      bcc,
+      attachments = [],
+    } = options;
+
+    try {
+      // Validate email address to prevent misrouting attacks
+      if (!this.isEmailSafe(to)) {
+        logger.error('Invalid or potentially malicious email address rejected:', { to });
+        throw new Error('Invalid email address format');
+      }
+
+      // If no transporter, log email instead
+      if (!this.transporters.pnptv) {
+        logger.info('Email would be sent (no transporter configured):', {
+          to,
+          subject,
+          from,
+          attachments: attachments.length,
+        });
+        return { success: true, messageId: 'logged', mode: 'logging' };
+      }
+
+      const mailOptions = {
+        from,
+        to,
+        ...(bcc ? { bcc } : {}),
+        subject,
+        html,
+        text: text || this.stripHtml(html),
+        attachments,
+      };
+
+      const info = await this.transporters.pnptv.sendMail(mailOptions);
+      logger.info('Email sent successfully:', {
+        to,
+        subject,
+        messageId: info.messageId,
+        attachments: attachments.length,
+      });
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        mode: 'sent',
+      };
+    } catch (error) {
+      logger.error('Error sending email:', {
+        to,
+        subject,
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  // ── Invoice / welcome / purchase / credentials / founder / tokens ──────
 
   /**
    * Send invoice email from pnptv.app
@@ -135,8 +256,8 @@ class EmailService {
    * @param {string} options.loginMethod - Method used to login (telegram, x, email, deep_link)
    * @returns {Promise<Object>} Send result
    */
-  async sendWelcomeEmail({ 
-    to, customerName, planName, duration, expiryDate, 
+  async sendWelcomeEmail({
+    to, customerName, planName, duration, expiryDate,
     language = 'es', onboardingGuidePdf = null,
     userUuid = null, username = null, loginMethod = null
   }) {
@@ -946,6 +1067,833 @@ class EmailService {
       logger.error('sendTokenCreditEmail error:', { error: error.message, to });
       return { success: false, error: error.message };
     }
+  }
+
+  // ── Legacy general-purpose methods (ported from the single-transporter
+  //    EmailService — account deletion, main-stage guest promo, broadcasts,
+  //    reactivation, recording-ready). All route through the generic send(). ──
+
+  /**
+   * Send account deletion confirmation email
+   * @param {Object} data - { email, userName, userLanguage }
+   * @returns {Promise<Object>} Send result
+   */
+  async sendAccountDeletionConfirmationEmail(data) {
+    const { email, userName = 'Member', userLanguage = 'en' } = data;
+    const safeName = this.escapeHtml(userName);
+    const isEs = userLanguage === 'es';
+    const subject = isEs
+      ? 'Tu cuenta de PNPtv! ha sido eliminada'
+      : 'Your PNPtv! account has been deleted';
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0f;padding:40px 20px;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#13131a;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);"><tr><td style="background:linear-gradient(135deg,#1a0a0a,#13131a);padding:32px;text-align:center;"><p style="margin:0;font-size:28px;font-weight:800;background:linear-gradient(135deg,#5ED1C4,#D4007A);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">PNPtv!</p></td></tr><tr><td style="padding:32px;"><h1 style="color:#fff;font-size:20px;font-weight:700;margin:0 0 16px;">${isEs ? 'Tu cuenta ha sido eliminada' : 'Your account has been deleted'}</h1><p style="color:rgba(255,255,255,0.7);font-size:14px;line-height:1.6;margin:0 0 16px;">${isEs ? `Hola ${safeName},` : `Hi ${safeName},`}</p><p style="color:rgba(255,255,255,0.7);font-size:14px;line-height:1.6;margin:0 0 16px;">${isEs ? 'Hemos procesado tu solicitud. Tu cuenta de PNPtv! y todos los datos asociados han sido eliminados permanentemente de nuestros servidores.' : 'We have processed your request. Your PNPtv! account and all associated data have been permanently deleted from our servers.'}</p><p style="color:rgba(255,255,255,0.7);font-size:14px;line-height:1.6;margin:0 0 24px;">${isEs ? 'Si tienes alguna pregunta, puedes contactarnos en support@pnptv.app.' : 'If you have any questions, you can reach us at support@pnptv.app.'}</p><p style="color:rgba(255,255,255,0.4);font-size:12px;margin:0;">${isEs ? '— El equipo de PNPtv!' : '— The PNPtv! Team'}</p></td></tr><tr><td style="padding:16px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;"><p style="color:rgba(255,255,255,0.3);font-size:11px;margin:0;">&copy; ${new Date().getFullYear()} PNPtv! &middot; support@pnptv.app</p></td></tr></table></td></tr></table></body></html>`;
+    return await this.send({ to: email, subject, html });
+  }
+
+  /**
+   * Send Main Stage guest welcome + lifetime100 promo.
+   * Triggered when an unauthenticated user redeems a Main Stage invite.
+   * @param {Object} data - { to, displayName, language? }
+   */
+  async sendMainStageGuestPromoEmail(data) {
+    const { to, displayName, language, inviteCode } = data || {};
+    const isEs = language === 'es';
+    const safeName = this.escapeHtml(displayName || (isEs ? 'invitado' : 'guest'));
+    const subject = isEs
+      ? '🎬 Tu acceso al Main Stage de PNPtv'
+      : '🎬 Your Main Stage access on PNPtv';
+    const ctaUrl = 'https://pnptv.app/lifetime100';
+    const joinUrl = 'https://pnptv.app/join';
+    const safeInviteCode = (typeof inviteCode === 'string' && /^[A-Za-z0-9_-]{8,32}$/.test(inviteCode)) ? inviteCode : null;
+    const inviteUrl = safeInviteCode ? `https://pnptv.app/main-stage/join/${safeInviteCode}` : null;
+
+    const intro = isEs
+      ? (inviteUrl
+          ? `¡Hola ${safeName}! Estás dentro del Main Stage de PNPtv. Si pierdes tu sesión (cierras pestaña, expira el navegador, etc.), usa el enlace de abajo para volver a entrar con este mismo invite.`
+          : `¡Hola ${safeName}! Gracias por unirte al Main Stage como invitado. Esperamos que la pasaras increíble en cámara.`)
+      : (inviteUrl
+          ? `Hi ${safeName}! You're in — welcome to PNPtv Main Stage. If you lose your session (close the tab, browser expires, etc.), use the link below to jump back in with this same invite.`
+          : `Hi ${safeName}! Thanks for jumping into Main Stage as a guest. We hope you had a great time on cam.`);
+
+    const rejoinBlock = inviteUrl ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr><td style="background:rgba(94,209,196,0.08);border:1px solid rgba(94,209,196,0.35);border-radius:14px;padding:20px;"><p style="margin:0 0 8px;font-size:15px;font-weight:800;color:#FFFFFF;">${isEs ? '🎬 Tu enlace de Main Stage' : '🎬 Your Main Stage link'}</p><p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:rgba(255,255,255,0.78);">${isEs ? 'Guarda este enlace. Te llevará directo al Main Stage como invitado (no necesitas cuenta).' : 'Save this link. It takes you straight into Main Stage as a guest (no account needed).'}</p><a href="${inviteUrl}" style="display:inline-block;background:linear-gradient(135deg,#5ED1C4,#1A8F8F);color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:999px;font-size:14px;font-weight:800;">${isEs ? 'Entrar al Main Stage →' : 'Enter Main Stage →'}</a><p style="margin:12px 0 0;font-size:11px;color:rgba(255,255,255,0.4);word-break:break-all;">${inviteUrl}</p></td></tr></table>` : '';
+    const pitch = isEs
+      ? 'Crea tu cuenta gratis para guardar tu perfil, seguir creadores, recibir invitaciones y mucho más. Y si te enganchó la vibra, mira esto:'
+      : 'Create a free account to keep your profile, follow creators, receive invites and unlock everything. And if you’re hooked, check this out:';
+    const offerTitle = isEs
+      ? 'Lifetime100 — paga una vez, accede para siempre'
+      : 'Lifetime100 — pay once, access forever';
+    const offerBody = isEs
+      ? 'Una sola cuota y obtienes acceso PRIME de por vida: video VOD exclusivo, salas premium, descuentos para reservas y los próximos lanzamientos. Cupos muy limitados.'
+      : 'One single payment unlocks lifetime PRIME access: exclusive VOD, premium rooms, booking discounts and every upcoming launch. Very limited spots.'
+    ;
+    const ctaLabel = isEs ? 'Reservar Lifetime100' : 'Claim Lifetime100';
+    const joinLabel = isEs ? 'Crear cuenta gratis' : 'Create free account';
+    const footer = isEs
+      ? 'Si no quieres más correos, ignora este mensaje. — El equipo de PNPtv!'
+      : 'If you’d rather not hear from us, just ignore this email. — The PNPtv! Team';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0f;padding:40px 20px;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#13131a;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);"><tr><td style="background:linear-gradient(135deg,#1a0a1a,#13131a);padding:32px;text-align:center;"><p style="margin:0;font-size:28px;font-weight:800;background:linear-gradient(135deg,#5ED1C4,#D4007A);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">PNPtv!</p></td></tr><tr><td style="padding:32px;"><h1 style="color:#fff;font-size:22px;font-weight:700;margin:0 0 16px;">${isEs ? '¡Bienvenido al Main Stage!' : 'Welcome to the Main Stage!'}</h1><p style="color:rgba(255,255,255,0.78);font-size:14px;line-height:1.6;margin:0 0 16px;">${intro}</p>${rejoinBlock}<p style="color:rgba(255,255,255,0.78);font-size:14px;line-height:1.6;margin:0 0 24px;">${pitch}</p><table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px;"><tr><td style="background:linear-gradient(135deg,rgba(212,0,122,0.15),rgba(123,97,255,0.15));border:1px solid rgba(212,0,122,0.45);border-radius:14px;padding:20px;"><p style="margin:0 0 8px;font-size:16px;font-weight:800;color:#FFFFFF;">${offerTitle}</p><p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:rgba(255,255,255,0.78);">${offerBody}</p><a href="${ctaUrl}" style="display:inline-block;background:linear-gradient(135deg,#D4007A,#7B61FF);color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:999px;font-size:14px;font-weight:800;letter-spacing:0.2px;">${ctaLabel} →</a></td></tr></table><p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:rgba(255,255,255,0.6);">${isEs ? '¿No estás listo todavía? Crea una cuenta gratis primero:' : 'Not ready yet? Create a free account first:'}</p><a href="${joinUrl}" style="display:inline-block;color:#5ED1C4;text-decoration:none;font-size:13px;font-weight:700;border:1px solid rgba(94,209,196,0.45);padding:9px 18px;border-radius:999px;">${joinLabel}</a><p style="color:rgba(255,255,255,0.4);font-size:12px;margin:28px 0 0;">${footer}</p></td></tr><tr><td style="padding:16px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;"><p style="color:rgba(255,255,255,0.3);font-size:11px;margin:0;">&copy; ${new Date().getFullYear()} PNPtv! &middot; support@pnptv.app</p></td></tr></table></td></tr></table></body></html>`;
+
+    return await this.send({ to, subject, html });
+  }
+
+  /**
+   * Send broadcast email to user
+   * @param {Object} data - Broadcast data
+   * @returns {Promise<Object>} Send result
+   */
+  async sendBroadcastEmail(data) {
+    const {
+      email,
+      userName = 'PNPtv! Member',
+      messageEn,
+      messageEs,
+      userLanguage = 'en',
+      mediaUrl = null,
+      buttons = [],
+      subjectEn = null,
+      subjectEs = null,
+      preheaderEn = null,
+      preheaderEs = null
+    } = data;
+
+    const message = userLanguage === 'es' ? messageEs : messageEn;
+    const subject = userLanguage === 'es'
+      ? (subjectEs || 'PNPtv! — Novedades')
+      : (subjectEn || 'PNPtv! — Latest Update');
+    const preheader = userLanguage === 'es' ? preheaderEs : preheaderEn;
+    const html = this.getBroadcastEmailTemplate({
+      userName,
+      message,
+      mediaUrl,
+      buttons,
+      language: userLanguage,
+      preheader
+    });
+
+    return await this.send({
+      to: email,
+      subject,
+      html,
+      from: process.env.PNPTV_FROM_EMAIL || 'PNPtv! <noreply@pnptv.app>'
+    });
+  }
+
+  /**
+   * Send broadcast emails to multiple users
+   * @param {Array} users - Array of user objects with email
+   * @param {Object} broadcastData - Broadcast content
+   * @returns {Promise<Object>} Results summary
+   */
+  async sendBroadcastEmails(users, broadcastData) {
+    const { messageEn, messageEs, mediaUrl, buttons, subjectEn, subjectEs, preheaderEn, preheaderEs } = broadcastData;
+
+    let sent = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const user of users) {
+      if (!user.email || !this.isEmailSafe(user.email)) {
+        continue; // Skip users without valid email
+      }
+
+      try {
+        await this.sendBroadcastEmail({
+          email: user.email,
+          userName: user.first_name || user.username || 'PNPtv! Member',
+          messageEn,
+          messageEs,
+          userLanguage: user.language || 'en',
+          mediaUrl,
+          buttons,
+          subjectEn,
+          subjectEs,
+          preheaderEn,
+          preheaderEs
+        });
+        sent++;
+
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        failed++;
+        errors.push({ email: user.email, error: error.message });
+      }
+    }
+
+    return { sent, failed, errors };
+  }
+
+  /**
+   * Send creator-account-activated email
+   * @param {Object} data - { to, name, language }
+   * @returns {Promise<Object>} Send result
+   */
+  async sendCreatorActivatedEmail({ to, name = 'Creator', language = 'en' }) {
+    const isEs = language.startsWith('es');
+    const safeName = this.escapeHtml(name);
+    const subject = isEs
+      ? '🎉 ¡Tu cuenta de creador en PNPtv ha sido activada!'
+      : '🎉 Your PNPtv creator account is now live!';
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#0d0d0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:560px;margin:0 auto;padding:32px 16px;">
+    <div style="text-align:center;margin-bottom:28px;">
+      <span style="font-size:40px">🎉</span>
+      <h1 style="color:#ffffff;font-size:22px;font-weight:700;margin:12px 0 4px;">
+        ${isEs ? `¡Bienvenido al equipo, ${safeName}!` : `Welcome to the team, ${safeName}!`}
+      </h1>
+      <p style="color:#8E8E93;font-size:14px;margin:0;">
+        ${isEs ? 'Tu cuenta de creador en PNPtv está activa' : 'Your PNPtv creator account is active'}
+      </p>
+    </div>
+
+    <div style="background:#1C1C1E;border-radius:16px;padding:24px;margin-bottom:20px;border:1px solid rgba(255,255,255,0.08);">
+      <p style="color:#E5E5EA;font-size:15px;line-height:1.6;margin:0 0 16px;">
+        ${isEs
+            ? `Tu perfil de creador ha sido activado. Ya puedes publicar contenido exclusivo, configurar tu precio de suscripción y conectar con tu audiencia en PNPtv.`
+            : `Your creator profile has been activated. You can now post exclusive content, set your subscription price, and connect with your audience on PNPtv.`}
+      </p>
+      <ul style="color:#E5E5EA;font-size:14px;line-height:1.8;margin:0;padding-left:20px;">
+        <li>${isEs ? 'Publica contenido exclusivo para tus suscriptores' : 'Post exclusive content for your subscribers'}</li>
+        <li>${isEs ? 'Configura tu precio de suscripción mensual' : 'Set your monthly subscription price'}</li>
+        <li>${isEs ? 'Transmite en vivo desde tu canal personal' : 'Go live on your personal channel'}</li>
+        <li>${isEs ? 'Ofrece llamadas privadas y sesiones personalizadas' : 'Offer private calls and personalized sessions'}</li>
+      </ul>
+    </div>
+
+    <div style="text-align:center;margin-bottom:28px;">
+      <a href="https://pnptv.app/profile"
+         style="display:inline-block;background:linear-gradient(135deg,#D4007A,#E69138);color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:12px;">
+        ${isEs ? 'Ver mi perfil' : 'View my profile'}
+      </a>
+    </div>
+
+    <p style="color:#8E8E93;font-size:12px;text-align:center;margin:0;">
+      PNPtv! &mdash; ${isEs ? 'La comunidad queer PNP' : 'The queer PNP community'}
+    </p>
+  </div>
+</body></html>`;
+
+    return await this.send({ to, subject, html, from: process.env.PNPTV_FROM_EMAIL || 'PNPtv! <noreply@pnptv.app>' });
+  }
+
+  /**
+   * Send reactivation email
+   * @param {Object} data - Reactivation email data
+   * @returns {Promise<Object>} Send result
+   */
+  async sendReactivationEmail(data) {
+    const { email, userName = 'PNPtv! Member', lifetimeDealLink, telegramLink, userLanguage = 'en' } = data;
+
+    const subject = userLanguage === 'es' ? '🔥 PNPtv! Está de Vuelta 🔥' : '🔥 PNPtv! IS BACK 🔥';
+    const html = this.getReactivationEmailTemplate({ lifetimeDealLink, telegramLink, language: userLanguage });
+
+    return await this.send({
+      to: email,
+      subject: subject,
+      html,
+      from: process.env.PNPTV_FROM_EMAIL || 'PNPtv! <noreply@pnptv.app>'
+    });
+  }
+
+  /**
+   * Send recording ready notification
+   * @param {Object} data - Recording data
+   * @returns {Promise<Object>} Send result
+   */
+  async sendRecordingReady(data) {
+    const {
+      email,
+      roomTitle,
+      recordingUrl,
+      downloadUrl,
+      duration,
+      fileSize
+    } = data;
+
+    const html = this.getRecordingReadyTemplate({
+      roomTitle,
+      recordingUrl,
+      downloadUrl,
+      fileSize,
+      duration
+    });
+
+    return await this.send({
+      to: email,
+      subject: `📹 Your Recording is Ready - ${roomTitle}`,
+      html
+    });
+  }
+
+  /**
+   * Get broadcast email template
+   * @param {Object} data - Template data
+   * @returns {string} HTML template
+   */
+  getBroadcastEmailTemplate(data) {
+    const { userName, message, mediaUrl, buttons, language, preheader } = data;
+
+    const isSpanish = language === 'es';
+    const greeting = isSpanish ? `¡Hola ${userName}!` : `Hey ${userName}!`;
+    const footerText = isSpanish
+      ? 'Recibiste este correo porque eres miembro de PNPtv!'
+      : 'You received this email because you are a member of PNPtv!';
+    const unsubText = isSpanish
+      ? 'Para dejar de recibir estos correos, actualiza tus preferencias en el bot.'
+      : 'To stop receiving these emails, update your preferences in the bot.';
+
+    // Build button HTML
+    let buttonsHtml = '';
+    if (buttons && buttons.length > 0) {
+      const buttonItems = buttons.map(btn => {
+        const buttonObj = typeof btn === 'string' ? JSON.parse(btn) : btn;
+        if (buttonObj.type === 'url' && buttonObj.target) {
+          return `<a href="${buttonObj.target}" class="button">${buttonObj.text}</a>`;
+        }
+        return '';
+      }).filter(b => b).join('\n');
+
+      if (buttonItems) {
+        buttonsHtml = `<div style="text-align: center; margin: 25px 0;">${buttonItems}</div>`;
+      }
+    }
+
+    // Media HTML
+    const mediaHtml = mediaUrl
+      ? `<div style="text-align: center; margin: 20px 0;"><img src="${mediaUrl}" alt="PNPtv!" style="max-width: 100%; border-radius: 10px;"></div>`
+      : '';
+
+    // Convert message line breaks to HTML
+    const formattedMessage = message
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/\n/g, '<br>');
+
+    const preheaderText = preheader
+      ? `<span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;max-height:0;max-width:0;overflow:hidden;">${preheader}</span>`
+      : '';
+
+    return `
+<!DOCTYPE html>
+<html lang="${isSpanish ? 'es' : 'en'}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a2e;
+        }
+        .container {
+            background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            color: #ffffff;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .greeting {
+            font-size: 22px;
+            margin-bottom: 20px;
+            color: #ff6b6b;
+        }
+        .content {
+            font-size: 16px;
+            line-height: 1.8;
+            color: #e0e0e0;
+        }
+        .button {
+            display: inline-block;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            color: white !important;
+            padding: 14px 35px;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: bold;
+            margin: 10px 5px;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.4);
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            color: #888;
+            font-size: 12px;
+        }
+        .social-links {
+            margin: 15px 0;
+        }
+        .social-links a {
+            color: #e94560;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    ${preheaderText}
+    <div class="container">
+        <div class="header">
+            <div class="logo">🔥 PNPtv!</div>
+        </div>
+
+        <h1 class="greeting">${greeting}</h1>
+
+        ${mediaHtml}
+
+        <div class="content">
+            ${formattedMessage}
+        </div>
+
+        ${buttonsHtml}
+
+        <div style="text-align: center; margin-top: 30px;">
+            <a href="https://t.me/pnplatinotv_bot" class="button">💬 Open Bot</a>
+        </div>
+
+        <div class="footer">
+            <div class="social-links">
+                <a href="https://t.me/pnplatinotv_bot">Telegram</a>
+            </div>
+            <p>${footerText}</p>
+            <p>${unsubText}</p>
+            <p>© ${new Date().getFullYear()} PNPtv!. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+  }
+
+  /**
+   * Get reactivation email template
+   * @param {Object} data - Template data
+   * @returns {string} HTML template
+   */
+  getReactivationEmailTemplate(data) {
+    const { lifetimeDealLink = "https://pnptv.app/lifetime100", telegramLink = "https://t.me/pnplatinotv_bot", language = 'es' } = data;
+
+    const spanishTemplate = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>PNPtv! Está de Vuelta</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #ffffff;
+      background-color: #0b0b0f; /* Dark background */
+    }
+    .container {
+      background-color: #1a1a2e; /* Slightly lighter dark background for content */
+      border-radius: 15px;
+      box-shadow: 0 8px 25px rgba(0, 229, 255, 0.2); /* Neon blue shadow */
+      padding: 20px;
+      margin: 20px auto; /* Center on page */
+      max-width: 600px;
+      border: 1px solid #00e5ff; /* Neon blue border */
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #ff00cc; /* Fuchsia divider */
+      margin-bottom: 20px;
+    }
+    h1 {
+      color: #ff00cc; /* Fuchsia */
+      font-size: 32px;
+      margin-bottom: 5px;
+      text-shadow: 0 0 10px rgba(255, 0, 204, 0.7); /* Neon glow */
+    }
+    h2 {
+      color: #00e5ff; /* Neon Blue */
+      font-size: 24px;
+      margin-top: 0;
+      text-shadow: 0 0 8px rgba(0, 229, 255, 0.7); /* Neon glow */
+    }
+    p {
+      font-size: 16px;
+      line-height: 1.6;
+      color: #dddddd;
+      margin-bottom: 15px;
+    }
+    .button-primary {
+      display: inline-block;
+      background-color: #ff00cc; /* Fuchsia */
+      color: #ffffff !important;
+      padding: 15px 30px;
+      text-decoration: none;
+      border-radius: 50px; /* Pill shape */
+      font-weight: bold;
+      font-size: 18px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(255, 0, 204, 0.4);
+      border: none;
+    }
+    .button-primary:hover {
+      background-color: #e600b8; /* Darker fuchsia on hover */
+      box-shadow: 0 6px 20px rgba(255, 0, 204, 0.6);
+      transform: translateY(-2px);
+    }
+    .button-secondary {
+      color: #00e5ff !important; /* Neon Blue */
+      font-size: 16px;
+      text-decoration: none;
+      font-weight: bold;
+      transition: color 0.3s ease;
+    }
+    .button-secondary:hover {
+      color: #00b8cc !important; /* Darker neon blue on hover */
+    }
+    .footer-text {
+      font-size: 13px;
+      color: #666666;
+      margin-top: 20px;
+    }
+    .highlight {
+      color: #00e5ff; /* Highlight words with neon blue */
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0b0b0f;">
+    <tr>
+      <td align="center">
+        <table class="container" width="600" cellpadding="20" cellspacing="0">
+
+          <tr>
+            <td class="header">
+              <h1>🔥 PNP LATINO TV ESTÁ DE VUELTA 🔥</h1>
+              <h2>Más Caliente Que Nunca</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td>
+              <p>
+                <span class="highlight">PNPtv!</span> está de vuelta — <span class="highlight">más 🔥 que nunca</span>.
+              </p>
+              <p>
+                Después de cada intento de cierre, nos levantamos más fuertes, trayéndote el contenido que amas y un bot de nueva generación construido para mantener a nuestra comunidad más unida que nunca.
+              </p>
+              <p>
+                Disfruta de tus videos favoritos, explora nuevas experiencias como Nearby, Hangouts y PNP Live, y reconecta con un espacio donde la <span class="highlight">libertad, la conexión y el placer</span> se encuentran.
+              </p>
+              <p style="text-align: center; font-style: italic; font-size: 18px; color: #ff00cc;">
+                Tu espacio. Tu gente. Tu momento.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding-top: 0;">
+              <a href="${lifetimeDealLink}" class="button-primary">
+                🔥 Lifetime Hot Deal
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center">
+              <p style="margin-bottom: 0;">Suscríbete ahora y vuelve a encender el 🔥.</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding-top: 10px;">
+              <a href="${telegramLink}" class="button-secondary">
+                Suscríbete al canal y únete a la comunidad
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" class="footer-text">
+              PNPtv! — Comunidad • Conexión • Placer
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    const englishTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PNPtv! Is Back</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #ffffff;
+      background-color: #0b0b0f; /* Dark background */
+    }
+    .container {
+      background-color: #1a1a2e; /* Slightly lighter dark background for content */
+      border-radius: 15px;
+      box-shadow: 0 8px 25px rgba(0, 229, 255, 0.2); /* Neon blue shadow */
+      padding: 20px;
+      margin: 20px auto; /* Center on page */
+      max-width: 600px;
+      border: 1px solid #00e5ff; /* Neon blue border */
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #ff00cc; /* Fuchsia divider */
+      margin-bottom: 20px;
+    }
+    h1 {
+      color: #ff00cc; /* Fuchsia */
+      font-size: 32px;
+      margin-bottom: 5px;
+      text-shadow: 0 0 10px rgba(255, 0, 204, 0.7); /* Neon glow */
+    }
+    h2 {
+      color: #00e5ff; /* Neon Blue */
+      font-size: 24px;
+      margin-top: 0;
+      text-shadow: 0 0 8px rgba(0, 229, 255, 0.7); /* Neon glow */
+    }
+    p {
+      font-size: 16px;
+      line-height: 1.6;
+      color: #dddddd;
+      margin-bottom: 15px;
+    }
+    .button-primary {
+      display: inline-block;
+      background-color: #ff00cc; /* Fuchsia */
+      color: #ffffff !important;
+      padding: 15px 30px;
+      text-decoration: none;
+      border-radius: 50px; /* Pill shape */
+      font-weight: bold;
+      font-size: 18px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(255, 0, 204, 0.4);
+      border: none;
+    }
+    .button-primary:hover {
+      background-color: #e600b8; /* Darker fuchsia on hover */
+      box-shadow: 0 6px 20px rgba(255, 0, 204, 0.6);
+      transform: translateY(-2px);
+    }
+    .button-secondary {
+      color: #00e5ff !important; /* Neon Blue */
+      font-size: 16px;
+      text-decoration: none;
+      font-weight: bold;
+      transition: color 0.3s ease;
+    }
+    .button-secondary:hover {
+      color: #00b8cc !important; /* Darker neon blue on hover */
+    }
+    .footer-text {
+      font-size: 13px;
+      color: #666666;
+      margin-top: 20px;
+    }
+    .highlight {
+      color: #00e5ff; /* Highlight words with neon blue */
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0b0b0f;">
+    <tr>
+      <td align="center">
+        <table class="container" width="600" cellpadding="20" cellspacing="0">
+
+          <tr>
+            <td class="header">
+              <h1>🔥 PNPtv! IS BACK 🔥</h1>
+              <h2>Hotter Than Ever</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td>
+              <p>
+                <span class="highlight">PNPtv!</span> is back — <span class="highlight">hotter than ever</span>.
+              </p>
+              <p>
+                After every shutdown attempt, we rise stronger, bringing you the content you love and a new generation bot built to keep our community closer than ever.
+              </p>
+              <p>
+                Enjoy your favorite videos, explore new experiences like Nearby, Hangouts, and PNP Live, and reconnect with a space where <span class="highlight">freedom, connection, and pleasure</span> meet.
+              </p>
+              <p style="text-align: center; font-style: italic; font-size: 18px; color: #ff00cc;">
+                Your space. Your people. Your moment.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding-top: 0;">
+              <a href="${lifetimeDealLink}" class="button-primary">
+                🔥 Lifetime Hot Deal
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center">
+              <p style="margin-bottom: 0;">Subscribe now and turn the heat back on. 🔥</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding-top: 10px;">
+              <a href="${telegramLink}" class="button-secondary">
+                Join the community & subscribe to our channel
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" class="footer-text">
+              PNPtv! — Community • Connection • Pleasure
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    return language === 'es' ? spanishTemplate : englishTemplate;
+  }
+
+  /**
+   * Get recording ready template
+   * @param {Object} data - Template data
+   * @returns {string} HTML template
+   */
+  getRecordingReadyTemplate(data) {
+    const { roomTitle, recordingUrl, downloadUrl, duration, fileSize } = data;
+
+    const fileSizeMB = fileSize ? (fileSize / 1024 / 1024).toFixed(2) : 'N/A';
+    const durationMin = duration ? Math.floor(duration / 60) : 'N/A';
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .button {
+            display: inline-block;
+            background: #2D8CFF;
+            color: white !important;
+            padding: 15px 40px;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: bold;
+            margin: 10px 5px;
+        }
+        .info-box {
+            background: #f9f9f9;
+            padding: 15px;
+            border-left: 4px solid #2D8CFF;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="color: #2D8CFF;">📹 Your Recording is Ready!</h1>
+
+        <p>The recording for <strong>${roomTitle}</strong> has been processed and is ready to view.</p>
+
+        <div class="info-box">
+            <p><strong>Duration:</strong> ${durationMin} minutes</p>
+            <p><strong>File Size:</strong> ${fileSizeMB} MB</p>
+        </div>
+
+        <div style="text-align: center;">
+            <a href="${recordingUrl}" class="button">▶️ Watch</a>
+            ${downloadUrl ? `<a href="${downloadUrl}" class="button">⬇️ Download</a>` : ''}
+        </div>
+
+        <p style="text-align: center; margin-top: 30px; color: #666; font-size: 12px;">
+            <strong>PNP.tv</strong> - Premium Zoom Meetings
+        </p>
+    </div>
+</body>
+</html>
+        `;
+  }
+
+  /**
+   * Verify email transporter connections
+   * @returns {Promise<boolean>} True if at least one transporter verifies
+   */
+  async verifyConnection() {
+    let ok = false;
+    for (const [name, transporter] of Object.entries(this.transporters)) {
+      if (!transporter) continue;
+      try {
+        await transporter.verify();
+        logger.info(`Email transporter '${name}' verified successfully`);
+        ok = true;
+      } catch (error) {
+        logger.error(`Email transporter '${name}' verification failed:`, error);
+      }
+    }
+    return ok;
   }
 }
 

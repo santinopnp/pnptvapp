@@ -6152,7 +6152,7 @@ async function sendBroadcastWithButtons(ctx, bot) {
   try {
     const { broadcastTarget, broadcastData } = ctx.session.temp;
     const { getLanguage } = require('../../utils/helpers');
-    const emailService = require('../../../services/emailService');
+    const emailService = require('../../../services/emailservice');
     const lang = getLanguage(ctx);
 
     if (!broadcastData || (!broadcastData.textEn && !broadcastData.textEs)) {

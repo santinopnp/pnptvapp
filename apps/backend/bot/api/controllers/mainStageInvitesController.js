@@ -13,7 +13,7 @@ const { asyncHandler }   = require('../middleware/errorHandler');
 const mainStageService   = require('../../../services/mainStageService');
 const livekitService     = require('../../../services/livekitService');
 const mainStageInviteService = require('../../../services/mainStageInviteService');
-const emailService       = require('../../../services/emailService');
+const emailService       = require('../../../services/emailservice');
 const EntitlementAccessService = require('../../../services/entitlementAccessService');
 const { getRedis }       = require('../../../config/redis');
 

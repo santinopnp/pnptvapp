@@ -6,7 +6,7 @@
 
 const { query, getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
-const emailService = require('../services/emailService');
+const emailService = require('../services/emailservice');
 const { Telegraf } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
