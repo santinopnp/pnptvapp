@@ -27,11 +27,12 @@ const logger = require('../../../utils/logger');
 const { query, getClient } = require('../../../config/postgres');
 const groupManagerService = require('../../../services/groupManagerService');
 const EntitlementModel = require('../../../models/entitlementModel');
+const BusinessNotificationService = require('../../../services/businessNotificationService');
 
 const CRON_EXPR = '0 8 * * 1'; // Monday 08:00 UTC = 03:00 COT
 const CRON_TZ = 'UTC';
 
-const REWARD_PERCENT = 0.30;         // top 30% get PRIME
+const REWARD_COUNT = 3;              // top 3 get PRIME
 const REWARD_DAYS = 7;               // duration of the PRIME grant
 const STRIKES_TO_KICK = 2;           // 2 consecutive zero-activity weeks → kicked
 
@@ -362,7 +363,7 @@ async function processHangoutGroup(group, weekWindow) {
   const adminIds = await getHangoutAdmins(group.id);
 
   const activeCount = weeklyActivity.length;
-  const winnerCount = activeCount === 0 ? 0 : Math.max(1, Math.ceil(activeCount * REWARD_PERCENT));
+  const winnerCount = activeCount === 0 ? 0 : Math.min(REWARD_COUNT, activeCount);
 
   let lifetimePrimeSet = new Set();
   try {
@@ -482,6 +483,7 @@ async function processHangoutGroup(group, weekWindow) {
     winners: winnerCount,
     removed: removedMembers.length,
   });
+  return grantedWinners.map((w) => ({ ...w, groupName: group.name }));
 }
 
 async function markKicked(chatId, userId, tgKicked, hangoutKicked) {
@@ -509,9 +511,8 @@ async function processGroup(telegram, group, weekWindow) {
   const weeklyPoints = await getWeeklyPoints(chatId, weekWindow.start, weekWindow.end);
   const knownMembers = await getKnownMembers(chatId);
 
-  // Build winner set (top 30%, min 1 if any active)
   const activeCount = weeklyPoints.length;
-  const winnerCount = activeCount === 0 ? 0 : Math.max(1, Math.ceil(activeCount * REWARD_PERCENT));
+  const winnerCount = activeCount === 0 ? 0 : Math.min(REWARD_COUNT, activeCount);
   const winners = weeklyPoints.slice(0, winnerCount);
   const winnerIds = new Set(winners.map((w) => String(w.user_id)));
 
@@ -663,6 +664,7 @@ async function processGroup(telegram, group, weekWindow) {
     winners: winnerCount,
     kicked: kicked.length,
   });
+  return grantedWinners.map((w) => ({ ...w, groupName: group.name }));
 }
 
 async function runWeeklyRank(telegram) {
@@ -689,9 +691,12 @@ async function runWeeklyRank(telegram) {
     weekStart: weekWindow.weekStartStr,
   });
 
+  const allWinners = [];
+
   for (const g of groups) {
     try {
-      await processGroup(telegram, g, weekWindow);
+      const w = await processGroup(telegram, g, weekWindow);
+      if (w) allWinners.push(...w);
       await new Promise((r) => setTimeout(r, 1500)); // gentle Telegram pacing
     } catch (err) {
       logger.error('[WeeklyRank] group failed', {
@@ -714,10 +719,25 @@ async function runWeeklyRank(telegram) {
 
   for (const hg of hangoutGroups) {
     try {
-      await processHangoutGroup(hg, weekWindow);
+      const w = await processHangoutGroup(hg, weekWindow);
+      if (w) allWinners.push(...w);
     } catch (err) {
       logger.error('[WeeklyRank] hangout group failed', { groupId: hg.id, error: err.message });
     }
+  }
+
+  // Post consolidated top-3 winners to the notifications channel
+  if (allWinners.length > 0) {
+    // Sort by points descending, dedupe by user_id, take top 3
+    const seen = new Set();
+    const top3 = allWinners
+      .sort((a, b) => (b.points || 0) - (a.points || 0))
+      .filter((w) => { const id = String(w.user_id); if (seen.has(id)) return false; seen.add(id); return true; })
+      .slice(0, 3);
+    await BusinessNotificationService.notifyWeeklyWinners({
+      weekStart: weekWindow.weekStartStr,
+      winners: top3,
+    }).catch((err) => logger.error('[WeeklyRank] winners notification failed', { error: err.message }));
   }
 
   logger.info('[WeeklyRank] run complete');

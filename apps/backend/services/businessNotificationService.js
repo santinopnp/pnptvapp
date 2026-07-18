@@ -16,6 +16,7 @@ const TOPICS = {
   creatorSub:     process.env.CREATOR_SUBS_TOPIC_ID,
   inviteRedeem:   process.env.INVITE_REDEMPTIONS_TOPIC_ID,
   tokenPurchase:  process.env.TOKEN_PURCHASES_TOPIC_ID,
+  gamification:   process.env.GAMIFICATION_TOPIC_ID,
 };
 function resolveTopic(kind) {
   const raw = TOPICS[kind];
@@ -268,6 +269,34 @@ class BusinessNotificationService {
       await this.send(lines.join('\n'), 'tokenPurchase');
     } catch (err) {
       logger.error('notifyTokenPurchase failed', { userId, tokens, error: err.message });
+    }
+  }
+  /**
+   * Fired after the weekly rank completes. winners: [{username, first_name, points, groupName}]
+   */
+  static async notifyWeeklyWinners({ weekStart, winners = [] }) {
+    try {
+      const medals = ['🥇', '🥈', '🥉'];
+      const lines = [
+        '🏆 <b>CAMPEONES DE LA SEMANA</b>',
+        '',
+        `📅 Semana del ${weekStart}`,
+        '',
+        'Esta semana estos miembros se destacaron por su participación activa en la comunidad y ganaron <b>7 días de PRIME</b> 💜',
+        '',
+      ];
+      winners.slice(0, 3).forEach((w, i) => {
+        const medal = medals[i] || `${i + 1}.`;
+        const who = w.username ? `@${w.username}` : (w.first_name || 'Miembro');
+        const where = w.groupName ? ` · <i>${w.groupName}</i>` : '';
+        lines.push(`${medal} <b>${who}</b>${where} — ${w.points} mensajes`);
+      });
+      lines.push('');
+      lines.push('¡Sigue participando — cada mensaje cuenta para el ranking de la próxima semana! 🔥');
+
+      await this.send(lines.join('\n'), 'gamification');
+    } catch (err) {
+      logger.error('notifyWeeklyWinners failed', { weekStart, error: err.message });
     }
   }
 }
