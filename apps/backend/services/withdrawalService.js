@@ -2,7 +2,7 @@ const WithdrawalModel = require('../models/withdrawalModel');
 const ModelEarningsModel = require('../models/modelEarningsModel');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
-const emailService = require('./emailService');
+const emailService = require('./emailservice');
 
 class WithdrawalService {
   /**

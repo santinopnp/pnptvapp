@@ -3,7 +3,7 @@ const { query } = require('../../../config/postgres');
 const { cache, getRedis } = require('../../../config/redis');
 const logger = require('../../../utils/logger');
 const UserModel = require('../../../models/userModel');
-const emailService = require('../../../services/emailService');
+const emailService = require('../../../services/emailservice');
 
 const SYNAPSE_INTERNAL_URL = process.env.MATRIX_SYNAPSE_URL || 'http://synapse:8008';
 

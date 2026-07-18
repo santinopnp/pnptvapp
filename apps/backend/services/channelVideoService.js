@@ -473,7 +473,7 @@ async function broadcastNewVideo({ videoId, channelId, creatorId, title, descrip
 
   // ── Email ─────────────────────────────────────────────────────────────────
   try {
-    const emailService = require('./emailService');
+    const emailService = require('./emailservice');
     const emailFollowers = followers.filter((f) => f.email);
     if (emailFollowers.length > 0) {
       await emailService.sendBroadcastEmails(emailFollowers, {

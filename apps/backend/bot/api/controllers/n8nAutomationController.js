@@ -1,6 +1,6 @@
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
-const EmailService = require('../../../services/emailService');
+const EmailService = require('../../../services/emailservice');
 const UserModel = require('../../../models/userModel');
 
 const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

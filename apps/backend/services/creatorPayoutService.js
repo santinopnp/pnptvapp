@@ -953,7 +953,7 @@ class CreatorPayoutService {
     // 2. Email — if the user has one
     if (user_email) {
       try {
-        const EmailService = require('./emailService');
+        const EmailService = require('./emailservice');
         const subject = lang === 'es'
           ? `Tu suscripción a "${resourceName}" vence en ${daysLeft} día${daysLeft === 1 ? '' : 's'}`
           : `Your "${resourceName}" subscription expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`;

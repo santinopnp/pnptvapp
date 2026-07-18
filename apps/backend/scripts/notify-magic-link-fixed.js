@@ -16,7 +16,7 @@ try { require('dotenv').config({ path: path.join(BACKEND, '../../.env') }); } ca
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env.production'), override: true }); } catch {}
 
 const { query } = require(path.join(BACKEND, 'config/postgres'));
-const emailService = require(path.join(BACKEND, 'services/emailService'));
+const emailService = require(path.join(BACKEND, 'services/emailservice'));
 
 const DRY_RUN = process.argv.includes('--dry-run');
 

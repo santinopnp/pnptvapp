@@ -2780,7 +2780,7 @@ app.post('/api/webapp/auth/recover-account', authLimiter, asyncHandler(async (re
               <p style="color:#636366;font-size:13px;">If you didn't request this, ignore this email.</p>
               <p style="margin-top:24px;color:#636366;font-size:13px;">— The PNPtv Team</p>
             </div>`;
-      const EmailService = require('../../services/emailService');
+      const EmailService = require('../../services/emailservice');
       await EmailService.send({ to: email, subject, html });
       logger.info('[recover-account] local token reset email sent', { userId: u.id });
       return res.json({ success: true });
@@ -2856,7 +2856,7 @@ app.post('/api/webapp/auth/recover-account', authLimiter, asyncHandler(async (re
             <p style="color:#636366;font-size:13px;">If you didn't request this, ignore this email.</p>
             <p style="margin-top:24px;color:#636366;font-size:13px;">— The PNPtv Team</p>
           </div>`;
-    const EmailService = require('../../services/emailService');
+    const EmailService = require('../../services/emailservice');
     await EmailService.send({ to: email, subject, html });
     logger.info('[recover-account] recovery email sent', { userId: u.id, pk: authentikPk });
   } catch (err) {
@@ -3720,7 +3720,7 @@ app.post('/api/webapp/auth/enable-pnptv-id', requireSessionAuth, enablePnptvIdLi
   }
 
   try {
-    const EmailService = require('../../services/emailService');
+    const EmailService = require('../../services/emailservice');
     const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     const displayName = user.displayName || user.firstName || user.username || 'there';
     await EmailService.send({
@@ -3819,7 +3819,7 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
 
   // Send notification emails (non-fatal)
   try {
-    const EmailService = require('../../services/emailService');
+    const EmailService = require('../../services/emailservice');
     const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     const displayName = user.displayName || user.firstName || user.username || 'there';
 

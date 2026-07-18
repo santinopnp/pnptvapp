@@ -16,7 +16,7 @@ const path = require('path');
 const backendPath = path.join(__dirname, '..');
 const { query } = require(path.join(backendPath, 'config/postgres'));
 const { Telegram } = require('telegraf');
-const emailService = require(path.join(backendPath, 'services/emailService'));
+const emailService = require(path.join(backendPath, 'services/emailservice'));
 
 const SLOT_URL_11 = 'https://www.notion.so/351b66dc11ff813b9d27e5f3e696497d';
 const SLOT_URL_14 = 'https://www.notion.so/351b66dc11ff81d7b53dc8c07a29fd87';
