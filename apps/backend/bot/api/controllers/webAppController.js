@@ -9,7 +9,7 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs').promises;
 const FileType = require('../../utils/fileType');
-const { generateRegistrationOptions, verifyRegistrationResponse } = require('@simplewebauthn/server');
+const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } = require('@simplewebauthn/server');
 
 // ── Enforced follows (shared service) ────────────────────────────────────────
 const { enforceDefaultFollows } = require('../../../services/followService');
@@ -640,12 +640,32 @@ const magicLinkVerify = async (req, res) => {
 
 const passkeyBegin = async (req, res) => {
   try {
-    const result = await AuthentikService.beginPasskeyFlow();
-    if (!result.success) {
-      logger.info('[Passkey] beginPasskeyFlow returned unavailable:', result.error);
-      return res.status(503).json({ success: false, error: result.error || 'passkey_unavailable' });
-    }
-    return res.json(result);
+    const redis = getRedis();
+    // Discoverable / resident-key mode: empty allowCredentials so any passkey
+    // stored on the device can respond. The authenticator returns a userHandle
+    // (set to the PNPtv user ID at registration time) which we use to look up
+    // the credential after verification.
+    const options = await generateAuthenticationOptions({
+      rpID: WEBAUTHN_RP_ID,
+      userVerification: 'preferred',
+      timeout: 300000,
+    });
+
+    // Two-slot state: local challenge for our own verification path, plus the
+    // Authentik flow state so we can fall back for pre-migration passkeys.
+    const stateToken = uuidv4();
+    await redis.set(`passkey:login:${stateToken}`, options.challenge, 'EX', 300);
+
+    // Also kick off the Authentik flow in parallel (non-blocking) so the
+    // fallback path has a ready state if the credential isn't in our local table.
+    AuthentikService.beginPasskeyFlow().then((ak) => {
+      if (ak.success && ak.stateToken) {
+        redis.set(`passkey:login:ak:${stateToken}`, ak.stateToken, 'EX', 300).catch(() => {});
+      }
+    }).catch(() => {});
+
+    logger.info('[Passkey] passkeyBegin: challenge issued');
+    return res.json({ success: true, options, stateToken });
   } catch (err) {
     logger.error('[Passkey] passkeyBegin unexpected error:', err);
     return res.status(503).json({ success: false, error: 'passkey_unavailable' });
@@ -661,14 +681,94 @@ const passkeyFinish = async (req, res) => {
       return res.status(400).json({ authenticated: false, error: 'invalid_request' });
     }
 
-    const flowResult = await AuthentikService.finishPasskeyFlow(stateToken, assertion);
+    const redis = getRedis();
+    const expectedChallenge = await redis.get(`passkey:login:${stateToken}`);
+
+    // ── Local verification path (passkeys registered via PNPtv UI) ───────────
+    if (expectedChallenge) {
+      await redis.del(`passkey:login:${stateToken}`);
+      // Clean up the Authentik fallback state too (best-effort).
+      redis.del(`passkey:login:ak:${stateToken}`).catch(() => {});
+
+      const rawId = assertion.rawId || assertion.id;
+      const credentialRow = rawId
+        ? (await query('SELECT * FROM user_passkeys WHERE credential_id = $1', [rawId])).rows[0]
+        : null;
+
+      if (credentialRow) {
+        let verification;
+        try {
+          verification = await verifyAuthenticationResponse({
+            response: assertion,
+            expectedChallenge,
+            expectedOrigin: WEBAUTHN_ORIGIN,
+            expectedRPID: WEBAUTHN_RP_ID,
+            requireUserVerification: false,
+            credential: {
+              id: credentialRow.credential_id,
+              publicKey: Buffer.from(credentialRow.public_key, 'base64url'),
+              counter: Number(credentialRow.sign_count),
+            },
+          });
+        } catch (verifyErr) {
+          logger.warn('[Passkey] local verification failed:', verifyErr.message);
+          return res.status(401).json({ authenticated: false, error: 'auth_failed' });
+        }
+
+        if (!verification.verified) {
+          return res.status(401).json({ authenticated: false, error: 'auth_failed' });
+        }
+
+        // Update counter and last_used_at.
+        query(
+          `UPDATE user_passkeys SET sign_count = $1, last_used_at = NOW() WHERE id = $2`,
+          [verification.authenticationInfo?.newCounter ?? credentialRow.sign_count, credentialRow.id]
+        ).catch(() => {});
+
+        const userRes = await query('SELECT * FROM users WHERE id = $1', [credentialRow.user_id]);
+        const user = userRes.rows[0];
+        if (!user) {
+          return res.status(401).json({ authenticated: false, error: 'user_not_found' });
+        }
+
+        query(
+          `UPDATE users SET last_login_at = NOW(), last_login_method = 'passkey', updated_at = NOW() WHERE id = $1`,
+          [user.id]
+        ).catch(() => {});
+
+        const { mapRowToUser } = require('../../../models/userModel');
+        const mappedUser = mapRowToUser(user);
+        const sessionData = buildSession(mappedUser, { last_login_method: 'passkey' });
+        await new Promise((resolve, reject) =>
+          req.session.regenerate((err) => (err ? reject(err) : resolve()))
+        );
+        req.session.user = sessionData;
+        await new Promise((resolve, reject) =>
+          req.session.save((err) => (err ? reject(err) : resolve()))
+        );
+
+        logger.info('[Passkey] local sign-in: user', user.id);
+        return res.json({ authenticated: true, user: { id: user.id, username: user.username, pnptvId: user.pnptv_id } });
+      }
+
+      // No local credential found — fall through to Authentik path below.
+      logger.info('[Passkey] no local credential found for rawId, trying Authentik fallback');
+    }
+
+    // ── Authentik fallback (passkeys registered before migration) ────────────
+    const akStateToken = await redis.get(`passkey:login:ak:${stateToken}`).catch(() => null);
+    if (!akStateToken) {
+      return res.status(401).json({ authenticated: false, error: 'auth_failed' });
+    }
+    await redis.del(`passkey:login:ak:${stateToken}`).catch(() => {});
+
+    const flowResult = await AuthentikService.finishPasskeyFlow(akStateToken, assertion);
     if (!flowResult.success) {
-      logger.warn('[Passkey] finishPasskeyFlow failed:', flowResult.error);
+      logger.warn('[Passkey] Authentik finishPasskeyFlow failed:', flowResult.error);
       return res.status(401).json({ authenticated: false, error: flowResult.error || 'auth_failed' });
     }
 
     const { authentikUser } = flowResult;
-    // Map Authentik identity to PNPtv user via email or username.
     const { user } = await findOrLinkUser({
       email: authentikUser.email && !authentikUser.email.endsWith('@telegram.pnptv.app') && !authentikUser.email.endsWith('@x.pnptv.app')
         ? authentikUser.email.toLowerCase().trim()
@@ -696,11 +796,8 @@ const passkeyFinish = async (req, res) => {
       req.session.save((err) => (err ? reject(err) : resolve()))
     );
 
-    logger.info('[Passkey] sign-in: user', user.id);
-    return res.json({
-      authenticated: true,
-      user: { id: user.id, username: user.username, pnptvId: user.pnptv_id },
-    });
+    logger.info('[Passkey] Authentik sign-in: user', user.id);
+    return res.json({ authenticated: true, user: { id: user.id, username: user.username, pnptvId: user.pnptv_id } });
   } catch (err) {
     logger.error('[Passkey] passkeyFinish unexpected error:', err);
     return res.status(500).json({ authenticated: false, error: 'server_error' });
@@ -803,28 +900,31 @@ const passkeyRegisterFinish = async (req, res) => {
     const credentialPublicKey = regInfo.credential?.publicKey ?? regInfo.credentialPublicKey;
     const { counter, aaguid } = regInfo;
 
-    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
-    if (!authentikPk) {
-      logger.error('[Passkey] passkeyRegisterFinish: could not resolve Authentik user for', sessionUser.id);
-      return res.status(422).json({ success: false, error: 'authentik_user_not_found' });
-    }
+    const credentialIdB64 = Buffer.from(credentialID).toString('base64url');
+    const publicKeyB64 = Buffer.from(credentialPublicKey).toString('base64url');
 
-    const result = await AuthentikService.createWebAuthnDevice(authentikPk, {
-      name: deviceName,
-      credentialId: Buffer.from(credentialID).toString('base64url'),
-      publicKey: Buffer.from(credentialPublicKey).toString('base64url'),
-      signCount: counter,
-      rpId: WEBAUTHN_RP_ID,
-      aaguid,
-    });
+    const insertRes = await query(
+      `INSERT INTO user_passkeys (user_id, name, credential_id, public_key, sign_count, aaguid, rp_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (credential_id) DO NOTHING
+       RETURNING id`,
+      [
+        String(sessionUser.id),
+        deviceName,
+        credentialIdB64,
+        publicKeyB64,
+        counter ?? 0,
+        aaguid && aaguid !== '00000000-0000-0000-0000-000000000000' ? aaguid : null,
+        WEBAUTHN_RP_ID,
+      ]
+    );
 
-    if (!result.success) {
-      logger.error('[Passkey] passkeyRegisterFinish: Authentik create failed:', result.detail);
-      return res.status(500).json({ success: false, error: 'store_failed' });
+    if (!insertRes.rows[0]) {
+      return res.status(409).json({ success: false, error: 'credential_exists' });
     }
 
     logger.info('[Passkey] passkeyRegisterFinish: passkey registered for user', sessionUser.id);
-    return res.json({ success: true, device: { pk: result.device?.pk, name: deviceName } });
+    return res.json({ success: true, device: { pk: insertRes.rows[0].id, name: deviceName } });
   } catch (err) {
     logger.error('[Passkey] passkeyRegisterFinish unexpected error:', err);
     return res.status(500).json({ success: false, error: 'server_error' });
@@ -836,19 +936,36 @@ const passkeyListDevices = async (req, res) => {
   if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
 
   try {
-    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
-    if (!authentikPk) return res.json({ success: true, devices: [] });
+    const [localRes, authentikRes] = await Promise.allSettled([
+      query(
+        `SELECT id, name, aaguid, created_at, last_used_at FROM user_passkeys WHERE user_id = $1 ORDER BY created_at`,
+        [String(sessionUser.id)]
+      ),
+      (async () => {
+        const pk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
+        if (!pk) return [];
+        const r = await AuthentikService.listWebAuthnDevices(pk);
+        return r.success ? r.devices : [];
+      })(),
+    ]);
 
-    const result = await AuthentikService.listWebAuthnDevices(authentikPk);
-    if (!result.success) return res.json({ success: true, devices: [] });
+    const localDevices = (localRes.status === 'fulfilled' ? localRes.value.rows : []).map((d) => ({
+      pk: `local:${d.id}`,
+      name: d.name,
+      createdAt: d.created_at,
+      lastUsed: d.last_used_at,
+      source: 'local',
+    }));
 
-    const devices = result.devices.map((d) => ({
+    const akDevices = (authentikRes.status === 'fulfilled' ? authentikRes.value : []).map((d) => ({
       pk: d.pk,
       name: d.name,
-      createdAt: d.created,
-      lastUsed: d.last_t,
+      createdAt: d.created_on,
+      lastUsed: null,
+      source: 'authentik',
     }));
-    return res.json({ success: true, devices });
+
+    return res.json({ success: true, devices: [...localDevices, ...akDevices] });
   } catch (err) {
     logger.error('[Passkey] passkeyListDevices error:', err);
     return res.json({ success: true, devices: [] });
@@ -859,10 +976,26 @@ const passkeyDeleteDevice = async (req, res) => {
   const sessionUser = req.session?.user;
   if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
 
-  const devicePk = parseInt(req.params?.devicePk, 10);
-  if (!devicePk || isNaN(devicePk)) return res.status(400).json({ success: false, error: 'invalid_device' });
+  const rawPk = String(req.params?.devicePk || '');
+  if (!rawPk) return res.status(400).json({ success: false, error: 'invalid_device' });
 
   try {
+    // Local device — pk format is "local:<id>"
+    if (rawPk.startsWith('local:')) {
+      const localId = parseInt(rawPk.slice(6), 10);
+      if (!localId || isNaN(localId)) return res.status(400).json({ success: false, error: 'invalid_device' });
+      const del = await query(
+        `DELETE FROM user_passkeys WHERE id = $1 AND user_id = $2 RETURNING id`,
+        [localId, String(sessionUser.id)]
+      );
+      if (!del.rows[0]) return res.status(404).json({ success: false, error: 'not_found' });
+      return res.json({ success: true });
+    }
+
+    // Authentik device — pk is a numeric integer
+    const devicePk = parseInt(rawPk, 10);
+    if (!devicePk || isNaN(devicePk)) return res.status(400).json({ success: false, error: 'invalid_device' });
+
     const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
     if (!authentikPk) return res.status(422).json({ success: false, error: 'authentik_user_not_found' });
 

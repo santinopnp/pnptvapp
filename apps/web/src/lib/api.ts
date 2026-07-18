@@ -385,7 +385,7 @@ export function passkeyFinish(payload: {
 
 // Passkey management (authenticated users)
 export interface PasskeyDevice {
-  pk: number;
+  pk: number | string;
   name: string;
   createdAt?: string;
   lastUsed?: string | null;
@@ -402,7 +402,7 @@ export function passkeyRegisterBegin(): Promise<{
 export function passkeyRegisterFinish(payload: {
   credential: unknown;
   name: string;
-}): Promise<{ success: boolean; device?: { pk: number; name: string }; error?: string }> {
+}): Promise<{ success: boolean; device?: { pk: number | string; name: string }; error?: string }> {
   return request("/api/webapp/auth/passkey/register/finish", { method: "POST", body: payload });
 }
 
@@ -410,7 +410,7 @@ export function listPasskeys(): Promise<{ success: boolean; devices: PasskeyDevi
   return request("/api/webapp/auth/passkeys");
 }
 
-export function deletePasskey(devicePk: number): Promise<{ success: boolean; error?: string }> {
+export function deletePasskey(devicePk: number | string): Promise<{ success: boolean; error?: string }> {
   return request(`/api/webapp/auth/passkeys/${devicePk}`, { method: "DELETE" });
 }
 

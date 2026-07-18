@@ -34,17 +34,12 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ["react", "react-dom", "react-router-dom"],
-          auth: ["oidc-client-ts"],
-          media: ["hls.js"],
-          livekit: [
-            "@livekit/components-react",
-            "@livekit/components-core",
-            "@livekit/components-styles",
-            "livekit-client",
-          ],
-          socket: ["socket.io-client"],
+        manualChunks(id) {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router-dom")) return "vendor";
+          if (id.includes("node_modules/oidc-client-ts")) return "auth";
+          if (id.includes("node_modules/hls.js")) return "media";
+          if (id.includes("@livekit/") || id.includes("node_modules/livekit-client")) return "livekit";
+          if (id.includes("node_modules/socket.io-client")) return "socket";
         },
       },
     },

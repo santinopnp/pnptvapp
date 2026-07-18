@@ -20,7 +20,7 @@ COPY package.json package-lock.json ./
 # apps/backend/node_modules pointing at hoisted packages). No backend-local
 # lockfile or backend-local `npm ci` is needed.
 WORKDIR /app
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm install --omit=dev --ignore-scripts
 
 # Stage 2: Production runtime
 FROM node:20-slim
