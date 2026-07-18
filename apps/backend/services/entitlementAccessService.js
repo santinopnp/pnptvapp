@@ -1,6 +1,6 @@
 'use strict';
 
-const { query } = require('../config/postgres');
+const { query, invalidateCacheForTables } = require('../config/postgres');
 const { getRedis } = require('../config/redis');
 const logger = require('../utils/logger');
 
@@ -27,6 +27,8 @@ class EntitlementAccessService {
       const cached = await redis.get(cacheKey);
       if (cached !== null) return cached === '1';
 
+      // cache: false — this function has its own Redis cache layer; the postgres
+      // queryCache would only add stale-read risk on top of it.
       const { rows } = await query(`
         SELECT 1 FROM user_entitlements
         WHERE user_id = $1
@@ -35,10 +37,19 @@ class EntitlementAccessService {
           AND is_consumed = false
           AND (is_lifetime = true OR (expires_at IS NOT NULL AND expires_at > NOW()))
         LIMIT 1
-      `, [String(userId), addOnId, creatorId ?? null]);
+      `, [String(userId), addOnId, creatorId ?? null], { cache: false });
 
       const has = rows.length > 0;
-      await redis.set(cacheKey, has ? '1' : '0', 'EX', ENTITLEMENT_CACHE_TTL);
+      // Pipeline: set the value + register scoped keys in a tracking set so
+      // invalidateCache can DEL them even after the DB rows are gone.
+      const pipeline = redis.pipeline();
+      pipeline.set(cacheKey, has ? '1' : '0', 'EX', ENTITLEMENT_CACHE_TTL);
+      if (creatorId) {
+        const scopeTrackerKey = `ent_scopes:${userId}`;
+        pipeline.sadd(scopeTrackerKey, cacheKey);
+        pipeline.expire(scopeTrackerKey, ENTITLEMENT_CACHE_TTL + 60);
+      }
+      await pipeline.exec();
       return has;
     } catch (err) {
       logger.error('EntitlementAccessService.hasEntitlement failed', { userId, addOnId, error: err.message });
@@ -123,20 +134,40 @@ class EntitlementAccessService {
     if (!userId) return;
     try {
       const redis = getRedis();
-      // Use SCAN instead of KEYS to avoid blocking Redis (O(N) scan)
-      const entKeys = [];
-      let cursor = '0';
-      do {
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `ent:${userId}:*`, 'COUNT', 100);
-        cursor = nextCursor;
-        entKeys.push(...keys);
-      } while (cursor !== '0');
-      const extraKeys = [`user_label:${userId}`, `tier_check:${userId}`, `ban:${userId}`];
-      const allKeys = [...entKeys, ...extraKeys];
-      if (allKeys.length > 0) {
-        await redis.del(...allKeys);
-      }
-      logger.debug('EntitlementAccessService.invalidateCache: cleared keys', { userId, count: allKeys.length });
+      // ioredis applies `keyPrefix` to GET/SET/DEL but NOT to SCAN's MATCH pattern,
+      // so SCAN('ent:{userId}:*') finds nothing (keys live under 'pnptv:ent:{userId}:*').
+      // Fix: explicitly delete all known global key patterns via DEL (which applies the
+      // prefix correctly), plus any scoped keys found in the DB.
+      const ADD_ON_IDS = ['prime', 'pnp-member', 'channel-access', 'hangout-access', 'creator-subscription', 'pnp-col'];
+      const keysToDelete = [
+        ...ADD_ON_IDS.map(id => `ent:${userId}:${id}`),
+        `user_label:${userId}`,
+        `tier_check:${userId}`,
+        `ban:${userId}`,
+      ];
+
+      // Also clear scoped entitlement keys (ent:{userId}:{addOnId}:{creatorId}).
+      // hasEntitlement registers every scoped key it writes into a Redis Set
+      // (ent_scopes:{userId}) so we can DEL them here even after the DB rows are gone.
+      try {
+        const scopeTrackerKey = `ent_scopes:${userId}`;
+        const scopedKeys = await redis.smembers(scopeTrackerKey);
+        if (scopedKeys.length > 0) {
+          keysToDelete.push(...scopedKeys);
+        }
+        keysToDelete.push(scopeTrackerKey);
+      } catch (_sErr) { /* non-fatal */ }
+
+      const pipeline = redis.pipeline();
+      keysToDelete.forEach(k => pipeline.del(k));
+      await pipeline.exec();
+
+      // postgres.js queryCache caches SELECTs for 120s. Transaction-based mutations
+      // (getClient()) bypass the per-table invalidation logic. Flush affected tables
+      // so stale reads can't survive a grant/revoke within the same process lifetime.
+      // Targeted (not global) so bulk payment processing doesn't evict unrelated entries.
+      invalidateCacheForTables(['user_entitlements', 'users']);
+      logger.debug('EntitlementAccessService.invalidateCache: cleared keys', { userId, count: keysToDelete.length });
     } catch (err) {
       logger.error('EntitlementAccessService.invalidateCache failed', { userId, error: err.message });
     }
@@ -211,12 +242,16 @@ class EntitlementAccessService {
   static async recomputeUserTier(userId) {
     if (!userId) return null;
     try {
+      // cache: false — tier computation must always read live DB state.
+      // The postgres queryCache can serve a stale result (e.g. prime was active
+      // at cache-write time but has since expired), causing phantom PRIME tiers.
       const { rows: addOnRows } = await query(
         `SELECT add_on_id FROM user_entitlements
            WHERE user_id = $1
              AND is_consumed = false
              AND (is_lifetime = true OR (expires_at IS NOT NULL AND expires_at > NOW()))`,
-        [String(userId)]
+        [String(userId)],
+        { cache: false }
       );
       const active = new Set(addOnRows.map((r) => r.add_on_id));
       const tier = active.has('prime') ? 'PRIME'
@@ -249,7 +284,7 @@ class EntitlementAccessService {
                  updated_at = NOW()
              WHERE id = $1
                AND tier IS DISTINCT FROM 'banned'
-               AND ($2 <> 'free' OR tier IS DISTINCT FROM 'creator')`,
+               AND ($2 <> 'free' OR tier NOT IN ('creator','model','admin'))`,
           [String(userId), tier]
         );
         await client.query('COMMIT');
@@ -378,7 +413,7 @@ class EntitlementAccessService {
       }
       if (kind === 'hangout') {
         const { rows } = await query(
-          `SELECT id, creator_id, is_paid, price_usd, channel_id, name
+          `SELECT id, creator_id, is_paid, price_usd, channel_id, name, parent_group_id
              FROM hangout_groups
              WHERE id = $1 LIMIT 1`,
           [String(resourceId)]
@@ -464,12 +499,15 @@ class EntitlementAccessService {
       // hangout_group_members row persists.
       if (!resource.is_paid && !resource.channel_id) {
         try {
+          // Check membership in this group OR its parent group (for topic sub-groups)
+          const groupIds = [String(resource.id)];
+          if (resource.parent_group_id) groupIds.push(String(resource.parent_group_id));
           const membership = await query(
             `SELECT 1 FROM hangout_group_members
-               WHERE group_id = $1 AND user_id = $2
+               WHERE group_id = ANY($1::int[]) AND user_id = $2
                  AND (is_banned = false OR is_banned IS NULL)
                LIMIT 1`,
-            [String(resource.id), String(userId)]
+            [groupIds, String(userId)]
           );
           if (membership.rows.length > 0) {
             return { allowed: true, reason: 'existing_member' };
@@ -805,6 +843,64 @@ class EntitlementAccessService {
         userId, error: err.message,
       });
       return empty;
+    }
+  }
+  /**
+   * Grant a 3-day PRIME trial to a user.
+   * Fire-and-forget safe — never throws. Skips silently if the user already
+   * holds any active prime entitlement (paid or lifetime).
+   *
+   * @param {string|number} userId
+   */
+  static async grantTrialPrime(userId) {
+    if (!userId) return;
+    try {
+      const { getClient } = require('../config/postgres');
+      const client = await getClient();
+      try {
+        await client.query('BEGIN');
+        // Re-grant only if the existing row was the trial plan AND has already expired.
+        // Paid or lifetime prime rows (different source_plan_id or expires_at IS NULL) are never overwritten.
+        const primeResult = await client.query(`
+          INSERT INTO user_entitlements (user_id, add_on_id, expires_at, source_plan_id, auto_renew)
+          VALUES ($1, 'prime', NOW() + INTERVAL '3 days', 'prime-trial-3d', false)
+          ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
+            SET expires_at = NOW() + INTERVAL '3 days', source_plan_id = 'prime-trial-3d'
+            WHERE user_entitlements.source_plan_id = 'prime-trial-3d'
+              AND user_entitlements.expires_at < NOW()
+          RETURNING xmax
+        `, [String(userId)]);
+        const memberResult = await client.query(`
+          INSERT INTO user_entitlements (user_id, add_on_id, expires_at, source_plan_id, auto_renew)
+          VALUES ($1, 'pnp-member', NOW() + INTERVAL '3 days', 'prime-trial-3d', false)
+          ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
+            SET expires_at = NOW() + INTERVAL '3 days', source_plan_id = 'prime-trial-3d'
+            WHERE user_entitlements.source_plan_id = 'prime-trial-3d'
+              AND user_entitlements.expires_at < NOW()
+          RETURNING xmax
+        `, [String(userId)]);
+        await client.query('COMMIT');
+
+        const primeGranted = primeResult.rows.length > 0;
+        if (!primeGranted) {
+          logger.info('Trial PRIME skipped — user already holds active entitlement', { userId });
+        } else {
+          logger.info('Trial PRIME granted', { userId, plan: 'prime-trial-3d' });
+        }
+        // Log member row independently (they should always match, but flag divergence)
+        if (primeGranted && memberResult.rows.length === 0) {
+          logger.warn('Trial PRIME granted but pnp-member row skipped (active non-trial row present)', { userId });
+        }
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+      await EntitlementAccessService.recomputeUserTier(userId);
+      await EntitlementAccessService.invalidateCache(userId);
+    } catch (err) {
+      logger.error('EntitlementAccessService.grantTrialPrime failed', { userId, error: err.message });
     }
   }
 }

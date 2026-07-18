@@ -152,35 +152,15 @@ class PaymentNotificationService {
         confirmButtonText = '✅ Confirm Purchase';
       }
 
-      // Send message with inline button
-      try {
-        const { Markup } = require('telegraf');
-
-        // H6: message body uses Markdown formatting — must match parse_mode
-        await bot.telegram.sendMessage(userId, message, {
-          parse_mode: 'Markdown',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.url(confirmButtonText, confirmationLink)],
-          ]).reply_markup,
-        });
-
-        logger.info('Payment confirmation sent to user', {
-          userId,
-          paymentId,
-          provider,
-          planId,
-        });
-
-        return true;
-      } catch (sendError) {
-        logger.error('Error sending payment confirmation message:', {
-          userId,
-          paymentId,
-          error: sendError.message,
-        });
-        // Return true anyway as the payment is still valid
-        return true;
-      }
+      // Telegram notification mirroring disabled — notifications are in-app and push only
+      // await bot.telegram.sendMessage(userId, message, {
+      //   parse_mode: 'Markdown',
+      //   reply_markup: Markup.inlineKeyboard([
+      //     [Markup.button.url(confirmButtonText, confirmationLink)],
+      //   ]).reply_markup,
+      // });
+      logger.info('Payment confirmation (Telegram disabled, email only)', { userId, paymentId, provider, planId });
+      return true;
     } catch (error) {
       logger.error('Error in payment confirmation notification:', {
         userId,
@@ -243,21 +223,10 @@ class PaymentNotificationService {
         language: lang,
       });
 
-      try {
-        await bot.telegram.sendMessage(userId, message, {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: false,
-        });
-
-        logger.info('Subscription activated notification sent', { userId, planName });
-        return true;
-      } catch (sendError) {
-        logger.error('Error sending subscription activated message:', {
-          userId,
-          error: sendError.message,
-        });
-        return true; // Don't fail the overall process
-      }
+      // Telegram notification mirroring disabled — notifications are in-app and push only
+      // await bot.telegram.sendMessage(userId, message, { parse_mode: 'Markdown', disable_web_page_preview: false });
+      logger.info('Subscription activated notification (Telegram disabled)', { userId, planName });
+      return true;
     } catch (error) {
       logger.error('Error in subscription activated notification:', {
         userId,
@@ -289,6 +258,7 @@ class PaymentNotificationService {
     transactionId,
     customerName,
     customerEmail,
+    planType,   // 'token_purchase' | 'call_package' | 'subscription' | undefined
   }) {
     try {
       // Merge ADMIN_ID + SUPERADMIN_IDS so all admins receive payment DMs.
@@ -301,6 +271,25 @@ class PaymentNotificationService {
       if (adminIds.length === 0 && !supportGroupId) {
         logger.warn('Neither ADMIN_ID/SUPERADMIN_IDS nor SUPPORT_GROUP_ID configured, skipping admin notification');
         return false;
+      }
+
+      // Route to the right Telegram Forum topic by payment type.
+      // Env vars (all optional, fall back to NOTIFICATIONS_TOPIC_ID → no topic):
+      //   PAYMENTS_TOKENS_TOPIC_ID  — token purchases
+      //   PAYMENTS_CALLS_TOPIC_ID   — private call packages
+      //   PAYMENTS_SUBS_TOPIC_ID    — subscriptions / plans
+      const notifTopicId = process.env.NOTIFICATIONS_TOPIC_ID
+        ? Number(process.env.NOTIFICATIONS_TOPIC_ID) : null;
+      let messageThreadId = null;
+      if (planType === 'token_purchase') {
+        messageThreadId = process.env.PAYMENTS_TOKENS_TOPIC_ID
+          ? Number(process.env.PAYMENTS_TOKENS_TOPIC_ID) : notifTopicId;
+      } else if (planType === 'call_package') {
+        messageThreadId = process.env.PAYMENTS_CALLS_TOPIC_ID
+          ? Number(process.env.PAYMENTS_CALLS_TOPIC_ID) : notifTopicId;
+      } else {
+        messageThreadId = process.env.PAYMENTS_SUBS_TOPIC_ID
+          ? Number(process.env.PAYMENTS_SUBS_TOPIC_ID) : notifTopicId;
       }
 
       const formattedAmount = parseFloat(amount).toFixed(2);
@@ -330,8 +319,11 @@ class PaymentNotificationService {
       ].join('\n');
 
       // Group message: no customer email to prevent PII broadcast.
+      const typeLabel = planType === 'token_purchase' ? '🪙 TOKENS'
+        : planType === 'call_package' ? '📞 LLAMADA PRIVADA'
+        : '🌟 SUSCRIPCIÓN';
       const groupMessage = [
-        '💰 *NUEVA COMPRA COMPLETADA*',
+        `💰 *NUEVA COMPRA — ${typeLabel}*`,
         '',
         '✅ Un cliente ha completado su pago exitosamente',
         '',
@@ -368,11 +360,12 @@ class PaymentNotificationService {
       }
 
       // Send to support group — redacted message without customer email
+      // Routes to the matching Forum topic when messageThreadId is set.
       if (supportGroupId) {
         try {
-          await bot.telegram.sendMessage(supportGroupId, groupMessage, {
-            parse_mode: 'Markdown',
-          });
+          const groupOpts = { parse_mode: 'Markdown' };
+          if (messageThreadId) groupOpts.message_thread_id = messageThreadId;
+          await bot.telegram.sendMessage(supportGroupId, groupMessage, groupOpts);
 
           logger.info('Support group payment notification sent', {
             supportGroupId,
@@ -380,6 +373,7 @@ class PaymentNotificationService {
             planName,
             amount,
             provider,
+            messageThreadId,
           });
 
           sentToGroup = true;
@@ -522,21 +516,10 @@ class PaymentNotificationService {
         }
       }
 
-      // Telegram DM — always sent when available (primary channel for bot users)
-      if (u.telegram) {
-        try {
-          await PaymentNotificationService.sendPaymentConfirmation(userId, {
-            planId,
-            planName,
-            amount,
-            provider,
-            language: lang,
-            expiryDate,
-          });
-        } catch (tgErr) {
-          logger.warn('[deliverPurchaseConfirmation] telegram DM failed', { userId, error: tgErr.message });
-        }
-      }
+      // Telegram notification mirroring disabled — notifications are in-app and push only
+      // if (u.telegram) {
+      //   await PaymentNotificationService.sendPaymentConfirmation(userId, { planId, planName, amount, provider, language: lang, expiryDate });
+      // }
 
       if (!u.email && !u.telegram) {
         logger.warn('[deliverPurchaseConfirmation] user has no email or telegram', { userId, planId, transactionId });

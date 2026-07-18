@@ -23,6 +23,7 @@ import { useI18n } from "@/lib/i18n";
 import {
   getCreatorCallPackages,
   getBookingOptions,
+
   getMyCallCredits,
   bookCallWithCredit,
   createCallCheckoutNowPayments,
@@ -33,6 +34,9 @@ import {
   getBtcSubscriptionStatus,
   getBookingPaymentStatus,
   assertPaymentUrl,
+  trackEvent,
+  getWalletBalance,
+  payCallWithTokens,
   type CallPackage,
   type BookingSlot,
   type FeaturedPerformer,
@@ -43,7 +47,7 @@ import type { CreatorCardCreator } from "./CreatorCard";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "nowpayments" | "nowpayments_usdc" | "dash" | "btc";
+type Provider = "nowpayments" | "nowpayments_usdc" | "dash" | "btc" | "tokens";
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -157,11 +161,14 @@ export function BookCallModal({
   const [step, setStep] = useState<Step>(firstStep);
   const [creator, setCreator] = useState<CreatorCardCreator>(initialCreator);
   const [isOnline, setIsOnline] = useState(initialIsOnline);
+  // FIX HIGH-08: track whether creator is accepting calls (from getBookingOptions response)
+  const [isAcceptingCalls, setIsAcceptingCalls] = useState(false);
   const [duration, setDuration] = useState<30 | 60>(initialDuration);
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
   const [provider, setProvider] = useState<Provider>("nowpayments");
   const [email, setEmail] = useState("");
   const [clientNotes, setClientNotes] = useState("");
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [packages, setPackages] = useState<CallPackage[]>([]);
@@ -208,6 +215,7 @@ export function BookCallModal({
   useEffect(() => {
     getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
     getDashAvailable().then((r) => setDashAvailable(r.available === true)).catch(() => {});
+    getWalletBalance().then((r) => { if (r.success) setTokenBalance(r.balance); }).catch(() => {});
   }, []);
 
   // Permission preflight state
@@ -273,7 +281,6 @@ export function BookCallModal({
     setHasMoreSlots(false);
     setIsCreatorLive(false);
     setLiveMessage(null);
-
     // Permissions preflight
     if (typeof navigator.permissions?.query === "function") {
       Promise.allSettled([
@@ -337,7 +344,7 @@ export function BookCallModal({
 
   // ── Load slots when entering SELECT_SLOT ────────────────────────────────────
   const loadSlots = useCallback(
-    (offset: number, append: boolean) => {
+    async (offset: number, append: boolean) => {
       if (!creator.id) return;
 
       if (append) {
@@ -345,7 +352,7 @@ export function BookCallModal({
       } else {
         setSlotsLoading(true);
         setSlotsError(null);
-        if (!append) setSlots([]);
+        setSlots([]);
         setSelectedSlot(null);
       }
 
@@ -357,6 +364,8 @@ export function BookCallModal({
           setIsCreatorLive(res.isLive ?? false);
           setLiveMessage(res.liveMessage ?? null);
           if (res.isOnline) setIsOnline(true);
+          // FIX HIGH-08: track accepting_calls flag from server response
+          if (typeof res.isAcceptingCalls === "boolean") setIsAcceptingCalls(res.isAcceptingCalls);
         })
         .catch((err: Error) => {
           if (!append) setSlotsError(err.message || t.creator.failedLoadSlots);
@@ -458,12 +467,13 @@ export function BookCallModal({
   };
 
   const handleNextFromPackage = useCallback(() => {
-    if (isOnline) {
+    // FIX HIGH-08: "Call NOW" path requires both isOnline AND isAcceptingCalls
+    if (isOnline && isAcceptingCalls) {
       setStep("CHECKOUT");
     } else {
       setStep("SELECT_SLOT");
     }
-  }, [isOnline]);
+  }, [isOnline, isAcceptingCalls]);
 
   const handleNextFromSlot = useCallback(() => {
     if (!selectedSlot && !isOnline) return;
@@ -484,6 +494,7 @@ export function BookCallModal({
       if (res.success) {
         setConfirmedStartAt(selectedSlot.startUtc);
         setConfirmedBookingId(res.booking?.id ?? null);
+        trackEvent("private_call_booked", { duration: String(duration) });
         setStep("SUCCESS");
       } else {
         setCreditBookingError(res.error ?? "Booking failed. Please try again.");
@@ -523,7 +534,7 @@ export function BookCallModal({
             const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
             paymentPopupRef.current = window.open(
               safeUrl, "nowpayments_call_checkout",
-              `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`
+              `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
             );
           }
         }
@@ -604,13 +615,15 @@ export function BookCallModal({
           const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
           paymentPopupRef.current = window.open(
             safeUrl, "btcpay_btc_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`
+            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
           );
         }
         const btcInvoiceId = btcRes.invoiceId;
         setDashPaymentId(btcInvoiceId ?? null);
 
-        const pollId = btcRes.bookingId ?? btcInvoiceId;
+        // FIX HIGH-03: only poll with a UUID (bookingId or paymentId); invoiceId is a
+        // BTCPay string (e.g. "GbXz...") that getBookingPaymentStatus cannot resolve.
+        const pollId = btcRes.bookingId ?? btcRes.paymentId;
         if (pollId) {
           if (dashPollRef.current) clearInterval(dashPollRef.current);
 
@@ -667,6 +680,32 @@ export function BookCallModal({
         return;
       }
 
+      // Tokens — instant payment from wallet (no popup, no polling)
+      if (provider === "tokens") {
+        const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 100);
+        if (tokenBalance !== null && tokenBalance < tokenCost) {
+          setCheckoutError(`Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} T — tienes ${tokenBalance.toLocaleString()} T.`);
+          return;
+        }
+        const tokenRes = await payCallWithTokens(activePackage.id, {
+          startTimeUtc: selectedSlot?.startUtc ?? undefined,
+          endTimeUtc: selectedSlot?.endUtc ?? undefined,
+          clientNotes: clientNotes.trim() || undefined,
+        });
+        if (!tokenRes.success) {
+          if (tokenRes.code === "INSUFFICIENT_TOKENS") {
+            setCheckoutError(`Tokens insuficientes. Necesitas ${tokenRes.required?.toLocaleString()} T — tienes ${tokenRes.current?.toLocaleString()} T.`);
+          } else {
+            setCheckoutError(tokenRes.error || "No se pudieron aplicar los créditos.");
+          }
+          return;
+        }
+        if (tokenRes.newBalance !== undefined) setTokenBalance(tokenRes.newBalance);
+        if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
+        setStep("SUCCESS");
+        return;
+      }
+
       // Dash — BTCPay Server Dash store
       if (provider === "dash") {
         const dashRes = await createCallCheckoutDash(
@@ -682,13 +721,15 @@ export function BookCallModal({
           const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
           paymentPopupRef.current = window.open(
             safeUrl, "dash_call_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`
+            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
           );
         }
         const dashInvoiceId = dashRes.invoiceId;
         setDashPaymentId(dashInvoiceId ?? null);
 
-        const pollId = dashRes.bookingId ?? dashRes.paymentId ?? dashInvoiceId;
+        // FIX HIGH-03: only poll with a UUID; dashInvoiceId is a BTCPay string and
+        // getBookingPaymentStatus will always 404 on it.
+        const pollId = dashRes.bookingId ?? dashRes.paymentId;
         if (pollId) {
           if (dashPollRef.current) clearInterval(dashPollRef.current);
 
@@ -1129,9 +1170,11 @@ export function BookCallModal({
       {!slotsLoading && !slotsError && slots.length > 0 && (
         <>
           <div className="max-h-[40vh] overflow-y-auto space-y-2.5 -mx-1 px-1" role="listbox" aria-label={t.creator.ariaAvailableSlots}>
-            <p className="text-xs pb-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              {t.creator.timesInLocalTz(Intl.DateTimeFormat().resolvedOptions().timeZone)}
-            </p>
+            <div className="flex items-center gap-2 pb-0.5">
+              <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                {t.creator.timesInLocalTz(Intl.DateTimeFormat().resolvedOptions().timeZone)}
+              </p>
+            </div>
             {slots.map((slot) => {
               const { day, date, time } = formatSlotDate(slot.startUtc);
               const isSelected = selectedSlot?.startUtc === slot.startUtc;
@@ -1386,7 +1429,24 @@ export function BookCallModal({
               ₿ BTC
             </button>
           )}
+          {tokenBalance !== null && tokenBalance > 0 && (
+            <button
+              type="button"
+              onClick={() => setProvider("tokens")}
+              className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
+              style={provider === "tokens"
+                ? { background: "rgba(212,0,122,0.18)", border: "1.5px solid #D4007A", color: "#FF69B4" }
+                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+            >
+              🎫 Tokens
+            </button>
+          )}
         </div>
+        {provider === "tokens" && activePackage && (
+          <p className="text-[11px] text-[#FF69B4] mt-1.5">
+            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 100).toLocaleString()} Tokens · Saldo: {tokenBalance?.toLocaleString() ?? "—"} T
+          </p>
+        )}
       </div>
 
       {/* Email input */}
@@ -1560,8 +1620,8 @@ export function BookCallModal({
                 const pw = 600, ph = 700;
                 const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
                 const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-                const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`);
-                if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank");
+                const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
+                if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
               }}
               className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
               style={{ background: "linear-gradient(90deg, #D4007A, #a8006a)" }}

@@ -15,13 +15,66 @@ import {
   editSocialPost,
   createUserReport,
   searchCreators,
+  getOwnChannels,
+  assignPostToChannel,
+  createSocialPost,
   type SocialPostItem,
   type MentionUser,
+  type CreatorChannel,
+  type CommunityHypeMetadata,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { translateText } from "@/lib/feedI18n";
 import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
+
+declare const window: Window & { twttr?: any };
+
+function XEmbedCard({ url }: { url: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+
+    const loadEmbed = () => {
+      if (window.twttr?.widgets) {
+        window.twttr.widgets.load(ref.current ?? undefined);
+      }
+    };
+
+    if (!window.twttr) {
+      const script = document.createElement("script");
+      script.src = "https://platform.twitter.com/widgets.js";
+      script.async = true;
+      script.onload = loadEmbed;
+      document.head.appendChild(script);
+    } else {
+      loadEmbed();
+    }
+  }, [url]);
+
+  return (
+    <div ref={ref} className="mt-3">
+      <blockquote className="twitter-tweet" data-dnt="true" data-theme="dark">
+        <a href={url} target="_blank" rel="noopener noreferrer">
+          {url}
+        </a>
+      </blockquote>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+        </svg>
+        View on X
+      </a>
+    </div>
+  );
+}
 
 /**
  * Channel-promo CTA resolver. Reads the post's `metadata` and the viewer's
@@ -52,41 +105,53 @@ function resolveChannelPromoCta(
   const isEs = lang === "es";
   const watchNow = isEs ? "Ver ahora →" : "Watch now →";
   const canPlayInline = m.access_type === "free" || (m.access_type === "prime" && isPrime);
-  const videoUrl = m.video_url || (m.video_directus_id ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
+  // Resolve the actual playable video URL from metadata.
+  // This URL is stored at publish time and is publicly accessible on the Directus CDN
+  // (no auth required for the media request itself). Access control is enforced at
+  // the channel/entitlement layer, not at the CDN layer.
+  const videoUrl = (m.video_url && m.video_url.length > 10)
+    ? m.video_url
+    : (m.video_directus_id ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
+
   switch (m.access_type) {
     case "free":
-      return { label: watchNow, href: `/channels/${slug}`, canPlayInline, videoUrl };
+      return { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl };
     case "prime":
       return isPrime
-        ? { label: watchNow, href: `/channels/${slug}`, canPlayInline, videoUrl }
+        ? { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl }
         : {
             label: isEs ? "Suscríbete a PRIME →" : "Subscribe to PRIME →",
-            href: `/subscribe?plan=prime&return=${encodeURIComponent(`/channels/${slug}`)}`,
-            canPlayInline,
+            href: `/subscribe?plan=prime&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
+            // Non-PRIME viewers cannot play inline — redirect them to subscribe.
+            canPlayInline: false,
             videoUrl,
           };
     case "subscription": {
+      // Subscription channels: the media URL is public (CDN, no auth required).
+      // Always allow inline play so subscribers see their content immediately.
+      // Non-subscribers who try to open the channel page will hit the proper paywall.
       const creator = m.creator_username || m.channel_name || "creator";
       return {
         label: isEs
           ? `Suscríbete a @${creator} →`
           : `Subscribe to @${creator} →`,
         href: `/profile/${creator}?action=subscribe`,
-        canPlayInline,
+        canPlayInline: !!videoUrl,
         videoUrl,
       };
     }
     case "paid":
+      // Paid channels: same reasoning as subscription — media URL is public CDN.
       return {
         label: isEs
           ? `Pase mensual — $${m.price_usd ?? "?"}/mes →`
           : `Get pass — $${m.price_usd ?? "?"}/mo →`,
-        href: `/channels/${slug}?action=purchase`,
-        canPlayInline,
+        href: `/channels?channel=${slug}&action=purchase`,
+        canPlayInline: !!videoUrl,
         videoUrl,
       };
     default:
-      return { label: watchNow, href: `/channels/${slug}`, canPlayInline, videoUrl };
+      return { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: !!videoUrl, videoUrl };
   }
 }
 
@@ -180,6 +245,18 @@ export default function SocialPostCard({
   const [reportSent, setReportSent] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [channelPromoPlaying, setChannelPromoPlaying] = useState(false);
+  const [channelPromoPlayerError, setChannelPromoPlayerError] = useState(false);
+  const [showChannelPicker, setShowChannelPicker] = useState(false);
+  const [ownChannels, setOwnChannels] = useState<CreatorChannel[]>([]);
+  const [channelPickerLoading, setChannelPickerLoading] = useState(false);
+  const [assigningChannel, setAssigningChannel] = useState(false);
+  const [assignedChannelId, setAssignedChannelId] = useState<number | null>(null);
+  const [hypeOpen, setHypeOpen] = useState(false);
+  const [hypeText, setHypeText] = useState('');
+  const [hypePosting, setHypePosting] = useState(false);
+  const [hypePosted, setHypePosted] = useState(false);
+  const [hypeError, setHypeError] = useState<string | null>(null);
+  const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isOwn = String(post.author_id) === currentUserId;
@@ -492,6 +569,17 @@ export default function SocialPostCard({
             className="w-10 h-10 rounded-full object-cover ring-2 ring-[#1C1C1E]"
             style={{ background: "#1a1a2e" }}
           />
+        ) : post.author_id === "8552451957" && channelPromoCta ? (
+          // Channel-promo post from the system account — show channel branding
+          // instead of the Cristina AI indicator so the feed card feels like it
+          // belongs to the creator, not the platform system.
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label="PNP Channel"
+          >
+            {((post.metadata as { channel_name?: string } | undefined)?.channel_name ?? "C").charAt(0).toUpperCase()}
+          </div>
         ) : post.author_id === "8552451957" ? (
           <span className="w-10 h-10 rounded-full flex items-center justify-center text-2xl ring-2 ring-[#1C1C1E] bg-[#1a1a2e]">🧜‍♀️</span>
         ) : (
@@ -512,6 +600,12 @@ export default function SocialPostCard({
               <span className="font-semibold text-white text-sm truncate">
                 {post.author_first_name || post.author_username || "Anonymous"}
               </span>
+            ) : channelPromoCta && post.author_id === "8552451957" ? (
+              // Channel-promo from system account: show channel name as author label
+              // so the card reads as belonging to the creator's channel, not the bot.
+              <span className="font-semibold text-white text-sm truncate">
+                {(post.metadata as { channel_name?: string } | undefined)?.channel_name || "PNP Channels"}
+              </span>
             ) : (
               <button
                 onClick={(e) => { e.stopPropagation(); onNavigate(authorPath); }}
@@ -520,7 +614,7 @@ export default function SocialPostCard({
                 {post.author_first_name || post.author_username || "Anonymous"}
               </button>
             )}
-            {post.author_username && !post.is_carousel && (
+            {post.author_username && !post.is_carousel && !(channelPromoCta && post.author_id === "8552451957") && (
               <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{post.author_username}
               </span>
@@ -654,6 +748,64 @@ export default function SocialPostCard({
                         </svg>
                         Edit
                       </button>
+                    )}
+                    {isOwn && user?.creator_status === "active" && !showChannelPicker && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#5ED1C4" }}
+                        onClick={async () => {
+                          setChannelPickerLoading(true);
+                          setShowChannelPicker(true);
+                          try {
+                            const res = await getOwnChannels();
+                            setOwnChannels(res.channels ?? []);
+                          } catch { /* silent */ } finally {
+                            setChannelPickerLoading(false);
+                          }
+                        }}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+                        </svg>
+                        Move to channel
+                      </button>
+                    )}
+                    {isOwn && showChannelPicker && (
+                      <div className="px-3 py-2 space-y-1 border-t border-white/10">
+                        {channelPickerLoading ? (
+                          <p className="text-xs text-white/40 py-1">Loading…</p>
+                        ) : ownChannels.length === 0 ? (
+                          <p className="text-xs text-white/40 py-1">No channels yet</p>
+                        ) : (
+                          ownChannels.map((ch) => (
+                            <button
+                              key={ch.id}
+                              disabled={assigningChannel || assignedChannelId === ch.id}
+                              className="w-full text-left px-2 py-1.5 rounded-lg text-xs hover:bg-white/10 transition-colors truncate"
+                              style={{ color: assignedChannelId === ch.id ? "#5ED1C4" : "#fff" }}
+                              onClick={async () => {
+                                setAssigningChannel(true);
+                                try {
+                                  await assignPostToChannel(post.id, ch.id);
+                                  setAssignedChannelId(ch.id);
+                                  setShowChannelPicker(false);
+                                  setShowMenu(false);
+                                } catch { /* silent */ } finally {
+                                  setAssigningChannel(false);
+                                }
+                              }}
+                            >
+                              {assignedChannelId === ch.id ? "✓ " : ""}{ch.name}
+                            </button>
+                          ))
+                        )}
+                        <button
+                          className="w-full text-left px-2 py-1 text-xs text-white/30 hover:text-white/60 transition-colors"
+                          onClick={() => setShowChannelPicker(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     )}
                     {canDelete && (
                       <button
@@ -993,16 +1145,17 @@ export default function SocialPostCard({
                 return (
                   <div className="mt-3" onClick={(e) => e.stopPropagation()}>
                     {/* Thumbnail with play button overlay */}
-                    {post.media_url && (
+                    {(post.media_url || post.video_thumbnail_url) && (
                       <div className="relative cursor-pointer mb-2" onClick={() => {
                         if (channelPromoCta.canPlayInline && channelPromoCta.videoUrl) {
+                          setChannelPromoPlayerError(false);
                           setChannelPromoPlaying(true);
                         } else {
                           onNavigate(channelPromoCta.href);
                         }
                       }}>
                         <img
-                          src={post.media_url}
+                          src={post.media_url || post.video_thumbnail_url!}
                           alt={channelName || "Channel promo"}
                           className="w-full object-cover rounded-xl"
                           loading="lazy"
@@ -1031,6 +1184,7 @@ export default function SocialPostCard({
                     <button
                       onClick={() => {
                         if (channelPromoCta.canPlayInline && channelPromoCta.videoUrl) {
+                          setChannelPromoPlayerError(false);
                           setChannelPromoPlaying(true);
                         } else {
                           onNavigate(channelPromoCta.href);
@@ -1041,7 +1195,7 @@ export default function SocialPostCard({
                     >
                       {channelPromoCta.canPlayInline && channelPromoCta.videoUrl
                         ? (lang === "es" ? "▶ Ver ahora" : "▶ Watch now")
-                        : (channelPromoCta.canPlayInline ? channelPromoCta.label : `🔒 ${lang === "es" ? "Suscríbete para ver" : "Subscribe to Watch"}`)}
+                        : channelPromoCta.label}
                     </button>
                   </div>
                 );
@@ -1129,8 +1283,70 @@ export default function SocialPostCard({
                 );
               })()}
 
-              {/* Media */}
-              {!post.is_promoted && post.media_url && (
+              {/* X embed */}
+              {post.content_type === "x_embed" && post.x_embed_url &&
+               /^https:\/\/(twitter\.com|x\.com)\//.test(post.x_embed_url) && (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <XEmbedCard url={post.x_embed_url} />
+                </div>
+              )}
+
+              {/* Community hype — re-shared community media */}
+              {(() => {
+                const m = post.metadata as Record<string, unknown> | undefined | null;
+                if (!m || m.kind !== 'community_hype') return null;
+                const originalAuthor = (m.original_author_username as string) || 'someone';
+                const mediaUrl = post.media_url || (m.original_media_url as string) || null;
+                const mediaType = (m.original_media_type as string) || post.media_type;
+                const thumbUrl = post.video_thumbnail_url || (m.original_video_thumbnail_url as string | undefined) || undefined;
+                const originalContent = m.original_content as string | undefined;
+                return (
+                  <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
+                    {mediaUrl && (
+                      mediaType === 'video' ? (
+                        <video
+                          src={mediaUrl}
+                          controls
+                          controlsList="nodownload"
+                          disablePictureInPicture
+                          onContextMenu={(e) => e.preventDefault()}
+                          playsInline
+                          className="w-full max-h-[360px] object-contain bg-black"
+                          preload="metadata"
+                          poster={thumbUrl || undefined}
+                        />
+                      ) : (
+                        <img
+                          src={mediaUrl}
+                          alt="Hyped post"
+                          className="w-full object-cover max-h-[360px] cursor-pointer"
+                          loading="lazy"
+                          onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
+                        />
+                      )
+                    )}
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 bg-white/4 hover:bg-white/8 transition-colors group"
+                      onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
+                    >
+                      <p className="text-[10px] text-orange-400/80 font-medium flex items-center gap-1">
+                        🔥 Shared from @{originalAuthor}
+                        <span className="ml-auto text-white/30 group-hover:text-white/60 transition-colors text-[9px]">View original →</span>
+                      </p>
+                      {originalContent && (
+                        <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{originalContent}</p>
+                      )}
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* Media — suppressed for channel_promo posts whose thumbnail is
+                   already rendered inside the channelPromoCta block above.
+                   Also suppressed for community_hype posts which use the block above.
+                   Rendering it again would show the media twice. */}
+              {!post.is_promoted && post.media_url && !channelPromoCta && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype' && (
                 <div className="mt-3">
                   {post.media_type === "video" ? (
                     <>
@@ -1171,9 +1387,9 @@ export default function SocialPostCard({
                             poster={post.video_thumbnail_url || undefined}
                             onError={() => setVideoError(true)}
                           />
-                          {user?.username && (
+                          {post.author_username && post.author_creator_status === "active" && (
                             <div aria-hidden="true" style={{ position: "absolute", bottom: 10, right: 10, color: "#fff", fontSize: 11, fontWeight: 600, opacity: 0.13, pointerEvents: "none", userSelect: "none", letterSpacing: "0.4px", zIndex: 10, textShadow: "0 1px 3px rgba(0,0,0,0.95)", whiteSpace: "nowrap" }}>
-                              @{user.username}
+                              @{post.author_username} · pnptv.app
                             </div>
                           )}
                         </div>
@@ -1191,9 +1407,9 @@ export default function SocialPostCard({
                             "none";
                         }}
                       />
-                      {user?.username && (
+                      {post.author_username && post.author_creator_status === "active" && (
                         <div aria-hidden="true" style={{ position: "absolute", bottom: 10, right: 10, color: "#fff", fontSize: 11, fontWeight: 600, opacity: 0.13, pointerEvents: "none", userSelect: "none", letterSpacing: "0.4px", zIndex: 10, textShadow: "0 1px 3px rgba(0,0,0,0.95)", whiteSpace: "nowrap" }}>
-                          @{user.username}
+                          @{post.author_username} · pnptv.app
                         </div>
                       )}
                     </div>
@@ -1319,6 +1535,31 @@ export default function SocialPostCard({
               </button>
             )}
 
+            {/* Hype — visible on media posts that are not already hype/promo posts */}
+            {user && post.media_url && !post.is_promoted && (post.media_type === 'video' || post.media_type === 'image')
+              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype'
+              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!hypeOpen) {
+                    const name = post.author_first_name ?? post.author_username ?? null;
+                    setHypeText(name ? `🔥 ${name} just dropped something 🔥 — you need to see this!` : '🔥 You need to see this!');
+                  }
+                  setHypeOpen(p => !p);
+                }}
+                className="flex items-center gap-1 text-xs transition-colors"
+                style={hypePosted || hypeOpen ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypePosted ? 'Hyped!' : 'Hype this post'}
+                aria-label={hypePosted ? 'Hyped!' : 'Hype this post'}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
+                </svg>
+              </button>
+            )}
+
             {/* Request Deletion — shown on WoF posts for the post author */}
             {post.is_wof && isOwn && !wofDeleted && (
               <button
@@ -1350,6 +1591,67 @@ export default function SocialPostCard({
               </span>
             )}
           </div>
+          )}
+
+          {/* Hype compose panel */}
+          {hypeOpen && (
+            <div className="mt-3 p-3 rounded-xl border border-orange-500/20 bg-orange-500/5" onClick={(e) => e.stopPropagation()}>
+              <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase mb-2">Hype Post</p>
+              <textarea
+                value={hypeText}
+                onChange={(e) => setHypeText(e.target.value)}
+                maxLength={280}
+                rows={2}
+                className="w-full bg-white/5 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/40"
+                placeholder="Write your hype post…"
+              />
+              {hypeError && <p className="text-xs text-red-400 mt-1">{hypeError}</p>}
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-[10px] text-white/30">{hypeText.length}/280</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setHypeOpen(false); setHypeError(null); }}
+                    className="px-3 py-1 text-xs text-white/40 hover:text-white/70 transition-colors"
+                  >Cancel</button>
+                  <button
+                    onClick={async () => {
+                      if (!hypeText.trim() || hypePosting || hypeInFlight.current) return;
+                      hypeInFlight.current = true;
+                      setHypePosting(true);
+                      setHypeError(null);
+                      try {
+                        const meta: CommunityHypeMetadata = {
+                          kind: 'community_hype',
+                          original_post_id: post.id,
+                          original_author_id: String(post.author_id ?? ''),
+                          original_author_username: post.author_username ?? null,
+                          original_media_url: post.media_url!,
+                          original_media_type: post.media_type as 'video' | 'image',
+                          original_video_thumbnail_url: post.video_thumbnail_url ?? null,
+                          original_content: post.content ?? null,
+                        };
+                        await createSocialPost(hypeText.trim(), undefined, false, true, { metadata: meta, videoThumbnailUrl: post.video_thumbnail_url ?? undefined });
+                        setHypePosted(true);
+                        setHypeOpen(false);
+                        setHypeText('');
+                      } catch (err: unknown) {
+                        console.error('Hype post failed', err);
+                        const msg = err instanceof Error ? err.message : '';
+                        setHypeError(msg.toLowerCase().includes('already') ? 'You already hyped this.' : 'Failed to post. Try again.');
+                      } finally {
+                        setHypePosting(false);
+                        hypeInFlight.current = false;
+                      }
+                    }}
+                    disabled={hypePosting || !hypeText.trim()}
+                    className="px-3 py-1 text-xs font-semibold rounded-lg disabled:opacity-40 transition-opacity"
+                    style={{ background: 'linear-gradient(135deg, #FF6B00, #FF9500)', color: '#fff' }}
+                  >
+                    {hypePosting ? 'Posting…' : '🔥 Post Hype'}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Replies section */}
@@ -1542,16 +1844,27 @@ export default function SocialPostCard({
                 </svg>
               </button>
             </div>
-            <video
-              src={channelPromoCta.videoUrl}
-              controls
-              autoPlay
-              playsInline
-              controlsList="nodownload"
-              preload="metadata"
-              className="w-full bg-black"
-              style={{ maxHeight: "60vh" }}
-            />
+            {channelPromoPlayerError ? (
+              <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 180 }}>
+                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <p className="text-xs text-white/40">{lang === "es" ? "Video no disponible" : "Video unavailable"}</p>
+              </div>
+            ) : (
+              <video
+                key={channelPromoCta.videoUrl ?? "promo"}
+                src={channelPromoCta.videoUrl ?? undefined}
+                controls
+                autoPlay
+                playsInline
+                controlsList="nodownload"
+                preload="metadata"
+                onError={() => setChannelPromoPlayerError(true)}
+                className="w-full bg-black"
+                style={{ maxHeight: "60vh" }}
+              />
+            )}
           </div>
         </div>
       )}

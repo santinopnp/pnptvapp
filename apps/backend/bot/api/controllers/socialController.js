@@ -3,8 +3,10 @@ const path = require('path');
 const fs = require('fs').promises;
 const FileType = require('../../utils/fileType');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+const _ffmpegStaticPath = (() => {
+  try { const p = require('ffmpeg-static'); return (p && require('fs').existsSync(p)) ? p : null; } catch { return null; }
+})();
+if (_ffmpegStaticPath) ffmpeg.setFfmpegPath(_ffmpegStaticPath);
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
@@ -31,6 +33,18 @@ async function extractVideoThumbnail(videoPath, thumbPath) {
     logger.warn('socialController: ffmpeg thumbnail extraction failed', { videoPath, error: err.message });
     await fs.unlink(thumbPath).catch(() => {});
     return false;
+  }
+}
+
+async function getVideoDurationSecs(videoPath) {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', videoPath,
+    ], { timeout: 30000 });
+    return Math.round(parseFloat(stdout.trim()) || 0);
+  } catch {
+    return 0;
   }
 }
 
@@ -183,7 +197,13 @@ function parseTaggedPerformerIds(raw) {
 async function resolveTaggedPerformers(ids) {
   if (!ids.length) return [];
   const { rows } = await dbQuery(
-    `SELECT id::text AS id, username, photo_file_id AS avatar_url FROM users WHERE id = ANY($1::text[]) AND subscription_status != 'banned' LIMIT 10`,
+    `SELECT id::text AS id, username,
+        CASE
+          WHEN photo_file_id IS NULL THEN NULL
+          WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+          ELSE '/uploads/avatars/' || photo_file_id
+        END AS avatar_url
+      FROM users WHERE id = ANY($1::text[]) AND subscription_status != 'banned' LIMIT 10`,
     [ids]
   );
   return rows;
@@ -197,14 +217,22 @@ const createPost = async (req, res) => {
   if (!content || !content.trim()) return res.status(400).json({ error: 'Content required' });
   const taggedPerformerIds = parseTaggedPerformerIds(rawTaggedIds);
 
-  try {
-    const { assertCleanText } = require('../../../services/contentModerationFilter');
-    assertCleanText(content, 'content');
-  } catch (err) {
-    if (err.code === 'FORBIDDEN_CONTENT') {
-      return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+  const rawMeta = req.body.metadata ?? null;
+  const isHypePost = rawMeta && typeof rawMeta === 'object' && (rawMeta.kind === 'community_hype' || rawMeta.kind === 'channel_promo');
+
+  // Skip content moderation for hype posts — the source media was already vetted
+  // when it was uploaded/posted; running the filter on auto-generated text containing
+  // video titles or creator names causes false positives.
+  if (!isHypePost) {
+    try {
+      const { assertCleanText } = require('../../../services/contentModerationFilter');
+      assertCleanText(content, 'content');
+    } catch (err) {
+      if (err.code === 'FORBIDDEN_CONTENT') {
+        return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+      }
+      throw err;
     }
-    throw err;
   }
 
   let replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
@@ -215,8 +243,7 @@ const createPost = async (req, res) => {
   if (req.body.repostOfId && (!Number.isFinite(repostOfId) || repostOfId <= 0)) {
     return res.status(400).json({ error: 'Invalid repostOfId' });
   }
-
-  const maxLen = replyToId ? 500 : 5000;
+  const maxLen = isHypePost ? 280 : (replyToId ? 500 : 5000);
   if (content.length > maxLen) return res.status(400).json({ error: `Content too long (max ${maxLen} chars)` });
 
   try {
@@ -236,9 +263,27 @@ const createPost = async (req, res) => {
     }
 
     if (replyToId) {
-      const parentCheck = await dbQuery('SELECT id, user_id, reply_to_id FROM social_posts WHERE id = $1 AND is_deleted = false', [replyToId]);
+      const parentCheck = await dbQuery('SELECT id, user_id, reply_to_id, channel_id FROM social_posts WHERE id = $1 AND is_deleted = false', [replyToId]);
       if (!parentCheck.rows.length) return res.status(404).json({ error: 'Parent post not found' });
-      if (parentCheck.rows[0].reply_to_id !== null) return res.status(400).json({ error: 'Cannot reply to a reply' });
+      // Flatten threading: if replying to a reply, reparent to the top-level post
+      if (parentCheck.rows[0].reply_to_id !== null) replyToId = parentCheck.rows[0].reply_to_id;
+
+      // Channel access gate: if the root post belongs to a channel, replier must have access
+      const rootChannelId = parentCheck.rows[0].channel_id
+        ?? (parentCheck.rows[0].reply_to_id
+          ? (await dbQuery('SELECT channel_id FROM social_posts WHERE id = $1', [replyToId])).rows[0]?.channel_id
+          : null);
+      if (rootChannelId) {
+        const commenterRole = user.role || '';
+        const isAdminReplier = commenterRole === 'admin' || commenterRole === 'superadmin';
+        if (!isAdminReplier) {
+          const EntitlementAccessService = require('../../../services/entitlementAccessService');
+          const decision = await EntitlementAccessService.hasResourceAccess(
+            String(user.id), 'channel', String(rootChannelId)
+          );
+          if (!decision.allowed) return res.status(403).json({ error: 'Subscribe to comment on this content', code: decision.code });
+        }
+      }
 
       // CRIT-3: Bidirectional block check — neither party may reply if either has blocked the other
       const parentAuthorId = parentCheck.rows[0].user_id;
@@ -259,33 +304,8 @@ const createPost = async (req, res) => {
       }
     }
 
-    // Validate creator status, role, and follower threshold for exclusive posts.
-    // Only creator/both roles can publish exclusive paid content — performer-only
-    // accounts have no subscription tier so the post would be unreachable.
-    if (isExclusive) {
-      const creatorCheck = await dbQuery(
-        'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
-        [user.id]
-      );
-      const row = creatorCheck.rows[0] || {};
-      if (row.creator_status !== 'active') {
-        return res.status(403).json({ error: 'Only active creators can post exclusive content' });
-      }
-      if (row.creator_role !== 'creator' && row.creator_role !== 'both') {
-        return res.status(403).json({
-          success: false,
-          error: 'Exclusive paid content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
-          code: 'CREATOR_ROLE_REQUIRED',
-        });
-      }
-      if ((row.followers_count ?? 0) < 10) {
-        return res.status(403).json({
-          success: false,
-          error: 'Reach 10 followers on your free profile to unlock exclusive content.',
-          code: 'creator_ice_tier',
-        });
-      }
-    }
+    // Text-only posts cannot be exclusive — requires a video ≥ 4 minutes
+    if (isExclusive) return res.status(400).json({ error: 'Exclusive content must be a video of at least 4 minutes', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
 
     const exclusive = !!isExclusive;
     const shareable = isShareable !== false;
@@ -324,6 +344,44 @@ const createPost = async (req, res) => {
       if (!isOwner && !isCollaborator) return res.status(403).json({ error: 'Channel not found or not yours' });
     }
 
+    // Community hype pre-flight — validate, dedup, exclusivity check BEFORE the INSERT
+    // so we never create an orphan post that gets immediately rejected.
+    let communityHypeOrig = null;
+    if (rawMeta && typeof rawMeta === 'object' && rawMeta.kind === 'community_hype') {
+      const origPostId = parseInt(rawMeta.original_post_id, 10);
+      if (!Number.isFinite(origPostId) || origPostId <= 0) {
+        return res.status(400).json({ error: 'Invalid original_post_id' });
+      }
+
+      const dupCheck = await dbQuery(
+        `SELECT 1 FROM social_posts
+          WHERE user_id = $1
+            AND (metadata->>'kind') = 'community_hype'
+            AND (metadata->>'original_post_id')::int = $2
+            AND is_deleted = false
+          LIMIT 1`,
+        [user.id, origPostId]
+      );
+      if (dupCheck.rows.length) {
+        return res.status(409).json({ error: 'You already hyped this post', code: 'ALREADY_HYPED' });
+      }
+
+      const origRes = await dbQuery(
+        `SELECT id, user_id, media_url, media_type, video_thumbnail_url,
+                is_exclusive, COALESCE(content_tier, 'free') AS content_tier
+           FROM social_posts WHERE id = $1 AND is_deleted = false`,
+        [origPostId]
+      );
+      if (!origRes.rows.length) {
+        return res.status(404).json({ error: 'Original post not found', code: 'POST_NOT_FOUND' });
+      }
+      const orig = origRes.rows[0];
+      if (orig.is_exclusive || orig.content_tier?.toLowerCase() === 'prime') {
+        return res.status(403).json({ error: 'Cannot hype exclusive content' });
+      }
+      communityHypeOrig = orig;
+    }
+
     const post = await SocialPostService.createPost(user.id, content.trim(), null, null, replyToId, repostOfId, false, exclusive, shareable, null, null, null, hangoutGroupId, null, rawCategory || null);
 
     // Assign to channel and update post_count
@@ -333,7 +391,43 @@ const createPost = async (req, res) => {
       post.channel_id = channelId;
     }
 
-    if (!replyToId && !repostOfId && !exclusive) {
+    // Apply metadata + media for hype posts (channel_promo and community_hype)
+    const rawVideoThumb = req.body.videoThumbnailUrl;
+    if (rawMeta && typeof rawMeta === 'object' && rawMeta.kind === 'channel_promo') {
+      await dbQuery(
+        `UPDATE social_posts
+            SET metadata = $1,
+                media_url = COALESCE($2, media_url),
+                media_type = CASE WHEN $2 IS NOT NULL THEN 'image' ELSE media_type END,
+                video_thumbnail_url = COALESCE($2, video_thumbnail_url)
+          WHERE id = $3`,
+        [JSON.stringify(rawMeta), rawVideoThumb || null, post.id]
+      );
+      post.metadata = rawMeta;
+      if (rawVideoThumb) {
+        post.video_thumbnail_url = rawVideoThumb;
+        post.media_url = rawVideoThumb;
+        post.media_type = 'image';
+      }
+    }
+
+    if (communityHypeOrig) {
+      const orig = communityHypeOrig;
+      // Sanitize stored metadata: replace client-supplied URLs with DB-authoritative values
+      const sanitizedMeta = { ...rawMeta, original_media_url: orig.media_url, original_author_id: String(orig.user_id) };
+      await dbQuery(
+        `UPDATE social_posts
+           SET metadata = $1, media_url = $2, media_type = $3, video_thumbnail_url = $4
+         WHERE id = $5`,
+        [JSON.stringify(sanitizedMeta), orig.media_url, orig.media_type || 'image', orig.video_thumbnail_url || null, post.id]
+      );
+      post.metadata = sanitizedMeta;
+      post.media_url = orig.media_url;
+      post.media_type = orig.media_type || 'image';
+      post.video_thumbnail_url = orig.video_thumbnail_url || null;
+    }
+
+    if (!replyToId && !repostOfId && !exclusive && !isHypePost) {
       SocialPostService.mirrorToMastodon(content.trim(), post.id);
     }
 
@@ -650,7 +744,8 @@ const createPostWithMedia = async (req, res) => {
     if (replyToId) {
       const parentCheck = await dbQuery('SELECT id, user_id, reply_to_id FROM social_posts WHERE id = $1 AND is_deleted = false', [replyToId]);
       if (!parentCheck.rows.length) return res.status(404).json({ error: 'Parent post not found' });
-      if (parentCheck.rows[0].reply_to_id !== null) return res.status(400).json({ error: 'Cannot reply to a reply' });
+      // Flatten threading: if replying to a reply, reparent to the top-level post
+      if (parentCheck.rows[0].reply_to_id !== null) replyToId = parentCheck.rows[0].reply_to_id;
 
       // CRIT-3: Bidirectional block check
       const parentAuthorId = parentCheck.rows[0].user_id;
@@ -671,28 +766,32 @@ const createPostWithMedia = async (req, res) => {
     }
 
     // Validate creator status, role, and follower threshold for exclusive posts.
+    // Admins bypass the gate so they can test the feature without creator setup.
     if (isExclusive === 'true' || isExclusive === true) {
-      const creatorCheck = await dbQuery(
-        'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
-        [user.id]
-      );
-      const row = creatorCheck.rows[0] || {};
-      if (row.creator_status !== 'active') {
-        return res.status(403).json({ error: 'Only active creators can post exclusive content' });
-      }
-      if (row.creator_role !== 'creator' && row.creator_role !== 'both') {
-        return res.status(403).json({
-          success: false,
-          error: 'Exclusive paid content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
-          code: 'CREATOR_ROLE_REQUIRED',
-        });
-      }
-      if ((row.followers_count ?? 0) < 10) {
-        return res.status(403).json({
-          success: false,
-          error: 'Reach 10 followers on your free profile to unlock exclusive content.',
-          code: 'creator_ice_tier',
-        });
+      const isAdminUser = user.role === 'admin' || user.role === 'superadmin';
+      if (!isAdminUser) {
+        const creatorCheck = await dbQuery(
+          'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
+          [user.id]
+        );
+        const row = creatorCheck.rows[0] || {};
+        if (row.creator_status !== 'active') {
+          return res.status(403).json({ error: 'Only active creators can post exclusive content' });
+        }
+        if (row.creator_role !== 'creator' && row.creator_role !== 'both') {
+          return res.status(403).json({
+            success: false,
+            error: 'Exclusive paid content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
+            code: 'CREATOR_ROLE_REQUIRED',
+          });
+        }
+        if ((row.followers_count ?? 0) < 10) {
+          return res.status(403).json({
+            success: false,
+            error: 'Reach 10 followers on your free profile to unlock exclusive content.',
+            code: 'creator_ice_tier',
+          });
+        }
       }
     }
 
@@ -796,6 +895,23 @@ const createPostWithMedia = async (req, res) => {
       }
     }
 
+    // Apply watermark for creator uploads
+    if (user.creator_status === 'active' && finalFilePath && mediaType === 'video') {
+      const { applyVideoWatermark } = require('../../../services/watermarkService');
+      const base = path.basename(finalFilePath, path.extname(finalFilePath));
+      const ext = path.extname(finalFilePath);
+      const wmPath = path.join(path.dirname(finalFilePath), `${base}-wm${ext}`);
+      try {
+        await applyVideoWatermark(finalFilePath, wmPath, user.username);
+        await fs.unlink(finalFilePath).catch(() => {});
+        finalFilePath = wmPath;
+        mediaUrl = `/uploads/posts/${path.basename(wmPath)}`;
+      } catch (err) {
+        logger.warn('socialController: video watermark failed, using original', { userId: user.id, error: err.message });
+        await fs.unlink(wmPath).catch(() => {});
+      }
+    }
+
     // Extract video thumbnail if we have a video
     let videoThumbnailUrl = null;
     if (mediaType === 'video' && finalFilePath) {
@@ -803,6 +919,20 @@ const createPostWithMedia = async (req, res) => {
       const thumbPath = path.join(path.dirname(finalFilePath), thumbFilename);
       const ok = await extractVideoThumbnail(finalFilePath, thumbPath);
       if (ok) videoThumbnailUrl = `/uploads/posts/${thumbFilename}`;
+    }
+
+    // Exclusive gate: only videos ≥ 4 minutes (240s) qualify
+    if (isExclusive === 'true' || isExclusive === true) {
+      if (mediaType !== 'video') {
+        if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
+        return res.status(400).json({ error: 'Exclusive content must be a video of at least 4 minutes', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
+      }
+      const durationSecs = await getVideoDurationSecs(finalFilePath);
+      if (durationSecs < 240) {
+        if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
+        const m = Math.floor(durationSecs / 60), s = durationSecs % 60;
+        return res.status(400).json({ error: `Exclusive content requires a video of at least 4 minutes (this video is ${m}m ${s}s)`, code: 'EXCLUSIVE_VIDEO_TOO_SHORT' });
+      }
     }
 
     const exclusive = isExclusive === 'true' || isExclusive === true;
@@ -1007,7 +1137,8 @@ const createPostWithMultiMedia = async (req, res) => {
     if (replyToId) {
       const parentCheck = await dbQuery('SELECT id, user_id, reply_to_id FROM social_posts WHERE id = $1 AND is_deleted = false', [replyToId]);
       if (!parentCheck.rows.length) return res.status(404).json({ error: 'Parent post not found' });
-      if (parentCheck.rows[0].reply_to_id !== null) return res.status(400).json({ error: 'Cannot reply to a reply' });
+      // Flatten threading: if replying to a reply, reparent to the top-level post
+      if (parentCheck.rows[0].reply_to_id !== null) replyToId = parentCheck.rows[0].reply_to_id;
 
       // CRIT-3: Bidirectional block check
       const parentAuthorId = parentCheck.rows[0].user_id;
@@ -1030,27 +1161,30 @@ const createPostWithMultiMedia = async (req, res) => {
     }
 
     if (isExclusive === 'true' || isExclusive === true) {
-      const creatorCheck = await dbQuery(
-        'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
-        [user.id]
-      );
-      const row = creatorCheck.rows[0] || {};
-      if (row.creator_status !== 'active') {
-        return res.status(403).json({ error: 'Only active creators can post exclusive content' });
-      }
-      if (row.creator_role !== 'creator' && row.creator_role !== 'both') {
-        return res.status(403).json({
-          success: false,
-          error: 'Exclusive paid content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
-          code: 'CREATOR_ROLE_REQUIRED',
-        });
-      }
-      if ((row.followers_count ?? 0) < 10) {
-        return res.status(403).json({
-          success: false,
-          error: 'Reach 10 followers on your free profile to unlock exclusive content.',
-          code: 'creator_ice_tier',
-        });
+      const isAdminUser = user.role === 'admin' || user.role === 'superadmin';
+      if (!isAdminUser) {
+        const creatorCheck = await dbQuery(
+          'SELECT creator_status, creator_role, followers_count FROM users WHERE id = $1',
+          [user.id]
+        );
+        const row = creatorCheck.rows[0] || {};
+        if (row.creator_status !== 'active') {
+          return res.status(403).json({ error: 'Only active creators can post exclusive content' });
+        }
+        if (row.creator_role !== 'creator' && row.creator_role !== 'both') {
+          return res.status(403).json({
+            success: false,
+            error: 'Exclusive paid content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
+            code: 'CREATOR_ROLE_REQUIRED',
+          });
+        }
+        if ((row.followers_count ?? 0) < 10) {
+          return res.status(403).json({
+            success: false,
+            error: 'Reach 10 followers on your free profile to unlock exclusive content.',
+            code: 'creator_ice_tier',
+          });
+        }
       }
     }
 
@@ -1120,7 +1254,7 @@ const createPostWithMultiMedia = async (req, res) => {
       } else {
         const ext = VIDEO_EXT_MAP[detectedMime] || 'mp4';
         const filename = `vid-${user.id}-${timestamp}-${i}.${ext}`;
-        const destPath = path.join(uploadDir, filename);
+        let destPath = path.join(uploadDir, filename);
         if (fileTempPath) {
           const fsSync = require('fs');
           try { fsSync.renameSync(fileTempPath, destPath); } catch {
@@ -1130,16 +1264,49 @@ const createPostWithMultiMedia = async (req, res) => {
         } else {
           await fs.writeFile(destPath, file.buffer);
         }
+
+        // Apply watermark for creator uploads
+        if (user.creator_status === 'active') {
+          const { applyVideoWatermark } = require('../../../services/watermarkService');
+          const base = path.basename(destPath, path.extname(destPath));
+          const wmPath = path.join(uploadDir, `${base}-wm.${ext}`);
+          try {
+            await applyVideoWatermark(destPath, wmPath, user.username);
+            await fs.unlink(destPath).catch(() => {});
+            destPath = wmPath;
+          } catch (err) {
+            logger.warn('createPostWithMultiMedia: video watermark failed, using original', { userId: user.id, error: err.message });
+            await fs.unlink(wmPath).catch(() => {});
+          }
+        }
+
         writtenFilePaths.push(destPath);
-        const thumbFilename = `thumb-${path.basename(filename, path.extname(filename))}.jpg`;
+        const videoUrl = `/uploads/posts/${path.basename(destPath)}`;
+        const thumbFilename = `thumb-${path.basename(destPath, path.extname(destPath))}.jpg`;
         const thumbPath = path.join(uploadDir, thumbFilename);
         const thumbOk = await extractVideoThumbnail(destPath, thumbPath);
-        mediaItems.push({ url: `/uploads/posts/${filename}`, type: 'video', thumbUrl: thumbOk ? `/uploads/posts/${thumbFilename}` : null });
+        mediaItems.push({ url: videoUrl, type: 'video', thumbUrl: thumbOk ? `/uploads/posts/${thumbFilename}` : null, _localPath: destPath });
       }
     }
 
     if (mediaItems.length === 0) {
       return res.status(400).json({ error: 'No valid media files could be processed' });
+    }
+
+    // Exclusive gate: must have at least one video of ≥ 4 minutes (240s)
+    if (isExclusive === 'true' || isExclusive === true) {
+      const videoItems = mediaItems.filter(m => m.type === 'video');
+      if (videoItems.length === 0) {
+        await Promise.all(writtenFilePaths.map(p => fs.unlink(p).catch(() => {})));
+        return res.status(400).json({ error: 'Exclusive content must be a video of at least 4 minutes', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
+      }
+      const durations = await Promise.all(videoItems.map(v => getVideoDurationSecs(v._localPath)));
+      const maxDuration = Math.max(...durations);
+      if (maxDuration < 240) {
+        await Promise.all(writtenFilePaths.map(p => fs.unlink(p).catch(() => {})));
+        const m = Math.floor(maxDuration / 60), s = maxDuration % 60;
+        return res.status(400).json({ error: `Exclusive content requires a video of at least 4 minutes (longest video is ${m}m ${s}s)`, code: 'EXCLUSIVE_VIDEO_TOO_SHORT' });
+      }
     }
 
     const exclusive = isExclusive === 'true' || isExclusive === true;
@@ -1293,9 +1460,22 @@ const getHomeFeed = async (req, res) => {
 const getPublicProfile = async (req, res) => {
   let { userId } = req.params;
 
+  // Short-circuit deleted/missing profiles via a Redis tombstone (24h TTL) so
+  // repeated requests for a hard-deleted UUID don't hammer the DB.
+  const { getRedis } = require('../../../config/redis');
+  const tombstoneKey = `profile:404:${userId}`;
+  try {
+    const redis = getRedis();
+    const tomb = await redis.get(tombstoneKey);
+    if (tomb) return res.status(404).json({ error: 'User not found' });
+  } catch { /* Redis down — fall through to DB */ }
+
   // Resolve param to canonical DB id (handles @usernames, pnptv_id UUIDs, telegram IDs)
   userId = await resolveUserId(userId);
-  if (!userId) return res.status(404).json({ error: 'User not found' });
+  if (!userId) {
+    try { await getRedis().set(tombstoneKey, '1', 'EX', 86400); } catch { /* non-fatal */ }
+    return res.status(404).json({ error: 'User not found' });
+  }
 
   const viewerId = req.session?.user?.id || null;
   const viewerRole = req.session?.user?.role || '';
@@ -1330,7 +1510,11 @@ const getPublicProfile = async (req, res) => {
       isFreeViewer ? FREE_PROFILE_LIMIT : req.query.limit,
       viewerTier, isAdmin
     );
-    if (!result.profile) return res.status(404).json({ error: 'User not found' });
+    if (!result.profile) {
+      // Soft-deleted or missing from social service — stamp tombstone so next requests skip DB
+      try { await getRedis().set(tombstoneKey, '1', 'EX', 86400); } catch { /* non-fatal */ }
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     const profile = result.profile;
     const pd = result.performerData;
@@ -2063,7 +2247,7 @@ const sharePostToHangouts = async (req, res) => {
   const noteText = typeof note === 'string' ? note.trim().slice(0, 500) : '';
   const authorHandle = post.author_username ? `@${post.author_username}` : (post.author_first_name || 'User');
   const preview = (post.content || '').trim().slice(0, 180);
-  const postUrl = `https://pnptv.app/post/${post.id}`;
+  const postUrl = `https://pnptv.app/social/post/${post.id}`;
 
   // Build the message body — visible to any client that doesn't know post_card type
   const bodyParts = [];

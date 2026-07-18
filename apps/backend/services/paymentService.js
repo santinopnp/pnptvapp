@@ -132,19 +132,9 @@ class PaymentService {
           provider,
         });
 
-        // Send notification
-        await bot.telegram.sendMessage(userId, message, {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: false,
-        });
-
-        logger.info('Payment confirmation notification sent', {
-          userId,
-          planId: plan.id,
-          transactionId,
-          language,
-        });
-
+        // Telegram notification mirroring disabled — notifications are in-app and push only
+        // await bot.telegram.sendMessage(userId, message, { parse_mode: 'Markdown', disable_web_page_preview: false });
+        logger.info('Payment confirmation notification (Telegram disabled)', { userId, planId: plan.id, transactionId, language });
         return true;
       } catch (error) {
         logger.error('Error sending payment confirmation notification:', {
@@ -522,19 +512,9 @@ class PaymentService {
 
       const message = language === 'es' ? messageEs : messageEn;
 
-      // Send notification
-      await bot.telegram.sendMessage(userId, message, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: false,
-      });
-
-      logger.info('PRIME confirmation sent', {
-        userId,
-        planName,
-        expiryDate,
-        source,
-        language,
-      });
+      // Telegram notification mirroring disabled — notifications are in-app and push only
+      // await bot.telegram.sendMessage(userId, message, { parse_mode: 'Markdown', disable_web_page_preview: false });
+      logger.info('PRIME confirmation (Telegram disabled)', { userId, planName, expiryDate, source, language });
 
       return true;
     } catch (error) {
@@ -866,6 +846,26 @@ class PaymentService {
         }
       }
 
+      // Update subscriber_count on creator_channels after channel-access grant
+      if (planId === 'channel_access' && paymentMetadata?.channelId) {
+        try {
+          await query(
+            `UPDATE creator_channels
+               SET subscriber_count = (
+                 SELECT COUNT(*) FROM user_entitlements
+                 WHERE add_on_id = 'channel-access'
+                   AND creator_id = $1::text
+                   AND is_consumed = false
+                   AND (is_lifetime = true OR expires_at > NOW())
+               )
+             WHERE id = $1::integer`,
+            [paymentMetadata.channelId]
+          );
+        } catch (scErr) {
+          logger.warn('Failed to update channel subscriber_count after grant (non-critical)', { channelId: paymentMetadata.channelId, error: scErr.message });
+        }
+      }
+
       // Auto-join hangout group for channel-access payments
       if (planId === 'channel_access' && paymentMetadata?.hangoutGroupId) {
         try {
@@ -890,30 +890,32 @@ class PaymentService {
           );
           if (channelRes.rows[0]) {
             const grossAmount = parseFloat(channelRes.rows[0].price_usd);
-            const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
-            const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
             const sourcePaymentId = paymentMetadata?.paymentId || null;
-            // Idempotent: skip if an earnings row for this exact source_payment_id
-            // already exists (defends against webhook replays after Redis flush).
-            const existing = sourcePaymentId
-              ? await query(
-                  `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
-                  [sourcePaymentId, channelRes.rows[0].creator_id]
-                )
-              : { rowCount: 0 };
-            if (existing.rowCount === 0) {
-              await query(
-                `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-                 VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
-                [channelRes.rows[0].creator_id, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
-              );
-              logger.info('Channel access earnings recorded (70/30, holding)', {
-                creatorId: channelRes.rows[0].creator_id, channelId: paymentMetadata.channelId, grossAmount, amountCreator,
-              });
+            if (grossAmount <= 0) {
+              logger.info('Channel access earnings skipped — zero price', { channelId: paymentMetadata.channelId });
+            } else if (!sourcePaymentId) {
+              logger.warn('Channel access earnings skipped — missing sourcePaymentId (IPN without payment reference)', { channelId: paymentMetadata.channelId });
             } else {
-              logger.info('Channel access earnings already recorded — idempotent no-op', {
-                creatorId: channelRes.rows[0].creator_id, channelId: paymentMetadata.channelId, sourcePaymentId,
-              });
+              const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
+              const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
+              const existing = await query(
+                `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
+                [sourcePaymentId, channelRes.rows[0].creator_id]
+              );
+              if (existing.rowCount === 0) {
+                await query(
+                  `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+                   VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+                  [channelRes.rows[0].creator_id, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
+                );
+                logger.info('Channel access earnings recorded (70/30, holding)', {
+                  creatorId: channelRes.rows[0].creator_id, channelId: paymentMetadata.channelId, grossAmount, amountCreator,
+                });
+              } else {
+                logger.info('Channel access earnings already recorded — idempotent no-op', {
+                  creatorId: channelRes.rows[0].creator_id, channelId: paymentMetadata.channelId, sourcePaymentId,
+                });
+              }
             }
           }
         } catch (earningsErr) {
@@ -933,28 +935,29 @@ class PaymentService {
           const priceCol = hangoutRes.rows[0]?.price_usd;
           const grossAmount = priceCol != null ? parseFloat(priceCol) : null;
           if (ownerId && Number.isFinite(grossAmount) && grossAmount > 0) {
-            const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
-            const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
-            const sourcePaymentId = paymentMetadata?.paymentId || null;
-            const existing = sourcePaymentId
-              ? await query(
-                  `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
-                  [sourcePaymentId, ownerId]
-                )
-              : { rowCount: 0 };
-            if (existing.rowCount === 0) {
-              await query(
-                `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-                 VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
-                [ownerId, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
+            const sourcePaymentId = paymentMetadata?.paymentId
+              || `hangout:${paymentMetadata.hangoutGroupId}:user:${userId}`;
+            {
+              const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
+              const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
+              const existing = await query(
+                `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
+                [sourcePaymentId, ownerId]
               );
-              logger.info('Hangout access earnings recorded (70/30, holding)', {
-                ownerId, hangoutGroupId: paymentMetadata.hangoutGroupId, grossAmount, amountCreator,
-              });
-            } else {
-              logger.info('Hangout access earnings already recorded — idempotent no-op', {
-                ownerId, hangoutGroupId: paymentMetadata.hangoutGroupId, sourcePaymentId,
-              });
+              if (existing.rowCount === 0) {
+                await query(
+                  `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+                   VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+                  [ownerId, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
+                );
+                logger.info('Hangout access earnings recorded (70/30, holding)', {
+                  ownerId, hangoutGroupId: paymentMetadata.hangoutGroupId, grossAmount, amountCreator,
+                });
+              } else {
+                logger.info('Hangout access earnings already recorded — idempotent no-op', {
+                  ownerId, hangoutGroupId: paymentMetadata.hangoutGroupId, sourcePaymentId,
+                });
+              }
             }
           }
         } catch (hangoutEarningsErr) {
@@ -981,6 +984,33 @@ class PaymentService {
         } catch (_) { /* non-critical */ }
       }
 
+      // Telegram notification with full entitlement detail (non-blocking)
+      if (result.granted > 0) {
+        try {
+          const BNS = require('./businessNotificationService');
+          const addOnsForNotif = addOnsResult.rows.map((row) => ({
+            add_on_id: row.add_on_id,
+            add_on_name: row.add_on_name,
+            is_lifetime: row.is_lifetime || false,
+            durationDays: row.addon_duration_days || row.plan_duration_days || 30,
+          }));
+          // Build scope label for scoped grants (channel, hangout, creator)
+          let scopeLabel = null;
+          if (paymentMetadata?.channelId) scopeLabel = `Canal #${paymentMetadata.channelId}`;
+          else if (paymentMetadata?.hangoutGroupId) scopeLabel = `Hangout #${paymentMetadata.hangoutGroupId}`;
+          else if (paymentMetadata?.creatorId) scopeLabel = `Creador #${paymentMetadata.creatorId}`;
+          await BNS.notifyEntitlementGrant({
+            userId,
+            planId,
+            planName: addOnsResult.rows[0]?.add_on_name ? null : planId,
+            addOns: addOnsForNotif,
+            source,
+            sourcePaymentId: resolvedPaymentId,
+            scopeLabel,
+          });
+        } catch (_) { /* non-critical */ }
+      }
+
       // After granting all add-ons: invalidate entitlement caches and sync users.tier.
       if (result.granted > 0) {
         try {
@@ -994,6 +1024,15 @@ class PaymentService {
           if (newTier) {
             logger.info('Display tier synced after entitlement grant', { userId, displayTier: newTier });
           }
+
+          // Notify any open sessions that entitlements changed (e.g. MainStage viewer→participant).
+          try {
+            const socketSingleton = require('./socketSingleton');
+            const io = socketSingleton.get();
+            if (io) {
+              io.to(`user:${userId}`).emit('user:entitlement-change', { planId, tier: newTier });
+            }
+          } catch (_emitErr) { /* non-fatal */ }
         } catch (postGrantErr) {
           logger.warn('Post-grant cache/tier sync failed (non-critical)', {
             userId, planId, error: postGrantErr.message,
@@ -1003,7 +1042,7 @@ class PaymentService {
         // Referral reward — grant PNP Live tokens to the referrer ONCE, when
         // the referee makes their first PAID plan purchase. Only fires for
         // payment sources; admin/manual grants must not trigger token rewards.
-        const PAID_SOURCES = ['payment', 'dash', 'nowpayments', 'btcpay', 'webhook'];
+        const PAID_SOURCES = ['payment', 'dash', 'nowpayments', 'btcpay', 'webhook', 'efipay_easybots'];
         if (PAID_SOURCES.includes(source)) {
           try {
             const referralService = require('./referralService');

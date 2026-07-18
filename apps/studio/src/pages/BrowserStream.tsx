@@ -1,8 +1,18 @@
 import React, { useState, useEffect, useRef, lazy } from "react";
 import { useNavigate } from "react-router-dom";
-import { useStreamer } from "@/hooks/useStreamer";
+import { useAuth } from "@/hooks/useAuth";
+import { useStreamer, detectMobileDevice } from "@/hooks/useStreamer";
 import type { FilterSettingsState } from "@/hooks/useStreamer";
-import { getCreatorEligibility, type CreatorEligibility } from "@/lib/api";
+import {
+  getCreatorEligibility,
+  getLiveGoal,
+  setLiveGoal as apiSetLiveGoal,
+  getAcceptingCallsStatus,
+  setAcceptingCalls as apiSetAcceptingCalls,
+  type CreatorEligibility,
+  type LiveGoal,
+} from "@/lib/api";
+import { connectSocket } from "@/lib/socket";
 import { StudioCanvas } from "@/components/studio/StudioCanvas";
 import { StudioToolbar } from "@/components/studio/StudioToolbar";
 import { StudioStatusBar } from "@/components/studio/StudioStatusBar";
@@ -103,6 +113,7 @@ function GoLiveButton({
 
 export default function BrowserStream() {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   // ── Eligibility gate ──────────────────────────────────────────────────────
   const [eligibility, setEligibility] = useState<CreatorEligibility | null>(null);
@@ -134,7 +145,33 @@ export default function BrowserStream() {
   }, []);
 
   // ── activeTab lives here — purely a UI concern ────────────────────────────
-  const [activeTab, setActiveTab] = useState<ActiveTab>("scenes");
+  // Default to "chat" on mobile — the canvas pipeline (SceneManager RAF loop
+  // at 1280×720/30fps) is too heavy for mobile CPUs and delays goLive().
+  const [activeTab, setActiveTab] = useState<ActiveTab>(detectMobileDevice() ? "chat" : "scenes");
+
+  // ── Browser compatibility check ───────────────────────────────────────────
+  const [browserUnsupported, setBrowserUnsupported] = useState(false);
+  useEffect(() => {
+    const hasMediaRecorder = typeof MediaRecorder !== "undefined";
+    const hasCaptureStream = typeof HTMLCanvasElement !== "undefined" &&
+      typeof (HTMLCanvasElement.prototype as any).captureStream === "function";
+    // On iOS < 14.5, MediaRecorder exists but only supports mp4 via a limited API.
+    // We still try — getSupportedMimeType() will return null and goLive() will
+    // surface a clear error. Only warn if MediaRecorder is completely missing.
+    if (!hasMediaRecorder || !hasCaptureStream) {
+      setBrowserUnsupported(true);
+    }
+  }, []);
+
+  // ── Tip goal state ────────────────────────────────────────────────────────
+  const [liveGoal, setLiveGoal] = useState<LiveGoal | null>(null);
+
+  // ── Accepting calls state ─────────────────────────────────────────────────
+  const [acceptingCalls, setAcceptingCalls] = useState(false);
+
+  // ── Raid UI state ─────────────────────────────────────────────────────────
+  const [showRaidInput, setShowRaidInput] = useState(false);
+  const [raidTarget, setRaidTarget] = useState("");
 
   // ── Single useStreamer call — all state lives here ────────────────────────
   const streamer = useStreamer();
@@ -155,6 +192,14 @@ export default function BrowserStream() {
     // Session earnings
     sessionEarnings,
 
+    // Gap 1: Historical earnings
+    earningsHistory,
+
+    // Gap 4: Server recording upload
+    uploadRecordingToServer,
+    serverRecordingUploading,
+    serverRecordingUrl,
+
     // Filter settings
     filterSettings,
     setFilterSettings,
@@ -172,7 +217,6 @@ export default function BrowserStream() {
     localRecordEnabled,
     setLocalRecordEnabled,
 
-    // Unused RTMP-key UI state (managed inside StudioSettingsPanel)
     availableCameras,
     cameraIndex,
 
@@ -246,6 +290,41 @@ export default function BrowserStream() {
 
   // Keep the beforeunload ref in sync with the live flag.
   useEffect(() => { isLiveForUnload.current = isLive; }, [isLive]);
+
+  // ── Fetch accepting-calls status on mount ─────────────────────────────────
+  useEffect(() => {
+    if (!user?.dbId) return;
+    // Endpoint is GET /api/webapp/creator/:creatorId/accepting-calls, resolved by users.id
+    getAcceptingCallsStatus(String(user.dbId))
+      .then((res) => setAcceptingCalls(res.accepting ?? false))
+      .catch(() => {});
+  }, [user?.dbId]);
+
+  // ── Load tip goal when stream goes live ───────────────────────────────────
+  useEffect(() => {
+    if (!channel?.ref || !isLive) return;
+    getLiveGoal(channel.ref).then((res) => setLiveGoal(res.goal ?? null)).catch(() => {});
+  }, [channel?.ref, isLive]);
+
+  // ── Tip goal handler ──────────────────────────────────────────────────────
+  const handleSetGoal = React.useCallback(async (amount: number, label: string) => {
+    try {
+      const res = await apiSetLiveGoal(amount, label);
+      setLiveGoal(res.goal);
+    } catch { /* silent */ }
+  }, []);
+
+  // ── Accepting calls handler ───────────────────────────────────────────────
+  const handleToggleAcceptingCalls = React.useCallback(async () => {
+    const next = !acceptingCalls;
+    setAcceptingCalls(next);
+    try { await apiSetAcceptingCalls(next); } catch { setAcceptingCalls(!next); }
+  }, [acceptingCalls]);
+
+  // ── Raid handler ──────────────────────────────────────────────────────────
+  const handleRaid = React.useCallback(() => {
+    setShowRaidInput((v) => !v);
+  }, []);
 
   // The raw camera stream for mic input — AudioMixer needs the actual microphone
   // audio tracks from getUserMedia. sceneStreamRef holds the canvas-capture output
@@ -406,11 +485,30 @@ export default function BrowserStream() {
           )}
         </div>
 
-        {/* Go Live / Stop button */}
-        <GoLiveButton isLive={isLive} isConnecting={isConnecting} onClick={handleGoLiveClick} />
+        {/* Go Live / Stop button — hidden during pre-stream setup (that page has its own validated button) */}
+        {(isLive || isConnecting) && (
+          <GoLiveButton isLive={isLive} isConnecting={isConnecting} onClick={handleGoLiveClick} />
+        )}
       </header>
 
       {/* ── PRE-STREAM SETUP (shown when not live and not connecting) ───────── */}
+      {!isLive && !isConnecting && browserUnsupported && (
+        <div
+          className="flex items-start gap-2 px-4 py-2.5 flex-shrink-0 border-b"
+          style={{
+            background: "rgba(255,214,10,0.08)",
+            borderColor: "rgba(255,214,10,0.25)",
+          }}
+          role="alert"
+        >
+          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FFD60A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z" />
+          </svg>
+          <p className="text-xs" style={{ color: "#FFD60A" }}>
+            Your browser may not support live streaming. Use Chrome on Android or Safari 14.5+ on iOS.
+          </p>
+        </div>
+      )}
       {!isLive && !isConnecting && (
         <PreStreamSetup
           videoRef={videoRef}
@@ -438,6 +536,7 @@ export default function BrowserStream() {
           isLive={isLive}
           isConnecting={isConnecting}
           isCameraOff={isCameraOff}
+          isMuted={isMuted}
           isRecording={isRecording}
           viewerCount={viewerCount}
           durationSec={durationSec}
@@ -472,6 +571,7 @@ export default function BrowserStream() {
           onBrb={brb}
           onSnapshot={snapshot}
           onFlipCamera={flipCamera}
+          onRaid={isLive ? handleRaid : undefined}
         />
 
         {/* Tab bar */}
@@ -539,6 +639,9 @@ export default function BrowserStream() {
               onToggleLocalRecord={() => setLocalRecordEnabled((v) => !v)}
               recordingBlob={recordingBlob}
               onDownloadRecording={downloadRecording}
+              onUploadRecordingToServer={uploadRecordingToServer}
+              serverRecordingUploading={serverRecordingUploading}
+              serverRecordingUrl={serverRecordingUrl}
               channel={channel}
               streamProfile={streamProfile}
               onStreamProfileChange={setStreamProfile}
@@ -556,6 +659,8 @@ export default function BrowserStream() {
                 streamId={streamId}
                 isLive={isLive}
                 className="h-full min-h-[400px]"
+                channelRef={channel?.ref ?? null}
+                onGoalUpdate={(g) => setLiveGoal(g)}
               />
             </div>
           )}
@@ -603,6 +708,7 @@ export default function BrowserStream() {
               isLive={isLive}
               isConnecting={isConnecting}
               isCameraOff={isCameraOff}
+              isMuted={isMuted}
               isRecording={isRecording}
               viewerCount={viewerCount}
               durationSec={durationSec}
@@ -628,6 +734,7 @@ export default function BrowserStream() {
             onBrb={brb}
             onSnapshot={snapshot}
             onFlipCamera={flipCamera}
+            onRaid={isLive ? handleRaid : undefined}
           />
 
           {/* Health panel below toolbar */}
@@ -642,6 +749,11 @@ export default function BrowserStream() {
               viewerCount={viewerCount}
               sessionEarnings={sessionEarnings}
               channel={channel}
+              earningsHistory={earningsHistory}
+              liveGoal={liveGoal}
+              onSetGoal={isLive ? handleSetGoal : undefined}
+              acceptingCalls={acceptingCalls}
+              onToggleAcceptingCalls={handleToggleAcceptingCalls}
             />
           </div>
         </main>
@@ -658,6 +770,8 @@ export default function BrowserStream() {
               streamId={streamId}
               isLive={isLive}
               className="h-full"
+              channelRef={channel?.ref ?? null}
+              onGoalUpdate={(g) => setLiveGoal(g)}
             />
           </div>
 
@@ -684,6 +798,9 @@ export default function BrowserStream() {
               onToggleLocalRecord={() => setLocalRecordEnabled((v) => !v)}
               recordingBlob={recordingBlob}
               onDownloadRecording={downloadRecording}
+              onUploadRecordingToServer={uploadRecordingToServer}
+              serverRecordingUploading={serverRecordingUploading}
+              serverRecordingUrl={serverRecordingUrl}
               channel={channel}
               streamProfile={streamProfile}
               onStreamProfileChange={setStreamProfile}
@@ -767,6 +884,43 @@ export default function BrowserStream() {
           >
             Dismiss
           </button>
+        </div>
+      )}
+
+      {/* ── Raid input panel ─────────────────────────────────────────────────── */}
+      {showRaidInput && isLive && (
+        <div className="fixed inset-x-4 bottom-20 z-50 bg-pnp-surface border border-pnp-border rounded-2xl p-4 shadow-xl space-y-3">
+          <p className="text-sm font-bold text-white">Raid a Channel</p>
+          <input
+            type="text"
+            value={raidTarget}
+            onChange={(e) => setRaidTarget(e.target.value)}
+            placeholder="Channel ref (e.g. pnptv-santino)"
+            className="w-full bg-pnp-background border border-pnp-border rounded-xl px-3 py-2 text-xs text-white placeholder-pnp-textSecondary/50 focus:outline-none focus:ring-2 focus:ring-pnp-accent"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (raidTarget.trim() && channel?.ref) {
+                  const socket = connectSocket();
+                  socket.emit('live:raid:initiate', { streamId: channel.ref, targetChannelRef: raidTarget.trim() });
+                  setShowRaidInput(false);
+                  setRaidTarget("");
+                }
+              }}
+              disabled={!raidTarget.trim()}
+              className="flex-1 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+            >
+              Raid Now
+            </button>
+            <button
+              onClick={() => { setShowRaidInput(false); setRaidTarget(""); }}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-pnp-textSecondary border border-pnp-border"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

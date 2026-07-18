@@ -23,13 +23,9 @@ const BADGE_OPTIONS = {
  * @param {Telegraf} bot - Bot instance
  */
 const registerGroupWelcomeHandlers = (bot) => {
-  // PRIMARY: Handle chat_member updates (modern, webhook-compatible)
-  // This is the preferred method for detecting new members
-  bot.on('chat_member', handleMemberJoin);
-
-  // FALLBACK: Handle new_chat_members message (legacy, polling-compatible)
-  // Kept for backward compatibility and edge cases
-  bot.on('new_chat_members', handleMemberJoin);
+  // new_chat_members and chat_member are intentionally NOT registered here.
+  // groupAdminPanel.js owns new_chat_members with the custom welcome + onboarding gate.
+  // Registering a second handler here would double-welcome every new member.
 
   // Handle badge selection
   bot.action(/^badge_select_(.+)$/, handleBadgeSelection);
@@ -253,6 +249,24 @@ This place is simple: real people, real vibes, no filters.
 • The Loyal Disciple (most photos)
 
 👉 Manage your account on the webapp:`;
+
+    // Wizard mode: on new-member join, send a compact welcome + Register button
+    // that deep-links back to the bot's onboarding wizard instead of the pricing
+    // pitch. Gate via BOT_WIZARD_ENABLED so we can enable the wizard without
+    // flipping the "secondary bot instance" mode.
+    if (process.env.BOT_WIZARD_ENABLED === 'true' && ctx.botInfo?.username) {
+      const deepLink = `https://t.me/${ctx.botInfo.username}?start=grp_${ctx.chat.id}`;
+      const onboardMsg = lang === 'es'
+        ? `👋 ¡Hola, ${username}! Bienvenidx al grupo.\n\nToca el botón para completar tu registro en PNPtv! y unirte al hangout.`
+        : `👋 Hey, ${username}! Welcome to the group.\n\nTap below to complete your PNPtv! registration and join the hangout.`;
+      const sentMessage = await ctx.reply(onboardMsg, {
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.url('🚀 Registrarme / Register', deepLink)],
+        ]).reply_markup,
+      });
+      ChatCleanupService.scheduleWelcomeMessage(ctx.telegram, sentMessage);
+      return;
+    }
 
     const webappButton = Markup.inlineKeyboard([
       [Markup.button.url(

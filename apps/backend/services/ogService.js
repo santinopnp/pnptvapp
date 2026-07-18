@@ -73,7 +73,7 @@ const cacheSet = async (key, value, ttl) => {
 const getDefaultOG = () => ({
   title: 'PNPtv! — Clouds & Slam Network',
   description: 'The queer PNP community streaming platform. Live streams, social posts, community hangouts, and creator content.',
-  image: `${APP_BASE_URL}/og-default.png`,
+  image: `${APP_BASE_URL}/og-image.png`,
   imageWidth: 1200,
   imageHeight: 630,
   url: APP_BASE_URL,
@@ -158,9 +158,10 @@ const getPostOG = async (postId) => {
       ogData = {
         title,
         description,
-        image: absoluteThumbUrl || absoluteAuthorPhoto || `${APP_BASE_URL}/og-default.png`,
+        image: absoluteThumbUrl || absoluteAuthorPhoto || `${APP_BASE_URL}/og-image.png`,
         imageWidth: 1280,
         imageHeight: 720,
+        imageAlt: title,
         url: `${APP_BASE_URL}/social/post/${id}`,
         type: 'video.other',
         video: absoluteMediaUrl,
@@ -177,6 +178,7 @@ const getPostOG = async (postId) => {
         image: absoluteMediaUrl,
         imageWidth: 1200,
         imageHeight: 630,
+        imageAlt: title,
         url: `${APP_BASE_URL}/social/post/${id}`,
         type: 'article',
         video: null,
@@ -190,9 +192,10 @@ const getPostOG = async (postId) => {
       ogData = {
         title,
         description,
-        image: absoluteAuthorPhoto || `${APP_BASE_URL}/og-default.png`,
+        image: absoluteAuthorPhoto || `${APP_BASE_URL}/og-image.png`,
         imageWidth: 1200,
         imageHeight: 630,
+        imageAlt: title,
         url: `${APP_BASE_URL}/social/post/${id}`,
         type: 'article',
         video: null,
@@ -245,7 +248,7 @@ const getProfileOG = async (userId) => {
     const handle = user.username || user.first_name || 'member';
     const title = `@${handle} — PNPtv! Clouds & Slam Network!`;
     const description = truncate(user.bio || 'PNPtv! Clouds & Slam Network!', 200);
-    const image = toAbsoluteUrl(user.photo_file_id) || `${APP_BASE_URL}/og-default.png`;
+    const image = toAbsoluteUrl(user.photo_file_id) || `${APP_BASE_URL}/og-image.png`;
 
     const resolvedId = user.username || user.id;
     const ogData = {
@@ -254,6 +257,7 @@ const getProfileOG = async (userId) => {
       image,
       imageWidth: 400,
       imageHeight: 400,
+      imageAlt: `${user.username || user.first_name}'s profile photo`,
       url: `${APP_BASE_URL}/profile/${user.id}`,
       type: 'profile',
       video: null,
@@ -305,13 +309,32 @@ const getStreamOG = async (streamId) => {
       const streamUrl = channelRef
         ? `${RESTREAMER_PUBLIC_URL}/memfs/${channelRef}.m3u8`
         : null;
+      // Route the snapshot through the /api/og/snapshot proxy so upstream 401s
+      // (Restreamer public URL requires auth) and offline creators degrade to
+      // the profile photo instead of a broken image on Twitter/Telegram/etc.
       const thumbUrl = channelRef
-        ? `${RESTREAMER_PUBLIC_URL}/memfs/${channelRef}.jpg`
-        : toAbsoluteUrl(user.photo_file_id) || `${APP_BASE_URL}/og-default.png`;
+        ? `${APP_BASE_URL}/api/og/snapshot/${channelRef}.jpg`
+        : toAbsoluteUrl(user.photo_file_id) || `${APP_BASE_URL}/og-image.png`;
+
+      // Prefer the creator-set stream title/description from Redis, fall back
+      // to a generic "<name> is LIVE" line. Matches the pattern used in
+      // ogPrerender middleware so both entry points produce the same card.
+      let metaTitle = null;
+      let metaDescription = null;
+      try {
+        const { getRedis } = require('../config/redis');
+        const redis = getRedis();
+        const raw = channelRef ? await redis.get(`stream:meta:${channelRef}`) : null;
+        if (raw) {
+          const meta = JSON.parse(raw);
+          if (meta.title) metaTitle = meta.title;
+          if (meta.description) metaDescription = meta.description;
+        }
+      } catch (_) { /* meta is best-effort */ }
 
       const ogData = {
-        title: `${displayName} is LIVE on PNPtv!`,
-        description: `Watch ${displayName} stream live on PNPtv! — Clouds & Slam Network`,
+        title: metaTitle || `🔴 ${displayName} is LIVE — Real Models. Real Clouds.`,
+        description: metaDescription || `Watch ${displayName} stream live on PNPtv! Real models, real clouds. Join now 🌫️🔞 — pnptv.app`,
         image: thumbUrl,
         imageWidth: 1280,
         imageHeight: 720,
@@ -333,7 +356,7 @@ const getStreamOG = async (streamId) => {
     const ogData = {
       title: 'Live Stream on PNPtv!',
       description: 'Watch live streams on PNPtv! — Clouds & Slam Network',
-      image: `${APP_BASE_URL}/og-default.png`,
+      image: `${APP_BASE_URL}/og-image.png`,
       imageWidth: 1280,
       imageHeight: 720,
       url: `${APP_BASE_URL}/live/${streamId}`,
@@ -358,6 +381,7 @@ const getStreamOG = async (streamId) => {
 
 const getCmsPageOG = async (slug) => {
   if (!slug) return getDefaultOG();
+  if (!/^[a-z0-9-]{1,100}$/.test(slug)) return getDefaultOG();
 
   const cacheKey = `og:cms:${slug}`;
   const cached = await cacheGet(cacheKey);
@@ -376,7 +400,7 @@ const getCmsPageOG = async (slug) => {
       const ogData = {
         title: `${pageTitle} — PNPtv!`,
         description: `${pageTitle} for PNPtv! — Clouds & Slam Network`,
-        image: `${APP_BASE_URL}/og-default.png`,
+        image: `${APP_BASE_URL}/og-image.png`,
         imageWidth: 1200,
         imageHeight: 630,
         url: `${APP_BASE_URL}/${slug}`,
@@ -399,7 +423,7 @@ const getCmsPageOG = async (slug) => {
     const ogData = {
       title: page.title ? `${page.title} — PNPtv!` : 'PNPtv! — Clouds & Slam Network',
       description: truncate(rawDescription, 200) || 'PNPtv! — Clouds & Slam Network',
-      image: toAbsoluteUrl(page.image) || `${APP_BASE_URL}/og-default.png`,
+      image: toAbsoluteUrl(page.image) || `${APP_BASE_URL}/og-image.png`,
       imageWidth: 1200,
       imageHeight: 630,
       url: `${APP_BASE_URL}/${slug}`,
@@ -421,7 +445,7 @@ const getCmsPageOG = async (slug) => {
     return {
       title: `${pageTitle} — PNPtv!`,
       description: `${pageTitle} for PNPtv! — Clouds & Slam Network`,
-      image: `${APP_BASE_URL}/og-default.png`,
+      image: `${APP_BASE_URL}/og-image.png`,
       imageWidth: 1200,
       imageHeight: 630,
       url: `${APP_BASE_URL}/${slug}`,
@@ -441,7 +465,7 @@ const getCmsPageOG = async (slug) => {
 const getChannelsOG = () => ({
   title: 'PNP Channels — PNPtv!',
   description: 'Browse creator channels on PNPtv! Discover exclusive content, live streams, and your favorite creators.',
-  image: `${APP_BASE_URL}/og-default.png`,
+  image: `${APP_BASE_URL}/og-image.png`,
   imageWidth: 1200,
   imageHeight: 630,
   url: `${APP_BASE_URL}/channels`,
@@ -546,9 +570,10 @@ const getVideoPreviewOG = async (postId) => {
       ogData = {
         title,
         description,
-        image: absoluteThumbUrl || `${APP_BASE_URL}/og-default.png`,
+        image: absoluteThumbUrl || `${APP_BASE_URL}/og-image.png`,
         imageWidth: 1280,
         imageHeight: 720,
+        imageAlt: title,
         url: canonicalUrl,
         type: 'video.other',
         // og:video tags kept for Facebook / Telegram / iMessage inline preview.
@@ -571,7 +596,7 @@ const getVideoPreviewOG = async (postId) => {
         authorName,
         authorUsername: post.username || null,
         authorProfileUrl,
-        thumbnailUrl: absoluteThumbUrl || `${APP_BASE_URL}/og-default.png`,
+        thumbnailUrl: absoluteThumbUrl || `${APP_BASE_URL}/og-image.png`,
         contentSnippet,
       };
     } else {
@@ -579,9 +604,10 @@ const getVideoPreviewOG = async (postId) => {
       ogData = {
         title,
         description,
-        image: absoluteThumbUrl || toAbsoluteUrl(effectiveMediaUrl) || `${APP_BASE_URL}/og-default.png`,
+        image: absoluteThumbUrl || toAbsoluteUrl(effectiveMediaUrl) || `${APP_BASE_URL}/og-image.png`,
         imageWidth: 1200,
         imageHeight: 630,
+        imageAlt: title,
         url: canonicalUrl,
         type: 'website',
         video: null,
@@ -597,7 +623,7 @@ const getVideoPreviewOG = async (postId) => {
         authorName,
         authorUsername: post.username || null,
         authorProfileUrl,
-        thumbnailUrl: absoluteThumbUrl || toAbsoluteUrl(effectiveMediaUrl) || `${APP_BASE_URL}/og-default.png`,
+        thumbnailUrl: absoluteThumbUrl || toAbsoluteUrl(effectiveMediaUrl) || `${APP_BASE_URL}/og-image.png`,
         contentSnippet,
       };
     }
@@ -614,7 +640,7 @@ const getVideoPreviewOG = async (postId) => {
 const getMainStageOG = () => ({
   title: '🔴 LIVE on PNPtv! Main Stage',
   description: 'Drop into the always-on community video room. Real guys, real PNP, every night. Members only — join at pnptv.app/join.',
-  image: `${APP_BASE_URL}/og-default.png`,
+  image: `${APP_BASE_URL}/og-image.png`,
   imageWidth: 1200,
   imageHeight: 630,
   url: `${APP_BASE_URL}/main-stage`,
@@ -656,7 +682,7 @@ const getHangoutOG = async (hangoutId) => {
       || 'Live video hangout for PNP guys. Drop in.';
     const image = row.avatar_url
       ? (row.avatar_url.startsWith('http') ? row.avatar_url : `${APP_BASE_URL}${row.avatar_url}`)
-      : `${APP_BASE_URL}/og-default.png`;
+      : `${APP_BASE_URL}/og-image.png`;
 
     const og = {
       title: `🎥 ${name} — PNPtv! Hangout`,
@@ -681,6 +707,113 @@ const getHangoutOG = async (hangoutId) => {
   }
 };
 
+// ─── Branded stream card compositing ────────────────────────────────────────
+// Composites a stream snapshot with the PNPtv logo, a LIVE badge, and the
+// "REAL MODELS. REAL CLOUDS." tagline. Requires sharp (already a dep).
+
+const LOGO_PATH = '/app/apps/public/logo.png';
+const CARD_W = 1280;
+const CARD_H = 720;
+
+function _escSvg(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _buildOverlaySvg(displayName) {
+  const name = _escSvg((displayName || 'Creator').slice(0, 40));
+  return `<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="black" stop-opacity="0"/>
+      <stop offset="60%" stop-color="black" stop-opacity="0.92"/>
+    </linearGradient>
+  </defs>
+  <!-- Bottom gradient band -->
+  <rect x="0" y="${CARD_H * 0.42}" width="${CARD_W}" height="${CARD_H * 0.58}" fill="url(#grad)"/>
+  <!-- Top-left logo placeholder (actual logo composited separately) -->
+  <!-- LIVE badge top-right -->
+  <rect x="${CARD_W - 130}" y="16" width="112" height="40" rx="8" fill="#C62828"/>
+  <circle cx="${CARD_W - 115}" cy="36" r="7" fill="white" opacity="0.95"/>
+  <text x="${CARD_W - 100}" y="44" font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900" font-size="21" fill="white">LIVE</text>
+  <!-- Tagline -->
+  <text x="${CARD_W / 2}" y="${CARD_H - 90}" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900" font-size="40" fill="white" letter-spacing="3">REAL MODELS. REAL CLOUDS.</text>
+  <!-- Creator + URL line -->
+  <text x="${CARD_W / 2}" y="${CARD_H - 40}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="rgba(255,255,255,0.82)">${name} is LIVE · pnptv.app</text>
+</svg>`;
+}
+
+/**
+ * Build a branded JPEG card from a raw snapshot buffer.
+ * Returns the composite JPEG as a Buffer, or null on error.
+ */
+const buildBrandedStreamCard = async (snapshotBuffer, displayName) => {
+  try {
+    const sharp = require('sharp');
+    const logoBuffer = await sharp(LOGO_PATH).resize(80, 80).png().toBuffer();
+    const svgBuffer = Buffer.from(_buildOverlaySvg(displayName));
+
+    return await sharp(snapshotBuffer)
+      .resize(CARD_W, CARD_H, { fit: 'cover', position: 'centre' })
+      .composite([
+        { input: svgBuffer, top: 0, left: 0 },
+        { input: logoBuffer, top: 16, left: 18 },
+      ])
+      .jpeg({ quality: 88 })
+      .toBuffer();
+  } catch (err) {
+    logger.warn('ogService.buildBrandedStreamCard error', { error: err.message });
+    return null;
+  }
+};
+
+/**
+ * Fetch a live stream snapshot from Restreamer and return a branded JPEG Buffer.
+ * Falls back: Restreamer → creator profile photo → null.
+ *
+ * @param {string} channelRef  e.g. "pnptv-santino"
+ * @param {string} displayName  Creator display name for text overlay
+ * @returns {Promise<Buffer|null>}
+ */
+const fetchAndBrandStreamSnapshot = async (channelRef, displayName) => {
+  const RESTREAMER_URL = (process.env.RESTREAMER_URL || 'http://restreamer:8080').replace(/\/$/, '');
+  let rawBuffer = null;
+
+  try {
+    const restreamerService = require('./restreamerService');
+    const token = await restreamerService.getToken().catch(() => null);
+    const resp = await axios.get(`${RESTREAMER_URL}/memfs/${channelRef}.jpg`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      responseType: 'arraybuffer',
+      timeout: 4000,
+      validateStatus: () => true,
+    });
+    if (resp.status === 200 && resp.data && resp.data.length > 500) {
+      rawBuffer = Buffer.from(resp.data);
+    }
+  } catch (_) { /* fall through to profile photo */ }
+
+  if (!rawBuffer) {
+    try {
+      const result = await query(
+        `SELECT photo_file_id FROM users WHERE live_channel = $1 OR username = $1 LIMIT 1`,
+        [channelRef]
+      );
+      const photo = result.rows[0]?.photo_file_id;
+      if (photo) {
+        const photoUrl = photo.startsWith('http') ? photo : `${APP_BASE_URL}${photo.startsWith('/') ? '' : '/'}${photo}`;
+        const resp = await axios.get(photoUrl, { responseType: 'arraybuffer', timeout: 5000, validateStatus: () => true });
+        if (resp.status === 200 && resp.data && resp.data.length > 100) {
+          rawBuffer = Buffer.from(resp.data);
+        }
+      }
+    } catch (_) { /* no fallback available */ }
+  }
+
+  if (!rawBuffer) return null;
+  return buildBrandedStreamCard(rawBuffer, displayName);
+};
+
 module.exports = {
   getPostOG,
   getProfileOG,
@@ -691,4 +824,6 @@ module.exports = {
   getVideoPreviewOG,
   getMainStageOG,
   getHangoutOG,
+  buildBrandedStreamCard,
+  fetchAndBrandStreamSnapshot,
 };

@@ -152,13 +152,7 @@ const getThreads = async (req, res) => {
        LEFT JOIN dm_thread_state s
          ON s.user_id = $1
         AND s.partner_id = CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END
-       LEFT JOIN LATERAL (
-         SELECT id, sender_id, media_type, is_read
-           FROM direct_messages
-          WHERE ((sender_id = $1 AND recipient_id = CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END)
-              OR (sender_id = CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END AND recipient_id = $1))
-          ORDER BY created_at DESC LIMIT 1
-       ) lm ON true
+       LEFT JOIN direct_messages lm ON lm.id = dt.last_message_id
        WHERE dt.user_a = $1 OR dt.user_b = $1
        ORDER BY (s.pinned_at IS NOT NULL) DESC, s.pinned_at DESC NULLS LAST, dt.last_message_at DESC
        LIMIT 100`,
@@ -272,8 +266,11 @@ const getConversation = async (req, res) => {
     // Normalize: deleted messages show placeholder, reactions always array
     const messages = rows.reverse().map(normalizeDmMessageRow);
 
-    // Mark messages as read (and emit dm:message:read so sender's checkmarks flip)
-    await DmService.markAsRead(user.id, partnerId, req.app.get('io') || null);
+    // Mark messages as read only on the first page (no cursor) — paginated history
+    // fetches must not emit false read-receipts for messages the user hasn't seen yet
+    if (!cursor) {
+      await DmService.markAsRead(user.id, partnerId, req.app.get('io') || null);
+    }
 
     return res.json({ success: true, messages });
   } catch (err) {
@@ -285,10 +282,11 @@ const getConversation = async (req, res) => {
 // Get partner user info
 const getPartnerInfo = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const partnerId = await resolveUserId(req.params.partnerId);
+  const partnerId = await resolveUserId(req.params.partnerId) || req.params.partnerId;
+  if (!partnerId) return res.status(400).json({ error: 'Invalid partner ID' });
   try {
     const { rows } = await query(
-      `SELECT id, telegram, username, first_name, last_name, photo_file_id, pnptv_id FROM users WHERE id=$1`,
+      `SELECT id, telegram, username, first_name, last_name, photo_file_id, pnptv_id, role, creator_status FROM users WHERE id=$1`,
       [partnerId]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -461,7 +459,7 @@ const sendMessage = async (req, res) => {
       user.id,
       requestedRecipientId,
       { content, replyToId },
-      { isAdmin: isAdminSender }
+      { isAdmin: isAdminSender, senderTier: user.tier || 'free' }
     );
 
     const hydratedMessage = await getHydratedDmMessage(message.id) || message;
@@ -495,7 +493,7 @@ const sendMessage = async (req, res) => {
     // ── Webapp → Telegram DM bridge: forward to recipient's Telegram ──
     DmService.bridgeToTelegram(user.id, message.recipient_id, hydratedMessage).catch(() => {});
 
-    return res.json({ success: true, message: hydratedMessage, remaining: req.dmLimit?.remaining ?? null });
+    return res.json({ success: true, message: hydratedMessage, remaining: message._remaining ?? null });
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message, code: err.code });
@@ -626,7 +624,6 @@ const searchDmMessages = async (req, res) => {
     return res.status(400).json({ error: 'Search query is required' });
   }
 
-  const { resolveUserId } = require('../../utils/helpers');
   const partnerId = (await resolveUserId(rawPartnerId)) || rawPartnerId;
 
   try {
@@ -780,6 +777,7 @@ const markUnread = async (req, res) => {
   try {
     const [a, b] = [String(user.id), String(partnerId)].sort();
     const col = String(user.id) === a ? 'unread_for_a' : 'unread_for_b';
+    if (!['unread_for_a', 'unread_for_b'].includes(col)) throw new Error('Invalid column');
     await query(
       `UPDATE dm_threads SET ${col} = GREATEST(1, ${col}) WHERE user_a = $1 AND user_b = $2`,
       [a, b]

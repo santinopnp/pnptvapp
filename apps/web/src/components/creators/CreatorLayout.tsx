@@ -8,9 +8,11 @@ import CreatorEnrollmentWizard, {
 import { useAuth } from "@/hooks/useAuth";
 import { useCreatorData } from "@/hooks/useCreatorData";
 import { Toast } from "@/components/Toast";
+import { ConfirmDialog } from "@/components/creators/ConfirmDialog";
 import {
   getCreatorSetupStatus,
   getCreatorMySubscribers,
+  getCreatorChannelSubscribers,
   getCreatorConsents,
   acceptCreatorPrivacyPolicy,
   acceptCreatorTerms,
@@ -25,8 +27,14 @@ import {
   deleteCreatorXCampaign,
   getCreatorXCampaignHistory,
   startCreatorXOAuth,
+  getOwnChannels,
+  listCreatorInviteLinks,
+  createCreatorInviteLink,
+  deleteCreatorInviteLink,
   type XAutoCampaign,
   type XAutoCampaignPost,
+  type CreatorChannel,
+  type CreatorInviteLink,
 } from "@/lib/api";
 import { Helmet } from "react-helmet-async";
 
@@ -46,6 +54,11 @@ const navItems: Array<{
   icon: string;
   roles?: CreatorRoleClient[];
 }> = [
+  {
+    to: "/creators/guidelines",
+    label: "Guidelines",
+    icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
+  },
   {
     to: "/creators",
     label: "Dashboard",
@@ -112,11 +125,6 @@ const navItems: Array<{
     to: "/creators/x-campaigns",
     label: "X Campaigns",
     icon: "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z",
-  },
-  {
-    to: "/creators/guidelines",
-    label: "Guidelines",
-    icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
   },
 ];
 
@@ -405,32 +413,335 @@ function CreatorOnboardingLockBanner({ lang }: { lang: "es" | "en" }) {
 
 // ── Creator Subscribers Page ──────────────────────────────────────────────────
 
+function resolvePhoto(url: string | null | undefined): string | null {
+  if (!url || typeof url !== "string") return null;
+  if (url.startsWith("/") || url.startsWith("http")) return url;
+  return null;
+}
+
+function SubscriberRow({ username, firstName, avatar, since, badge, badgeColor, detail }: {
+  username: string; firstName: string; avatar: string | null;
+  since: string; badge: string; badgeColor: string; detail: string;
+}) {
+  const photo = resolvePhoto(avatar);
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.04)" }}>
+      {photo ? (
+        <img src={photo} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
+      ) : (
+        <div className="w-10 h-10 rounded-full bg-pnp-surface flex items-center justify-center shrink-0">
+          <span className="text-sm text-pnp-textSecondary">{(firstName || username || "?")[0].toUpperCase()}</span>
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-white truncate">{firstName || username}</p>
+        <p className="text-xs text-pnp-textSecondary">@{username} · since {new Date(since).toLocaleDateString()}</p>
+      </div>
+      <div className="text-right shrink-0">
+        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeColor}`}>{badge}</span>
+        <p className="text-xs text-pnp-textSecondary mt-1">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Invite Links sub-panel ────────────────────────────────────────────────────
+
+function InviteLinksPanel() {
+  const { user } = useAuth();
+  const [links, setLinks] = React.useState<CreatorInviteLink[]>([]);
+  const [channels, setChannels] = React.useState<CreatorChannel[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [showForm, setShowForm] = React.useState(false);
+  const [form, setForm] = React.useState<{
+    resourceType: "channel" | "creator";
+    resourceId: string;
+    durationHours: string;
+    maxUses: string;
+    note: string;
+  }>({ resourceType: "creator", resourceId: "", durationHours: "72", maxUses: "", note: "" });
+  const [saving, setSaving] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const [linksRes, chRes] = await Promise.all([listCreatorInviteLinks(), getOwnChannels()]);
+      if (linksRes.success) setLinks(linksRes.links);
+      if (chRes.success) setChannels(chRes.channels);
+    } catch (_) {}
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    if (!form.resourceId) {
+      setFormError("Select a resource.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await createCreatorInviteLink({
+        resourceType: form.resourceType,
+        resourceId: form.resourceId,
+        durationHours: parseInt(form.durationHours || "72", 10),
+        maxUses: form.maxUses ? parseInt(form.maxUses, 10) : null,
+        note: form.note || undefined,
+      });
+      if (res.success) {
+        setShowForm(false);
+        setForm({ resourceType: "creator", resourceId: "", durationHours: "72", maxUses: "", note: "" });
+        await load();
+      } else {
+        setFormError("Failed to create link.");
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to create link.");
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (code: string) => {
+    try {
+      await deleteCreatorInviteLink(code);
+      setLinks(prev => prev.filter(l => l.code !== code));
+    } catch (_) {}
+    setDeleteConfirm(null);
+  };
+
+  const copyUrl = (code: string) => {
+    navigator.clipboard.writeText(`https://pnptv.app/invite/${code}`).catch(() => {});
+    setCopied(code);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const isExpired = (l: CreatorInviteLink) =>
+    (l.expires_at && new Date(l.expires_at) < new Date()) ||
+    (l.max_uses !== null && l.use_count >= l.max_uses);
+
+  const resourceLabel = (l: CreatorInviteLink) => {
+    if (l.resource_type === "channel") {
+      const ch = channels.find(c => String(c.id) === String(l.resource_id));
+      return ch ? `📺 ${ch.name}` : `Channel #${l.resource_id}`;
+    }
+    return "👤 My Profile";
+  };
+
+  if (loading) return (
+    <div className="animate-pulse space-y-3">
+      {[1,2,3].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl" />)}
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-pnp-textSecondary">Share links that give fans free trial access to your content.</p>
+        </div>
+        <button
+          onClick={() => { setShowForm(v => !v); setFormError(null); }}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-pnp-primary text-white hover:opacity-90 transition-opacity shrink-0"
+        >
+          {showForm ? "Cancel" : "+ New Link"}
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleCreate} className="rounded-xl p-4 space-y-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          {/* Resource type */}
+          <div>
+            <label className="text-xs text-pnp-textSecondary mb-1 block">Access to</label>
+            <div className="flex gap-2">
+              {(["creator", "channel"] as const).map(rt => (
+                <button
+                  key={rt}
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, resourceType: rt, resourceId: rt === "creator" ? (user?.dbId ?? "") : "" }))}
+                  className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${form.resourceType === rt ? "bg-pnp-primary text-white" : "bg-white/5 text-pnp-textSecondary hover:text-white"}`}
+                >
+                  {rt === "creator" ? "👤 My Profile" : "📺 A Channel"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.resourceType === "channel" && (
+            <div>
+              <label className="text-xs text-pnp-textSecondary mb-1 block">Channel</label>
+              <select
+                value={form.resourceId}
+                onChange={e => setForm(f => ({ ...f, resourceId: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+              >
+                <option value="">Select a channel…</option>
+                {channels.map(ch => (
+                  <option key={ch.id} value={String(ch.id)}>{ch.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {form.resourceType === "creator" && (
+            <input type="hidden" value={form.resourceId} />
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-pnp-textSecondary mb-1 block">Duration (hours)</label>
+              <input
+                type="number" min={1} max={720}
+                value={form.durationHours}
+                onChange={e => setForm(f => ({ ...f, durationHours: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-pnp-textSecondary mb-1 block">Max uses (blank = unlimited)</label>
+              <input
+                type="number" min={1}
+                placeholder="∞"
+                value={form.maxUses}
+                onChange={e => setForm(f => ({ ...f, maxUses: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/20"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-pnp-textSecondary mb-1 block">Label (optional)</label>
+            <input
+              type="text" maxLength={200} placeholder="e.g. Instagram story promo"
+              value={form.note}
+              onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30"
+            />
+          </div>
+
+          {formError && <p className="text-xs text-red-400">{formError}</p>}
+
+          <button
+            type="submit" disabled={saving}
+            className="w-full py-2 rounded-lg text-sm font-semibold bg-pnp-primary text-white disabled:opacity-50"
+          >
+            {saving ? "Creating…" : "Create Link"}
+          </button>
+        </form>
+      )}
+
+      {links.length === 0 ? (
+        <div className="text-center py-10 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
+          <p className="text-pnp-textSecondary text-sm">No invite links yet</p>
+          <p className="text-pnp-textSecondary/60 text-xs mt-1">Create one to give fans free trial access</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {links.map(l => {
+            const expired = isExpired(l);
+            return (
+              <div key={l.code} className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", opacity: expired ? 0.5 : 1 }}>
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-sm font-semibold text-white">{l.code}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${expired ? "bg-white/10 text-pnp-textSecondary" : "bg-green-500/20 text-green-400"}`}>
+                        {expired ? "Exhausted" : "Active"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-pnp-textSecondary mt-0.5">{resourceLabel(l)}</p>
+                    <p className="text-xs text-pnp-textSecondary/70 mt-0.5">
+                      {l.duration_hours}h access · {l.use_count}{l.max_uses !== null ? `/${l.max_uses}` : ""} uses
+                      {l.note ? ` · ${l.note}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button
+                      onClick={() => copyUrl(l.code)}
+                      className="p-1.5 rounded-lg text-xs hover:bg-white/10 text-pnp-textSecondary hover:text-white transition-colors"
+                      title="Copy link"
+                    >
+                      {copied === l.code ? "✓" : "⎘"}
+                    </button>
+                    {!expired && (
+                      deleteConfirm === l.code ? (
+                        <div className="flex gap-1">
+                          <button onClick={() => handleDelete(l.code)} className="px-2 py-1 rounded text-[10px] bg-red-500/20 text-red-400 hover:bg-red-500/30">Yes, deactivate</button>
+                          <button onClick={() => setDeleteConfirm(null)} className="px-2 py-1 rounded text-[10px] bg-white/5 text-pnp-textSecondary">Cancel</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeleteConfirm(l.code)}
+                          className="p-1.5 rounded-lg text-xs hover:bg-white/10 text-pnp-textSecondary hover:text-red-400 transition-colors"
+                          title="Deactivate"
+                        >
+                          ✕
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Creator Subscribers Page ──────────────────────────────────────────────────
+
 export function CreatorSubscribers() {
-  const [data, setData] = React.useState<any>(null);
+  const [tab, setTab] = React.useState<"profile" | "channels" | "invite-links">("profile");
+  const [profileData, setProfileData] = React.useState<any>(null);
+  const [channelData, setChannelData] = React.useState<any>(null);
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async () => {
+  const loadProfile = React.useCallback(async (p: number) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getCreatorMySubscribers(page);
-      if (res.success) setData(res);
+      const res = await getCreatorMySubscribers(p);
+      if (res.success) setProfileData(res);
       else setError("Failed to load subscribers.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load subscribers.");
     }
     setLoading(false);
-  }, [page]);
+  }, []);
 
-  React.useEffect(() => { load(); }, [load]);
+  const loadChannels = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await getCreatorChannelSubscribers();
+      if (res.success) setChannelData(res);
+      else setError("Failed to load channel subscribers.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load channel subscribers.");
+    }
+    setLoading(false);
+  }, []);
 
-  function resolvePhoto(url: string | null | undefined): string | null {
-    if (!url || typeof url !== "string") return null;
-    if (url.startsWith("/") || url.startsWith("http")) return url;
-    return null;
-  }
+  React.useEffect(() => {
+    if (tab === "profile") loadProfile(page);
+    else if (tab === "channels") loadChannels();
+  }, [tab, page, loadProfile, loadChannels]);
+
+  const handleTabChange = (t: "profile" | "channels" | "invite-links") => {
+    setTab(t);
+    setPage(1);
+    setError(null);
+  };
+
+  const isLoadingInitial = loading && !profileData && !channelData;
 
   return (
     <>
@@ -438,7 +749,22 @@ export function CreatorSubscribers() {
       <div className="p-4 lg:p-6">
         <h1 className="text-xl font-bold text-pnp-textPrimary mb-4">My Subscribers</h1>
 
-        {loading && !data ? (
+        {/* Tab switcher */}
+        <div className="flex gap-1 mb-6 p-1 rounded-xl" style={{ background: "rgba(255,255,255,0.05)" }}>
+          {(["profile", "channels", "invite-links"] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => handleTabChange(t)}
+              className={`flex-1 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${tab === t ? "bg-pnp-primary text-white shadow-sm" : "text-pnp-textSecondary hover:text-white"}`}
+            >
+              {t === "profile" ? "Profile" : t === "channels" ? "Channels" : "Invite Links"}
+            </button>
+          ))}
+        </div>
+
+        {tab === "invite-links" ? (
+          <InviteLinksPanel />
+        ) : isLoadingInitial ? (
           <div className="animate-pulse space-y-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[1,2,3,4].map(i => <div key={i} className="h-20 bg-white/5 rounded-xl" />)}
@@ -448,71 +774,129 @@ export function CreatorSubscribers() {
         ) : error ? (
           <div className="text-center py-12 rounded-xl" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
             <p className="text-sm text-red-400">{error}</p>
-            <button onClick={load} className="mt-3 text-xs text-pnp-textSecondary underline">Retry</button>
+            <button onClick={() => tab === "profile" ? loadProfile(page) : loadChannels()} className="mt-3 text-xs text-pnp-textSecondary underline">Retry</button>
           </div>
-        ) : data ? (
+        ) : tab === "profile" && profileData ? (
           <>
-            {/* Stats row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
               <div className="rounded-xl p-4" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.2)" }}>
-                <p className="text-2xl font-bold text-white">{data.stats.active_count}</p>
+                <p className="text-2xl font-bold text-white">{profileData.stats.active_count}</p>
                 <p className="text-xs text-pnp-textSecondary mt-1">Active</p>
               </div>
               <div className="rounded-xl p-4" style={{ background: "rgba(91,200,245,0.08)", border: "1px solid rgba(91,200,245,0.2)" }}>
-                <p className="text-2xl font-bold text-white">{data.stats.total_count}</p>
+                <p className="text-2xl font-bold text-white">{profileData.stats.total_count}</p>
                 <p className="text-xs text-pnp-textSecondary mt-1">Total</p>
               </div>
               <div className="rounded-xl p-4" style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.2)" }}>
-                <p className="text-2xl font-bold text-white">{data.stats.new_this_month}</p>
+                <p className="text-2xl font-bold text-white">{profileData.stats.new_this_month}</p>
                 <p className="text-xs text-pnp-textSecondary mt-1">New this month</p>
               </div>
               <div className="rounded-xl p-4" style={{ background: "rgba(230,145,56,0.08)", border: "1px solid rgba(230,145,56,0.2)" }}>
-                <p className="text-2xl font-bold text-white">{data.stats.churn_rate}%</p>
+                <p className="text-2xl font-bold text-white">{profileData.stats.churn_rate}%</p>
                 <p className="text-xs text-pnp-textSecondary mt-1">Churn rate</p>
               </div>
             </div>
 
-            {/* Subscriber list */}
-            {data.subscribers.length === 0 ? (
+            {profileData.subscribers.length === 0 ? (
               <div className="text-center py-12 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-                <p className="text-pnp-textSecondary text-sm">No subscribers yet</p>
+                <p className="text-pnp-textSecondary text-sm">No profile subscribers yet</p>
                 <p className="text-pnp-textSecondary/60 text-xs mt-1">Share your profile to attract subscribers</p>
               </div>
             ) : (
               <div className="space-y-2">
-                {data.subscribers.map((sub: any) => {
-                  const photo = resolvePhoto(sub.subscriber_avatar);
-                  return (
-                    <div key={sub.id} className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.04)" }}>
-                      {photo ? (
-                        <img src={photo} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-pnp-surface flex items-center justify-center shrink-0">
-                          <span className="text-sm text-pnp-textSecondary">{(sub.subscriber_first_name || sub.subscriber_username || "?")[0].toUpperCase()}</span>
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{sub.subscriber_first_name || sub.subscriber_username}</p>
-                        <p className="text-xs text-pnp-textSecondary">@{sub.subscriber_username} · since {new Date(sub.started_at).toLocaleDateString()}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${sub.status === "active" ? "bg-green-500/20 text-green-400" : "bg-white/10 text-pnp-textSecondary"}`}>
-                          {sub.status}
-                        </span>
-                        <p className="text-xs text-pnp-textSecondary mt-1">${Number(sub.revenue || 0).toFixed(2)}</p>
-                      </div>
-                    </div>
-                  );
-                })}
+                {profileData.subscribers.map((sub: any) => (
+                  <SubscriberRow
+                    key={sub.id}
+                    username={sub.subscriber_username}
+                    firstName={sub.subscriber_first_name}
+                    avatar={sub.subscriber_avatar}
+                    since={sub.started_at}
+                    badge={sub.status}
+                    badgeColor={sub.status === "active" ? "bg-green-500/20 text-green-400" : "bg-white/10 text-pnp-textSecondary"}
+                    detail={`$${Number(sub.revenue || 0).toFixed(2)}`}
+                  />
+                ))}
               </div>
             )}
 
-            {/* Pagination */}
-            {data.pagination.totalPages > 1 && (
+            {profileData.pagination.totalPages > 1 && (
               <div className="flex justify-center gap-2 mt-4">
                 <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="px-3 py-1.5 rounded-lg text-xs text-white bg-white/10 disabled:opacity-30">← Prev</button>
-                <span className="px-3 py-1.5 text-xs text-pnp-textSecondary">{page} / {data.pagination.totalPages}</span>
-                <button disabled={page >= data.pagination.totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1.5 rounded-lg text-xs text-white bg-white/10 disabled:opacity-30">Next →</button>
+                <span className="px-3 py-1.5 text-xs text-pnp-textSecondary">{page} / {profileData.pagination.totalPages}</span>
+                <button disabled={page >= profileData.pagination.totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1.5 rounded-lg text-xs text-white bg-white/10 disabled:opacity-30">Next →</button>
+              </div>
+            )}
+          </>
+        ) : tab === "channels" && channelData ? (
+          <>
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="rounded-xl p-4" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.2)" }}>
+                <p className="text-2xl font-bold text-white">{channelData.summary.total_channel_subscribers}</p>
+                <p className="text-xs text-pnp-textSecondary mt-1">Total channel subs</p>
+              </div>
+              <div className="rounded-xl p-4" style={{ background: "rgba(91,200,245,0.08)", border: "1px solid rgba(91,200,245,0.2)" }}>
+                <p className="text-2xl font-bold text-white">{channelData.summary.total_channels}</p>
+                <p className="text-xs text-pnp-textSecondary mt-1">Active channels</p>
+              </div>
+            </div>
+
+            {channelData.channels.length === 0 ? (
+              <div className="text-center py-12 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
+                <p className="text-pnp-textSecondary text-sm">No active channels yet</p>
+                <p className="text-pnp-textSecondary/60 text-xs mt-1">Create channels from your Studio to grow your audience</p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {channelData.channels.map((ch: any) => (
+                  <div key={ch.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="flex items-center gap-3 px-4 py-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+                      {ch.cover_image_url ? (
+                        <img src={ch.cover_image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-pnp-primary/20 flex items-center justify-center shrink-0">
+                          <span className="text-base">📺</span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">{ch.name}</p>
+                        <p className="text-xs text-pnp-textSecondary">
+                          {ch.access_type === "subscription" ? `$${ch.price_usd}/mo` : ch.access_type === "prime" ? "PRIME" : "Free"}
+                          {" · "}{ch.new_this_month} new this month
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-lg font-bold text-white">{ch.subscriber_count}</p>
+                        <p className="text-[10px] text-pnp-textSecondary">subscribers</p>
+                      </div>
+                    </div>
+                    {ch.subscribers.length > 0 && (
+                      <div className="divide-y divide-white/5">
+                        {ch.subscribers.map((s: any) => (
+                          <SubscriberRow
+                            key={s.user_id}
+                            username={s.username}
+                            firstName={s.first_name}
+                            avatar={s.avatar}
+                            since={s.created_at}
+                            badge="subscribed"
+                            badgeColor="bg-pnp-primary/20 text-pnp-primary"
+                            detail=""
+                          />
+                        ))}
+                        {ch.subscriber_count > 20 && (
+                          <p className="text-center text-xs text-pnp-textSecondary py-2">
+                            +{ch.subscriber_count - 20} more subscribers
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {ch.subscribers.length === 0 && (
+                      <div className="text-center py-6">
+                        <p className="text-xs text-pnp-textSecondary">No subscribers yet</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -1106,6 +1490,7 @@ export function CreatorXCampaigns() {
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [showCreate, setShowCreate] = React.useState(false);
   const [editingCampaignId, setEditingCampaignId] = React.useState<string | null>(null);
+  const [confirmDeleteCampaignId, setConfirmDeleteCampaignId] = React.useState<string | null>(null);
   const [expandedHistory, setExpandedHistory] = React.useState<string | null>(null);
   const [historyData, setHistoryData] = React.useState<Record<string, { posts: XAutoCampaignPost[]; page: number; totalPages: number; error?: boolean }>>({});
 
@@ -1233,7 +1618,6 @@ export function CreatorXCampaigns() {
     }
   };
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this campaign? This cannot be undone.")) return;
     setActionError(null);
     try {
       await deleteCreatorXCampaign(id);
@@ -1368,7 +1752,7 @@ export function CreatorXCampaigns() {
                         >
                           Edit
                         </button>
-                        <button onClick={() => handleDelete(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">Delete</button>
+                        <button onClick={() => setConfirmDeleteCampaignId(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">Delete</button>
                         <button onClick={() => toggleHistory(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-white/10 text-pnp-textSecondary hover:bg-white/15 transition-colors">
                           {expandedHistory === c.campaign_id ? "Hide History" : "View History"}
                         </button>
@@ -1400,6 +1784,22 @@ export function CreatorXCampaigns() {
                 ))}
               </div>
             )}
+
+            {/* Delete confirmation dialog */}
+            <ConfirmDialog
+              open={confirmDeleteCampaignId !== null}
+              title="Delete campaign"
+              message="Delete this campaign? This cannot be undone."
+              confirmLabel="Delete"
+              cancelLabel="Cancel"
+              variant="danger"
+              onConfirm={async () => {
+                const id = confirmDeleteCampaignId;
+                setConfirmDeleteCampaignId(null);
+                if (id) await handleDelete(id);
+              }}
+              onCancel={() => setConfirmDeleteCampaignId(null)}
+            />
 
             {/* Create / Edit Campaign Modal */}
             {showCreate && (

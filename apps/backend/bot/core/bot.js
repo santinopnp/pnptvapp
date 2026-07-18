@@ -39,7 +39,6 @@ const globalBanCheck = require('./middleware/globalBanCheck');
 const rateLimitMiddleware = require('./middleware/rateLimit');
 const chatCleanupMiddleware = require('./middleware/chatCleanup');
 const privateOutboundGuardMiddleware = require('./middleware/privateOutboundGuard');
-const moderationFilter = require('./middleware/moderationFilter');
 const groupCommandReminder = require('./middleware/groupCommandReminder');
 const errorHandler = require('./middleware/errorHandler');
 // Topic middleware
@@ -65,6 +64,7 @@ const {
 const groupCommandRestrictionMiddleware = require('./middleware/groupCommandRestriction');
 const wallOfFameGuard = require('./middleware/wallOfFameGuard');
 const notificationsTopicGuard = require('./middleware/notificationsTopicGuard');
+const { getHangoutJoinWelcomeMessage } = require('../../config/groupMessages');
 const logger = require('../../utils/logger');
 const performanceMonitor = require('../../utils/performanceMonitor');
 
@@ -99,6 +99,10 @@ const registerRoleManagementHandlers = safeRequire('../handlers/admin/roleManage
 const { registerWallOfFameHandlers } = safeRequire('../handlers/group/wallOfFame', { registerWallOfFameHandlers: _noop });
 const registerPaymentTutorialHandlers = safeRequire('../handlers/user/paymentTutorial');
 const registerSupportRoutingHandlers = safeRequire('../handlers/support/supportRouting');
+const { registerGroupManagerHandlers } = safeRequire('../handlers/group/groupManager', { registerGroupManagerHandlers: _noop });
+const { registerGroupAdminPanelHandlers } = safeRequire('../handlers/group/groupAdminPanel', { registerGroupAdminPanelHandlers: _noop });
+const { registerJoinRequestGate } = safeRequire('../handlers/group/joinRequestGate', { registerJoinRequestGate: _noop });
+const { registerLeaderboardHandlers } = safeRequire('../handlers/group/leaderboard', { registerLeaderboardHandlers: _noop });
 const { buildOnboardingPrompt } = safeRequire('../handlers/user/menu', { buildOnboardingPrompt: _noop });
 
 // ─── Services (non-critical — wrapped in safeRequire) ───────────────────────
@@ -205,7 +209,7 @@ const startApiServer = (modeLabel) => {
   // Attach Socket.IO for real-time chat/DM
   // Resolve the allow-list once so both cors.origin and allowRequest can share it.
   const allowedOrigins = (() => {
-    const defaults = ['https://app.pnptv.app', 'https://pnptv.app', 'https://studio.pnptv.app'];
+    const defaults = ['https://app.pnptv.app', 'https://pnptv.app'];
     const raw = process.env.WEBAPP_ORIGIN;
     if (!raw) return defaults;
     const allowed = raw.split(',').map(o => o.trim()).filter(o => o && o !== '*');
@@ -216,8 +220,7 @@ const startApiServer = (modeLabel) => {
   const io = new SocketIOServer(server, {
     cors: {
       // H5: Filter out wildcard '*' entries — WEBAPP_ORIGIN must never accept all origins.
-      // Default fallback includes studio.pnptv.app so MediaRecorder→FFmpeg streaming
-      // works even when WEBAPP_ORIGIN is unset in the environment.
+      // Default CORS origins for socket connections.
       origin: allowedOrigins,
       credentials: true,
     },
@@ -232,6 +235,11 @@ const startApiServer = (modeLabel) => {
       callback('origin not allowed', false);
     },
     path: '/socket.io',
+    // Mobile networks routinely stall packets for 20-40s; the default 20s
+    // pingTimeout was disconnecting real users mid-session. Bump to 60s so a
+    // brief network hiccup no longer triggers a "ping timeout" reconnect loop.
+    pingInterval: 25_000,
+    pingTimeout: 60_000,
   });
   apiApp.set('io', io);
   require('../../services/socketSingleton').set(io);
@@ -355,6 +363,22 @@ const startBot = async () => {
     try {
       initializeRedis();
       logger.info('✓ Redis initialized');
+
+      // LIVE-H-06: Flush stale live:viewers:* keys from the previous process run.
+      // Without this, viewer counts persist across restarts and show ghost viewers.
+      try {
+        const { getRedis: getRedisForStartup } = require('../../config/redis');
+        const redisForStartup = getRedisForStartup();
+        if (redisForStartup) {
+          const viewerKeys = await redisForStartup.keys('live:viewers:*');
+          if (viewerKeys.length > 0) {
+            await redisForStartup.del(...viewerKeys);
+            logger.info(`✓ Flushed ${viewerKeys.length} stale live:viewers:* Redis keys on startup`);
+          }
+        }
+      } catch (flushErr) {
+        logger.warn(`Could not flush live:viewers:* keys on startup (non-fatal): ${flushErr.message}`);
+      }
     } catch (error) {
       logger.warn(`Redis initialization failed, continuing without cache: ${error.message}`);
       logger.warn('⚠️  Performance may be degraded without caching');
@@ -476,27 +500,24 @@ const startBot = async () => {
 
     // FIX: Register /admin command early using admin handler directly
     bot.command('admin', async (ctx) => {
+      if (ctx.chat?.type !== 'private') return;
       logger.info('[ADMIN-EARLY] /admin command received');
       try {
         const PermissionService = require('../../services/permissionService');
         const { getLanguage, t } = require('../utils/helpers');
         const { showAdminPanel } = require('../handlers/admin/index');
-        
-        const isAdmin = await PermissionService.isAdmin(ctx.from?.id);
-        logger.info(`[ADMIN-EARLY] Permission check: isAdmin=${isAdmin}`);
-        
+
+        const isAdmin = await PermissionService.isSuperAdmin(ctx.from?.id);
+
         if (!isAdmin) {
-          logger.info(`[ADMIN-EARLY] User not authorized`);
           await ctx.reply(t('unauthorized', getLanguage(ctx)));
           return;
         }
 
-        logger.info('[ADMIN-EARLY] User authorized, calling showAdminPanel...');
         await showAdminPanel(ctx, false);
-        logger.info('[ADMIN-EARLY] showAdminPanel completed successfully');
       } catch (error) {
-        logger.error('[ADMIN-EARLY] Error in /admin handler:', error.message, error.stack);
-        await ctx.reply('❌ Error loading admin panel.');
+        logger.error('[ADMIN-EARLY] Error in /admin handler:', { error: error.message });
+        await ctx.reply('❌ Error loading admin panel.').catch(() => {});
       }
     });
 
@@ -543,6 +564,116 @@ const startBot = async () => {
         return;
       }
 
+      if (process.env.BOT_WIZARD_ENABLED === 'true') {
+        // Handle group deep link: /start grp_-1234567890
+        if (startPayload.startsWith('grp_')) {
+          const chatId = startPayload.replace('grp_', '');
+          const { getRedis } = require('../../config/redis');
+          const redis = getRedis();
+          // Belt-and-suspenders: don't trust the Redis flag alone — it can be
+          // stale after a schema change or set by the webapp flow. Also verify
+          // age_verified AND terms_accepted in the DB so we always re-run the
+          // wizard when either compliance flag is missing, regardless of
+          // which channel the user originally registered on.
+          const alreadyDone = await redis.get(`onboard:done:${ctx.from.id}`);
+          let complianceOk = false;
+          if (alreadyDone) {
+            try {
+              const { query: dbQ } = require('../../config/postgres');
+              const check = await dbQ(
+                'SELECT age_verified, terms_accepted FROM users WHERE telegram = $1 LIMIT 1',
+                [String(ctx.from.id)]
+              );
+              complianceOk = check.rows[0]?.age_verified === true &&
+                             check.rows[0]?.terms_accepted === true;
+            } catch (_) { complianceOk = false; }
+          }
+          if (alreadyDone && complianceOk) {
+            let groupName2 = 'the group';
+            let hangoutId2 = null, hangoutName2 = null;
+            try {
+              const chat2 = await ctx.telegram.getChat(chatId);
+              groupName2 = chat2.title || groupName2;
+            } catch (_) {}
+            try {
+              const { query: dbQ } = require('../../config/postgres');
+              const { rows } = await dbQ('SELECT id, name FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1', [String(chatId)]);
+              if (rows.length) { hangoutId2 = rows[0].id; hangoutName2 = rows[0].name || groupName2; }
+            } catch (_) {}
+            let invLink = null;
+            try { const inv = await ctx.telegram.createChatInviteLink(chatId, { name: 'PNPtv', creates_join_request: false }); invLink = inv.invite_link; } catch (_) {}
+            const btns = [];
+            if (invLink) btns.push([{ text: `🔗 Unirme / Join ${groupName2}`, url: invLink }]);
+            if (hangoutId2) btns.push([{ text: '💬 Abrir hangout en PNPtv!', url: `https://pnptv.app/hangouts/${hangoutId2}` }]);
+            btns.push([{ text: '🌐 Abrir PNPtv!', url: 'https://pnptv.app/login' }]);
+            await ctx.reply(`✅ Ya estás registradx. Aquí están tus accesos a *${groupName2}*:`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
+            return;
+          }
+          let groupName = 'PNPtv Community';
+          try {
+            const chat = await ctx.telegram.getChat(chatId);
+            groupName = chat.title || groupName;
+          } catch (_) {}
+          await redis.set(
+            `onboard:grp:${ctx.from.id}`,
+            JSON.stringify({ name: groupName, chatId }),
+            'EX', 1800
+          );
+          const { showLanguageSelection } = require('../handlers/user/onboarding');
+          await showLanguageSelection(ctx);
+          return;
+        }
+
+        // Plain /start — still require full onboarding (no group context)
+        const { getRedis: getRedis2 } = require('../../config/redis');
+        const redis2 = getRedis2();
+        // Same double-check as the grp_ branch: Redis flag AND both compliance
+        // flags in DB must be true, otherwise re-run the wizard.
+        const alreadyDone = await redis2.get(`onboard:done:${ctx.from.id}`);
+        let complianceOk2 = false;
+        if (alreadyDone) {
+          try {
+            const { query: dbQ2 } = require('../../config/postgres');
+            const check = await dbQ2(
+              'SELECT age_verified, terms_accepted FROM users WHERE telegram = $1 LIMIT 1',
+              [String(ctx.from.id)]
+            );
+            complianceOk2 = check.rows[0]?.age_verified === true &&
+                            check.rows[0]?.terms_accepted === true;
+          } catch (_) { complianceOk2 = false; }
+        }
+        if (alreadyDone && complianceOk2) {
+          const firstName2 = ctx.from?.first_name || '';
+          await ctx.reply(
+            `👋 ¡Hola${firstName2 ? `, *${firstName2}*` : ''}! Soy *PNPManagerBot* 🤖\n\n` +
+            'Te ayudo a conectar tu grupo de Telegram con PNPtv y gamificar la migración.\n\n' +
+            '*Add me to your group, then use:*\n' +
+            '📊 /stats — migration + points summary\n' +
+            '📈 /progress — migration bar toward next milestone\n' +
+            '🏆 /leaderboard — top contributors\n' +
+            '📣 /announce — post to group + linked hangout\n' +
+            '🎯 /challenge — set or view the weekly challenge\n\n' +
+            '🔗 To link your group to a PNPtv Hangout, use /link <hangoutId> inside the group.\n\n' +
+            '📱 _Members who join via the group deep link earn 100 points automatically._',
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🌐 Open PNPtv!', url: 'https://pnptv.app' }],
+                  [{ text: '📖 How it works', url: 'https://pnptv.app/hangouts' }],
+                ],
+              },
+            }
+          );
+          return;
+        }
+        // No group context — store empty placeholder so completeCreatorOnboarding works
+        await redis2.set(`onboard:grp:${ctx.from.id}`, JSON.stringify({ name: 'PNPtv', chatId: null }), 'EX', 1800);
+        const { showLanguageSelection: showLang } = require('../handlers/user/onboarding');
+        await showLang(ctx);
+        return;
+      }
+
       await ctx.reply(
         '🌐 PNPtv! has moved to the web!\n\n' +
         'Visit our app for the full experience:\n' +
@@ -552,7 +683,49 @@ const startBot = async () => {
       );
     });
 
+    // Helper: import Telegram forum topics into a hangout, replacing existing topics.
+    // Runs silently (no reply) if the chat isn't a forum or has no topics.
+    // Returns the number of topics imported, or 0.
+    const importForumTopics = async (telegram, dbQuery, chatId, hangoutId) => {
+      const { getClient } = require('../../config/postgres');
+      const chatInfo = await telegram.getChat(chatId);
+      if (!chatInfo.is_forum) return 0;
+      const forumsResult = await telegram.callApi('getForumTopics', { chat_id: chatId, limit: 100 });
+      const tgTopics = (forumsResult?.topics || forumsResult || []).filter(t => t?.name);
+      if (tgTopics.length === 0) return 0;
+      const { rows: hgRows } = await dbQuery('SELECT creator_id FROM hangout_groups WHERE id=$1', [hangoutId]);
+      const creatorId = hgRows[0]?.creator_id || null;
+      const client = await getClient();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM hangout_groups WHERE parent_group_id=$1', [hangoutId]);
+        for (let i = 0; i < tgTopics.length; i++) {
+          const t = tgTopics[i];
+          const { rows: tRows } = await client.query(
+            `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position, is_read_only, is_wall_of_fame)
+             VALUES ($1, '', $2, false, true, 200000, $3, $4, $5, false)
+             RETURNING id`,
+            [t.name.slice(0, 100), creatorId, hangoutId, i, !!t.is_closed]
+          );
+          if (creatorId) {
+            await client.query(
+              `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT (group_id, user_id) DO NOTHING`,
+              [tRows[0].id, creatorId]
+            );
+          }
+        }
+        await client.query('COMMIT');
+        return tgTopics.length;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    };
+
     // /link <hangoutId> — Link a Telegram group to a PNPtv hangout
+    // Running /link again on an already-linked group re-syncs forum topics.
     bot.command('link', async (ctx) => {
       if (ctx.chat.type === 'private') {
         return ctx.reply('❌ This command must be used inside a Telegram group.');
@@ -560,7 +733,7 @@ const startBot = async () => {
       const args = ctx.message.text.split(' ').slice(1);
       const hangoutId = parseInt(args[0], 10);
       if (!Number.isFinite(hangoutId)) {
-        // Try to find a hangout already linked to this Telegram group that the user owns
+        // No args — show existing link info AND sync forum topics if applicable
         try {
           const { query: dbQuery } = require('../../config/postgres');
           const { rows: linkedRows } = await dbQuery(
@@ -576,10 +749,20 @@ const startBot = async () => {
           );
           if (linkedRows.length > 0) {
             const g = linkedRows[0];
-            return ctx.reply(
+            await ctx.reply(
               `🔗 This group is linked to the hangout *${g.name}*.\n\nOpen it here: https://app.pnptv.app/chat/${g.id}`,
               { parse_mode: 'Markdown' }
             );
+            // Sync forum topics in case they weren't imported at link time
+            try {
+              const count = await importForumTopics(ctx.telegram, dbQuery, ctx.chat.id, g.id);
+              if (count > 0) {
+                await ctx.reply(`📋 Synced ${count} topic${count === 1 ? '' : 's'} from your Telegram forum into the hangout.`);
+              }
+            } catch (syncErr) {
+              logger.warn('/link: forum topic sync failed for existing link', { hangoutId: g.id, error: syncErr.message });
+            }
+            return;
           }
         } catch { /* fall through silently */ }
         return;
@@ -619,8 +802,15 @@ const startBot = async () => {
         try { require('./middleware/groupSecurityEnforcement').invalidateLinkedCache(); } catch {}
         await ctx.reply(`✅ Linked to hangout "${groupRows[0].name}" (ID: ${hangoutId}).\n\nMembers can now open this Telegram group from the PNPtv app.`);
 
-        // Matrix bridge removed (migrated to LiveKit/Socket.IO)
-        // ─────────────────────────────────────────────────────────────────────
+        // Import forum topics (replaces default topics if this is a Telegram forum group)
+        try {
+          const count = await importForumTopics(ctx.telegram, dbQuery, ctx.chat.id, hangoutId);
+          if (count > 0) {
+            await ctx.reply(`📋 Imported ${count} topic${count === 1 ? '' : 's'} from your Telegram forum.`);
+          }
+        } catch (forumErr) {
+          logger.warn('/link: forum topic import failed', { hangoutId, error: forumErr.message });
+        }
       } catch (err) {
         logger.error('/link command error', { error: err.message, chatId: ctx.chat.id });
         await ctx.reply('❌ Something went wrong. Please try again.');
@@ -782,7 +972,6 @@ const startBot = async () => {
       ['botAdditionPrevention', () => bot.use(botAdditionPreventionMiddleware())],
       ['autoModeration', () => bot.use(autoModerationMiddleware())],
       ['personalInfoFilter', () => bot.use(personalInfoFilterMiddleware())],
-      ['moderationFilter', () => bot.use(moderationFilter())],
       ['primeChannelSilentRedirect', () => bot.use(primeChannelSilentRedirectMiddleware())],
       ['groupBehavior', () => bot.use(groupBehaviorMiddleware())],
       ['cristinaGroupFilter', () => bot.use(cristinaGroupFilterMiddleware())],
@@ -816,6 +1005,13 @@ const startBot = async () => {
       const { registerPrimeChannelMirrorHandler } = require('../handlers/channel/primeChannelMirrorHandler');
       registerPrimeChannelMirrorHandler(bot);
     } catch (e) { logger.error(`Prime channel mirror handler failed: ${e.message}`); }
+
+    // ── Creator availability ping callbacks ──────────────────────────────────
+    try {
+      const { registerAvailabilityPingHandlers } = require('../handlers/creator/availabilityPingHandler');
+      registerAvailabilityPingHandlers(bot);
+      logger.info('✓ Availability ping handlers registered');
+    } catch (e) { logger.error(`Availability ping handlers failed: ${e.message}`); }
 
     // ── Telegram → Webapp hangout chat bridge ────────────────────────────────
     // When a message arrives in a linked Telegram group, insert it into
@@ -957,21 +1153,16 @@ const startBot = async () => {
           if (addResult.rowCount > 0) {
             (async () => {
               try {
-                const { rows: grpRows } = await dbQuery('SELECT name, rules FROM hangout_groups WHERE id = $1', [hangoutId]);
+                const { rows: grpRows } = await dbQuery('SELECT name, rules, language_code FROM hangout_groups WHERE id = $1', [hangoutId]);
                 if (!grpRows.length) return;
-                const { name: grpName, rules: grpRules } = grpRows[0];
-                const rulesBlock = grpRules
-                  ? `📋 *Group rules:*\n${grpRules}`
-                  : `No special rules set yet — just respect and good vibes! 🌈`;
-                const displayFirst = firstName || username || 'there';
-                const welcomeText =
-                  `🧜‍♀️ *Cristina AI agent says:*\n\n` +
-                  `Welcome to *${grpName}*, ${displayFirst}! 🎉\n\n` +
-                  `I'm Cristina, your PNPtv AI guide. Here's what you need to know:\n\n` +
-                  `📱 *Use the PNPtv app* for the full experience — live chat, media feed, video calls, and more. This Telegram group mirrors the conversation, but the full features are in the app.\n\n` +
-                  `💡 *Tip:* Photos and videos shared here automatically appear in the group's media feed. Text messages stay in chat. Everything is only visible to members.\n\n` +
-                  `${rulesBlock}\n\n` +
-                  `Questions? Say "Hey Cristina" in the app anytime.`;
+                const { name: grpName, rules: grpRules, language_code: grpLang } = grpRows[0];
+                const displayFirst = (firstName || username || 'there').replace(/[_*`[]/g, '\\$&');
+                const welcomeText = getHangoutJoinWelcomeMessage({
+                  displayFirst,
+                  hangoutName: grpName,
+                  rules: grpRules || null,
+                  lang: grpLang || 'en',
+                });
 
                 const { rows: ins } = await dbQuery(
                   `INSERT INTO chat_messages (room, user_id, username, first_name, content)
@@ -984,6 +1175,17 @@ const startBot = async () => {
                     user_id: '8552451957', username: 'pnptv', first_name: 'PNPtv! News',
                     photo_url: null, content: welcomeText, created_at: ins[0].created_at,
                   });
+                  // Auto-delete after 3 minutes
+                  const msgId = ins[0].id;
+                  setTimeout(async () => {
+                    try {
+                      await dbQuery(
+                        `UPDATE chat_messages SET is_deleted=true, deleted_by='8552451957', deleted_for_all=true WHERE id=$1 AND is_deleted=false`,
+                        [msgId]
+                      );
+                      socketIO.to(room).emit('hangout:message:deleted', { messageId: msgId, deletedBy: '8552451957', forAll: true });
+                    } catch (_) {}
+                  }, 3 * 60 * 1000);
                 }
                 // Also send TG DM
                 if (botInstance && telegramId) {
@@ -1029,17 +1231,21 @@ const startBot = async () => {
           } catch (e) { logger.warn('Bridge: failed to get photo link', { error: e.message }); }
         }
 
-        // Video / video note
+        // Video / video note — Telegram getFile only works for files ≤ 20 MB
         if (msg.video || msg.video_note) {
-          try {
-            const vid = msg.video || msg.video_note;
-            const fileLink = await ctx.telegram.getFileLink(vid.file_id);
-            mediaUrl = fileLink.href || fileLink.toString();
-            mediaType = 'video';
-            mediaMime = vid.mime_type || 'video/mp4';
-            mediaWidth = vid.width;
-            mediaHeight = vid.height;
-          } catch (e) { logger.warn('Bridge: failed to get video link', { error: e.message }); }
+          const vid = msg.video || msg.video_note;
+          if ((vid.file_size || 0) > 20 * 1024 * 1024) {
+            logger.info('Bridge: video too large for TG API, skipping link', { file_size: vid.file_size });
+          } else {
+            try {
+              const fileLink = await ctx.telegram.getFileLink(vid.file_id);
+              mediaUrl = fileLink.href || fileLink.toString();
+              mediaType = 'video';
+              mediaMime = vid.mime_type || 'video/mp4';
+              mediaWidth = vid.width;
+              mediaHeight = vid.height;
+            } catch (e) { logger.warn('Bridge: failed to get video link', { error: e.message }); }
+          }
         }
 
         // Voice / audio
@@ -1498,13 +1704,17 @@ const startBot = async () => {
           } catch (e) { logger.warn('[TG→App DM] Failed to save photo', { error: e.message }); }
         }
         if (msg.video || msg.video_note) {
-          try {
-            const vid = msg.video || msg.video_note;
-            const fileLink = await ctx.telegram.getFileLink(vid.file_id);
-            mediaUrl = await downloadAndSaveDmMedia(fileLink.href || fileLink.toString(), 'video', telegramId, tgMsgId);
-            mediaType = 'video';
-            mediaMime = vid.mime_type || 'video/mp4';
-          } catch (e) { logger.warn('[TG→App DM] Failed to save video', { error: e.message }); }
+          const vid = msg.video || msg.video_note;
+          if ((vid.file_size || 0) > 20 * 1024 * 1024) {
+            logger.info('[TG→App DM] Video too large for TG API, skipping', { file_size: vid.file_size });
+          } else {
+            try {
+              const fileLink = await ctx.telegram.getFileLink(vid.file_id);
+              mediaUrl = await downloadAndSaveDmMedia(fileLink.href || fileLink.toString(), 'video', telegramId, tgMsgId);
+              mediaType = 'video';
+              mediaMime = vid.mime_type || 'video/mp4';
+            } catch (e) { logger.warn('[TG→App DM] Failed to save video', { error: e.message }); }
+          }
         }
         if (msg.voice || msg.audio) {
           try {
@@ -1759,6 +1969,13 @@ const startBot = async () => {
       ['wallOfFameHandlers', () => registerWallOfFameHandlers(bot)],
       ['paymentTutorialHandlers', () => registerPaymentTutorialHandlers(bot)],
       ['supportRoutingHandlers', () => registerSupportRoutingHandlers(bot)],
+      ['groupAdminPanelHandlers', () => registerGroupAdminPanelHandlers(bot)],
+      ['joinRequestGate', () => registerJoinRequestGate(bot)],
+      ['leaderboardHandlers', () => registerLeaderboardHandlers(bot)],
+      ['groupManagerHandlers', () => registerGroupManagerHandlers(bot)],
+      // Wizard buttons (language / age / terms / etc.) — without this the
+      // wizard shows the first screen but tapping buttons is a no-op.
+      ['onboardingHandlers', () => require('../handlers/user/onboarding')(bot)],
     ];
     let hLoaded = 0;
     for (const [name, register] of handlerList) {
@@ -1787,6 +2004,9 @@ const startBot = async () => {
     // Private calls pronto worker — disabled
     // PNP Live worker — disabled
     // --- End disabled user-facing services ---
+    if (process.env.BOT_ONBOARDING_ENABLED === 'true') {
+      logger.info('• Schedulers/workers skipped (BOT_ONBOARDING_ENABLED mode — secondary bot instance)');
+    } else {
     // Initialize membership cleanup service (for daily status updates and channel management)
     MembershipCleanupService.initialize(bot);
     logger.info('✓ Membership cleanup service initialized');
@@ -1877,6 +2097,30 @@ const startBot = async () => {
     // Migration nudge scheduler — DISABLED (spam prevention per admin request)
     logger.info('• Migration nudge scheduler skipped (disabled)');
 
+    // Group digest scheduler — DISABLED (no more app promotion DMs per admin request 2026-07-08)
+    logger.info('• Group digest scheduler skipped (disabled)');
+
+    // Group broadcast scheduler — fires scheduled/recurring group messages (60s interval)
+    try {
+      const GroupBroadcastScheduler = require('./schedulers/groupBroadcastScheduler');
+      const groupBroadcastScheduler = new GroupBroadcastScheduler();
+      groupBroadcastScheduler.setTelegram(bot.telegram);
+      groupBroadcastScheduler.start();
+      global.groupBroadcastScheduler = groupBroadcastScheduler;
+      logger.info('✓ Group broadcast scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Group broadcast scheduler initialization failed: ${error.message}`);
+    }
+
+    // Weekly group activity rank + reward + strike scheduler (Monday 08:00 UTC)
+    try {
+      const { startWeeklyRankScheduler } = require('./schedulers/weeklyRankScheduler');
+      startWeeklyRankScheduler(bot);
+      logger.info('✓ Weekly group rank scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Weekly group rank scheduler initialization failed: ${error.message}`);
+    }
+
     // Initialize X post analytics ingestion scheduler (every 6h)
     try {
       const XAnalyticsIngestionScheduler = require('./schedulers/xAnalyticsIngestionScheduler');
@@ -1899,8 +2143,30 @@ const startBot = async () => {
       logger.warn(`Creator tier upgrade scheduler initialization failed: ${error.message}`);
     }
 
+    // Initialize creator availability ping scheduler (55 min interval)
+    try {
+      const CreatorAvailabilityPingScheduler = require('./schedulers/creatorAvailabilityPingScheduler');
+      const creatorAvailabilityPingScheduler = new CreatorAvailabilityPingScheduler();
+      creatorAvailabilityPingScheduler.start();
+      global.creatorAvailabilityPingScheduler = creatorAvailabilityPingScheduler;
+      logger.info('✓ Creator availability ping scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Creator availability ping scheduler initialization failed: ${error.message}`);
+    }
+
     // Onboarding reminder scheduler — DISABLED (spam prevention per admin request)
     logger.info('• Onboarding reminder scheduler skipped (disabled)');
+
+    // Channel video stuck-processing recovery (1h interval)
+    try {
+      const ChannelVideoStuckScheduler = require('./schedulers/channelVideoStuckScheduler');
+      const channelVideoStuckScheduler = new ChannelVideoStuckScheduler();
+      channelVideoStuckScheduler.start();
+      global.channelVideoStuckScheduler = channelVideoStuckScheduler;
+      logger.info('✓ Channel video stuck scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Channel video stuck scheduler initialization failed: ${error.message}`);
+    }
 
     // Initialize proactive reminder service
     try {
@@ -1939,6 +2205,25 @@ const startBot = async () => {
     // Cristina onboarding reminders — DISABLED (spam prevention per admin request)
     logger.info('• Cristina onboarding reminders skipped (disabled)');
 
+
+    // NowPayments payout reconciler — rolls back earnings stuck in 'in_payout' with no active payout (every 6h)
+    try {
+      const cron = require('node-cron');
+      const { reconcileStuckPayouts } = require('../../services/nowpaymentsPayoutService');
+      cron.schedule('0 */6 * * *', async () => {
+        try {
+          const count = await reconcileStuckPayouts();
+          if (count > 0) {
+            logger.info('[Scheduler] reconcileStuckPayouts: rolled back stuck earnings', { creatorCount: count });
+          }
+        } catch (reconcileErr) {
+          logger.error('[Scheduler] reconcileStuckPayouts failed', { error: reconcileErr.message });
+        }
+      }, { timezone: 'UTC' });
+      logger.info('✓ NowPayments payout reconciler scheduled (every 6h)');
+    } catch (error) {
+      logger.warn(`NowPayments payout reconciler scheduling failed: ${error.message}`);
+    }
 
     // Private calls lifecycle worker (expire held bookings, auto-end overdue calls, no-show detection)
     try {
@@ -1992,18 +2277,29 @@ const startBot = async () => {
       }
     }
 
+    } // end BOT_ONBOARDING_ENABLED guard
+
     // Register commands with Telegram
     try {
-      const commands = [
-        { command: 'start', description: 'Start the bot and select your language' },
-        { command: 'admin', description: 'Open admin panel (admin only)' },
-        { command: 'mono', description: 'Ask Mono — AI business assistant (admin only)' },
-        { command: 'stats', description: 'View real-time statistics (admin only)' },
-        { command: 'viewas', description: 'Preview as different user type (admin only)' },
-        { command: 'support', description: 'Get help and support' },
-        { command: 'pay', description: 'How to pay — step-by-step tutorials' },
-        { command: 'about', description: 'Learn about PNPtv' },
-      ];
+      const commands = process.env.BOT_ONBOARDING_ENABLED === 'true'
+        ? [
+            { command: 'start', description: 'Register and join the community' },
+            { command: 'stats', description: 'Group migration stats (admins)' },
+            { command: 'progress', description: 'See migration progress' },
+            { command: 'leaderboard', description: 'PNPtv community leaderboard' },
+            { command: 'announce', description: 'Announce to group + PNPtv (admins)' },
+            { command: 'challenge', description: 'View or set the current group challenge' },
+          ]
+        : [
+            { command: 'start', description: 'Start the bot and select your language' },
+            { command: 'admin', description: 'Open admin panel (admin only)' },
+            { command: 'mono', description: 'Ask Mono — AI business assistant (admin only)' },
+            { command: 'stats', description: 'View real-time statistics (admin only)' },
+            { command: 'viewas', description: 'Preview as different user type (admin only)' },
+            { command: 'support', description: 'Get help and support' },
+            { command: 'pay', description: 'How to pay — step-by-step tutorials' },
+            { command: 'about', description: 'Learn about PNPtv' },
+          ];
       await bot.telegram.setMyCommands(commands);
       logger.info('✓ Bot commands registered with Telegram:', commands.map(c => `/${c.command}`).join(', '));
     } catch (error) {
@@ -2023,6 +2319,7 @@ const startBot = async () => {
         'callback_query',
         'my_chat_member',  // Bot added/removed from group
         'chat_member',     // User joined/left group (for welcome messages)
+        'chat_join_request', // Join-approval gate (see joinRequestGate.js)
         'channel_post',
         'edited_message',
         'message_reaction', // TG emoji reactions on messages (for hangout bridge + wallOfFame)

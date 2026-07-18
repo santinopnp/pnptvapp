@@ -1,90 +1,8 @@
 const logger = require('../../../utils/logger');
 const { getPool } = require('../../../config/postgres');
 const { getRedis } = require('../../../config/redis');
-const axios = require('axios');
 const restreamerService = require('../../../services/restreamerService');
 const IdentityVerificationService = require('../../../services/identityVerificationService');
-
-/**
- * Module-level cache for the Restreamer auth token.
- * Tokens typically last 1 hour; we cache for 55 minutes to avoid expiry mid-request.
- */
-const _restreamerTokenCache = {
-  token: null,
-  expiresAt: 0,
-  TTL_MS: 55 * 60 * 1000, // 55 minutes
-};
-
-/**
- * Authenticate with the Restreamer API and return a Bearer token.
- * Results are cached for 55 minutes to avoid hitting the login endpoint on every request.
- * Returns null if credentials are not configured or login fails (non-fatal).
- *
- * @param {string} restreamerUrl - Internal Restreamer base URL (e.g. http://restreamer:8080)
- * @returns {Promise<string|null>}
- */
-async function getRestreamerToken(restreamerUrl) {
-  const user = process.env.RESTREAMER_USER;
-  const pass = process.env.RESTREAMER_PASSWORD;
-  // Use strict undefined check — empty-string credentials are still valid and must be sent.
-  if (user === undefined || pass === undefined) return null;
-
-  // Return cached token if still valid.
-  if (_restreamerTokenCache.token && Date.now() < _restreamerTokenCache.expiresAt) {
-    return _restreamerTokenCache.token;
-  }
-
-  try {
-    const resp = await axios.post(`${restreamerUrl}/api/login`, {
-      username: user,
-      password: pass,
-    }, { timeout: 5000 });
-    const token = resp.data?.access_token ?? null;
-    if (token) {
-      _restreamerTokenCache.token = token;
-      _restreamerTokenCache.expiresAt = Date.now() + _restreamerTokenCache.TTL_MS;
-    }
-    return token;
-  } catch (err) {
-    // Clear stale cache on auth failure so the next request retries immediately.
-    _restreamerTokenCache.token = null;
-    _restreamerTokenCache.expiresAt = 0;
-    logger.warn(`Restreamer login failed: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * Fetch all ingest processes from Restreamer.
- * Throws a typed error on failure so callers can return a 503 to the client.
- * The error has a `restreamerUnavailable` flag set to true.
- *
- * @param {string} restreamerUrl
- * @param {string|null} token
- * @returns {Promise<Array>}
- */
-async function fetchRestreamerProcesses(restreamerUrl, token) {
-  try {
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const resp = await axios.get(`${restreamerUrl}/api/v3/process`, {
-      headers,
-      timeout: 5000,
-    });
-    if (resp.status !== 200) {
-      logger.warn(`Restreamer process list returned status ${resp.status}`);
-      const err = new Error(`Restreamer returned status ${resp.status}`);
-      err.restreamerUnavailable = true;
-      throw err;
-    }
-    return (resp.data || []).filter(p => p.id?.startsWith('restreamer-ui:ingest:'));
-  } catch (err) {
-    if (!err.restreamerUnavailable) {
-      logger.warn(`Restreamer process fetch failed: ${err.message}`);
-      err.restreamerUnavailable = true;
-    }
-    throw err;
-  }
-}
 
 /**
  * Extract the RTMP stream name from a Restreamer process config input address.
@@ -115,6 +33,11 @@ function sanitizeRefId(refId) {
   return refId;
 }
 
+function parseBitrateKbps(bitrateStr) {
+  const m = String(bitrateStr || '').match(/([\d.]+)\s*kbits/i);
+  return m ? parseFloat(m[1]) : 0;
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/webapp/live/streams
 // Proxies to Restreamer API and returns active HLS streams.
@@ -125,12 +48,10 @@ const listStreams = async (req, res) => {
   }
   const user = req.session.user;
 
-  const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
   const publicUrl = (process.env.RESTREAMER_PUBLIC_URL || 'https://live.pnptv.app').replace(/\/$/, '');
 
   try {
-    const token = await getRestreamerToken(restreamerUrl);
-    const processes = await fetchRestreamerProcesses(restreamerUrl, token);
+    const processes = await restreamerService.listProcesses();
 
     let baseStreams = processes
       .map((p) => {
@@ -150,28 +71,24 @@ const listStreams = async (req, res) => {
       })
       .filter(Boolean);
 
-    // Filter out streams owned by creators who have not completed onboarding.
-    // Admins and superadmins see all streams regardless.
+    // Keep only streams that belong to a verified, active creator in DB.
+    // Orphaned channels (no matching DB user) are excluded for non-admins.
     if (!['admin', 'superadmin'].includes(user.role) && baseStreams.length > 0) {
       const refIds = baseStreams.map((s) => s.id);
-      const { rows: blockedRows } = await getPool().query(
+      const { rows: allowedRows } = await getPool().query(
         `SELECT live_channel FROM users
          WHERE live_channel = ANY($1::text[])
-           AND NOT (
-             is_deleted = FALSE
-             AND creator_status = 'active'
-             AND creator_locked = FALSE
-             AND (
-               identity_verified = TRUE
-               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-             )
+           AND is_deleted = FALSE
+           AND creator_status = 'active'
+           AND creator_locked = FALSE
+           AND (
+             identity_verified = TRUE
+             OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
            )`,
         [refIds]
       );
-      if (blockedRows.length > 0) {
-        const blockedRefs = new Set(blockedRows.map((r) => r.live_channel));
-        baseStreams = baseStreams.filter((s) => !blockedRefs.has(s.id));
-      }
+      const allowedRefs = new Set(allowedRows.map((r) => r.live_channel));
+      baseStreams = baseStreams.filter((s) => allowedRefs.has(s.id));
     }
 
     // Augment streams with metadata and host info from Redis
@@ -325,16 +242,13 @@ const getRtmpKey = async (req, res) => {
     }
 
     // Fetch the process config from Restreamer to extract the RTMP stream name.
-    let processes;
+    let proc;
     try {
-      const token = await getRestreamerToken(restreamerUrl);
-      processes = await fetchRestreamerProcesses(restreamerUrl, token);
+      proc = await restreamerService.getProcess(channelRef);
     } catch (fetchErr) {
       logger.warn(`getRtmpKey: Restreamer unavailable for user ${user.id}: ${fetchErr.message}`);
       return res.status(503).json({ success: false, error: 'Streaming service temporarily unavailable' });
     }
-
-    const proc = processes.find(p => p.reference === channelRef);
 
     if (!proc) {
       logger.warn(`getRtmpKey: user ${user.id} assigned channel '${channelRef}' not found in Restreamer`);
@@ -361,10 +275,12 @@ const getRtmpKey = async (req, res) => {
     const safeRef = sanitizeRefId(channelRef);
     const hlsUrl = safeRef ? `${restreamerPublicUrl}/memfs/${safeRef}.m3u8` : null;
 
+    const rtmpToken = process.env.RESTREAMER_RTMP_TOKEN;
+    const streamKey = rtmpToken ? `${streamName}?token=${rtmpToken}` : streamName;
     return res.json({
       success: true,
       rtmpUrl,
-      streamKey: streamName,    // What the user enters in OBS as "Stream Key"
+      streamKey,                // What the user enters in OBS as "Stream Key"
       channelRef,               // The Restreamer channel slug (e.g. 'pnptv-frank')
       hlsUrl,                   // The HLS playback URL for this channel
       isLive: proc.state?.exec === 'running',
@@ -470,7 +386,9 @@ const provisionChannel = async (req, res) => {
       const safeRef = sanitizeRefId(dbUser.live_channel);
       const hlsUrl = safeRef ? `${restreamerPublicUrl}/memfs/${safeRef}.m3u8` : null;
 
-      const existingStreamKey = safeRef && safeRef.startsWith('pnptv-') ? safeRef.slice('pnptv-'.length) : safeRef;
+      const existingStreamName = safeRef && safeRef.startsWith('pnptv-') ? safeRef.slice('pnptv-'.length) : safeRef;
+      const rtmpToken = process.env.RESTREAMER_RTMP_TOKEN;
+      const existingStreamKey = rtmpToken ? `${existingStreamName}?token=${rtmpToken}` : existingStreamName;
       logger.info(`provisionChannel: user ${user.id} already has channel '${dbUser.live_channel}' — returning existing`);
       return res.json({
         success: true,
@@ -535,7 +453,9 @@ const provisionChannel = async (req, res) => {
     const safeRef = sanitizeRefId(finalRef);
     const hlsUrl = safeRef ? `${restreamerPublicUrl}/memfs/${safeRef}.m3u8` : null;
 
-    const newStreamKey = safeRef && safeRef.startsWith('pnptv-') ? safeRef.slice('pnptv-'.length) : safeRef;
+    const newStreamName = safeRef && safeRef.startsWith('pnptv-') ? safeRef.slice('pnptv-'.length) : safeRef;
+    const rtmpToken = process.env.RESTREAMER_RTMP_TOKEN;
+    const newStreamKey = rtmpToken ? `${newStreamName}?token=${rtmpToken}` : newStreamName;
     logger.info(`provisionChannel: user ${user.id} provisioned channel '${finalRef}'`);
     return res.json({
       success: true,
@@ -578,21 +498,17 @@ const assignChannel = async (req, res) => {
     return res.status(400).json({ error: 'channelRef contains invalid characters' });
   }
 
-  const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
-
   try {
     // Validate that the channel exists in Restreamer (unless unassigning).
     if (channelRef) {
-      let processes;
+      let proc;
       try {
-        const token = await getRestreamerToken(restreamerUrl);
-        processes = await fetchRestreamerProcesses(restreamerUrl, token);
+        proc = await restreamerService.getProcess(channelRef);
       } catch (fetchErr) {
         logger.warn(`assignChannel: Restreamer unavailable: ${fetchErr.message}`);
         return res.status(503).json({ error: 'Streaming service temporarily unavailable' });
       }
-      const exists = processes.some(p => p.reference === channelRef);
-      if (!exists) {
+      if (!proc) {
         return res.status(404).json({ error: 'Channel not found' });
       }
     }
@@ -638,14 +554,13 @@ const listChannels = async (req, res) => {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
   const publicUrl = (process.env.RESTREAMER_PUBLIC_URL || 'https://live.pnptv.app').replace(/\/$/, '');
 
   try {
-    let token, userRows;
+    let processes, userRows;
     try {
-      [token, userRows] = await Promise.all([
-        getRestreamerToken(restreamerUrl),
+      [processes, userRows] = await Promise.all([
+        restreamerService.listProcesses(),
         getPool().query(
           `SELECT id, username, first_name, last_name, live_channel
            FROM users
@@ -658,14 +573,6 @@ const listChannels = async (req, res) => {
         return res.status(503).json({ error: 'Streaming service temporarily unavailable' });
       }
       throw fetchErr;
-    }
-
-    let processes;
-    try {
-      processes = await fetchRestreamerProcesses(restreamerUrl, token);
-    } catch (fetchErr) {
-      logger.warn(`listChannels: Restreamer process fetch failed: ${fetchErr.message}`);
-      return res.status(503).json({ error: 'Streaming service temporarily unavailable' });
     }
 
     // Build a map of channelRef -> assigned user
@@ -908,8 +815,6 @@ const initiateRaid = async (req, res) => {
     logger.warn('initiateRaid: Redis cooldown check failed (continuing)', { userId: user.id, error: cooldownErr.message });
   }
 
-  const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
-
   try {
     // Look up the raider's assigned channel
     const { rows } = await getPool().query(
@@ -925,20 +830,20 @@ const initiateRaid = async (req, res) => {
     }
 
     // Fetch processes to validate liveness
-    let processes;
+    let sourceProc, targetProc;
     try {
-      const token = await getRestreamerToken(restreamerUrl);
-      processes = await fetchRestreamerProcesses(restreamerUrl, token);
+      [sourceProc, targetProc] = await Promise.all([
+        restreamerService.getProcess(sourceChannelRef),
+        restreamerService.getProcess(targetChannelRef),
+      ]);
     } catch (fetchErr) {
       return res.status(503).json({ success: false, error: 'Streaming service temporarily unavailable' });
     }
 
-    const sourceProc = processes.find(p => p.reference === sourceChannelRef);
     if (!sourceProc || sourceProc.state?.exec !== 'running') {
       return res.status(400).json({ success: false, error: 'Your stream must be live to initiate a raid' });
     }
 
-    const targetProc = processes.find(p => p.reference === targetChannelRef);
     if (!targetProc || targetProc.state?.exec !== 'running') {
       return res.status(400).json({ success: false, error: 'Target stream is not currently live' });
     }
@@ -1022,11 +927,9 @@ const setHostedChannel = async (req, res) => {
     }
 
     // Validate target channel exists in Restreamer (non-fatal if unavailable)
-    const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
     try {
-      const token = await getRestreamerToken(restreamerUrl);
-      const processes = await fetchRestreamerProcesses(restreamerUrl, token);
-      if (!processes.some(p => p.reference === targetChannelRef)) {
+      const targetProc = await restreamerService.getProcess(targetChannelRef);
+      if (!targetProc) {
         return res.status(404).json({ success: false, error: 'Target channel not found' });
       }
     } catch {
@@ -1241,14 +1144,34 @@ const buySlotTicket = async (req, res) => {
         }
         const newBalance = debitResult.rows[0].balance_tokens;
 
-        await client.query(
+        // HIGH-05: Use RETURNING id to detect ON CONFLICT DO NOTHING no-ops.
+        // If the row was already inserted by a concurrent request, rollback the debit
+        // and return success without double-charging the wallet.
+        const ticketInsert = await client.query(
           `INSERT INTO live_show_tickets (slot_id, user_id, price_paid_tokens)
            VALUES ($1, $2, $3)
-           ON CONFLICT (slot_id, user_id) DO NOTHING`,
+           ON CONFLICT (slot_id, user_id) DO NOTHING
+           RETURNING id`,
           [id, userId, price]
         );
 
+        if (ticketInsert.rows.length === 0) {
+          // Conflict: ticket already exists — rollback the wallet debit and return success
+          await client.query('ROLLBACK');
+          logger.info('buySlotTicket (tokens): conflict — ticket already owned, wallet debit rolled back', { userId, slotId: id });
+          return res.json({ success: true, hasTicket: true, alreadyOwned: true });
+        }
+
         await client.query('COMMIT');
+
+        // Invalidate both wallet cache keys (see tokenService/DashTokenService).
+        try {
+          const { cache } = require('../../../config/redis');
+          await Promise.all([
+            cache.del(`wallet:${userId}`),
+            cache.del(`wallet:obj:${userId}`),
+          ]);
+        } catch (_) { /* best-effort */ }
 
         logger.info('Live ticket purchased (tokens)', { userId, slotId: id, price });
 
@@ -1808,6 +1731,10 @@ const broadcastLiveNow = async (req, res) => {
     } catch { /* non-fatal */ }
 
     const bot = req.app.get('bot') || null;
+    // broadcastGoingLive fans out DMs + push + feed post + linked-group posts
+    // (all with the same branded snapshot). Group notification lives inside the
+    // service now (goingLiveBroadcastService.notifyLinkedGroups) so both the
+    // manual trigger and the auto stream:started path stay in sync.
     const result = await goingLiveBroadcastService.broadcastGoingLive(bot, creatorId, channelRef, { message: customMessage });
 
     logger.info('broadcastLiveNow: manual trigger', { creatorId, channelRef, ...result });
@@ -2388,17 +2315,17 @@ const getStreamHealth = async (req, res) => {
   }
 
   // ── Build health payload from process data ────────────────────────────────
-  // Restreamer v3 process state structure:
+  // Restreamer v3 actual state structure (verified against live API):
   //   proc.state.exec          — 'running' | 'idle' | 'failed' | 'killed' | 'starting'
-  //   proc.state.runtime       — FFmpeg progress object (populated when running)
-  //     .speed                 — playback speed multiplier (string like "1x")
+  //   proc.state.progress      — FFmpeg progress object (populated when running)
+  //     .bitrate_kbit          — total input bitrate in kbps (number)
   //     .fps                   — current frames per second (number)
-  //     .bitrate               — input bitrate string (e.g. "2500.0kbits/s")
-  //     .time                  — duration processed in seconds
+  //     .time                  — duration processed in seconds (number)
   //   proc.state.last_logline  — last FFmpeg log line (error info when failed)
+  // NOTE: proc.state.runtime does not exist in Restreamer v2/v3; field is 'progress'.
 
   const execState = proc?.state?.exec || 'idle';
-  const runtime = proc?.state?.runtime || {};
+  const progress = proc?.state?.progress || {};
 
   // Derive inputState
   let inputState;
@@ -2410,21 +2337,14 @@ const getStreamHealth = async (req, res) => {
     inputState = 'idle';
   }
 
-  // Parse bitrate string: "2500.0kbits/s" → 2500
-  let bitrateKbps = 0;
-  if (runtime.bitrate) {
-    const bitrateStr = String(runtime.bitrate);
-    const match = bitrateStr.match(/([\d.]+)\s*kbits/i);
-    if (match) {
-      bitrateKbps = Math.round(parseFloat(match[1]));
-    }
-  }
+  // bitrate_kbit is a number (e.g. 5932.163)
+  const bitrateKbps = typeof progress.bitrate_kbit === 'number' ? Math.round(progress.bitrate_kbit) : 0;
 
   // Parse fps
-  const fps = typeof runtime.fps === 'number' ? Math.round(runtime.fps) : 0;
+  const fps = typeof progress.fps === 'number' ? Math.round(progress.fps) : 0;
 
-  // Uptime: proc.state.runtime.time is seconds elapsed in the current process run
-  const uptimeSeconds = typeof runtime.time === 'number' ? Math.floor(runtime.time) : 0;
+  // Uptime: progress.time is seconds elapsed in the current process run
+  const uptimeSeconds = typeof progress.time === 'number' ? Math.floor(progress.time) : 0;
 
   // lastInputAt: if process is running we set it to now; otherwise null
   const lastInputAt = execState === 'running' ? new Date().toISOString() : null;
@@ -2463,7 +2383,7 @@ const getCreatorEligibility = async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT role, creator_status, creator_locked, identity_verified,
+      `SELECT role, creator_status, creator_role, creator_locked, identity_verified,
               identity_verification_required_by, live_channel, followers_count
        FROM users WHERE id = $1`,
       [userId]
@@ -2555,14 +2475,24 @@ const getCreatorEligibility = async (req, res) => {
 
     const canGoLive = hasActivePerformerRow && !isLocked && hasLiveChannel && is2257Compliant;
 
-    // Exclusive content monetization requires Ice tier threshold (10 followers)
-    const canPostExclusive = hasActivePerformerRow && followersCount >= 10;
+    // Exclusive posts require: active status + creator/both role + ≥10 followers.
+    // Mirrors the exact gate in socialController.js — the performers table is NOT
+    // required here (it's only used for stream:start and private calls).
+    const hasCreatorRole = user.creator_role === 'creator' || user.creator_role === 'both';
+    const canPostExclusive = user.creator_status === 'active' && hasCreatorRole && followersCount >= 10;
 
-    if (!canPostExclusive && hasActivePerformerRow) {
-      issueDetails.push({
-        code: 'low_followers',
-        message: 'Reach 10 followers on your free profile to unlock exclusive content monetization.',
-      });
+    if (!canPostExclusive && user.creator_status === 'active') {
+      if (!hasCreatorRole) {
+        issueDetails.push({
+          code: 'creator_role_required',
+          message: 'Exclusive content requires the Creator role. Performer-only accounts cannot publish exclusive posts.',
+        });
+      } else {
+        issueDetails.push({
+          code: 'low_followers',
+          message: 'Reach 10 followers on your free profile to unlock exclusive content monetization.',
+        });
+      }
     }
 
     return res.json({

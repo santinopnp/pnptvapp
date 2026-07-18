@@ -6,16 +6,12 @@ import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
 import {
   getCmsProfile,
   updateCmsProfile,
-  listCmsContent,
-  createCmsContent,
-  updateCmsContent,
-  deleteCmsContent,
   listCmsShows,
   createCmsShow,
   updateCmsShow,
   deleteCmsShow,
-  uploadCmsMedia,
   createSocialPost,
+  createXEmbedPost,
   getOwnChannels,
   createCreatorChannel,
   updateCreatorChannel,
@@ -31,13 +27,15 @@ import {
   listOwnCreatorMedia,
   updateOwnCreatorMedia,
   deleteOwnCreatorMedia,
+  sharePostToHangouts,
+  getHangoutGroups,
   type CmsPerformer,
-  type CmsContent,
   type CmsShow,
   type CreatorChannel,
   type SocialPostItem,
   type ChannelVideo,
   type CreatorMediaItem,
+  type HangoutGroup,
 } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 
@@ -82,11 +80,10 @@ export function ContentTab({ t }: ContentTabProps) {
 
   // CMS data
   const [cmsPerformer, setCmsPerformer] = useState<CmsPerformer | null>(null);
-  const [cmsContent, setCmsContent] = useState<CmsContent[]>([]);
   const [cmsShows, setCmsShows] = useState<CmsShow[]>([]);
   const [cmsLoading, setCmsLoading] = useState(true);
   const [cmsError, setCmsError] = useState<string | null>(null);
-  const [cmsContentSection, setCmsContentSection] = useState<"profile" | "content" | "shows" | "channels">("profile");
+  const [cmsContentSection, setCmsContentSection] = useState<"profile" | "shows" | "channels">("profile");
 
   // ── Channels state ──
   const [ownChannels, setOwnChannels] = useState<CreatorChannel[]>([]);
@@ -133,20 +130,6 @@ export function ContentTab({ t }: ContentTabProps) {
   const [cmsProfileSaving, setCmsProfileSaving] = useState(false);
   const [cmsProfileStatus, setCmsProfileStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  // Content form (create/edit)
-  const [contentModal, setContentModal] = useState<{ mode: "create" | "edit"; item?: CmsContent } | null>(null);
-  const [contentForm, setContentForm] = useState<Partial<CmsContent>>({});
-  const [contentSaving, setContentSaving] = useState(false);
-  const [contentUploadFile, setContentUploadFile] = useState<File | null>(null);
-  const [contentUploadProgress, setContentUploadProgress] = useState(false);
-  const [contentSaveError, setContentSaveError] = useState<string | null>(null);
-  const [contentDeleteTarget, setContentDeleteTarget] = useState<number | null>(null);
-
-  // Content pagination
-  const [contentPage, setContentPage] = useState(1);
-  const [contentTotal, setContentTotal] = useState(0);
-  const CONTENT_PAGE_SIZE = 20;
-
   // Show form (create/edit)
   const [showModal, setShowModal] = useState<{ mode: "create" | "edit"; item?: CmsShow } | null>(null);
   const [showForm, setShowForm] = useState<Partial<CmsShow>>({});
@@ -165,12 +148,24 @@ export function ContentTab({ t }: ContentTabProps) {
   const [sharePosting, setSharePosting] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
 
+  // X embed modal
+  const [xEmbedOpen, setXEmbedOpen] = useState(false);
+  const [xEmbedUrl, setXEmbedUrl] = useState("");
+  const [xEmbedPosting, setXEmbedPosting] = useState(false);
+  const [xEmbedError, setXEmbedError] = useState<string | null>(null);
+  const [xEmbedSuccess, setXEmbedSuccess] = useState(false);
+  const [xEmbedTarget, setXEmbedTarget] = useState<'feed' | 'channel' | 'hangout'>('feed');
+  const [xEmbedChannelId, setXEmbedChannelId] = useState<number | null>(null);
+  const [xEmbedHangoutId, setXEmbedHangoutId] = useState<number | null>(null);
+  const [ownHangouts, setOwnHangouts] = useState<HangoutGroup[]>([]);
+  const [hangoutsLoaded, setHangoutsLoaded] = useState(false);
+
   // Load CMS data (initial: profile + shows + first content page)
   useEffect(() => {
     setCmsLoading(true);
     setCmsError(null);
-    Promise.all([getCmsProfile(), listCmsContent({ page: 1, limit: CONTENT_PAGE_SIZE }), listCmsShows()])
-      .then(([prof, cont, shows]) => {
+    Promise.all([getCmsProfile(), listCmsShows()])
+      .then(([prof, shows]) => {
         setCmsPerformer(prof.performer);
         setCmsProfileForm({
           name: prof.performer.name,
@@ -179,13 +174,9 @@ export function ContentTab({ t }: ContentTabProps) {
           categories: prof.performer.categories ?? [],
           is_available: prof.performer.is_available,
           availability_message: prof.performer.availability_message ?? "",
-          base_price_cents: prof.performer.base_price_cents ?? null,
-          currency: prof.performer.currency ?? "USD",
-          timezone: prof.performer.timezone ?? "",
           social_links: prof.performer.social_links ?? {},
+          status: prof.performer.status ?? "draft",
         });
-        setCmsContent(cont.content);
-        setContentTotal((cont.meta?.filter_count as number) || (cont.meta?.total_count as number) || cont.content.length);
         setCmsShows(shows.shows);
       })
       .catch((err) => setCmsError(err.message || t.errorFailedLoadCms))
@@ -308,20 +299,6 @@ export function ContentTab({ t }: ContentTabProps) {
     }
   };
 
-  // Re-fetch content when page changes (skip page 1 — already fetched by initial load effect)
-  useEffect(() => {
-    if (contentPage === 1) return;
-    setCmsLoading(true);
-    setCmsError(null);
-    listCmsContent({ page: contentPage, limit: CONTENT_PAGE_SIZE })
-      .then((res) => {
-        setCmsContent(res.content);
-        setContentTotal((res.meta?.filter_count as number) || (res.meta?.total_count as number) || res.content.length);
-      })
-      .catch((err) => setCmsError(err instanceof Error ? err.message : t.errorFailedLoadCms))
-      .finally(() => setCmsLoading(false));
-  }, [contentPage, t.errorFailedLoadCms]);
-
   // ── Profile handlers ──
   const handleCmsProfileSave = async () => {
     setCmsProfileSaving(true);
@@ -329,63 +306,12 @@ export function ContentTab({ t }: ContentTabProps) {
     try {
       const res = await updateCmsProfile(cmsProfileForm);
       setCmsPerformer(res.performer);
+      setCmsProfileForm((f) => ({ ...f, status: res.performer.status ?? "draft" }));
       setCmsProfileStatus({ ok: true, msg: t.profileUpdated });
     } catch (err) {
       setCmsProfileStatus({ ok: false, msg: err instanceof Error ? err.message : t.profileSaveFailed });
     } finally {
       setCmsProfileSaving(false);
-    }
-  };
-
-  // ── Content handlers ──
-  const openContentCreate = () => {
-    setContentForm({ status: "draft", type: "video", tags: [], is_premium: false });
-    setContentUploadFile(null);
-    setContentModal({ mode: "create" });
-  };
-
-  const openContentEdit = (item: CmsContent) => {
-    setContentForm({ ...item });
-    setContentUploadFile(null);
-    setContentModal({ mode: "edit", item });
-  };
-
-  const handleContentSave = async () => {
-    if (!contentForm.title || !contentForm.type) return;
-    setContentSaving(true);
-    try {
-      let mediaUrl = contentForm.media_url;
-      if (contentUploadFile) {
-        setContentUploadProgress(true);
-        const uploaded = await uploadCmsMedia(contentUploadFile);
-        mediaUrl = uploaded.url;
-        setContentUploadProgress(false);
-      }
-      setContentSaveError(null);
-      const payload = { ...contentForm, media_url: mediaUrl, status: "draft" as const };
-      if (contentModal?.mode === "edit" && contentModal.item) {
-        const res = await updateCmsContent(contentModal.item.id, payload);
-        setCmsContent((prev) => prev.map((c) => c.id === res.content.id ? res.content : c));
-      } else {
-        const res = await createCmsContent(payload);
-        setCmsContent((prev) => [res.content, ...prev]);
-      }
-      setContentModal(null);
-    } catch (err) {
-      setContentSaveError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setContentSaving(false);
-      setContentUploadProgress(false);
-    }
-  };
-
-  const confirmContentDelete = async (id: number) => {
-    setContentDeleteTarget(null);
-    try {
-      await deleteCmsContent(id);
-      setCmsContent((prev) => prev.filter((c) => c.id !== id));
-    } catch (err) {
-      setContentSaveError(err instanceof Error ? err.message : "Delete failed");
     }
   };
 
@@ -471,6 +397,55 @@ export function ContentTab({ t }: ContentTabProps) {
       setShareError(err instanceof Error ? err.message : "Failed to post");
     } finally {
       setSharePosting(false);
+    }
+  };
+
+  // ── X embed handler ──
+  const openXEmbedModal = () => {
+    setXEmbedOpen(true);
+    setXEmbedUrl("");
+    setXEmbedError(null);
+    setXEmbedSuccess(false);
+    setXEmbedTarget('feed');
+    setXEmbedChannelId(null);
+    setXEmbedHangoutId(null);
+    if (!hangoutsLoaded) {
+      getHangoutGroups()
+        .then((res) => { setOwnHangouts(res.groups ?? []); setHangoutsLoaded(true); })
+        .catch(() => { setHangoutsLoaded(true); });
+    }
+  };
+
+  const handleXEmbedPublish = async () => {
+    if (!xEmbedUrl.trim()) return;
+    if (xEmbedTarget === 'channel' && !xEmbedChannelId) {
+      setXEmbedError("Please select a channel");
+      return;
+    }
+    if (xEmbedTarget === 'hangout' && !xEmbedHangoutId) {
+      setXEmbedError("Please select a hangout group");
+      return;
+    }
+    setXEmbedPosting(true);
+    setXEmbedError(null);
+    setXEmbedSuccess(false);
+    try {
+      const { post } = await createXEmbedPost(xEmbedUrl.trim());
+      if (xEmbedTarget === 'channel' && xEmbedChannelId) {
+        await assignPostToChannel(post.id, xEmbedChannelId);
+      } else if (xEmbedTarget === 'hangout' && xEmbedHangoutId) {
+        await sharePostToHangouts(post.id, [xEmbedHangoutId]);
+      }
+      setXEmbedSuccess(true);
+      setXEmbedUrl("");
+      setTimeout(() => {
+        setXEmbedOpen(false);
+        setXEmbedSuccess(false);
+      }, 1800);
+    } catch (err) {
+      setXEmbedError(err instanceof Error ? err.message : "Failed to embed tweet");
+    } finally {
+      setXEmbedPosting(false);
     }
   };
 
@@ -767,18 +742,31 @@ export function ContentTab({ t }: ContentTabProps) {
             <p className="text-sm font-semibold text-white">Fotos y Videos de Perfil</p>
             <p className="text-xs text-white/40 mt-0.5">Estas aparecen en tu perfil público</p>
           </div>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadState?.uploading === true}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-opacity disabled:opacity-40"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            aria-label="Agregar foto o video al perfil"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            Agregar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openXEmbedModal}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 transition-colors hover:text-white"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+              aria-label="Embed X post"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+              Embed X
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadState?.uploading === true}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-opacity disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              aria-label="Agregar foto o video al perfil"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Agregar
+            </button>
+          </div>
           {/* Hidden file input — no size limit; backend validates */}
           <input
             ref={fileInputRef}
@@ -961,7 +949,7 @@ export function ContentTab({ t }: ContentTabProps) {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {profileMedia.map((item) => {
               const isToggling = togglingMediaId === item.id;
-              const thumb = item.thumbUrl || item.url;
+              const thumb = item.type === "video" ? item.thumbUrl : (item.thumbUrl || item.url);
               return (
                 <div
                   key={item.id}
@@ -978,9 +966,15 @@ export function ContentTab({ t }: ContentTabProps) {
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
-                      </svg>
+                      {item.type === "video" ? (
+                        <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                        </svg>
+                      )}
                     </div>
                   )}
 
@@ -1069,7 +1063,7 @@ export function ContentTab({ t }: ContentTabProps) {
 
       {/* Sub-nav */}
       <div className="flex gap-2 flex-wrap">
-        {(["profile", "content", "shows", "channels"] as const).map((s) => (
+        {(["profile", "shows", "channels"] as const).map((s) => (
           <button
             key={s}
             onClick={() => setCmsContentSection(s)}
@@ -1079,7 +1073,7 @@ export function ContentTab({ t }: ContentTabProps) {
               : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)" }
             }
           >
-            {s === "profile" ? t.subNavProfile : s === "content" ? t.subNavContent : s === "shows" ? t.subNavShows : "Channels"}
+            {s === "profile" ? t.subNavProfile : s === "shows" ? t.subNavShows : "Channels"}
           </button>
         ))}
       </div>
@@ -1131,27 +1125,6 @@ export function ContentTab({ t }: ContentTabProps) {
                 className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none"
               />
             </div>
-            <div>
-              <label className="block text-xs text-white/50 mb-1">{t.fieldBasePriceCents}</label>
-              <input
-                type="number"
-                value={cmsProfileForm.base_price_cents ?? ""}
-                onChange={(e) => setCmsProfileForm((p) => ({ ...p, base_price_cents: Number(e.target.value) || null }))}
-                className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-white/50 mb-1">{t.fieldCurrency}</label>
-              <select
-                value={cmsProfileForm.currency ?? "USD"}
-                onChange={(e) => setCmsProfileForm((p) => ({ ...p, currency: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-              >
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="COP">COP</option>
-              </select>
-            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -1189,82 +1162,6 @@ export function ContentTab({ t }: ContentTabProps) {
           >
             {cmsProfileSaving ? t.savingProfile : t.saveProfile}
           </button>
-        </div>
-      )}
-
-      {/* ── Content Library Section ── */}
-      {cmsContentSection === "content" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-white">{t.contentLibraryTitle(cmsContent.length)}</p>
-            <button
-              onClick={openContentCreate}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
-              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            >
-              {t.newItemBtn}
-            </button>
-          </div>
-
-          {cmsContent.length === 0 && (
-            <div className="glass-card-sm p-6 text-center">
-              <p className="text-sm text-white/40">{t.noContentYet}</p>
-            </div>
-          )}
-
-          {cmsContent.map((item) => (
-            <div key={item.id} className="glass-card-sm p-4 flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-medium text-white truncate">{item.title}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0" style={{
-                    background: item.status === "published" ? "rgba(94,209,196,0.15)" : "rgba(255,255,255,0.06)",
-                    color: item.status === "published" ? "#5ED1C4" : "#8E8E93",
-                  }}>{item.status}</span>
-                  {item.is_premium && <span className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A" }}>{t.primeBadge}</span>}
-                </div>
-                <p className="text-xs text-white/40">
-                  {item.type === "video" ? "🎬" : item.type === "audio" ? "🎵" : "🎙"} {item.type}{item.duration_seconds ? ` · ${Math.round(item.duration_seconds / 60)}m` : ""}
-                </p>
-              </div>
-              <div className="flex gap-2 flex-shrink-0">
-                <button
-                  onClick={() => openShareModal(
-                    `${item.type === "video" ? "🎬" : item.type === "audio" ? "🎵" : "🎙"} New ${item.type}: "${item.title}"${item.description ? `\n\n${item.description}` : ""}\n\n#PNPtv #Creator`,
-                    item.media_url ?? null,
-                    item.type === "video" ? "video" : item.type === "audio" ? "audio" : null
-                  )}
-                  className="text-xs hover:underline"
-                  style={{ color: "#E69138" }}
-                >
-                  {t.shareBtn}
-                </button>
-                <button onClick={() => openContentEdit(item)} className="text-xs text-pnp-accent hover:underline">{t.editBtn}</button>
-                <button onClick={() => setContentDeleteTarget(item.id)} className="text-xs text-red-400 hover:underline">{t.deleteBtn}</button>
-              </div>
-            </div>
-          ))}
-
-          {/* Pagination */}
-          {contentTotal > CONTENT_PAGE_SIZE && (
-            <div className="flex items-center justify-between mt-4 text-xs text-pnp-textSecondary">
-              <button
-                disabled={contentPage === 1}
-                onClick={() => setContentPage(p => p - 1)}
-                className="px-3 py-1 rounded-lg bg-white/5 disabled:opacity-40 hover:bg-white/10 transition-colors"
-              >
-                Previous
-              </button>
-              <span>Page {contentPage} of {Math.ceil(contentTotal / CONTENT_PAGE_SIZE)}</span>
-              <button
-                disabled={contentPage >= Math.ceil(contentTotal / CONTENT_PAGE_SIZE)}
-                onClick={() => setContentPage(p => p + 1)}
-                className="px-3 py-1 rounded-lg bg-white/5 disabled:opacity-40 hover:bg-white/10 transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -1321,87 +1218,6 @@ export function ContentTab({ t }: ContentTabProps) {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* ── Content Modal (create/edit) ── */}
-      {contentModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }} onClick={() => { setContentModal(null); setContentSaveError(null); }}>
-          <div className="w-full max-w-md rounded-2xl p-5 space-y-4" style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <p className="text-base font-semibold text-white">{contentModal.mode === "create" ? t.newContentTitle : t.editContentTitle}</p>
-              <button onClick={() => setContentModal(null)} className="text-white/40 hover:text-white text-xl leading-none">&times;</button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-white/50 mb-1">{t.fieldTitle}</label>
-                <input value={contentForm.title ?? ""} onChange={(e) => setContentForm((p) => ({ ...p, title: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-white/50 mb-1">{t.fieldType}</label>
-                  <select value={contentForm.type ?? "video"} onChange={(e) => setContentForm((p) => ({ ...p, type: e.target.value as CmsContent["type"] }))}
-                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none">
-                    <option value="video">{t.contentTypeVideo}</option>
-                    <option value="audio">{t.contentTypeAudio}</option>
-                    <option value="podcast">{t.contentTypePodcast}</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-white/50 mb-1">{t.fieldContentStatus}</label>
-                  <span className="text-xs px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-white/60 block">
-                    Draft — published by admin review
-                  </span>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs text-white/50 mb-1">{t.fieldMediaUrl}</label>
-                <input value={contentForm.media_url ?? ""} onChange={(e) => setContentForm((p) => ({ ...p, media_url: e.target.value }))}
-                  placeholder={t.mediaUrlPlaceholder} className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent" />
-              </div>
-              <div>
-                <label className="block text-xs text-white/50 mb-1">{t.fieldUploadFile}</label>
-                <input type="file" accept="video/*,audio/*" onChange={(e) => setContentUploadFile(e.target.files?.[0] ?? null)}
-                  className="w-full text-xs text-white/60 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-white/10 file:text-white/70 hover:file:bg-white/20" />
-                {contentUploadFile && <p className="text-xs text-white/40 mt-1">{contentUploadFile.name}</p>}
-              </div>
-              <div>
-                <label className="block text-xs text-white/50 mb-1">{t.fieldDescription}</label>
-                <textarea rows={2} value={contentForm.description ?? ""} onChange={(e) => setContentForm((p) => ({ ...p, description: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none resize-none" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-white/50 mb-1">{t.fieldDurationSec}</label>
-                  <input type="number" value={contentForm.duration_seconds ?? ""} onChange={(e) => setContentForm((p) => ({ ...p, duration_seconds: Number(e.target.value) || null }))}
-                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none" />
-                </div>
-                <div className="flex items-end pb-2">
-                  <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
-                    <input type="checkbox" checked={!!contentForm.is_premium} onChange={(e) => setContentForm((p) => ({ ...p, is_premium: e.target.checked }))} className="rounded" />
-                    {t.fieldPrimeOnly}
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {contentSaveError && (
-              <div className="px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>
-                {contentSaveError}
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button onClick={handleContentSave} disabled={contentSaving || !contentForm.title || !contentForm.type}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                {contentUploadProgress ? t.uploadingMedia : contentSaving ? t.savingContent : contentModal.mode === "create" ? t.createBtn : t.saveBtn}
-              </button>
-              <button onClick={() => { setContentModal(null); setContentSaveError(null); }} className="px-4 py-2.5 rounded-xl text-sm text-white/60 border border-white/10 hover:bg-white/5">{t.cancelBtn}</button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -1562,6 +1378,125 @@ export function ContentTab({ t }: ContentTabProps) {
                 {sharePosting ? t.postingToFeed : shareModal.postTarget === 'channel' ? 'Post to Channel' : 'Post to Wall'}
               </button>
               <button onClick={() => setShareModal(null)} className="px-4 py-2.5 rounded-xl text-sm text-white/60 border border-white/10 hover:bg-white/5">
+                {t.cancelBtn}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── X Embed Modal ── */}
+      {xEmbedOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }}
+          onClick={() => setXEmbedOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-5 space-y-4"
+            style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-white/70" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+                <p className="text-base font-semibold text-white">Embed X Post</p>
+              </div>
+              <button onClick={() => setXEmbedOpen(false)} className="text-white/40 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+
+            {/* Destination picker */}
+            <div className="flex gap-2">
+              {(["feed", "channel", "hangout"] as const).map((target) => (
+                <button
+                  key={target}
+                  onClick={() => { setXEmbedTarget(target); setXEmbedChannelId(null); setXEmbedHangoutId(null); setXEmbedError(null); }}
+                  className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all border"
+                  style={xEmbedTarget === target
+                    ? { background: "linear-gradient(135deg,#D4007A,#E69138)", color: "#fff", borderColor: "transparent" }
+                    : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)", borderColor: "rgba(255,255,255,0.1)" }
+                  }
+                >
+                  {target === 'feed' ? '🌐 Feed' : target === 'channel' ? '📺 Channel' : '🍻 Hangout'}
+                </button>
+              ))}
+            </div>
+
+            {xEmbedTarget === 'channel' && (
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Select Channel</label>
+                {ownChannels.length === 0 ? (
+                  <p className="text-xs text-white/40">No channels yet.</p>
+                ) : (
+                  <select
+                    value={xEmbedChannelId ?? ""}
+                    onChange={(e) => setXEmbedChannelId(Number(e.target.value) || null)}
+                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
+                  >
+                    <option value="">— Choose a channel —</option>
+                    {ownChannels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {xEmbedTarget === 'hangout' && (
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Select Hangout Group</label>
+                {ownHangouts.length === 0 ? (
+                  <p className="text-xs text-white/40">No hangout groups found.</p>
+                ) : (
+                  <select
+                    value={xEmbedHangoutId ?? ""}
+                    onChange={(e) => setXEmbedHangoutId(Number(e.target.value) || null)}
+                    className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
+                  >
+                    <option value="">— Choose a group —</option>
+                    {ownHangouts.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs text-white/50 mb-1">Tweet URL</label>
+              <input
+                type="url"
+                value={xEmbedUrl}
+                onChange={(e) => { setXEmbedUrl(e.target.value); setXEmbedError(null); }}
+                placeholder="https://x.com/username/status/..."
+                disabled={xEmbedPosting || xEmbedSuccess}
+                className="w-full px-3 py-2.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent disabled:opacity-50"
+              />
+            </div>
+
+            {xEmbedError && (
+              <div className="px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>
+                {xEmbedError}
+              </div>
+            )}
+
+            {xEmbedSuccess && (
+              <div className="px-3 py-2 rounded-lg text-xs text-emerald-300" style={{ background: "rgba(52,211,153,0.1)" }}>
+                {xEmbedTarget === 'channel' ? 'Tweet embedded and posted to your channel.' : xEmbedTarget === 'hangout' ? 'Tweet embedded and shared to hangout.' : 'Tweet embedded and posted to the feed.'}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleXEmbedPublish}
+                disabled={xEmbedPosting || xEmbedSuccess || !xEmbedUrl.trim()}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                {xEmbedPosting ? "Publishing..." : "Publish"}
+              </button>
+              <button
+                onClick={() => setXEmbedOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-sm text-white/60 border border-white/10 hover:bg-white/5"
+              >
                 {t.cancelBtn}
               </button>
             </div>
@@ -1996,20 +1931,19 @@ export function ContentTab({ t }: ContentTabProps) {
                           className="flex items-center gap-3 rounded-lg px-3 py-2.5"
                           style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
                         >
-                          {vid.thumbnail_url ? (
-                            <img
-                              src={vid.thumbnail_url}
-                              alt={vid.title}
-                              className="w-14 h-10 rounded-lg object-cover flex-shrink-0"
-                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                            />
-                          ) : (
-                            <div className="w-14 h-10 rounded-lg flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(255,255,255,0.06)" }}>
-                              <svg className="w-4 h-4 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9A2.25 2.25 0 0013.5 5.25h-9A2.25 2.25 0 002.25 7.5v9A2.25 2.25 0 004.5 18.75z" />
-                              </svg>
-                            </div>
-                          )}
+                          <div className="w-14 h-10 rounded-lg flex-shrink-0 relative overflow-hidden flex items-center justify-center" style={{ background: "rgba(255,255,255,0.06)" }}>
+                            <svg className="w-4 h-4 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9A2.25 2.25 0 0013.5 5.25h-9A2.25 2.25 0 002.25 7.5v9A2.25 2.25 0 004.5 18.75z" />
+                            </svg>
+                            {(vid.gif_url || vid.thumbnail_url) && (
+                              <img
+                                src={vid.gif_url || vid.thumbnail_url!}
+                                alt={vid.title}
+                                className="absolute inset-0 w-full h-full object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                              />
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-white/90 truncate">{vid.title}</p>
                             <div className="flex items-center gap-2 mt-0.5">
@@ -2134,18 +2068,6 @@ export function ContentTab({ t }: ContentTabProps) {
           />
         </div>
       )}
-
-      {/* ── Content Delete Confirm ── */}
-      <ConfirmDialog
-        open={contentDeleteTarget !== null}
-        title={t.deleteContentConfirm}
-        message={t.cannotBeUndone}
-        confirmLabel={t.deleteConfirmBtn}
-        cancelLabel={t.cancelBtn}
-        onConfirm={() => contentDeleteTarget !== null && confirmContentDelete(contentDeleteTarget)}
-        onCancel={() => setContentDeleteTarget(null)}
-        variant="danger"
-      />
 
       {/* ── Show Delete Confirm ── */}
       <ConfirmDialog

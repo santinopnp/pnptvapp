@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, Skeleton } from "@pnptv/ui-kit";
 import {
@@ -120,7 +119,6 @@ function ChannelCard({ overlay, onEdit }: ChannelCardProps) {
 
 export default function StreamManagement() {
   const { isAdmin, isLoading: authLoading } = useAuth();
-  const navigate = useNavigate();
   const t = useI18n().admin;
 
   const [overlays, setOverlays] = useState<StreamOverlay[]>([]);
@@ -181,6 +179,10 @@ export default function StreamManagement() {
           </h1>
           <p className="text-sm text-pnp-textSecondary mt-1">
             {t.streams.subtitle}
+          </p>
+          <p className="text-xs text-pnp-textSecondary/70 mt-1">
+            Video calls: <span className="text-pnp-textPrimary font-medium">LiveKit only</span>.
+            JaaS (8x8.vc) is reserved exclusively for Book-a-Call private sessions (callBookingController).
           </p>
         </div>
         <button

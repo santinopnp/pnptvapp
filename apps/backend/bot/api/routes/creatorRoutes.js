@@ -5,6 +5,7 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const creatorController = require('../controllers/creatorController');
 const cmsCreatorController = require('../controllers/cmsCreatorController');
+const creatorPayoutController = require('../controllers/creatorPayoutController');
 const authGuard = require('../middleware/authGuard');
 const creatorGuard = require('../middleware/creatorGuard');
 const { creatorLockGuard } = require('../middleware/creatorGuard');
@@ -79,6 +80,17 @@ const toggleSubLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// FIX 6: Payout request — 3 per hour per user. Prevents accidental double-submission
+// and limits abuse of the NowPayments payout API quota.
+const payoutRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  message: { success: false, error: 'Too many payout requests. Please wait before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const router = express.Router();
 
 // ── ID document upload for enrollment ────────────────────────────────────────
@@ -86,11 +98,13 @@ const enrollmentUploadDir = path.join(__dirname, '../../../../../public/uploads/
 if (!fs.existsSync(enrollmentUploadDir)) {
   fs.mkdirSync(enrollmentUploadDir, { recursive: true });
 }
+const ALLOWED_ENROLL_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const enrollmentUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, enrollmentUploadDir),
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+      const rawExt = path.extname(file.originalname || '').toLowerCase();
+      const ext = ALLOWED_ENROLL_EXTS.has(rawExt) ? rawExt : '.jpg';
       const uid = req.session?.user?.id || 'u';
       cb(null, `id-${uid}-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
@@ -111,8 +125,9 @@ if (!fs.existsSync(identity2257UploadDir)) {
 const identity2257Upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, identity2257UploadDir),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    filename: (_req, file, cb) => {
+      const rawExt = path.extname(file.originalname || '').toLowerCase();
+      const ext = ALLOWED_ENROLL_EXTS.has(rawExt) ? rawExt : '.jpg';
       cb(null, `id2257-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
   }),
@@ -134,11 +149,12 @@ router.get('/enrollment', authGuard, creatorController.getEnrollment);
 // Legacy direct activation — admin-only; bypasses KYC enrollment flow
 router.post('/activate', adminGuard, creatorController.activateCreator);
 
-router.get('/dashboard', authGuard, creatorController.getDashboard);
+router.get('/dashboard', authGuard, creatorGuard, creatorController.getDashboard);
 
 // Creator wallet routes
 router.get('/wallet', authGuard, creatorController.getWalletAddress);
-router.post('/wallet', authGuard, walletWriteLimiter, creatorController.saveWalletAddress);
+// FIX 5: creatorGuard added — prevents non-creators from writing a wallet address
+router.post('/wallet', authGuard, creatorGuard, walletWriteLimiter, creatorController.saveWalletAddress);
 
 // Creator tier change
 router.post('/change-tier', authGuard, creatorGuard, changeTierLimiter, creatorController.changeTier);
@@ -171,7 +187,7 @@ router.post('/cms/upload', authGuard, creatorGuard, creatorLockGuard, ...cmsCrea
 
 // ── Channel management (active creators) ─────────────────────────────────────
 router.get('/channels', authGuard, creatorController.listOwnChannels);
-router.post('/channels', authGuard, creatorLockGuard, creatorController.createChannel);
+router.post('/channels', authGuard, creatorGuard, creatorLockGuard, creatorController.createChannel);
 router.patch('/channels/:id', authGuard, creatorGuard, creatorLockGuard, creatorController.updateChannel);
 router.delete('/channels/:id', authGuard, creatorGuard, creatorLockGuard, creatorController.deleteChannel);
 
@@ -181,12 +197,17 @@ router.delete('/channels/:id/collaborators', authGuard, creatorGuard, creatorLoc
 
 // ── Milestone routes (auth required) ─────────────────────────────────────────
 // IMPORTANT: must come BEFORE /:creatorId/* param routes
-router.get('/milestones', authGuard, creatorController.getMilestones);
-router.post('/milestones/:id/respond', authGuard, creatorController.respondToMilestone);
+router.get('/milestones', authGuard, creatorGuard, creatorController.getMilestones);
+router.post('/milestones/:id/respond', authGuard, creatorGuard, creatorController.respondToMilestone);
 
 // ── Creator panel: subscribers, consents, X campaigns ────────────────────────
 router.get('/earnings', authGuard, creatorGuard, creatorController.getCreatorEarnings);
+router.get('/payout/balance', authGuard, creatorGuard, creatorPayoutController.getPayoutBalance);
+// FIX 6: payoutRequestLimiter — 3/hr per user prevents double-submission abuse
+router.post('/payout/request', authGuard, creatorGuard, payoutRequestLimiter, creatorPayoutController.requestPayout);
+router.get('/payout/history', authGuard, creatorGuard, creatorPayoutController.getPayoutHistory);
 router.get('/subscribers', authGuard, creatorGuard, creatorController.getMySubscribers);
+router.get('/channel-subscribers', authGuard, creatorGuard, creatorController.getMyChannelSubscribers);
 router.get('/consents', authGuard, creatorGuard, creatorController.getMyConsents);
 router.post('/privacy/accept', authGuard, creatorGuard, creatorController.acceptPrivacyPolicy);
 router.post('/terms/accept', authGuard, creatorGuard, creatorController.acceptCreatorTerms);
@@ -228,10 +249,102 @@ router.get('/2257/records', adminGuard, creatorController.list2257Records);
 router.post('/2257/records/:userId/approve', adminGuard, creatorController.approve2257);
 router.post('/2257/records/:userId/reject', adminGuard, creatorController.reject2257);
 
+// ── Creator invite links ──────────────────────────────────────────────────────
+const inviteLinkService = require('../../../services/inviteLinkService');
+const { query: pgQuery } = require('../../../config/postgres');
+
+const inviteLinkCreateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.session?.userId || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// GET /api/webapp/creator/invite-links — list own links
+router.get('/invite-links', authGuard, creatorGuard, async (req, res) => {
+  try {
+    const links = await inviteLinkService.listLinksByCreator(req.session.userId);
+    res.json({ success: true, links });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/webapp/creator/invite-links — create a new scoped link
+router.post('/invite-links', authGuard, creatorGuard, inviteLinkCreateLimiter, async (req, res) => {
+  try {
+    const { resourceType, resourceId, durationHours = 72, maxUses, note } = req.body;
+
+    if (!resourceType || !['channel', 'creator'].includes(resourceType)) {
+      return res.status(400).json({ success: false, error: 'resourceType must be "channel" or "creator"' });
+    }
+    if (!resourceId) {
+      return res.status(400).json({ success: false, error: 'resourceId is required' });
+    }
+
+    const userId = String(req.session.userId);
+
+    // Verify ownership
+    if (resourceType === 'channel') {
+      const { rows } = await pgQuery(
+        `SELECT id FROM channels WHERE id = $1::int AND creator_id = $2`,
+        [resourceId, userId],
+      );
+      if (rows.length === 0) {
+        return res.status(403).json({ success: false, error: 'Channel not found or not owned by you' });
+      }
+    } else {
+      // creator — resourceId must be their own pnptv_id
+      const { rows } = await pgQuery(
+        `SELECT id FROM users WHERE (id = $1 OR pnptv_id = $1) AND id = $2`,
+        [String(resourceId), userId],
+      );
+      if (rows.length === 0) {
+        return res.status(403).json({ success: false, error: 'Creator resource must match your own profile' });
+      }
+    }
+
+    const link = await inviteLinkService.createLink({
+      createdBy: userId,
+      note: note ? String(note).slice(0, 200) : null,
+      maxUses: maxUses ? parseInt(maxUses, 10) : null,
+      isLifetime: false,
+      primeHours: 0,
+      resourceType,
+      resourceId: String(resourceId),
+      durationHours: Math.min(720, Math.max(1, parseInt(durationHours, 10) || 72)),
+    });
+
+    res.json({
+      success: true,
+      code: link.code,
+      url: `https://pnptv.app/invite/${link.code}`,
+      link,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/webapp/creator/invite-links/:code — deactivate own link
+router.delete('/invite-links/:code', authGuard, creatorGuard, async (req, res) => {
+  try {
+    const ok = await inviteLinkService.deactivateLink(req.params.code, req.session.userId);
+    if (!ok) return res.status(404).json({ success: false, error: 'Link not found or not owned by you' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── Param routes LAST ─────────────────────────────────────────────────────────
 // Note: /:creatorId/subscription-status, /:creatorId/subscribe, and /:creatorId/unsubscribe
 // are registered in routes.js (with rate limiting) and must NOT be duplicated here.
 router.get('/:creatorId/strikes', authGuard, roleGuard('admin', 'superadmin'), creatorController.getStrikes);
 router.post('/:creatorId/strike', authGuard, roleGuard('admin', 'superadmin'), creatorController.issueStrike);
+router.get('/:creatorId/engagement', adminGuard, creatorController.getCreatorEngagement);
+router.post('/:creatorId/promote', adminGuard, creatorController.adminActivateCreator);
+router.post('/:creatorId/set-eligible', adminGuard, creatorController.adminSetEligible);
 
 module.exports = router;

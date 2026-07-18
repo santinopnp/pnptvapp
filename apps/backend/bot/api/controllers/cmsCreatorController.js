@@ -187,29 +187,14 @@ async function requireActiveCreator(req, res) {
 
 /** Find or auto-create the performer record linked to this creator */
 async function getOrCreatePerformer(pnptvId, user) {
-  // 1. Exact match
-  let listRes = await axios.get(`${DIRECTUS_URL}/items/performers`, {
+  // Exact match only — substring fallback removed because _contains can return
+  // a different creator's performer when pnptv_ids collide or were malformed,
+  // leaking their bio/profile data and silently reassigning the record.
+  const listRes = await axios.get(`${DIRECTUS_URL}/items/performers`, {
     headers: directusHeaders(),
     params: { filter: JSON.stringify({ pnptv_id: { _eq: pnptvId } }), limit: 1 },
   });
-  let existing = listRes.data?.data?.[0];
-
-  // 2. Fallback: old code stored pnptv_id as a JSON blob like {"uuid":"<id>",...}
-  if (!existing) {
-    listRes = await axios.get(`${DIRECTUS_URL}/items/performers`, {
-      headers: directusHeaders(),
-      params: { filter: JSON.stringify({ pnptv_id: { _contains: pnptvId } }), limit: 1 },
-    });
-    existing = listRes.data?.data?.[0];
-    // Self-heal: rewrite the stored value to the clean pnptv_id
-    if (existing) {
-      axios.patch(
-        `${DIRECTUS_URL}/items/performers/${existing.id}`,
-        { pnptv_id: pnptvId },
-        { headers: directusHeaders() }
-      ).catch(() => {});
-    }
-  }
+  const existing = listRes.data?.data?.[0];
 
   if (existing) return existing;
 
@@ -221,22 +206,39 @@ async function getOrCreatePerformer(pnptvId, user) {
   });
   if (slugCheck.data?.data?.[0]) slug = `${slug}-${Date.now()}`;
 
-  const createRes = await axios.post(
-    `${DIRECTUS_URL}/items/performers`,
-    {
-      status: 'draft',
-      name: user.first_name || user.username || 'Creator',
-      slug,
-      pnptv_id: pnptvId,
-      bio: user.bio || '',
-      bio_short: '',
-      categories: [],
-      is_featured: false,
-      is_available: false,
-    },
-    { headers: directusHeaders() }
-  );
-  return createRes.data?.data;
+  try {
+    const createRes = await axios.post(
+      `${DIRECTUS_URL}/items/performers`,
+      {
+        status: 'draft',
+        name: user.first_name || user.username || 'Creator',
+        slug,
+        pnptv_id: pnptvId,
+        bio: '',
+        bio_short: '',
+        categories: [],
+        is_featured: false,
+        is_available: false,
+      },
+      { headers: directusHeaders() }
+    );
+    return createRes.data?.data;
+  } catch (createErr) {
+    // Concurrent request already created the record (race on first CMS visit).
+    // Re-fetch by pnptv_id — if found return it; otherwise re-throw.
+    const isUnique = createErr?.response?.data?.errors?.some?.(
+      (e) => e?.extensions?.code === 'RECORD_NOT_UNIQUE'
+    );
+    if (isUnique) {
+      const refetch = await axios.get(`${DIRECTUS_URL}/items/performers`, {
+        headers: directusHeaders(),
+        params: { filter: JSON.stringify({ pnptv_id: { _eq: pnptvId } }), limit: 1 },
+      });
+      const found = refetch.data?.data?.[0];
+      if (found) return found;
+    }
+    throw createErr;
+  }
 }
 
 // ─── Performer Profile ────────────────────────────────────────────────────────
@@ -261,16 +263,12 @@ const updateProfile = async (req, res) => {
 
     const performer = await getOrCreatePerformer(user.pnptv_id, user);
 
-    if (req.body.status !== undefined) {
-      return res.status(400).json({
-        error: 'Performer status can only be changed by admins.',
-        code: 'STATUS_NOT_ALLOWED',
-      });
+    if (req.body.status !== undefined && !['published', 'draft'].includes(req.body.status)) {
+      return res.status(400).json({ error: 'Invalid status value.', code: 'STATUS_INVALID' });
     }
 
     const allowed = ['name', 'slug', 'bio', 'bio_short', 'categories', 'social_links',
-      'is_available', 'availability_message', 'base_price_cents', 'currency',
-      'timezone', 'durations_minutes'];
+      'is_available', 'availability_message', 'status'];
     const patch = {};
     for (const k of allowed) {
       if (req.body[k] !== undefined) patch[k] = req.body[k];

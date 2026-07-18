@@ -100,7 +100,6 @@ const Subscribe = lazy(() => import("@/pages/Subscribe"));
 const MyAccess = lazy(() => import("@/pages/MyAccess"));
 const DirectMessages = lazy(() => import("@/pages/DirectMessages"));
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
-const TokenCheckout = lazy(() => import("@/pages/TokenCheckout"));
 const Support = lazy(() => import("@/pages/Support"));
 const Apply = lazy(() => import("@/pages/Apply"));
 const Welcome = lazy(() => import("@/pages/Welcome"));
@@ -130,6 +129,7 @@ const PaymentsSettings = lazy(() => import("@/pages/settings/PaymentsSettings"))
 const DangerZoneSettings = lazy(() => import("@/pages/settings/DangerZoneSettings"));
 const BookingConfirmation = lazy(() => import("@/pages/BookingConfirmation"));
 const CallRoom = lazy(() => import("@/pages/CallRoom"));
+const CallConfirmPage = lazy(() => import("@/pages/CallConfirmPage"));
 
 // Admin pages
 const StatsOverview = lazy(() => import("@/pages/admin/StatsOverview"));
@@ -157,6 +157,7 @@ const MeruLinks = lazy(() => import("@/pages/admin/MeruLinks"));
 const DuplicateAccounts = lazy(() => import("@/pages/admin/DuplicateAccounts"));
 const PaymentHealth = lazy(() => import("@/pages/admin/PaymentHealth"));
 const HangoutTelegramHealth = lazy(() => import("@/pages/admin/HangoutTelegramHealth"));
+const Monitoring = lazy(() => import("@/pages/admin/Monitoring"));
 const WellnessShell = lazy(() => import("@/pages/WellnessShell"));
 const SelfCareCenter = lazy(() => import("@/pages/SelfCareCenter"));
 const CristinaPage = lazy(() => import("@/components/CristinaWidget").then((m) => ({ default: m.CristinaWidget })));
@@ -208,6 +209,14 @@ export const router = createBrowserRouter([
       },
       {
         path: "media",
+        element: <Navigate to="/channels" replace />,
+      },
+      {
+        path: "videorama-app",
+        element: <Navigate to="/channels" replace />,
+      },
+      {
+        path: "videorama",
         element: <Navigate to="/channels" replace />,
       },
       {
@@ -643,7 +652,19 @@ export const router = createBrowserRouter([
       },
       {
         path: "moderation",
-        element: <Navigate to="/admin/posts" replace />,
+        element: (
+          <ModuleLoader>
+            <ContentModeration />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "moderation/username-history",
+        element: (
+          <ModuleLoader>
+            <ContentModeration defaultTab="usernames" />
+          </ModuleLoader>
+        ),
       },
       {
         path: "hangouts",
@@ -814,6 +835,14 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "monitoring",
+        element: (
+          <ModuleLoader>
+            <Monitoring />
+          </ModuleLoader>
+        ),
+      },
+      {
         path: "compliance-2257",
         element: (
           <ModuleLoader>
@@ -844,7 +873,9 @@ export const router = createBrowserRouter([
     path: "/creators",
     element: (
       <ModuleLoader>
-        <CreatorLayout />
+        <VerificationGate>
+          <CreatorLayout />
+        </VerificationGate>
       </ModuleLoader>
     ),
     children: [
@@ -1026,9 +1057,25 @@ export const router = createBrowserRouter([
     path: "/become-model",
     element: <Navigate to="/become-a-model" replace />,
   },
+  {
+    path: "/book-a-call/confirm",
+    element: (
+      <ModuleLoader>
+        <CallConfirmPage />
+      </ModuleLoader>
+    ),
+  },
   { path: "/lifetime80", element: <Navigate to="/lifetime100" replace /> },
   {
     path: "/lifetime100",
+    element: (
+      <ModuleLoader>
+        <Lifetime100 />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/lifetime100/activate",
     element: (
       <ModuleLoader>
         <Lifetime100 />
@@ -1076,16 +1123,6 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <AuthCallback />
-      </ModuleLoader>
-    ),
-  },
-  {
-    path: "/token-checkout/:purchaseId",
-    element: (
-      <ModuleLoader>
-        <VerificationGate>
-          <TokenCheckout />
-        </VerificationGate>
       </ModuleLoader>
     ),
   },

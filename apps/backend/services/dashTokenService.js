@@ -1,20 +1,22 @@
 /**
  * Dash Token Service
- * Manages PNP Token wallets — funded via Dash Pay (BTCPay Server)
- * 1 token = $1 USD equivalent
+ * Manages Tokens wallets — funded via BTCPay Server / NowPayments
+ * 100 Tokens = $1 USD
  */
 
 const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 
-// Token package options  (tokens === USD amount)
+// Token packages — bonus capped at 20% max: guarantees ≥16% platform margin
+// even if 100% of tokens are tipped (70% creator payout × 1.20 bonus = 84% max outflow)
 const TOKEN_PACKAGES = [
-  { id: 'pkg_5',   tokens: 5,   usd: 5,   label: '5 tokens — $5' },
-  { id: 'pkg_10',  tokens: 10,  usd: 10,  label: '10 tokens — $10' },
-  { id: 'pkg_20',  tokens: 20,  usd: 20,  label: '20 tokens — $20' },
-  { id: 'pkg_50',  tokens: 50,  usd: 50,  label: '50 tokens — $50' },
-  { id: 'pkg_100', tokens: 100, usd: 100, label: '100 tokens — $100' },
+  { id: 'pkg_20',   tokens: 2000,   usd: 20,   bonus: 0,  label: '2,000 tokens' },
+  { id: 'pkg_50',   tokens: 5250,   usd: 50,   bonus: 5,  label: '5,250 tokens (+250 extra)' },
+  { id: 'pkg_100',  tokens: 11000,  usd: 100,  bonus: 10, label: '11,000 tokens (+1,000 extra)' },
+  { id: 'pkg_500',  tokens: 57500,  usd: 500,  bonus: 15, label: '57,500 tokens (+7,500 extra)' },
+  { id: 'pkg_1000', tokens: 120000, usd: 1000, bonus: 20, label: '120,000 tokens (+20,000 extra)' },
+  { id: 'pkg_5000', tokens: 600000, usd: 5000, bonus: 20, label: '600,000 tokens (+100,000 extra)' },
 ];
 
 class DashTokenService {
@@ -26,7 +28,9 @@ class DashTokenService {
    * @returns {Promise<{balance_tokens: number, dash_dpns: string|null}>}
    */
   static async getWallet(userId) {
-    const cacheKey = `wallet:${userId}`;
+    // NOTE: tokenService.getBalance caches a bare number under `wallet:${userId}`.
+    // Use a distinct key so the two cache shapes never collide (audit M-03).
+    const cacheKey = `wallet:obj:${userId}`;
     const cached = await cache.get(cacheKey).catch(() => null);
     if (cached) return cached;
 
@@ -107,7 +111,10 @@ class DashTokenService {
       const newBalance = walletResult.rows[0]?.balance_tokens ?? tokens;
 
       // Invalidate cache
-      await cache.del(`wallet:${userId}`).catch(() => {});
+      await Promise.all([
+        cache.del(`wallet:${userId}`).catch(() => {}),
+        cache.del(`wallet:obj:${userId}`).catch(() => {}),
+      ]);
       logger.info('Tokens credited', { userId, tokens, invoiceId, newBalance });
       return { newBalance, alreadyProcessed: false };
     } catch (error) {
@@ -143,7 +150,10 @@ class DashTokenService {
     }
 
     const newBalance = result.rows[0].balance_tokens;
-    await cache.del(`wallet:${userId}`).catch(() => {});
+    await Promise.all([
+      cache.del(`wallet:${userId}`).catch(() => {}),
+      cache.del(`wallet:obj:${userId}`).catch(() => {}),
+    ]);
     return { success: true, newBalance };
   }
 
@@ -263,7 +273,10 @@ class DashTokenService {
       await client.query('COMMIT');
       const newBalance = walletResult.rows[0]?.balance_tokens ?? purchase.tokens_credited;
 
-      await cache.del(`wallet:${purchase.user_id}`).catch(() => {});
+      await Promise.all([
+        cache.del(`wallet:${purchase.user_id}`).catch(() => {}),
+        cache.del(`wallet:obj:${purchase.user_id}`).catch(() => {}),
+      ]);
       logger.info('Tokens credited via payment', {
         userId: purchase.user_id,
         tokens: purchase.tokens_credited,
@@ -305,7 +318,10 @@ class DashTokenService {
        ON CONFLICT (user_id) DO UPDATE SET dash_dpns = $2, updated_at = NOW()`,
       [userId, dpnsHandle.toLowerCase()]
     );
-    await cache.del(`wallet:${userId}`).catch(() => {});
+    await Promise.all([
+      cache.del(`wallet:${userId}`).catch(() => {}),
+      cache.del(`wallet:obj:${userId}`).catch(() => {}),
+    ]);
   }
 
   /**
@@ -314,11 +330,43 @@ class DashTokenService {
    * @param {number} [limit=10]
    */
   static async getPurchaseHistory(userId, limit = 10) {
+    // Union the two token-purchase tables:
+    //   token_purchases      — BTCPay Dash/BTC flows (native)
+    //   dash_subscription_orders — NowPayments flows (plan_id='token_purchase')
+    // Without the union the NowPayments purchases are invisible in wallet history.
     const result = await query(
-      `SELECT id, tokens_credited, usd_amount, dash_amount, btcpay_invoice_id,
-              status, payment_method, created_at, settled_at
-       FROM token_purchases
-       WHERE user_id = $1
+      `(
+         SELECT id::text AS id,
+                tokens_credited,
+                usd_amount,
+                dash_amount,
+                btcpay_invoice_id,
+                status,
+                payment_method,
+                created_at,
+                settled_at
+         FROM token_purchases
+         WHERE user_id = $1
+       )
+       UNION ALL
+       (
+         SELECT id::text AS id,
+                COALESCE((metadata->>'tokens')::int, 0) AS tokens_credited,
+                usd_amount,
+                NULL::numeric AS dash_amount,
+                btcpay_invoice_id,
+                CASE
+                  WHEN status = 'completed' THEN 'paid'
+                  WHEN status = 'failed' THEN 'invalid'
+                  ELSE status
+                END AS status,
+                'nowpayments' AS payment_method,
+                created_at,
+                completed_at AS settled_at
+         FROM dash_subscription_orders
+         WHERE user_id = $1
+           AND plan_id = 'token_purchase'
+       )
        ORDER BY created_at DESC
        LIMIT $2`,
       [userId, limit]

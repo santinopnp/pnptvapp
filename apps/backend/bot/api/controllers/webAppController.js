@@ -9,6 +9,7 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs').promises;
 const FileType = require('../../utils/fileType');
+const { generateRegistrationOptions, verifyRegistrationResponse } = require('@simplewebauthn/server');
 
 // ── Enforced follows (shared service) ────────────────────────────────────────
 const { enforceDefaultFollows } = require('../../../services/followService');
@@ -225,6 +226,8 @@ async function findOrLinkUser({ telegramId, twitterHandle, xId, email, firstName
   const newUser = await createWebUser({ telegramId, twitterHandle, xId, email, firstName, lastName, username, photoFileId });
   // Enforce default follows for new user (fire-and-forget)
   enforceDefaultFollows(newUser.id).catch(() => {});
+  // Grant 3-day PRIME trial (fire-and-forget, never blocks login)
+  require('../../../services/entitlementAccessService').grantTrialPrime(newUser.id).catch(() => {});
   return { user: newUser, isNew: true };
 }
 
@@ -254,6 +257,7 @@ function buildSession(user, extra = {}) {
       x: !!(user.twitter || user.x_user_id || user.x_id || extra.xHandle),
     },
     last_login_method: extra.last_login_method || user.last_login_method || null,
+    sessionCreatedAt: Date.now(),
     ...extra,
   };
 }
@@ -327,7 +331,9 @@ function verifyTelegramAuth(data) {
     match: calculatedHash === hash,
   });
 
-  if (calculatedHash !== hash) {
+  const calcBuf = Buffer.from(calculatedHash, 'hex');
+  const hashBuf = Buffer.from(hash, 'hex');
+  if (calcBuf.length !== hashBuf.length || !crypto.timingSafeEqual(calcBuf, hashBuf)) {
     logger.warn('Hash mismatch in Telegram auth - possible domain not set in BotFather', {
       userId: rest.id,
       hashLength: hash.length,
@@ -375,13 +381,9 @@ const telegramGenerateToken = async (req, res) => {
     // Generate UUID v4 token for Telegram login session
     const token = uuidv4();
     const redis = getRedis();
-    // Store token with expiry; bind to the issuing session to prevent cross-session polling.
-    // Force session save so the cookie is issued now — required for session ID to be stable
-    // across the /token → /check polling loop.
-    req.session.tgPending = token;
-    await new Promise((resolve, reject) => req.session.save(err => (err ? reject(err) : resolve())));
+    // Store token with 'pending' sentinel. The 36-char UUID is the sole proof of
+    // ownership — no session binding so iOS Safari app-switches don't break polling.
     await redis.set(`${TELEGRAM_LOGIN_PREFIX}${token}`, 'pending', 'EX', TELEGRAM_LOGIN_TTL);
-    await redis.set(`${TELEGRAM_LOGIN_PREFIX}${token}:session`, req.session.id, 'EX', TELEGRAM_LOGIN_TTL);
 
     const botUsername = process.env.BOT_USERNAME || 'PNPLatinoTV_Bot';
     // Create deep link for Telegram authentication
@@ -410,12 +412,6 @@ const telegramCheckToken = async (req, res) => {
     if (!token) return res.status(400).json({ authenticated: false, error: 'Missing token' });
 
     const redis = getRedis();
-
-    // Reject if the token was issued by a different browser session (prevents cross-session token theft)
-    const boundSession = await redis.get(`${TELEGRAM_LOGIN_PREFIX}${token}:session`);
-    if (boundSession && boundSession !== req.session.id) {
-      return res.status(401).json({ authenticated: false, error: 'Unauthorized' });
-    }
 
     // Atomically get-and-delete the token so only one poll ever consumes it
     const luaScript = `local v = redis.call('GET', KEYS[1]); if v ~= false and v ~= 'pending' then redis.call('DEL', KEYS[1]) end; return v`;
@@ -490,7 +486,7 @@ const telegramConfirmLogin = async (telegramUser, token) => {
     const key = `${TELEGRAM_LOGIN_PREFIX}${token}`;
     const exists = await redis.get(key);
     if (!exists) {
-      logger.warn('Telegram login token not found or expired:', token);
+      logger.warn('Telegram login token not found or expired', { token: String(token).substring(0, 8) + '...' });
       return false;
     }
     await redis.set(key, JSON.stringify(telegramUser), 'EX', 300); // 5 min to poll — matches webapp deadline so PWA users have time to switch back from Telegram
@@ -633,7 +629,7 @@ const magicLinkVerify = async (req, res) => {
 
     enforceDefaultFollows(user.id).catch(() => {});
     logger.info(`[magic-link] sign-in: user ${user.id}`);
-    return res.redirect(`${APP_URL}/`);
+    return res.redirect(`${APP_URL}/login?magic_verified=1`);
   } catch (error) {
     logger.error('[magic-link] verify error', error);
     return fail('server_error');
@@ -708,6 +704,178 @@ const passkeyFinish = async (req, res) => {
   } catch (err) {
     logger.error('[Passkey] passkeyFinish unexpected error:', err);
     return res.status(500).json({ authenticated: false, error: 'server_error' });
+  }
+};
+
+// ── Passkey registration (authenticated user adding a new passkey) ─────────────
+
+const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'pnptv.app';
+const WEBAUTHN_ORIGIN = process.env.WEBAUTHN_ORIGIN || 'https://pnptv.app';
+
+const passkeyRegisterBegin = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
+
+  try {
+    const redis = getRedis();
+    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
+
+    // Collect existing credentials so the authenticator doesn't create a duplicate.
+    let excludeCredentials = [];
+    if (authentikPk) {
+      const existing = await AuthentikService.listWebAuthnDevices(authentikPk);
+      if (existing.success && existing.devices.length) {
+        excludeCredentials = existing.devices
+          .filter((d) => d.credential_id)
+          .map((d) => ({ id: d.credential_id, type: 'public-key' }));
+      }
+    }
+
+    const options = await generateRegistrationOptions({
+      rpName: 'PNPtv',
+      rpID: WEBAUTHN_RP_ID,
+      userName: sessionUser.username || sessionUser.displayName || String(sessionUser.id),
+      userDisplayName: sessionUser.displayName || sessionUser.username || 'Member',
+      userID: Buffer.from(String(sessionUser.id)),
+      attestationType: 'none',
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+      },
+      excludeCredentials,
+      timeout: 300000,
+    });
+
+    const regKey = `passkey:reg:${sessionUser.id}`;
+    await redis.set(regKey, options.challenge, 'EX', 300);
+
+    logger.info('[Passkey] passkeyRegisterBegin: challenge issued for user', sessionUser.id);
+    return res.json({ success: true, options });
+  } catch (err) {
+    logger.error('[Passkey] passkeyRegisterBegin error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+};
+
+const passkeyRegisterFinish = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
+
+  const credential = req.body?.credential;
+  const deviceName = typeof req.body?.name === 'string' && req.body.name.trim()
+    ? req.body.name.trim().slice(0, 60)
+    : 'My Passkey';
+
+  if (!credential || typeof credential !== 'object') {
+    return res.status(400).json({ success: false, error: 'invalid_request' });
+  }
+
+  try {
+    const redis = getRedis();
+    const regKey = `passkey:reg:${sessionUser.id}`;
+    const expectedChallenge = await redis.get(regKey);
+    if (!expectedChallenge) {
+      return res.status(400).json({ success: false, error: 'expired' });
+    }
+    await redis.del(regKey);
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: credential,
+        expectedChallenge,
+        expectedOrigin: WEBAUTHN_ORIGIN,
+        expectedRPID: WEBAUTHN_RP_ID,
+        requireUserVerification: false,
+      });
+    } catch (verifyErr) {
+      logger.warn('[Passkey] passkeyRegisterFinish: verification failed:', verifyErr.message);
+      return res.status(400).json({ success: false, error: 'verification_failed', detail: verifyErr.message });
+    }
+
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ success: false, error: 'verification_failed' });
+    }
+
+    // SimpleWebAuthn v13+: credential info moved to registrationInfo.credential.*
+    const regInfo = verification.registrationInfo;
+    const credentialID = regInfo.credential?.id ?? regInfo.credentialID;
+    const credentialPublicKey = regInfo.credential?.publicKey ?? regInfo.credentialPublicKey;
+    const { counter, aaguid } = regInfo;
+
+    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
+    if (!authentikPk) {
+      logger.error('[Passkey] passkeyRegisterFinish: could not resolve Authentik user for', sessionUser.id);
+      return res.status(422).json({ success: false, error: 'authentik_user_not_found' });
+    }
+
+    const result = await AuthentikService.createWebAuthnDevice(authentikPk, {
+      name: deviceName,
+      credentialId: Buffer.from(credentialID).toString('base64url'),
+      publicKey: Buffer.from(credentialPublicKey).toString('base64url'),
+      signCount: counter,
+      rpId: WEBAUTHN_RP_ID,
+      aaguid,
+    });
+
+    if (!result.success) {
+      logger.error('[Passkey] passkeyRegisterFinish: Authentik create failed:', result.detail);
+      return res.status(500).json({ success: false, error: 'store_failed' });
+    }
+
+    logger.info('[Passkey] passkeyRegisterFinish: passkey registered for user', sessionUser.id);
+    return res.json({ success: true, device: { pk: result.device?.pk, name: deviceName } });
+  } catch (err) {
+    logger.error('[Passkey] passkeyRegisterFinish unexpected error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+};
+
+const passkeyListDevices = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
+
+  try {
+    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
+    if (!authentikPk) return res.json({ success: true, devices: [] });
+
+    const result = await AuthentikService.listWebAuthnDevices(authentikPk);
+    if (!result.success) return res.json({ success: true, devices: [] });
+
+    const devices = result.devices.map((d) => ({
+      pk: d.pk,
+      name: d.name,
+      createdAt: d.created,
+      lastUsed: d.last_t,
+    }));
+    return res.json({ success: true, devices });
+  } catch (err) {
+    logger.error('[Passkey] passkeyListDevices error:', err);
+    return res.json({ success: true, devices: [] });
+  }
+};
+
+const passkeyDeleteDevice = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'unauthenticated' });
+
+  const devicePk = parseInt(req.params?.devicePk, 10);
+  if (!devicePk || isNaN(devicePk)) return res.status(400).json({ success: false, error: 'invalid_device' });
+
+  try {
+    const authentikPk = await AuthentikService._resolveAuthentikUserPk(sessionUser.pnptvId, sessionUser.username);
+    if (!authentikPk) return res.status(422).json({ success: false, error: 'authentik_user_not_found' });
+
+    const result = await AuthentikService.deleteWebAuthnDevice(devicePk, authentikPk);
+    if (!result.success) {
+      if (result.error === 'forbidden') return res.status(403).json({ success: false, error: 'forbidden' });
+      if (result.error === 'not_found') return res.status(404).json({ success: false, error: 'not_found' });
+      return res.status(500).json({ success: false, error: result.error });
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('[Passkey] passkeyDeleteDevice error:', err);
+    return res.status(500).json({ success: false, error: 'server_error' });
   }
 };
 
@@ -1136,9 +1304,14 @@ const oidcTokenExchange = async (req, res) => {
       );
       if (userResult.rows.length > 0) {
         user = userResult.rows[0];
-        // Link pnptv_id to this existing account if not already set
-        if (!user.pnptv_id) {
-          await query('UPDATE users SET pnptv_id = $1 WHERE id = $2', [profile.sub, user.id]);
+        // Link or heal pnptv_id: update if not set OR if stored value is not a valid UUID
+        // (legacy accounts had SHA-256 hashes stored instead of the real Authentik UUID)
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!user.pnptv_id || !UUID_RE.test(user.pnptv_id)) {
+          await query(
+            'UPDATE users SET pnptv_id = $1 WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM users WHERE pnptv_id = $1 AND id != $2)',
+            [profile.sub, user.id]
+          ).catch(() => {});
           user.pnptv_id = profile.sub;
         }
       }
@@ -1159,6 +1332,7 @@ const oidcTokenExchange = async (req, res) => {
       user.pnptv_id = profile.sub;
       user.email_verified = true;
       logger.info(`Created new user via Authentik OIDC: ${user.id} (sub: ${profile.sub})`);
+      require('../../../services/entitlementAccessService').grantTrialPrime(user.id).catch(() => {});
     }
 
     // 4. Check bans
@@ -2026,7 +2200,7 @@ const resetPassword = async (req, res) => {
     }
 
     const passwordHash = await hashPassword(password);
-    await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
+    await query('UPDATE users SET password_hash = $1, session_version = COALESCE(session_version, 0) + 1, updated_at = NOW() WHERE id = $2', [passwordHash, row.user_id]);
     await query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [row.id]);
 
     logger.info(`Password reset successful for user ${row.user_id}`);
@@ -2091,11 +2265,40 @@ const updateProfile = async (req, res) => {
   // Validate dateOfBirth if provided
   const { dateOfBirth } = req.body;
   if (dateOfBirth !== undefined && dateOfBirth !== null && dateOfBirth !== '') {
-    const dob = new Date(dateOfBirth);
-    if (isNaN(dob.getTime())) return res.status(400).json({ error: 'Invalid date of birth' });
-    const age = (Date.now() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) return res.status(400).json({ error: 'Invalid date of birth format' });
+    const [dobYear, dobMonth, dobDay] = dateOfBirth.split('-').map(Number);
+    if (!dobYear || !dobMonth || !dobDay || dobMonth > 12 || dobDay > 31) {
+      return res.status(400).json({ error: 'Invalid date of birth' });
+    }
+    // Calendar-year age check — avoids UTC midnight off-by-one across timezones
+    const now = new Date();
+    let age = now.getUTCFullYear() - dobYear;
+    if (now.getUTCMonth() + 1 < dobMonth || (now.getUTCMonth() + 1 === dobMonth && now.getUTCDate() < dobDay)) age--;
     if (age < 18) return res.status(400).json({ error: 'You must be at least 18 years old' });
-    if (dob > new Date()) return res.status(400).json({ error: 'Date of birth cannot be in the future' });
+    if (dobYear > now.getUTCFullYear() || dateOfBirth > now.toISOString().split('T')[0]) {
+      return res.status(400).json({ error: 'Date of birth cannot be in the future' });
+    }
+  }
+
+  // Snapshot identity fields BEFORE the update so we can diff and alert admins
+  // on any name/username change. Doing this in the same request as the write
+  // avoids race conditions with concurrent updates. Failure to snapshot is
+  // non-fatal — we just skip the alert rather than block the save.
+  let identitySnapshot = null;
+  const identityFieldsProvided =
+    Object.prototype.hasOwnProperty.call(req.body, 'username') ||
+    Object.prototype.hasOwnProperty.call(req.body, 'firstName') ||
+    Object.prototype.hasOwnProperty.call(req.body, 'lastName');
+  if (identityFieldsProvided) {
+    try {
+      const { rows } = await query(
+        'SELECT username, first_name, last_name, telegram FROM users WHERE id = $1',
+        [user.id]
+      );
+      if (rows[0]) identitySnapshot = rows[0];
+    } catch (err) {
+      logger.warn(`updateProfile: identity snapshot failed for user ${user.id}: ${err.message}`);
+    }
   }
 
   try {
@@ -2213,6 +2416,47 @@ const updateProfile = async (req, res) => {
     }
 
     logger.info(`Profile updated: user ${user.id}`);
+
+    // Fire-and-forget admin alert on identity change. Never awaited so
+    // Telegram latency can't slow the response. Skip if we couldn't
+    // snapshot (already logged), no identity fields were provided, or
+    // nothing actually changed.
+    if (identitySnapshot) {
+      const changes = [];
+      const norm = (v) => (v === undefined || v === null) ? '' : String(v).trim();
+      const oldU = norm(identitySnapshot.username);
+      const oldF = norm(identitySnapshot.first_name);
+      const oldL = norm(identitySnapshot.last_name);
+      const newU = Object.prototype.hasOwnProperty.call(req.body, 'username') ? norm(req.body.username) : oldU;
+      const newF = Object.prototype.hasOwnProperty.call(req.body, 'firstName') ? norm(req.body.firstName) : oldF;
+      const newL = Object.prototype.hasOwnProperty.call(req.body, 'lastName') ? norm(req.body.lastName) : oldL;
+      if (oldU !== newU) changes.push({ field: 'username', old: oldU, new: newU });
+      if (oldF !== newF) changes.push({ field: 'first name', old: oldF, new: newF });
+      if (oldL !== newL) changes.push({ field: 'last name', old: oldL, new: newL });
+
+      if (changes.length > 0) {
+        (async () => {
+          try {
+            const { alertAdmins, escape } = require('../../../services/adminAlertService');
+            const APP_URL = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+            const displayCurrent = newF || newU || user.id;
+            const lines = [
+              `🪪 <b>Identity change on PNPtv!</b>`,
+              ``,
+              `User: <b>${escape(displayCurrent)}</b> (id <code>${escape(user.id)}</code>${identitySnapshot.telegram ? ` · TG <code>${escape(identitySnapshot.telegram)}</code>` : ''})`,
+              ``,
+              ...changes.map(c => `• ${escape(c.field)}: <code>${escape(c.old || '(empty)')}</code> → <code>${escape(c.new || '(empty)')}</code>`),
+              ``,
+              `<a href="${APP_URL}/admin/moderation/username-history">Review in Moderation</a>`,
+            ];
+            await alertAdmins(lines.join('\n'), { silent: true });
+          } catch (alertErr) {
+            logger.warn(`updateProfile: admin identity alert failed for user ${user.id}: ${alertErr.message}`);
+          }
+        })();
+      }
+    }
+
     return res.json({ success: true });
   } catch (error) {
     logger.error('Update profile error:', error);
@@ -2674,6 +2918,10 @@ module.exports = {
   magicLinkVerify,
   passkeyBegin,
   passkeyFinish,
+  passkeyRegisterBegin,
+  passkeyRegisterFinish,
+  passkeyListDevices,
+  passkeyDeleteDevice,
   telegramWidgetAuth,
   emailRegister,
   emailLogin,

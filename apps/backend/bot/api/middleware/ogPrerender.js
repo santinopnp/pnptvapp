@@ -10,8 +10,13 @@
  * Supported routes:
  *   /social/post/:postId        → post content + media
  *   /profile/:userId            → user profile
+ *   /u/:username                → user profile (short alias)
+ *   /creator/:username          → creator profile page
  *   /live/:streamId             → live stream
+ *   /v/:postId[/:slug]          → video preview page for X sharing
+ *   /channels                   → channels directory
  *   /chat/:groupId              → hangout group
+ *   /h/:groupId                 → hangout group (short alias)
  *   /main-stage                 → Main Stage generic card
  *   /main-stage/join/:code      → Main Stage invite card (host name + branded image)
  *   /*                          → default PNPtv card
@@ -19,6 +24,7 @@
 
 const { getPool } = require('../../../config/postgres');
 const mainStageInviteService = require('../../../services/mainStageInviteService');
+const ogService = require('../../../services/ogService');
 const logger = require('../../../utils/logger');
 
 const CRAWLER_UA = /Twitterbot|facebookexternalhit|LinkedInBot|Slackbot|Discordbot|WhatsApp|TelegramBot|Pinterest|Googlebot|bingbot/i;
@@ -33,11 +39,15 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function renderOgHtml({ title, description, image, url, type = 'website' }) {
+function renderOgHtml({ title, description, image, url, type = 'website', imageWidth, imageHeight, twitterCard }) {
   const safeTitle = escapeHtml(title || DEFAULT_TITLE);
   const safeDesc = escapeHtml(description || DEFAULT_DESC);
   const safeImage = escapeHtml(image || DEFAULT_IMAGE);
   const safeUrl = escapeHtml(url || BASE_URL);
+  const safeImageAlt = escapeHtml(title || DEFAULT_TITLE);
+  const w = imageWidth || 1200;
+  const h = imageHeight || 630;
+  const card = twitterCard || 'summary_large_image';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -51,9 +61,12 @@ function renderOgHtml({ title, description, image, url, type = 'website' }) {
   <meta property="og:description" content="${safeDesc}" />
   <meta property="og:url" content="${safeUrl}" />
   <meta property="og:image" content="${safeImage}" />
-  <meta property="og:image:width" content="1920" />
-  <meta property="og:image:height" content="1080" />
-  <meta name="twitter:card" content="summary_large_image" />
+  <meta property="og:image:secure_url" content="${safeImage}" />
+  <meta property="og:image:width" content="${w}" />
+  <meta property="og:image:height" content="${h}" />
+  <meta property="og:image:alt" content="${safeImageAlt}" />
+  <meta name="twitter:card" content="${card}" />
+  <meta name="twitter:site" content="@pnptv" />
   <meta name="twitter:title" content="${safeTitle}" />
   <meta name="twitter:description" content="${safeDesc}" />
   <meta name="twitter:image" content="${safeImage}" />
@@ -126,22 +139,53 @@ async function getProfileOg(userId) {
 
 async function getLiveOg(streamId) {
   try {
+    // streamId in the URL is a channel ref like "pnptv-santino". Look up the
+    // creator by live_channel (primary), username, or numeric id (legacy).
+    // The old query joined against live_streams.user_id, but live_streams rows
+    // are only created by the deprecated bot flow — OBS-based creators (the
+    // current path) have no row, so the old query always returned null.
     const { rows } = await getPool().query(
-      `SELECT ls.title, ls.description, u.first_name, u.username
-       FROM live_streams ls
-       JOIN users u ON u.id = ls.user_id
-       WHERE ls.id = $1`,
+      `SELECT id, first_name, username, live_channel, photo_file_id
+         FROM users
+        WHERE live_channel = $1 OR username = $1 OR id::text = $1
+        LIMIT 1`,
       [streamId]
     );
     if (!rows[0]) return null;
-    const stream = rows[0];
-    const streamer = stream.first_name || stream.username || 'Creator';
+    const user = rows[0];
+    const streamer = user.first_name || user.username || 'Creator';
+    const channelRef = user.live_channel || streamId;
+
+    // Prefer the creator-set stream title/description from Redis (stream:meta),
+    // fall back to a generic "<streamer> is live" line.
+    let title = null;
+    let description = null;
+    try {
+      const { getRedis } = require('../../../config/redis');
+      const redis = getRedis();
+      const raw = await redis.get(`stream:meta:${channelRef}`);
+      if (raw) {
+        const meta = JSON.parse(raw);
+        if (meta.title) title = meta.title;
+        if (meta.description) description = meta.description;
+      }
+    } catch (_) { /* meta is best-effort */ }
+
+    // Snapshot image — served by /api/og/snapshot/<ref>.jpg, which fetches
+    // the Restreamer JPG (updated every 5s while streaming) with a graceful
+    // fallback chain (Restreamer → creator's profile photo → default OG image)
+    // so crawlers never get a 401/404 and the card always renders something.
+    const snapshotUrl = `${BASE_URL}/api/og/snapshot/${channelRef}.jpg`;
+
     return {
-      title: stream.title || `${streamer} is live on PNPtv!`,
-      description: stream.description || `Watch ${streamer} live now on PNPtv!`,
-      image: DEFAULT_IMAGE,
+      title: title || `🔴 ${streamer} is LIVE — Real Models. Real Clouds.`,
+      description: description || `Watch ${streamer} stream live on PNPtv! Real models, real clouds. Join now 🌫️🔞 — pnptv.app`,
+      image: snapshotUrl,
+      imageWidth: 1280,
+      imageHeight: 720,
       url: `${BASE_URL}/live/${streamId}`,
       type: 'video.other',
+      twitterCard: 'summary_large_image',
     };
   } catch (err) {
     logger.warn('OG prerender: stream lookup failed', { streamId, error: err.message });
@@ -229,6 +273,24 @@ async function getMainStageInviteOg(code) {
 }
 
 /**
+ * Convert an ogService data object (which may have richer fields) into
+ * the shape expected by renderOgHtml. Falls back to defaults on null.
+ */
+function ogServiceToRenderOg(og, fallbackUrl) {
+  if (!og) return { url: fallbackUrl };
+  return {
+    title: og.title || null,
+    description: og.description || null,
+    image: og.image || null,
+    url: og.url || fallbackUrl,
+    type: og.type || 'website',
+    imageWidth: og.imageWidth || null,
+    imageHeight: og.imageHeight || null,
+    twitterCard: og.twitterCard || null,
+  };
+}
+
+/**
  * Express middleware — mount BEFORE the static file handler.
  * Only intercepts crawler user-agents; regular browsers pass through.
  */
@@ -241,17 +303,33 @@ function ogPrerenderMiddleware(req, res, next) {
   // Match routes
   const postMatch = path.match(/^\/social\/post\/(\d+)$/);
   const profileMatch = path.match(/^\/profile\/([^/]+)$/);
+  const uMatch = path.match(/^\/u\/([^/]+)$/);
+  const creatorMatch = path.match(/^\/creator\/([^/]+)$/);
   const liveMatch = path.match(/^\/live\/([^/]+)$/);
+  const videoMatch = path.match(/^\/v\/(\d+)(?:\/[^/]*)?\/?$/);
   const chatMatch = path.match(/^\/chat\/(\d+)$/);
   const hMatch = path.match(/^\/h\/(\d+)$/);
   const mainStageInviteMatch = path.match(/^\/main-stage\/join\/([A-Za-z0-9_-]{8,32})$/);
   const mainStageMatch = /^\/main-stage\/?$/.test(path);
+  const channelsMatch = /^\/channels\/?$/.test(path);
 
   let ogPromise;
   if (postMatch) {
     ogPromise = getPostOg(postMatch[1]);
   } else if (profileMatch) {
     ogPromise = getProfileOg(profileMatch[1]);
+  } else if (uMatch) {
+    // /u/:username — delegate to ogService which supports username lookup
+    ogPromise = ogService.getProfileOG(uMatch[1]).then((og) => ogServiceToRenderOg(og, `${BASE_URL}/u/${uMatch[1]}`));
+  } else if (creatorMatch) {
+    // /creator/:username — creator profile page
+    ogPromise = ogService.getProfileOG(creatorMatch[1]).then((og) => ogServiceToRenderOg(og, `${BASE_URL}/creator/${creatorMatch[1]}`));
+  } else if (videoMatch) {
+    // /v/:postId[/:slug] — video preview page for X sharing
+    ogPromise = ogService.getVideoPreviewOG(videoMatch[1]).then((og) => ogServiceToRenderOg(og, `${BASE_URL}/v/${videoMatch[1]}`));
+  } else if (channelsMatch) {
+    const html = renderOgHtml(ogServiceToRenderOg(ogService.getChannelsOG(), `${BASE_URL}/channels`));
+    return res.type('html').send(html);
   } else if (liveMatch) {
     ogPromise = getLiveOg(liveMatch[1]);
   } else if (chatMatch) {

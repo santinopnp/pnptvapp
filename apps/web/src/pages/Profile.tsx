@@ -47,13 +47,19 @@ import {
   getUserHangoutActivity,
   createSupportTicket,
   listCreatorMedia,
+  getOwnChannels,
+  listChannelVideos,
+  deleteChannelVideo,
   type UserProfile,
   type SocialPostItem,
   type EventItem,
   type HangoutActivity,
   type MentionUser,
   type CreatorMediaItem,
+  type CreatorChannel,
+  type ChannelVideo,
 } from "@/lib/api";
+import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
 import { EventCard } from "@/components/events/EventCard";
 import { CreateEventModal } from "@/components/events/CreateEventModal";
 import { EventDetailModal } from "@/components/events/EventDetailModal";
@@ -70,7 +76,6 @@ import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 import { useAcceptingCalls } from "@/hooks/useAcceptingCalls";
 
-const STUDIO_LOGIN_URL = `/login?returnTo=${encodeURIComponent("https://studio.pnptv.app/")}`;
 
 function resolvePhotoUrl(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -200,6 +205,13 @@ export default function Profile() {
   // My Events state (own profile only)
   const [myEvents, setMyEvents] = useState<EventItem[]>([]);
   const [myEventsLoading, setMyEventsLoading] = useState(false);
+
+  // My Channel Videos state (own profile, creator only)
+  const [myChannel, setMyChannel] = useState<CreatorChannel | null>(null);
+  const [channelVideos, setChannelVideos] = useState<ChannelVideo[]>([]);
+  const [channelVideosLoading, setChannelVideosLoading] = useState(false);
+  const [channelVideoDeleteId, setChannelVideoDeleteId] = useState<number | null>(null);
+  const [channelVideoDeleteBusy, setChannelVideoDeleteBusy] = useState(false);
 
   // Hangout activity state
   const [hangoutActivity, setHangoutActivity] = useState<HangoutActivity[]>([]);
@@ -412,6 +424,18 @@ export default function Profile() {
             .then((r) => { if (r.success) setHangoutActivity(r.hangouts); })
             .catch(() => {})
             .finally(() => setHangoutActivityLoading(false));
+          // Load own channel + videos (creator only — ok to fire for all; noop if no channels)
+          setChannelVideosLoading(true);
+          getOwnChannels()
+            .then(async (r) => {
+              if (!r.success || !r.channels.length) return;
+              const ch = r.channels[0];
+              setMyChannel(ch);
+              const vr = await listChannelVideos(ch.id);
+              if (vr.success) setChannelVideos(vr.videos.filter((v) => v.status !== "removed"));
+            })
+            .catch(() => {})
+            .finally(() => setChannelVideosLoading(false));
         } else {
           setPosts((prev) => [...prev, ...postsRes.posts]);
         }
@@ -764,7 +788,7 @@ export default function Profile() {
           window.open(
             assertPaymentUrl(btcRes.checkoutUrl),
             "btcpay_btc_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes`
+            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
           );
           setSubscribePaymentId(btcRes.invoiceId);
           setSubscribeAwaitingPayment(true);
@@ -847,6 +871,19 @@ export default function Profile() {
     // If the user is on the exclusive tab, switch to posts tab so they can see the subscribe button context
     setActiveTab("posts");
   }, []);
+
+  const handleDeleteChannelVideo = async (videoId: number) => {
+    if (!myChannel || channelVideoDeleteBusy) return;
+    setChannelVideoDeleteId(videoId);
+    setChannelVideoDeleteBusy(true);
+    try {
+      const r = await deleteChannelVideo(myChannel.id, videoId);
+      if (r.success) setChannelVideos((prev) => prev.filter((v) => v.id !== videoId));
+    } catch { /* silent */ } finally {
+      setChannelVideoDeleteId(null);
+      setChannelVideoDeleteBusy(false);
+    }
+  };
 
   // ── Not authenticated + no param → sign in prompt ──────────────────────────
 
@@ -1353,9 +1390,9 @@ export default function Profile() {
         </div>
 
         {/* Cristina's profile completion nudge */}
-        {isOwnProfile && (!photoUrl || !profile.dateOfBirth || !profile.city) && !localStorage.getItem("pnp:cristina-profile-nudge-dismissed") && (() => {
+        {isOwnProfile && (!photoUrl || !profile.dateOfBirth || (!profile.locationText && !profile.city)) && !localStorage.getItem("pnp:cristina-profile-nudge-dismissed") && (() => {
           const totalSteps = 3;
-          const completedSteps = (photoUrl ? 1 : 0) + (profile.dateOfBirth ? 1 : 0) + (profile.city ? 1 : 0);
+          const completedSteps = (photoUrl ? 1 : 0) + (profile.dateOfBirth ? 1 : 0) + ((profile.locationText || profile.city) ? 1 : 0);
           const pct = Math.round((completedSteps / totalSteps) * 100);
           return (
           <div className="mt-4 rounded-xl p-3.5 relative" style={{ background: "linear-gradient(135deg, rgba(91,200,245,0.08), rgba(0,212,232,0.08))", border: "1px solid rgba(91,200,245,0.25)" }}>
@@ -1393,7 +1430,7 @@ export default function Profile() {
                       {p.cristinaAddBirthday}
                     </span>
                   )}
-                  {!profile.city && (
+                  {!profile.locationText && !profile.city && (
                     <span className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full" style={{ background: "rgba(91,200,245,0.12)", color: "rgba(255,255,255,0.8)", border: "1px solid rgba(91,200,245,0.2)" }}>
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
                       {p.cristinaSetLocation}
@@ -1506,18 +1543,14 @@ export default function Profile() {
                                 <span className="font-medium">{p.creatorDashboard}</span>
                               </button>
                               <div className="h-px mx-1" style={{ background: `rgba(${tc.rgb},0.1)` }} />
-                              <a
+                              <button
                                 role="menuitem"
-                                href={STUDIO_LOGIN_URL}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={() => setOverflowOpen(false)}
+                                onClick={() => { setOverflowOpen(false); navigate("/creators/live"); }}
                                 className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-white/70 hover:bg-white/5 transition-colors"
                               >
                                 <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
-                                <span className="flex-1">{p.studio}</span>
-                                <svg className="w-3 h-3 flex-shrink-0 opacity-35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                              </a>
+                                <span className="flex-1">Go Live</span>
+                              </button>
                               <div className="h-px mx-1" style={{ background: `rgba(${tc.rgb},0.1)` }} />
                               <a
                                 role="menuitem"
@@ -1611,15 +1644,37 @@ export default function Profile() {
                 {followError && (
                   <p className="text-xs text-center w-full" style={{ color: "#FF453A" }}>{followError}</p>
                 )}
-                <button
-                  onClick={() => navigate(`/dm/${profile.id || effectiveParamId}`)}
-                  className="flex-1 min-h-[40px] py-2 rounded-lg text-white text-sm font-semibold border border-white/20 hover:border-white/40 transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  {p.message}
-                </button>
+                {(() => {
+                  const isCreatorDmLocked =
+                    profile.creatorStatus === "active" &&
+                    user?.tier !== "prime" &&
+                    user?.creator_status !== "active";
+                  return (
+                    <button
+                      onClick={() => isCreatorDmLocked
+                        ? navigate("/subscribe")
+                        : navigate(`/dm/${profile.id || effectiveParamId}`)
+                      }
+                      className="flex-1 min-h-[40px] py-2 rounded-lg text-sm font-semibold border transition-colors flex items-center justify-center gap-1.5"
+                      style={isCreatorDmLocked
+                        ? { color: "#8A8A9A", borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }
+                        : { color: "#fff", borderColor: "rgba(255,255,255,0.2)" }
+                      }
+                      title={isCreatorDmLocked ? "PRIME or subscription required to message this creator" : undefined}
+                    >
+                      {isCreatorDmLocked ? (
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                      )}
+                      {isCreatorDmLocked ? "PRIME only" : p.message}
+                    </button>
+                  );
+                })()}
 
                 {/* 3-dots overflow — always present on other profiles */}
                 <div ref={viewerMenuContainerRef}>
@@ -2176,6 +2231,77 @@ export default function Profile() {
           </div>
         );
       })()}
+
+      {/* ── My Channel Videos (own profile, creator with channel) ── */}
+      {isOwnProfile && myChannel && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">Mis Videos</p>
+            <UploadVideoButton
+              channelId={myChannel.id}
+              channelName={myChannel.name}
+              channelSlug={myChannel.slug}
+              accessType={myChannel.access_type}
+              pricePerMonth={myChannel.price_usd}
+              creatorUsername={user?.username ?? null}
+              onPublished={(v) => setChannelVideos((prev) => [v, ...prev])}
+              variant="compact"
+            />
+          </div>
+          {channelVideosLoading ? (
+            <div className="grid grid-cols-3 gap-1">
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className="aspect-square rounded-lg" />
+              ))}
+            </div>
+          ) : channelVideos.length === 0 ? (
+            <p className="text-xs text-pnp-textSecondary text-center py-4">
+              Sin videos aún. Sube tu primero.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-1 rounded-xl overflow-hidden">
+              {channelVideos.map((v) => (
+                <div key={v.id} className="relative aspect-square bg-pnp-border/30 group">
+                  {v.gif_url || v.thumbnail_url ? (
+                    <img
+                      src={v.gif_url || v.thumbnail_url!}
+                      alt={v.title}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <svg className="w-6 h-6 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 px-1.5 py-1">
+                    <p className="text-[9px] text-white font-medium truncate">{v.title}</p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteChannelVideo(v.id)}
+                    disabled={channelVideoDeleteBusy}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="Eliminar video"
+                  >
+                    {channelVideoDeleteId === v.id ? (
+                      <svg className="w-3 h-3 text-white animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3 h-3 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Tabs (sticky) ── */}
       <div

@@ -12,6 +12,8 @@ const { showNearbyMenu } = require('./nearbyUnified');
 const supportRoutingService = require('../../../services/supportRoutingService');
 const { handlePromoDeepLink } = require('../promo/promoHandler');
 const { activateMembership, fetchActivationCode, markCodeUsed, logActivation } = require('../payments/activation');
+const { query } = require('../../../config/postgres');
+const { getRedis } = require('../../../config/redis');
 
 const WEBAPP_URL = process.env.WEBAPP_URL || 'https://pnptv.app';
 const SubscriptionService = require('../../../services/subscriptionService');
@@ -431,11 +433,54 @@ const registerOnboardingHandlers = (bot) => {
     }
   });
 
-  // Terms acceptance
+  // Terms acceptance — persist to DB so compliance is honored even for users
+  // who only ever touch the bot (never the webapp). Uses the shared
+  // onboardingService so version constants + audit columns stay in sync with
+  // the webapp acceptance path.
   bot.action('accept_terms', async (ctx) => {
     try {
       const lang = getLanguage(ctx);
       ctx.session.temp.termsAccepted = true;
+
+      const userId = String(ctx.from.id);
+      const onboardingService = require('../../../services/onboardingService');
+      // Bot has no client IP; leave null. terms_accepted_ip stays NULL for
+      // Telegram-origin acceptances (distinguishable from web acceptances).
+      const ip = null;
+
+      try {
+        await onboardingService.markStep(userId, 'terms', {}, ip);
+        await onboardingService.markStep(userId, 'privacy', {}, ip);
+      } catch (persistErr) {
+        logger.warn('accept_terms: DB persist failed (non-fatal, wizard continues)', {
+          userId, error: persistErr.message,
+        });
+      }
+
+      // If the user entered via a group deep link and that group has rules,
+      // record rules acceptance too — the rules text was appended to the
+      // terms message they just accepted.
+      try {
+        const { getRedis } = require('../../../config/redis');
+        const redis = getRedis();
+        const grpRaw = await redis.get(`onboard:grp:${ctx.from.id}`);
+        if (grpRaw) {
+          const grp = JSON.parse(grpRaw);
+          if (grp?.chatId) {
+            const rulesRes = await query(
+              'SELECT rules FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1',
+              [String(grp.chatId)]
+            );
+            if (rulesRes.rows[0]?.rules) {
+              await onboardingService.markStep(userId, 'rules', {}, ip);
+            }
+          }
+        }
+      } catch (rulesErr) {
+        logger.warn('accept_terms: rules persist failed (non-fatal)', {
+          userId, error: rulesErr.message,
+        });
+      }
 
       await ctx.editMessageText(t('termsAccepted', lang));
 
@@ -782,6 +827,14 @@ const registerOnboardingHandlers = (bot) => {
       }
 
       if (isValidEmail(rawEmail)) {
+        // Wizard mode: skip location/WoF and go straight to creator completion.
+        if (process.env.BOT_WIZARD_ENABLED === 'true') {
+          ctx.session.temp.waitingForEmail = false;
+          await ctx.saveSession();
+          await completeCreatorOnboarding(ctx, rawEmail);
+          return;
+        }
+
         const existingUser = typeof UserService.getByEmail === 'function'
           ? await UserService.getByEmail(rawEmail)
           : await UserModel.getByEmail(rawEmail);
@@ -895,10 +948,30 @@ const showAgeConfirmation = async (ctx) => {
 const showTermsAndPrivacy = async (ctx) => {
   const lang = getLanguage(ctx);
 
+  let baseText = `${t('termsAndPrivacy', lang)}\n\n📄 Terms: https://pnptv.app/terms\n🔒 Privacy: https://pnptv.app/privacy`;
+
+  // Append group-specific rules if user joined via a group
+  try {
+    const redis = getRedis();
+    const grpRaw = await redis.get(`onboard:grp:${ctx.from.id}`);
+    if (grpRaw) {
+      const grp = JSON.parse(grpRaw);
+      if (grp.chatId) {
+        const rulesRes = await query(
+          'SELECT rules FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1',
+          [String(grp.chatId)]
+        );
+        if (rulesRes.rows.length > 0 && rulesRes.rows[0].rules) {
+          baseText += `\n\n📋 *Group Rules — ${grp.name || 'the group'}:*\n${rulesRes.rows[0].rules}`;
+        }
+      }
+    }
+  } catch (_) {}
+
   await ctx.reply(
-    `${t('termsAndPrivacy', lang)}\n\n📄 Terms: https://pnptv.app/terms\n🔒 Privacy: https://pnptv.app/privacy`,
+    baseText,
     Markup.inlineKeyboard([
-      [Markup.button.callback(`✅ ${t('confirm', lang)}`, 'accept_terms')],
+      [Markup.button.callback(`✅ I accept all of the above`, 'accept_terms')],
     ]),
   );
 };
@@ -1081,6 +1154,26 @@ const completeOnboarding = async (ctx) => {
     ctx.session.temp = {};
     await ctx.saveSession();
 
+    // Unrestrict user in group (if they joined via a group) and mark onboarding done
+    try {
+      const { unrestrictUserInGroup } = require('../group/groupAdminPanel');
+      const redis = getRedis();
+      const grpRaw = await redis.get(`onboard:grp:${userId}`);
+      if (grpRaw) {
+        const grp = JSON.parse(grpRaw);
+        if (grp.chatId) {
+          await unrestrictUserInGroup(ctx.telegram, grp.chatId, userId);
+        }
+        await redis.del(`onboard:grp:${userId}`);
+      }
+      await redis.set(`onboard:done:${userId}`, '1', 'EX', 86400 * 30);
+    } catch (grpErr) {
+      logger.error('completeOnboarding: failed to unrestrict/mark done in group', {
+        userId,
+        error: grpErr.message,
+      });
+    }
+
     // Check if user is PRIME to send appropriate onboarding completion message
     const user = await UserService.getById(userId);
     const isPrime = user && user.isPremium;
@@ -1091,43 +1184,19 @@ const completeOnboarding = async (ctx) => {
     
     await ctx.reply(t(messageKey, lang));
 
-    // Send Telegram group invite via API
+    // Show all connected communities the user can join
     try {
-      const groupId = process.env.GROUP_ID;
-      if (!groupId) {
-        throw new Error('GROUP_ID environment variable not configured');
+      const groupManagerService = require('../../../services/groupManagerService');
+      const groups = await groupManagerService.getLinkedGroups();
+      if (groups.length > 0) {
+        const joinMsg = lang === 'es'
+          ? '🏘 *Comunidades disponibles* — toca cualquiera para obtener tu enlace personal de acceso:'
+          : '🏘 *Available communities* — tap any to get your personal invite link:';
+        const buttons = groups.map((g) => [Markup.button.callback(`🏘 ${g.name}`, `join_group:${g.telegram_chat_id}`)]);
+        await ctx.reply(joinMsg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
       }
-
-      // Create a one-time use invite link via Telegram API
-      const inviteLink = await ctx.telegram.createChatInviteLink(
-        groupId,
-        {
-          expire_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60), // 24 hours from now
-          member_limit: 1, // One-time use
-          name: `Onboarding-${userId}-${Date.now()}`,
-        }
-      );
-
-      const message = lang === 'es'
-        ? `🎉 ¡Estás listo!\n\nTe damos la bienvenida a la comunidad PNPtv. Aquí está tu enlace exclusivo de acceso único para el grupo gratuito:\n\n🔗 [Únete al grupo](${inviteLink.invite_link})\n\n⏰ Este enlace expira en 24 horas.\n📱 Únete ahora para acceder a todo el contenido.`
-        : `🎉 You're all set!\n\nWelcome to the PNPtv community. Here's your exclusive one-time use link to access the free group:\n\n🔗 [Join the group](${inviteLink.invite_link})\n\n⏰ This link expires in 24 hours.\n📱 Join now to access all content.`;
-
-      await ctx.reply(message, { parse_mode: 'Markdown', disable_web_page_preview: true });
-
-      logger.info('Telegram group invite sent to user', {
-        userId,
-        groupId,
-        inviteLinkId: inviteLink.invite_link,
-      });
-    } catch (telegramInviteError) {
-      logger.error('Failed to create Telegram group invite link:', telegramInviteError);
-
-      // Fallback to customer support if invite link generation fails
-      const fallbackMessage = lang === 'es'
-        ? `⚠️ Hubo un problema al generar tu enlace de acceso.\n\nNo te preocupes, nuestro equipo de soporte te ayudará. Por favor contacta a:\n\n🔗 https://t.me/pnptv_support\n\n📞 Nuestro equipo te dará acceso manual al grupo en menos de 5 minutos.`
-        : `⚠️ There was an issue generating your access link.\n\nDon't worry, our support team will help you. Please contact:\n\n🔗 https://t.me/pnptv_support\n\n📞 Our team will give you manual access to the group within 5 minutes.`;
-
-      await ctx.reply(fallbackMessage);
+    } catch (groupErr) {
+      logger.warn('Post-onboarding group list failed (non-fatal)', { error: groupErr.message });
     }
 
     // Show main menu
@@ -1404,5 +1473,94 @@ Membresía activada correctamente`;
   }
 };
 
+/**
+ * Completion step for external-group bot onboarding.
+ * Replaces location-sharing + WoF consent with group invite + hangout links.
+ */
+const completeCreatorOnboarding = async (ctx, email) => {
+  try {
+    const lang = getLanguage(ctx);
+    const userId = ctx.from.id;
+
+    await UserService.updateProfile(userId, { email, onboardingComplete: true, language: lang });
+
+    const { getRedis } = require('../../../config/redis');
+    const { query: dbQuery } = require('../../../config/postgres');
+    const redis = getRedis();
+    const stored = await redis.get(`onboard:grp:${userId}`);
+    let groupName = 'PNPtv';
+    let groupChatId = null;
+    try { const p = JSON.parse(stored); groupName = p.name || groupName; groupChatId = p.chatId || null; } catch (_) {}
+    await redis.del(`onboard:grp:${userId}`);
+    await redis.set(`onboard:done:${userId}`, '1', 'EX', 60 * 60 * 24 * 30);
+
+    // Unrestrict user in group now that onboarding is complete
+    if (groupChatId) {
+      try {
+        const { unrestrictUserInGroup } = require('../group/groupAdminPanel');
+        await unrestrictUserInGroup(ctx.telegram, groupChatId, userId);
+      } catch (_) {}
+    }
+
+    let inviteLink = null;
+    if (groupChatId) {
+      try {
+        const inv = await ctx.telegram.createChatInviteLink(groupChatId, { name: 'PNPtv Onboarding', creates_join_request: false });
+        inviteLink = inv.invite_link;
+      } catch (e) { logger.debug('Could not create invite link:', e.message); }
+    }
+
+    let hangoutId = null, hangoutName = null;
+    if (groupChatId) {
+      try {
+        const { rows } = await dbQuery('SELECT id, name FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1', [String(groupChatId)]);
+        if (rows.length) { hangoutId = rows[0].id; hangoutName = rows[0].name || groupName; }
+      } catch (e) { logger.debug('Could not fetch hangout:', e.message); }
+    }
+
+    // Track migration and award points when user joins via a linked group
+    if (groupChatId) {
+      try {
+        const groupManagerService = require('../../../services/groupManagerService');
+        const pnptvUserId = String(ctx.from.id);
+        const tracked = await groupManagerService.trackMigration(
+          String(groupChatId), hangoutId, pnptvUserId,
+          String(userId), ctx.from.username || null
+        );
+        if (tracked) {
+          await groupManagerService.awardPoints(
+            String(groupChatId), pnptvUserId, String(userId),
+            ctx.from.username || null, 100, 'joined_pnptv'
+          );
+          const milestone = await groupManagerService.checkMilestone(String(groupChatId));
+          if (milestone) {
+            const celebMsg = `*Milestone reached!* ${milestone} members from this group have now joined PNPtv! Amazing community growth!`;
+            ctx.telegram.sendMessage(groupChatId, celebMsg, { parse_mode: 'Markdown' }).catch(() => {});
+          }
+        }
+      } catch (e) {
+        logger.warn('completeCreatorOnboarding: group tracking failed', { error: e.message });
+      }
+    }
+
+    const firstName = ctx.from?.first_name || '';
+    const doneMsg = lang === 'es'
+      ? `✅ ¡Listo${firstName ? `, *${firstName}*` : ''}! Ya eres parte de *${groupName}*. 🏳️‍🌈\n\nTu perfil está sincronizado. Usa los botones de abajo para unirte al grupo y al hangout.`
+      : `✅ You\'re in${firstName ? `, *${firstName}*` : ''}! Welcome to *${groupName}*. 🏳️‍🌈\n\nYour profile is synced. Use the buttons below to join the group and hangout.`;
+
+    const buttons = [];
+    if (inviteLink) buttons.push([{ text: `🔗 ${lang === 'es' ? 'Unirme al grupo' : 'Join the group'} — ${groupName}`, url: inviteLink }]);
+    if (hangoutId) buttons.push([{ text: `💬 ${lang === 'es' ? 'Abrir hangout' : 'Open hangout'} en PNPtv!`, url: `https://pnptv.app/hangouts/${hangoutId}` }]);
+    buttons.push([{ text: `🌐 ${lang === 'es' ? 'Abrir PNPtv!' : 'Open PNPtv!'}`, url: 'https://pnptv.app' }]);
+
+    await ctx.reply(doneMsg, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } });
+    logger.info('Creator onboarding complete', { userId, groupName, hangoutId });
+  } catch (err) {
+    logger.error('Error in completeCreatorOnboarding:', err);
+    await ctx.reply('An error occurred. Please try /start again.');
+  }
+};
+
 module.exports = registerOnboardingHandlers;
 module.exports.showTermsAndPrivacy = showTermsAndPrivacy;
+module.exports.showLanguageSelection = showLanguageSelection;

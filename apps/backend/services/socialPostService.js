@@ -54,7 +54,8 @@ class SocialPostService {
     const cursorClause = cursorId ? `AND sp.id < $3` : '';
 
     const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
               sp.source_channel, sp.hangout_group_id, sp.category,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -79,7 +80,6 @@ class SocialPostService {
        LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
        WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
          AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
-         AND sp.channel_id IS NULL
          ${cursorClause}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
          AND (
@@ -272,12 +272,14 @@ class SocialPostService {
         repost_of_id: post.repost_of_id,
         is_wof: post.is_wof,
         liked_by_me: post.liked_by_me,
+        is_exclusive: post.is_exclusive,
         blurred: true,
         content_locked: true,
         content: null,
         media_url: null,
         media_type: null,
         media_urls: null,
+        video_thumbnail_url: null,
       };
     });
   }
@@ -348,10 +350,11 @@ class SocialPostService {
    * Does NOT require authentication — the home page shows this before/after login.
    * liked_by_me is always false; the Social page full feed provides accurate state.
    */
-  static async getHomeFeed(limit = 15) {
-    const lim = Math.min(Number(limit) || 15, 25);
+  static async getHomeFeed(limit = 10) {
+    const lim = Math.min(Number(limit) || 10, 10);
     const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
               sp.source_channel, sp.category,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_wof, sp.created_at,
@@ -375,8 +378,6 @@ class SocialPostService {
          -- on a PRIME-tier post would otherwise leak unblurred to free
          -- viewers. See 2026-05-01 backfill.
          AND COALESCE(sp.content_tier, 'free') = 'free'
-         -- Channel videos live in their channel only, not the public feed.
-         AND sp.channel_id IS NULL
        ORDER BY sp.id DESC
        LIMIT $1`,
       [lim]
@@ -408,7 +409,8 @@ class SocialPostService {
     const cursorClause = cursorId ? `AND sp.id < $3` : '';
 
     const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
               sp.source_channel,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -420,7 +422,6 @@ class SocialPostService {
        FROM social_posts sp
        JOIN users u ON sp.user_id = u.id
        WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL AND sp.is_wof = true AND sp.is_exclusive = false
-         AND sp.channel_id IS NULL
          ${cursorClause}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
        ORDER BY sp.id DESC
@@ -468,7 +469,8 @@ class SocialPostService {
     const cursorClause = cursorId ? `AND sp.id < $4` : '';
 
     const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
               sp.source_channel, sp.hangout_group_id,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -525,7 +527,8 @@ class SocialPostService {
     const cursorClause = cursorId ? `AND sp.id < $4` : '';
 
     const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
               sp.source_channel, sp.hangout_group_id, sp.source_message_id,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -584,7 +587,8 @@ class SocialPostService {
 
     const [postsRes, profileRes] = await Promise.all([
       query(
-        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+                sp.content_type, sp.x_embed_url, sp.channel_id,
                 sp.source_channel,
                 sp.reply_to_id, sp.repost_of_id,
                 sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -595,8 +599,12 @@ class SocialPostService {
                 EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
-         WHERE sp.is_deleted = false AND sp.user_id = $2 AND sp.reply_to_id IS NULL
-           AND sp.channel_id IS NULL
+         WHERE sp.is_deleted = false
+           AND (
+             sp.user_id = $2
+             OR (sp.channel_id IS NOT NULL AND sp.channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $2::varchar))
+           )
+           AND sp.reply_to_id IS NULL
            ${cursorClause}
            AND sp.user_id != ALL($${blockedParamIdx}::text[])
          ORDER BY sp.id DESC LIMIT $3`,
@@ -629,6 +637,13 @@ class SocialPostService {
   // ── Create Post ───────────────────────────────────────────────────────────
 
   static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null) {
+    // Ephemeral Telegram bot file URLs expire in ~1 hour. Force callers to
+    // download to /uploads/ first so the post keeps working long-term.
+    if (mediaUrl && /^https?:\/\/api\.telegram\.org\/file\//i.test(mediaUrl)) {
+      const err = new Error('EPHEMERAL_TELEGRAM_URL');
+      err.code = 'EPHEMERAL_TELEGRAM_URL';
+      throw err;
+    }
     const contentTier = isExclusive ? 'PRIME' : 'free';
     const VALID_CATEGORIES = new Set(['fun', 'wellness', 'adult', 'community', 'social', 'media']);
     const resolvedCategory = (category && VALID_CATEGORIES.has(category))
@@ -780,33 +795,39 @@ class SocialPostService {
   static async deletePost(postId, userId, isAdmin = false) {
     if (isAdmin) {
       const { rows, rowCount } = await query(
-        'UPDATE social_posts SET is_deleted=true, updated_at=NOW() WHERE id=$1 RETURNING reply_to_id, repost_of_id',
+        'UPDATE social_posts SET is_deleted=true, updated_at=NOW() WHERE id=$1 RETURNING reply_to_id, repost_of_id, channel_id',
         [postId]
       );
       if (rowCount > 0) {
         await MediaCleanupService.deletePostMedia(postId);
-        const { reply_to_id, repost_of_id } = rows[0];
+        const { reply_to_id, repost_of_id, channel_id } = rows[0];
         if (reply_to_id) {
           await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);
         }
         if (repost_of_id) {
           await query('UPDATE social_posts SET reposts_count = GREATEST(reposts_count - 1, 0) WHERE id = $1', [repost_of_id]);
         }
+        if (channel_id) {
+          await query('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channel_id]);
+        }
       }
       return rowCount > 0;
     }
     const { rows, rowCount } = await query(
-      'UPDATE social_posts SET is_deleted=true WHERE id=$1 AND user_id=$2 RETURNING reply_to_id, repost_of_id',
+      'UPDATE social_posts SET is_deleted=true WHERE id=$1 AND user_id=$2 RETURNING reply_to_id, repost_of_id, channel_id',
       [postId, userId]
     );
     if (rowCount > 0) {
       await MediaCleanupService.deletePostMedia(postId);
-      const { reply_to_id, repost_of_id } = rows[0];
+      const { reply_to_id, repost_of_id, channel_id } = rows[0];
       if (reply_to_id) {
         await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);
       }
       if (repost_of_id) {
         await query('UPDATE social_posts SET reposts_count = GREATEST(reposts_count - 1, 0) WHERE id = $1', [repost_of_id]);
+      }
+      if (channel_id) {
+        await query('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channel_id]);
       }
     }
     return rowCount > 0;
@@ -877,8 +898,8 @@ class SocialPostService {
 
     const [postsRes, profileRes, postCountRes, performerRes, exclusiveCountRes] = await Promise.all([
       query(
-        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description,
-                sp.source_channel, sp.channel_id,
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata,
+                sp.content_type, sp.x_embed_url, sp.source_channel, sp.channel_id,
                 sp.reply_to_id, sp.repost_of_id,
                 sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
                 COALESCE(sp.content_tier, 'free') as content_tier,
@@ -888,8 +909,12 @@ class SocialPostService {
                 ${likedSubquery}
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
-         WHERE sp.is_deleted = false AND sp.user_id = $1 AND sp.reply_to_id IS NULL
-           AND sp.channel_id IS NULL
+         WHERE sp.is_deleted = false
+           AND (
+             sp.user_id = $1
+             OR (sp.channel_id IS NOT NULL AND sp.channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $1::varchar))
+           )
+           AND sp.reply_to_id IS NULL
            ${cursorClause}
          ORDER BY sp.id DESC LIMIT $2`,
         params
@@ -903,7 +928,9 @@ class SocialPostService {
         [userId]
       ),
       query(
-        'SELECT COUNT(*)::int as count FROM social_posts WHERE user_id = $1 AND is_deleted = false AND reply_to_id IS NULL AND channel_id IS NULL',
+        `SELECT COUNT(*)::int as count FROM social_posts
+          WHERE is_deleted = false AND reply_to_id IS NULL
+            AND (user_id = $1 OR (channel_id IS NOT NULL AND channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $1::varchar)))`,
         [userId]
       ),
       query(

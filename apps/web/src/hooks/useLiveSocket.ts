@@ -30,6 +30,14 @@ export interface LiveRaidEvent {
   raidedBy: string | number;
 }
 
+export interface LiveRaidRequestEvent {
+  raidId: string;
+  sourceChannelRef: string;
+  sourceName: string;
+  viewerCount: number;
+  raidedBy: string | number;
+}
+
 export interface LiveTipAlert {
   amount: number;
   username: string;
@@ -53,6 +61,16 @@ interface UseLiveSocketResult {
   raidEvent: LiveRaidEvent | null;
   /** Dismiss the active raid overlay (viewer clicked Cancel). */
   dismissRaid: () => void;
+  /** Incoming raid request for the stream owner — non-null while awaiting response. */
+  raidRequest: LiveRaidRequestEvent | null;
+  /** Owner calls this to accept or decline an incoming raid request. */
+  respondToRaid: (raidId: string, accept: boolean) => void;
+  /** Non-null when a raid the local user initiated was declined by the target. */
+  raidDeclined: { raidId: string; targetName: string } | null;
+  /** Non-null when a raid the local user initiated expired (target never responded). */
+  raidExpired: { raidId: string } | null;
+  /** Clear the declined/expired status after the user has seen it. */
+  clearRaidStatus: () => void;
   /** Current tip goal state — updated via live:goal_update socket event. */
   tipGoal: TipGoal | null;
   /** Latest tip alert — auto-clears after 4 seconds. */
@@ -74,6 +92,9 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
   const [tipAlert, setTipAlert] = useState<LiveTipAlert | null>(null);
   const [chatBanned, setChatBanned] = useState(false);
   const [socketBalanceReceived, setSocketBalanceReceived] = useState(false);
+  const [raidRequest, setRaidRequest] = useState<LiveRaidRequestEvent | null>(null);
+  const [raidDeclined, setRaidDeclined] = useState<{ raidId: string; targetName: string } | null>(null);
+  const [raidExpired, setRaidExpired] = useState<{ raidId: string } | null>(null);
   const tipAlertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const raidDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -138,6 +159,20 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       }, 4000);
     };
 
+    // Incoming raid request — target streamer receives this on their personal room
+    const onRaidRequest = (data: LiveRaidRequestEvent) => {
+      setRaidRequest(data);
+    };
+
+    // Raider receives these on their personal room
+    const onRaidDeclined = (data: { raidId: string; targetChannelRef: string; targetName: string }) => {
+      setRaidDeclined({ raidId: data.raidId, targetName: data.targetName });
+    };
+
+    const onRaidExpired = (data: { raidId: string }) => {
+      setRaidExpired({ raidId: data.raidId });
+    };
+
     if (socket.connected) {
       setIsConnected(true);
     }
@@ -150,6 +185,9 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
     socket.on("live:error", onLiveError);
     socket.on("live:goal_update", onGoalUpdate);
     socket.on("live:tip_alert", onTipAlert);
+    socket.on("live:raid:request", onRaidRequest);
+    socket.on("live:raid:declined", onRaidDeclined);
+    socket.on("live:raid:expired", onRaidExpired);
 
     return () => {
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
@@ -163,6 +201,9 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       socket.off("live:error", onLiveError);
       socket.off("live:goal_update", onGoalUpdate);
       socket.off("live:tip_alert", onTipAlert);
+      socket.off("live:raid:request", onRaidRequest);
+      socket.off("live:raid:declined", onRaidDeclined);
+      socket.off("live:raid:expired", onRaidExpired);
     };
   }, []);
 
@@ -213,7 +254,7 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
 
     const onHistory = (data: LiveChatMessage[] | { messages: LiveChatMessage[] }) => {
       const msgs = Array.isArray(data) ? data : (data.messages ?? []);
-      setMessages(msgs);
+      setMessages(msgs.slice(-MAX_MESSAGES));
     };
 
     const MAX_MESSAGES = 200;
@@ -245,12 +286,18 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       }, 30_000);
     };
 
+    // Stream ended — reset viewer count immediately so the page detects offline faster
+    const onLiveEnded = () => {
+      setViewerCount(0);
+    };
+
     socket.on("connect", onConnectForStream);
     socket.on("live:history", onHistory);
     socket.on("live:message", onMessage);
     socket.on("live:viewer_count", onViewerCount);
     socket.on("live:tip", onTip);
     socket.on("live:raid", onRaid);
+    socket.on("live:ended", onLiveEnded);
 
     // Join immediately if already connected
     if (socket.connected) {
@@ -271,6 +318,7 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       socket.off("live:viewer_count", onViewerCount);
       socket.off("live:tip", onTip);
       socket.off("live:raid", onRaid);
+      socket.off("live:ended", onLiveEnded);
     };
   }, [streamId]);
 
@@ -293,10 +341,16 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
     setRaidEvent(null);
   }, []);
 
-  const emitRaid = useCallback((sid: string, targetChannelRef: string) => {
+  const respondToRaid = useCallback((raidId: string, accept: boolean) => {
     const socket = connectSocket();
     if (!socket.connected) return;
-    socket.emit("live:raid:initiate", { streamId: sid, targetChannelRef });
+    socket.emit("live:raid:respond", { raidId, accept });
+    setRaidRequest(null);
+  }, []);
+
+  const clearRaidStatus = useCallback(() => {
+    setRaidDeclined(null);
+    setRaidExpired(null);
   }, []);
 
   return {
@@ -312,6 +366,11 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
     socketError,
     raidEvent,
     dismissRaid,
+    raidRequest,
+    respondToRaid,
+    raidDeclined,
+    raidExpired,
+    clearRaidStatus,
     tipGoal,
     tipAlert,
     chatBanned,

@@ -28,6 +28,10 @@ class EmailService {
           host: process.env.EASYBOTS_SMTP_HOST,
           port: parseInt(process.env.EASYBOTS_SMTP_PORT || '587'),
           secure: process.env.EASYBOTS_SMTP_SECURE === 'true', // true for 465, false for other ports
+          pool: true,
+          maxConnections: 2,
+          rateDelta: 1000,
+          rateLimit: 3,
           auth: {
             user: process.env.EASYBOTS_SMTP_USER,
             pass: process.env.EASYBOTS_SMTP_PASS,
@@ -44,6 +48,10 @@ class EmailService {
           host: process.env.PNPTV_SMTP_HOST,
           port: parseInt(process.env.PNPTV_SMTP_PORT || '587'),
           secure: process.env.PNPTV_SMTP_SECURE === 'true',
+          pool: true,
+          maxConnections: 2,
+          rateDelta: 1000,
+          rateLimit: 3,
           auth: {
             user: process.env.PNPTV_SMTP_USER,
             pass: process.env.PNPTV_SMTP_PASS,
@@ -153,7 +161,7 @@ class EmailService {
       }
 
       const mailOptions = {
-        from: '"PNPtv" <noreply@pnptv.app>',
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv" <hello@pnptv.app>',
         to,
         subject,
         html: this.generateWelcomeEmailHtml({
@@ -189,7 +197,7 @@ class EmailService {
   }
 
   /**
-   * Unified purchase confirmation email — sent from noreply@pnptv.app for every
+   * Unified purchase confirmation email — sent from hello@pnptv.app for every
    * completed payment regardless of provider. Generates a PDF invoice inline.
    */
   async sendPurchaseConfirmationEmail({
@@ -268,7 +276,7 @@ class EmailService {
     <a class="btn" href="https://pnptv.app">Ir a PNPtv</a>
     <p>Si tienes preguntas, escríbenos a <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
   </div>
-  <div class="ftr"><p>PNPtv | noreply@pnptv.app</p></div>
+  <div class="ftr"><p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p></div>
 </div>
 </body></html>` : `
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
@@ -299,7 +307,7 @@ class EmailService {
     <a class="btn" href="https://pnptv.app">Go to PNPtv</a>
     <p>Questions? Email us at <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
   </div>
-  <div class="ftr"><p>PNPtv | noreply@pnptv.app</p></div>
+  <div class="ftr"><p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p></div>
 </div>
 </body></html>`;
 
@@ -310,7 +318,7 @@ class EmailService {
       }] : [];
 
       const result = await this.transporters.pnptv.sendMail({
-        from: '"PNPtv" <noreply@pnptv.app>',
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv" <hello@pnptv.app>',
         to,
         subject,
         html,
@@ -349,7 +357,7 @@ class EmailService {
         : 'Your PNPtv Access Credentials';
 
       const mailOptions = {
-        from: '"PNPtv" <noreply@pnptv.app>',
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv" <hello@pnptv.app>',
         to,
         subject,
         html: this.generateCredentialsEmailHtml({ customerName, username, password, loginUrl, language }),
@@ -391,7 +399,7 @@ class EmailService {
       : 'Save these credentials in a safe place. You can change your password after logging in at';
     const footer = isSpanish
       ? 'Este es un correo automático, por favor no respondas directamente.'
-      : 'This is an automated email, please do not reply directly.';
+      : 'For help or questions, contact <a href="mailto:support@pnptv.app">support@pnptv.app</a>.';
 
     return `
 <!DOCTYPE html>
@@ -453,7 +461,7 @@ class EmailService {
     </div>
 
     <div class="footer">
-      <p>PNPtv | noreply@pnptv.app</p>
+      <p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p>
       <p>${footer}</p>
     </div>
   </div>
@@ -506,7 +514,7 @@ class EmailService {
 
       <p>Your invoice is attached to this email as a PDF.</p>
 
-      <p>If you have any questions about this invoice, please contact our support team.</p>
+      <p>Questions about this invoice? Contact us at <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
 
       <p>Best regards,<br>
       <strong>PNPtv Team</strong></p>
@@ -514,7 +522,7 @@ class EmailService {
 
     <div class="footer">
       <p>PNPtv | billing@pnptv.app</p>
-      <p>This is an automated email, please do not reply directly to this message.</p>
+      <p>For help or questions, contact <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
     </div>
   </div>
 </body>
@@ -646,7 +654,7 @@ class EmailService {
     </div>
 
     <div class="footer">
-      <p>PNPtv | noreply@pnptv.app</p>
+      <p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p>
       <p>Este es un correo automático, por favor no respondas directamente a este mensaje.</p>
     </div>
   </div>
@@ -739,8 +747,8 @@ class EmailService {
     </div>
 
     <div class="footer">
-      <p>PNPtv | noreply@pnptv.app</p>
-      <p>This is an automated email, please do not reply directly to this message.</p>
+      <p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p>
+      <p>For help or questions, contact <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
     </div>
   </div>
 </body>
@@ -848,7 +856,7 @@ class EmailService {
 </div>`;
 
       const result = await this.transporters.pnptv.sendMail({
-        from: '"PNPtv Founder" <noreply@pnptv.app>',
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv Founder" <hello@pnptv.app>',
         to,
         subject,
         html,

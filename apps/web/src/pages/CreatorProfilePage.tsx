@@ -14,7 +14,8 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import shaka from "shaka-player/dist/shaka-player.compiled";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import {
   Lock,
@@ -39,9 +40,15 @@ import {
   getPublicCreatorProfile,
   subscribeToCreator,
   unsubscribeFromCreator,
+  prepareUsdcSubscription,
+  getCreatorSubscriptionStatus,
+  getWalletBalance,
+  payCreatorSubWithTokens,
   ApiError,
   type CreatorPublicProfile,
   type PublicCreatorMediaItem,
+  type PublicCreatorChannel,
+  type PublicCreatorFeaturedVideo,
   type PublicCallPackage,
   type CreatorRecentPost,
   type CreatorNextAvailability,
@@ -51,6 +58,144 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Watermark positions — cycles every 30s for anti-screenshot deterrence
+const WM_POSITIONS: Array<{ top?: string; bottom?: string; left?: string; right?: string }> = [
+  { bottom: "10%", right: "8%" },
+  { top: "10%", left: "8%" },
+  { top: "40%", right: "8%" },
+  { bottom: "10%", left: "8%" },
+];
+
+// ─── DRM-capable video player ─────────────────────────────────────────────────
+// Wraps a <video> element with Shaka Player for Widevine/FairPlay DRM when
+// VITE_DRM_ENABLED=true and the content has a drmContentId.
+// Falls back to a plain <video> for non-DRM content or when DRM is not enabled.
+
+interface DrmVideoPlayerProps {
+  src: string;
+  drmContentId?: string | null;
+  poster?: string | null;
+  watermarkLabel?: string;
+}
+
+function DrmVideoPlayer({ src, drmContentId, poster, watermarkLabel }: DrmVideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const shakaRef = useRef<shaka.Player | null>(null);
+  const [initError, setInitError] = useState(false);
+  const drmEnabled = import.meta.env.VITE_DRM_ENABLED === "true";
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    // Only initialise Shaka when DRM is enabled AND this content has a drmContentId
+    if (!drmEnabled || !drmContentId) {
+      // Plain video — just set src via the element directly if not already set
+      return;
+    }
+
+    let player: shaka.Player | null = null;
+
+    async function initShaka() {
+      if (!shaka.Player.isBrowserSupported()) {
+        setInitError(true);
+        return;
+      }
+
+      try {
+        player = new shaka.Player(videoEl!);
+        shakaRef.current = player;
+
+        // Fetch FairPlay certificate (iOS Safari)
+        let fpsCertificate: ArrayBuffer | null = null;
+        try {
+          const certRes = await fetch("/api/webapp/drm/fairplay-cert", { credentials: "include" });
+          if (certRes.ok) {
+            fpsCertificate = await certRes.arrayBuffer();
+          }
+        } catch {
+          // FairPlay cert unavailable — FairPlay DRM won't work on iOS but Widevine still will
+        }
+
+        player!.configure({
+          drm: {
+            servers: {
+              "com.widevine.alpha": `/api/webapp/drm/widevine-license?contentId=${encodeURIComponent(drmContentId!)}`,
+              "com.apple.fps.1_0": `/api/webapp/drm/fairplay-license?contentId=${encodeURIComponent(drmContentId!)}`,
+            },
+            advanced: fpsCertificate
+              ? {
+                  "com.apple.fps.1_0": {
+                    serverCertificate: new Uint8Array(fpsCertificate),
+                  },
+                }
+              : {},
+          },
+        });
+
+        await player!.load(src);
+      } catch (err) {
+        // Shaka init failed — fall back to plain video
+        setInitError(true);
+        if (player) {
+          try { await player.destroy(); } catch { /* ignore */ }
+        }
+        shakaRef.current = null;
+      }
+    }
+
+    void initShaka();
+
+    return () => {
+      if (shakaRef.current) {
+        shakaRef.current.destroy().catch(() => { /* ignore */ });
+        shakaRef.current = null;
+      }
+    };
+  }, [src, drmContentId, drmEnabled]);
+
+  // If DRM init failed or DRM not needed, render a plain video element
+  const usePlainVideo = initError || !drmEnabled || !drmContentId;
+
+  return (
+    <div style={{ position: "relative" }}>
+      <video
+        ref={videoRef}
+        src={usePlainVideo ? src : undefined}
+        poster={poster ?? undefined}
+        controls
+        controlsList="nodownload"
+        disablePictureInPicture
+        onContextMenu={(e) => e.preventDefault()}
+        playsInline
+        autoPlay
+        className="max-w-full max-h-[90dvh] rounded-xl"
+        style={{ background: "#000" }}
+      />
+      {watermarkLabel && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            bottom: 10,
+            right: 10,
+            color: "rgba(255,255,255,0.12)",
+            fontSize: 10,
+            fontFamily: "monospace",
+            pointerEvents: "none",
+            userSelect: "none",
+            zIndex: 20,
+            whiteSpace: "nowrap",
+            textShadow: "0 1px 3px rgba(0,0,0,0.95)",
+          }}
+        >
+          {watermarkLabel}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function formatPrice(usd: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -79,6 +224,13 @@ function formatTimeRange(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+function formatDuration(seconds: number | null | undefined): string | null {
+  if (seconds == null || seconds < 0) return null;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function availabilityDayLabel(avail: CreatorNextAvailability): string {
@@ -87,7 +239,7 @@ function availabilityDayLabel(avail: CreatorNextAvailability): string {
   return DAY_NAMES[avail.day_of_week] ?? "";
 }
 
-type CreatorTier = "creator" | "crystal" | "ice";
+type CreatorTier = "creator" | "crystal" | "ice" | "diamond" | "full_time";
 
 // ─── Tier Badge ───────────────────────────────────────────────────────────────
 
@@ -109,6 +261,26 @@ function TierBadge({ tier }: { tier: CreatorTier }) {
         style={{ background: "rgba(59,130,246,0.18)", color: "#60A5FA" }}
       >
         ICE
+      </span>
+    );
+  }
+  if (tier === "diamond") {
+    return (
+      <span
+        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
+        style={{ background: "rgba(139,92,246,0.18)", color: "#A78BFA" }}
+      >
+        Diamond
+      </span>
+    );
+  }
+  if (tier === "full_time") {
+    return (
+      <span
+        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
+        style={{ background: "rgba(230,145,56,0.18)", color: "#FCD34D" }}
+      >
+        Featured
       </span>
     );
   }
@@ -194,9 +366,13 @@ function PageSkeleton() {
 interface LightboxProps {
   item: PublicCreatorMediaItem;
   onClose: () => void;
+  watermarkLabel?: string;
 }
 
-function Lightbox({ item, onClose }: LightboxProps) {
+function Lightbox({ item, onClose, watermarkLabel }: LightboxProps) {
+  // Rotating watermark position index (cycles every 30s)
+  const [wmIdx, setWmIdx] = useState(0);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -204,6 +380,19 @@ function Lightbox({ item, onClose }: LightboxProps) {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!watermarkLabel) return;
+    const interval = setInterval(() => {
+      setWmIdx((i) => (i + 1) % WM_POSITIONS.length);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [watermarkLabel]);
+
+  // The backend sends camelCase `mediaType`; the interface declares `media_type`.
+  // Support both to be resilient against the existing field naming mismatch.
+  const mediaType = (item as unknown as { mediaType?: string }).mediaType ?? item.media_type;
+  const thumbUrl = (item as unknown as { thumbUrl?: string | null }).thumbUrl ?? item.thumb_url;
 
   return (
     <div
@@ -225,20 +414,41 @@ function Lightbox({ item, onClose }: LightboxProps) {
         className="max-w-[90vw] max-h-[90dvh] flex items-center justify-center"
         onClick={(e) => e.stopPropagation()}
       >
-        {item.media_type === "video" ? (
-          <video
+        {mediaType === "video" ? (
+          <DrmVideoPlayer
             src={item.url!}
-            controls
-            autoPlay
-            className="max-w-full max-h-[90dvh] rounded-xl"
-            style={{ background: "#000" }}
+            drmContentId={item.drmContentId}
+            poster={thumbUrl}
+            watermarkLabel={watermarkLabel}
           />
         ) : (
-          <img
-            src={item.url!}
-            alt={item.caption ?? "Creator media"}
-            className="max-w-full max-h-[90dvh] rounded-xl object-contain"
-          />
+          <div style={{ position: "relative" }}>
+            <img
+              src={item.url!}
+              alt={item.caption ?? "Creator media"}
+              className="max-w-full max-h-[90dvh] rounded-xl object-contain"
+            />
+            {watermarkLabel && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  color: "rgba(255,255,255,0.12)",
+                  fontSize: 10,
+                  fontFamily: "monospace",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                  zIndex: 20,
+                  whiteSpace: "nowrap",
+                  textShadow: "0 1px 3px rgba(0,0,0,0.95)",
+                  transition: "top 0.5s, bottom 0.5s, left 0.5s, right 0.5s",
+                  ...WM_POSITIONS[wmIdx],
+                }}
+              >
+                {watermarkLabel}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -253,87 +463,59 @@ function Lightbox({ item, onClose }: LightboxProps) {
   );
 }
 
-// ─── Media item tile ──────────────────────────────────────────────────────────
+// ─── Channel cover card ───────────────────────────────────────────────────────
 
-interface MediaTileProps {
-  item: PublicCreatorMediaItem;
-  isSubscribed: boolean;
-  onOpenLightbox: (item: PublicCreatorMediaItem) => void;
-  onSubscribeCta: () => void;
-}
+function ChannelCoverCard({ channel }: { channel: PublicCreatorChannel }) {
+  const navigate = useNavigate();
+  const cover = channel.cover_image_url || "/default-channel-cover.png";
 
-function MediaTile({
-  item,
-  isSubscribed,
-  onOpenLightbox,
-  onSubscribeCta,
-}: MediaTileProps) {
-  const isLocked = item.is_premium && item.url === null;
-  const isUnlocked = item.is_premium && item.url !== null;
-  const thumbSrc = item.thumb_url ?? item.url;
-
-  function handleClick() {
-    if (isLocked) {
-      onSubscribeCta();
-      return;
+  const badge = (() => {
+    switch (channel.access_type) {
+      case "prime":
+        return { label: "PRIME", cls: "bg-yellow-400/90 text-black" };
+      case "subscription":
+        return { label: "SUB", cls: "bg-fuchsia-500/90 text-white" };
+      case "paid":
+        return {
+          label: channel.price_usd > 0 ? `$${channel.price_usd.toFixed(0)}` : "PAID",
+          cls: "bg-emerald-500/90 text-white",
+        };
+      default:
+        return { label: "FREE", cls: "bg-white/85 text-black" };
     }
-    onOpenLightbox(item);
-  }
+  })();
 
   return (
     <button
-      className="relative aspect-square rounded-xl overflow-hidden group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-      style={{ background: "var(--pnp-surface)" }}
-      onClick={handleClick}
-      aria-label={
-        isLocked
-          ? "Contenido premium bloqueado — suscríbete para desbloquear"
-          : item.caption
-          ? item.caption
-          : item.media_type === "video"
-          ? "Reproducir video"
-          : "Ver foto"
-      }
+      type="button"
+      onClick={() => navigate(`/channels?channel=${encodeURIComponent(channel.slug)}`)}
+      className="group relative aspect-[4/5] rounded-2xl overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-transform active:scale-[0.98]"
+      aria-label={`Abrir canal ${channel.name}`}
     >
-      {thumbSrc && (
-        <img
-          src={thumbSrc}
-          alt={item.caption ?? ""}
-          loading="lazy"
-          className={[
-            "w-full h-full object-cover transition-transform duration-200",
-            !isLocked ? "group-hover:scale-105" : "blur-sm scale-105",
-          ].join(" ")}
-        />
-      )}
-
-      {isLocked && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60 backdrop-blur-[2px]">
-          <Lock size={20} className="text-white/80" aria-hidden="true" />
-          <span className="text-[10px] font-medium text-white/70 text-center px-2 leading-tight">
-            Suscríbete para ver
-          </span>
+      <img
+        src={cover}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        className="absolute inset-0 w-full h-full object-cover"
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/10" aria-hidden="true" />
+      <span
+        className={`absolute top-2 left-2 px-2 py-0.5 text-[10px] font-bold rounded-full uppercase tracking-wider ${badge.cls}`}
+      >
+        {badge.label}
+      </span>
+      <div className="absolute bottom-0 inset-x-0 p-3">
+        <div className="text-white font-semibold text-sm leading-tight line-clamp-2">
+          {channel.name}
         </div>
-      )}
-
-      {!isLocked && item.media_type === "video" && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center group-hover:bg-black/80 transition-colors">
-            <Play size={16} className="text-white ml-0.5" aria-hidden="true" />
-          </div>
+        <div className="mt-1 text-[11px] text-white/75 font-medium">
+          {channel.post_count} {channel.post_count === 1 ? "video" : "videos"}
         </div>
-      )}
-
-      {isUnlocked && (
-        <div className="absolute top-1.5 left-1.5">
-          <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider text-white uppercase"
-            style={{ background: "var(--pnp-accent)" }}
-          >
-            Exclusivo
-          </span>
-        </div>
-      )}
+      </div>
     </button>
   );
 }
@@ -343,40 +525,83 @@ function MediaTile({
 interface SubscribePanelProps {
   creatorId: string;
   priceUsd: number;
+  videoCount: number;
+  photoCount: number;
   onSuccess: () => void;
 }
 
-function SubscribePanel({ creatorId, priceUsd, onSuccess }: SubscribePanelProps) {
-  const [status, setStatus] = useState<"idle" | "loading" | "payment_pending" | "error">("idle");
+function SubscribePanel({ creatorId, priceUsd, videoCount, photoCount, onSuccess }: SubscribePanelProps) {
+  const [loading, setLoading] = useState<"crypto" | "tokens" | "verify" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
+  const [paymentPending, setPaymentPending] = useState(false);
+  const [tokenBalance, setTokensBalance] = useState<number | null>(null);
+  const inFlight = useRef(false);
 
-  async function handleSubscribe() {
-    setStatus("loading");
+  useEffect(() => {
+    getWalletBalance()
+      .then((res) => { if (res.success) setTokensBalance(res.balance); })
+      .catch(() => {});
+  }, []);
+
+  async function handleTokens() {
+    if (inFlight.current) return;
+    const tokenCost = Math.round(priceUsd * 100);
+    if (tokenBalance !== null && tokenBalance < tokenCost) {
+      setError(`Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.`);
+      return;
+    }
+    inFlight.current = true;
+    setLoading("tokens");
     setError(null);
     try {
-      const result = await subscribeToCreator(creatorId);
-      if (result.paymentUrl) {
-        setPaymentUrl(result.paymentUrl);
-        window.open(result.paymentUrl, "_blank", "noopener,noreferrer");
-        setStatus("payment_pending");
-      } else if (result.success) {
-        onSuccess();
-      } else {
-        setError("No se pudo iniciar la suscripción. Intenta de nuevo.");
-        setStatus("error");
+      const result = await payCreatorSubWithTokens(creatorId);
+      if (!result.success) {
+        if (result.code === "MEMBER_REQUIRED") {
+          setError("Necesitas una membresía Basic para suscribirte a un creador.");
+        } else if (result.code === "INSUFFICIENT_TOKENS") {
+          setError(`Tokens insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.`);
+        } else {
+          setError(result.error || "No se pudo activar la suscripción.");
+        }
+        return;
       }
+      if (result.newBalance !== undefined) setTokensBalance(result.newBalance);
+      onSuccess();
     } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? err.message
-          : "Algo salió mal. Por favor intenta de nuevo.";
-      setError(msg);
-      setStatus("error");
+      setError(err instanceof Error ? err.message : "Error al pagar con Tokens.");
+    } finally {
+      setLoading(null);
+      inFlight.current = false;
     }
   }
 
-  if (status === "payment_pending") {
+  async function handleCrypto() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setLoading("crypto");
+    setError(null);
+    try {
+      const result = await prepareUsdcSubscription("creator_monthly", undefined, creatorId);
+      if (!result.invoiceUrl) throw new Error("No payment URL received");
+      setPaymentUrl(result.invoiceUrl);
+      window.open(result.invoiceUrl, "_blank", "noopener,noreferrer,width=800,height=700");
+      setPaymentPending(true);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "";
+      const cryptoErrors: Record<string, string> = {
+        MEMBER_REQUIRED: "Necesitas una membresía Basic para suscribirte con crypto. Usa Pagar con Tarjeta / PSE en su lugar.",
+        CREATOR_LOCKED: "Este creador no está aceptando suscripciones por el momento.",
+        SUBSCRIPTIONS_PAUSED: "Este creador pausó sus suscripciones temporalmente.",
+      };
+      setError(cryptoErrors[msg] ?? (msg || "Algo salió mal. Por favor intenta de nuevo."));
+    } finally {
+      setLoading(null);
+      inFlight.current = false;
+    }
+  }
+
+  if (paymentPending) {
     return (
       <div
         className="rounded-2xl p-4 mt-1 border border-white/10 text-center space-y-3"
@@ -399,16 +624,34 @@ function SubscribePanel({ creatorId, priceUsd, onSuccess }: SubscribePanelProps)
           </a>
         )}
         <button
-          onClick={onSuccess}
-          className="flex items-center gap-2 mx-auto px-4 py-2 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-80"
+          disabled={loading === "verify"}
+          onClick={async () => {
+            setLoading("verify");
+            setError(null);
+            try {
+              const status = await getCreatorSubscriptionStatus(creatorId);
+              if (status.subscribed) {
+                onSuccess();
+              } else {
+                setError("Tu pago aún no se ha confirmado. Espera un momento y vuelve a intentarlo.");
+              }
+            } catch {
+              setError("No se pudo verificar. Intenta de nuevo.");
+            } finally {
+              setLoading(null);
+            }
+          }}
+          className="flex items-center gap-2 mx-auto px-4 py-2 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-50"
           style={{ background: "var(--pnp-accent)" }}
         >
-          <RefreshCw size={14} aria-hidden="true" />
-          Verificar suscripción
+          <RefreshCw size={14} aria-hidden="true" className={loading === "verify" ? "animate-spin" : ""} />
+          {loading === "verify" ? "Verificando…" : "Verificar suscripción"}
         </button>
       </div>
     );
   }
+
+  const hasContent = videoCount > 0 || photoCount > 0;
 
   return (
     <div
@@ -422,6 +665,23 @@ function SubscribePanel({ creatorId, priceUsd, onSuccess }: SubscribePanelProps)
         </span>
       </p>
 
+      {hasContent && (
+        <div className="flex items-center justify-center gap-4 text-xs text-pnp-textSecondary">
+          {videoCount > 0 && (
+            <span className="flex items-center gap-1">
+              <span aria-hidden="true">🎬</span>
+              {videoCount} video{videoCount !== 1 ? "s" : ""}
+            </span>
+          )}
+          {photoCount > 0 && (
+            <span className="flex items-center gap-1">
+              <span aria-hidden="true">📸</span>
+              {photoCount} foto{photoCount !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 rounded-lg px-3 py-2">
           <AlertTriangle size={13} aria-hidden="true" className="shrink-0" />
@@ -429,18 +689,49 @@ function SubscribePanel({ creatorId, priceUsd, onSuccess }: SubscribePanelProps)
         </div>
       )}
 
+      {tokenBalance !== null && tokenBalance > 0 && (
+        <button
+          onClick={handleTokens}
+          disabled={loading !== null}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 active:scale-[0.98] flex items-center justify-center gap-2"
+          style={{ background: "linear-gradient(135deg, #D4007A, #a0005e)" }}
+        >
+          {loading === "tokens" ? (
+            "Procesando…"
+          ) : (
+            <>
+              <span>🎫</span>
+              <span>Pagar con Tokens · {(Math.round(priceUsd * 100)).toLocaleString()} F</span>
+              <span className="text-[10px] opacity-70 ml-1">({tokenBalance.toLocaleString()} F disponibles)</span>
+            </>
+          )}
+        </button>
+      )}
+
       <button
-        onClick={handleSubscribe}
-        disabled={status === "loading"}
+        onClick={handleCrypto}
+        disabled={loading !== null}
         className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 active:scale-[0.98]"
         style={{ background: "var(--pnp-accent)" }}
       >
-        {status === "loading" ? "Procesando…" : `Suscribirme · ${formatPrice(priceUsd)}/mes`}
+        {loading === "crypto" ? "Procesando…" : `Pagar con Crypto · ${formatPrice(priceUsd)}/mes`}
       </button>
 
       <p className="text-[10px] text-pnp-textSecondary text-center">
         Cancela cuando quieras. El contenido se desbloquea inmediatamente.
       </p>
+
+      <div className="border-t border-white/8 pt-2 space-y-1">
+        <p className="text-[10px] text-pnp-textSecondary text-center leading-relaxed">
+          <span className="font-medium text-amber-400/80">Compra final.</span>{" "}
+          Todas las compras son definitivas y no reembolsables, salvo lo requerido por la ley local aplicable.
+        </p>
+        <p className="text-[10px] text-pnp-textSecondary text-center leading-relaxed">
+          Facturado por <span className="font-medium text-pnp-textPrimary">EasyBots</span> · Aparece como{" "}
+          <span className="font-medium text-pnp-textPrimary">EasyBots</span> o{" "}
+          <span className="font-medium text-pnp-textPrimary">NowPayments</span> en tu estado de cuenta.
+        </p>
+      </div>
     </div>
   );
 }
@@ -469,13 +760,30 @@ export default function CreatorProfilePage() {
 
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [showSubscribePanel, setShowSubscribePanel] = useState(false);
+  const [showVideoConfirm, setShowVideoConfirm] = useState(false);
   const [unsubscribeLoading, setUnsubscribeLoading] = useState(false);
 
   const [lightboxItem, setLightboxItem] = useState<PublicCreatorMediaItem | null>(null);
   const [showBookCall, setShowBookCall] = useState(false);
+  const [bookCallDuration, setBookCallDuration] = useState<30 | 60 | undefined>(undefined);
 
   // Share / QR state
   const [copied, setCopied] = useState(false);
+
+  // Watermark label for lightbox — shown on all unlocked media the viewer opens
+  const watermarkLabel = user
+    ? `${user.username ? '@' + user.username : user.firstName ?? 'member'} · pnptv.app`
+    : undefined;
+
+  // Rotating watermark position index for the lightbox (cycles every 30s)
+  const [wmIdx, setWmIdx] = useState(0);
+  useEffect(() => {
+    if (!lightboxItem) return;
+    const interval = setInterval(() => {
+      setWmIdx((i) => (i + 1) % WM_POSITIONS.length);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [lightboxItem]);
 
   const subscribePanelRef = useRef<HTMLDivElement>(null);
 
@@ -507,11 +815,29 @@ export default function CreatorProfilePage() {
     load();
   }, [load]);
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (!data) return;
+    const action = searchParams.get("action");
+    if (action === "book" && data.callPackages.some((p) => p.is_active)) {
+      setShowBookCall(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("action");
+      setSearchParams(next, { replace: true });
+    }
+  }, [data, searchParams, setSearchParams]);
+
   function handleSubscribeCta() {
     if (!isAuthenticated) {
       navigate("/login");
       return;
     }
+    // Show content-count + legal confirmation modal before opening payment panel
+    setShowVideoConfirm(true);
+  }
+
+  function confirmSubscribe() {
+    setShowVideoConfirm(false);
     setShowSubscribePanel(true);
     setTimeout(() => {
       subscribePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -616,7 +942,7 @@ export default function CreatorProfilePage() {
     );
   }
 
-  const { creator, media, callPackages, recentPosts, socialLinks, nextAvailability } = data;
+  const { creator, channels, media, featuredVideos, callPackages, recentPosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
   const hasCallPackages = activePackages.length > 0;
   const cheapestPackage = hasCallPackages
@@ -625,16 +951,39 @@ export default function CreatorProfilePage() {
 
   const ALLOWED_SOCIAL = new Set(["x", "twitter", "telegram"]);
   const filteredSocialLinks = socialLinks
-    ? Object.fromEntries(Object.entries(socialLinks).filter(([k]) => ALLOWED_SOCIAL.has(k)))
+    ? Object.fromEntries(
+        Object.entries(socialLinks).filter(
+          ([k, v]) =>
+            ALLOWED_SOCIAL.has(k) &&
+            typeof v === "string" &&
+            v.startsWith("https://")
+        )
+      )
     : {};
   const hasSocialLinks = Object.keys(filteredSocialLinks).length > 0;
   const hasRecentPosts = recentPosts && recentPosts.length > 0;
+  const hasChannels = Array.isArray(channels) && channels.length > 0;
 
-  const allExclusive = media.every((m) => m.is_premium);
-  const contentSectionTitle = allExclusive ? "Contenido Exclusivo" : "Contenido";
+  // Contenido sub-sections
+  // Support both snake_case (API) and camelCase (possible transform) field names
+  const publicPhotos = (Array.isArray(media) ? media : []).filter((m) => {
+    const mt = (m as unknown as { mediaType?: string }).mediaType ?? m.media_type;
+    const isPrem = (m as unknown as { isPremium?: boolean }).isPremium ?? m.is_premium;
+    return (mt === "photo" || mt === "image") && !isPrem;
+  }).slice(0, 6);
+
+  const featuredVideoList: PublicCreatorFeaturedVideo[] = Array.isArray(featuredVideos)
+    ? featuredVideos.slice(0, 3)
+    : [];
+
+  const hasPhotos = publicPhotos.length > 0;
+  const hasFeaturedVideos = featuredVideoList.length > 0;
+  const hasContenido = hasPhotos || hasFeaturedVideos || hasChannels;
 
   const profileUrl = `https://pnptv.app/creator/${creator.username}`;
-  const isOwnProfile = isAuthenticated && user?.id === creator.id;
+  const isOwnProfile = !!user && (
+    String(user.dbId || user.id) === String(creator.id)
+  );
 
   // Map creator_type to BookCallModal's expected CreatorType
   const mappedCreatorType = (
@@ -712,8 +1061,8 @@ export default function CreatorProfilePage() {
                 <TierBadge tier={creator.creator_type} />
                 <span className="flex items-center gap-1 text-xs text-pnp-textSecondary">
                   <Users size={11} aria-hidden="true" />
-                  {creator.creator_subscriber_count.toLocaleString()}{" "}
-                  {creator.creator_subscriber_count === 1 ? "suscriptor" : "suscriptores"}
+                  {(creator.creator_subscriber_count ?? 0).toLocaleString()}{" "}
+                  {(creator.creator_subscriber_count ?? 0) === 1 ? "suscriptor" : "suscriptores"}
                 </span>
               </div>
             </div>
@@ -814,6 +1163,8 @@ export default function CreatorProfilePage() {
               <SubscribePanel
                 creatorId={creator.id}
                 priceUsd={creator.creator_price_usd}
+                videoCount={creator.videoCount ?? 0}
+                photoCount={creator.photoCount ?? 0}
                 onSuccess={handleSubscribeSuccess}
               />
             )}
@@ -874,27 +1225,35 @@ export default function CreatorProfilePage() {
             <section aria-label="Paquetes de llamadas privadas">
               <SectionHeading>Llamadas Privadas</SectionHeading>
               <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
-                {activePackages.map((pkg) => (
-                  <div
-                    key={pkg.id}
-                    className="flex-none flex flex-col gap-2 rounded-2xl p-4 min-w-[140px]"
-                    style={{ background: "var(--pnp-surface)" }}
-                  >
-                    <p className="text-sm font-semibold text-pnp-textPrimary">
-                      {pkg.label || `${pkg.duration_minutes} min`}
-                    </p>
-                    <p className="text-lg font-bold text-pnp-textPrimary">
-                      {formatPrice(pkg.price_usd)}
-                    </p>
-                    <button
-                      onClick={() => setShowBookCall(true)}
-                      className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-[0.97] min-h-[36px]"
-                      style={{ background: "var(--pnp-accent)" }}
+                {activePackages.map((pkg) => {
+                  const pkgDuration = (pkg.duration_minutes === 30 || pkg.duration_minutes === 60)
+                    ? pkg.duration_minutes as 30 | 60
+                    : undefined;
+                  return (
+                    <div
+                      key={pkg.id}
+                      className="flex-none flex flex-col gap-2 rounded-2xl p-4 min-w-[140px]"
+                      style={{ background: "var(--pnp-surface)" }}
                     >
-                      Reservar
-                    </button>
-                  </div>
-                ))}
+                      <p className="text-sm font-semibold text-pnp-textPrimary">
+                        {pkg.label || `${pkg.duration_minutes} min`}
+                      </p>
+                      <p className="text-lg font-bold text-pnp-textPrimary">
+                        {formatPrice(pkg.price_usd)}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setBookCallDuration(pkgDuration);
+                          setShowBookCall(true);
+                        }}
+                        className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 active:scale-[0.97] min-h-[36px]"
+                        style={{ background: "var(--pnp-accent)" }}
+                      >
+                        Reservar
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -915,23 +1274,182 @@ export default function CreatorProfilePage() {
             </section>
           )}
 
-          {/* ── 7. EXCLUSIVE CONTENT GRID ───────────────────────────────────── */}
-          {media.length > 0 && (
-            <section aria-label={contentSectionTitle}>
-              <SectionHeading>{contentSectionTitle}</SectionHeading>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {media.map((item) => (
-                  <MediaTile
-                    key={item.id}
-                    item={item}
-                    isSubscribed={isSubscribed}
-                    onOpenLightbox={setLightboxItem}
-                    onSubscribeCta={handleSubscribeCta}
-                  />
-                ))}
+          {/* ── 7. CONTENIDO ────────────────────────────────────────────────── */}
+          <section aria-label="Contenido del creador">
+            <SectionHeading>Contenido</SectionHeading>
+
+            {hasContenido ? (
+              <div className="space-y-5">
+
+                {/* ── 7a. Fotos ──────────────────────────────────────────────── */}
+                {hasPhotos && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Fotos
+                    </h3>
+                    {/* Mobile: horizontal scroll snap — each tile ~40vw. Desktop: 6-col grid */}
+                    <div
+                      className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1
+                                 sm:grid sm:grid-cols-6 sm:overflow-visible sm:snap-none"
+                    >
+                      {publicPhotos.map((photo) => {
+                        const thumbSrc =
+                          (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
+                          photo.thumb_url ??
+                          photo.url;
+                        return (
+                          <button
+                            key={photo.id}
+                            type="button"
+                            onClick={() => setLightboxItem(photo)}
+                            aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
+                            className="flex-none w-[40vw] sm:w-auto aspect-square rounded-xl overflow-hidden
+                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
+                                       focus:ring-offset-2 focus:ring-offset-pnp-background
+                                       transition-opacity hover:opacity-85 active:scale-[0.97]"
+                          >
+                            {thumbSrc ? (
+                              <img
+                                src={thumbSrc}
+                                alt={photo.caption ?? "Foto del creador"}
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div
+                                className="w-full h-full"
+                                style={{ background: "var(--pnp-surface)" }}
+                                aria-hidden="true"
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 7b. Videos destacados ───────────────────────────────────── */}
+                {hasFeaturedVideos && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Videos destacados
+                    </h3>
+                    <div className="space-y-2">
+                      {featuredVideoList.map((vid) => {
+                        const duration = formatDuration(vid.duration_seconds);
+                        return (
+                          <button
+                            key={vid.id}
+                            type="button"
+                            onClick={() =>
+                              navigate(
+                                `/channels?channel=${encodeURIComponent(vid.channel_slug)}&video=${vid.id}`
+                              )
+                            }
+                            aria-label={`Reproducir: ${vid.title}`}
+                            className="group relative w-full aspect-video rounded-2xl overflow-hidden
+                                       focus:outline-none focus:ring-2 focus:ring-pnp-accent
+                                       focus:ring-offset-2 focus:ring-offset-pnp-background
+                                       transition-transform active:scale-[0.98]"
+                          >
+                            {/* Thumbnail */}
+                            {vid.thumb_url ? (
+                              <img
+                                src={vid.thumb_url}
+                                alt=""
+                                aria-hidden="true"
+                                loading="lazy"
+                                className="absolute inset-0 w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div
+                                className="absolute inset-0"
+                                style={{ background: "var(--pnp-surface)" }}
+                                aria-hidden="true"
+                              />
+                            )}
+
+                            {/* Gradient overlay */}
+                            <div
+                              className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/10"
+                              aria-hidden="true"
+                            />
+
+                            {/* Play button — scales on group hover */}
+                            <div
+                              className="absolute inset-0 flex items-center justify-center"
+                              aria-hidden="true"
+                            >
+                              <div
+                                className="flex items-center justify-center w-12 h-12 rounded-full
+                                           bg-white/20 backdrop-blur-sm border border-white/30
+                                           group-hover:bg-white/30 group-hover:scale-110
+                                           transition-all duration-150"
+                              >
+                                <Play size={22} className="text-white ml-0.5" fill="currentColor" />
+                              </div>
+                            </div>
+
+                            {/* Duration badge — top right */}
+                            {duration && (
+                              <span
+                                className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md
+                                           text-[10px] font-semibold text-white
+                                           bg-black/60 backdrop-blur-sm"
+                                aria-hidden="true"
+                              >
+                                {duration}
+                              </span>
+                            )}
+
+                            {/* Title + channel tag — bottom */}
+                            <div className="absolute bottom-0 inset-x-0 p-3 text-left">
+                              <p className="text-white font-semibold text-sm leading-tight line-clamp-2">
+                                {vid.title}
+                              </p>
+                              <span
+                                className="inline-block mt-1.5 px-2 py-0.5 rounded-full
+                                           text-[10px] font-medium text-white/80 bg-white/15
+                                           backdrop-blur-sm border border-white/20"
+                              >
+                                {vid.channel_name}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 7c. Canales ────────────────────────────────────────────── */}
+                {hasChannels && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Canales
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {channels.map((ch) => (
+                        <ChannelCoverCard key={ch.id} channel={ch} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
               </div>
-            </section>
-          )}
+            ) : (
+              /* Section-level empty state — only when ALL three sub-sections are empty */
+              !isOwnProfile && (
+                <div
+                  className="rounded-2xl p-6 text-center text-sm text-pnp-textSecondary border border-white/8"
+                  style={{ background: "var(--pnp-surface)" }}
+                >
+                  Este creador aún no ha publicado contenido.
+                </div>
+              )
+            )}
+          </section>
 
           {/* ── 8. SHARE & QR SECTION ───────────────────────────────────────── */}
           <section
@@ -1001,6 +1519,7 @@ export default function CreatorProfilePage() {
         <Lightbox
           item={lightboxItem}
           onClose={() => setLightboxItem(null)}
+          watermarkLabel={watermarkLabel}
         />
       )}
 
@@ -1010,9 +1529,108 @@ export default function CreatorProfilePage() {
           creator={bookCallCreator}
           isOnline={false}
           open={showBookCall}
-          onClose={() => setShowBookCall(false)}
+          onClose={() => { setShowBookCall(false); setBookCallDuration(undefined); }}
+          initialDuration={bookCallDuration ?? 30}
+          skipPackageStep={bookCallDuration !== undefined}
         />
       )}
+
+      {/* ── Purchase confirmation modal ────────────────────────────────────────── */}
+      {showVideoConfirm && (() => {
+        const vCount = creator.videoCount ?? 0;
+        const pCount = creator.photoCount ?? 0;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.75)" }}
+            onClick={() => setShowVideoConfirm(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pcm-title"
+              aria-describedby="pcm-desc"
+              className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+              style={{ background: "var(--pnp-surface-raised, #1e1e2e)", border: "1px solid rgba(255,255,255,0.08)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="text-center space-y-1">
+                <p className="text-2xl" aria-hidden="true">🔓</p>
+                <h3 id="pcm-title" className="text-base font-bold text-pnp-textPrimary">
+                  Contenido exclusivo de {creator.first_name}
+                </h3>
+                <p id="pcm-desc" className="text-sm text-pnp-textSecondary">
+                  Tu suscripción desbloquea:
+                </p>
+              </div>
+
+              {/* Content counts */}
+              <div
+                className="rounded-xl px-4 py-3 flex items-center justify-center gap-6"
+                style={{ background: "rgba(255,255,255,0.05)" }}
+              >
+                <div className="text-center">
+                  <p className="text-xl font-bold" style={{ color: "var(--pnp-accent)" }}>{vCount}</p>
+                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">
+                    video{vCount !== 1 ? "s" : ""} <span aria-hidden="true">🎬</span>
+                  </p>
+                </div>
+                {pCount > 0 && (
+                  <>
+                    <div className="w-px h-8 bg-white/10" aria-hidden="true" />
+                    <div className="text-center">
+                      <p className="text-xl font-bold" style={{ color: "var(--pnp-accent)" }}>{pCount}</p>
+                      <p className="text-[11px] text-pnp-textSecondary mt-0.5">
+                        foto{pCount !== 1 ? "s" : ""} <span aria-hidden="true">📸</span>
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Price */}
+              <p className="text-sm text-pnp-textSecondary text-center">
+                Por{" "}
+                <span className="font-bold text-pnp-textPrimary">
+                  {formatPrice(creator.creator_price_usd ?? 0)}/mes
+                </span>
+                {" "}· Cancela cuando quieras
+              </p>
+
+              {/* Legal disclosures */}
+              <div
+                className="rounded-xl px-3 py-2.5 space-y-1.5"
+                style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)" }}
+              >
+                <p className="text-[10px] text-amber-300/80 leading-relaxed">
+                  <span className="font-semibold">Compra final.</span> Todas las compras son definitivas y no reembolsables, salvo lo requerido por la ley local aplicable.
+                </p>
+                <p className="text-[10px] text-pnp-textSecondary leading-relaxed">
+                  Facturado por <span className="font-medium text-pnp-textPrimary">EasyBots</span> · En tu estado de cuenta aparecerá como <span className="font-medium text-pnp-textPrimary">EasyBots</span> o <span className="font-medium text-pnp-textPrimary">NowPayments</span>.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => setShowVideoConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-white/15 text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmSubscribe}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
+                  style={{ background: "linear-gradient(135deg, #8B5CF6, #D946EF)" }}
+                >
+                  Suscribirme
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

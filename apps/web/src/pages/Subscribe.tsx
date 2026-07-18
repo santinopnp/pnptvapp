@@ -14,7 +14,12 @@ import {
   getDashSubscriptionStatus,
   getLabelColor,
   validatePromoCode,
+  trackEvent,
+  redeemActivationCode,
+  assertPaymentUrl,
   NP_COINS,
+  getWalletBalance,
+  paySubscriptionWithTokens,
   type SubscriptionPlan,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -26,6 +31,7 @@ import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d"]);
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -87,6 +93,7 @@ export default function Subscribe() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [meruPanelPlanId, setMeruPanelPlanId] = useState<string | null>(null);
   // Per-plan benefits expand state — plans start collapsed (N-06)
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
   const togglePlanBenefits = (planId: string) => {
@@ -140,12 +147,22 @@ export default function Subscribe() {
   const [dashOrder, setDashOrder] = useState<{ invoiceId: string; checkoutUrl: string; planName: string; usdAmount: number } | null>(null);
   const [dashPolling, setDashPolling] = useState(false);
   const [dashSuccess, setDashSuccess] = useState(false);
+  const [tokenBalance, setTokensBalance] = useState<number | null>(null);
+  const [tokenSuccess, setTokensSuccess] = useState<string | null>(null);
+
+  // Activation code
+  const [activationExpanded, setActivationExpanded] = useState(false);
+  const [activationCode, setActivationCode] = useState("");
+  const [activationSubmitting, setActivationSubmitting] = useState(false);
+  const [activationSuccess, setActivationSuccess] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
   const dashPopupRef = useRef<Window | null>(null);
   const dashPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const {
     order: usdcOrder,
     isPolling: usdcPolling,
     isSuccess: usdcPaymentSuccess,
+    isConfirming: usdcConfirming,
     startPayment: startNowPayments,
     cancelOrder: cancelNowPayments,
     error: nowpaymentsError,
@@ -157,6 +174,7 @@ export default function Subscribe() {
       await refreshUser();
       setTimeout(() => {
         setPaymentSuccess(true);
+        trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "nowpayments" });
       }, 500);
     },
   });
@@ -194,6 +212,12 @@ export default function Subscribe() {
     getDashAvailable()
       .then((res) => setDashAvailable(res.available === true && res.configured === true))
       .catch(() => setDashAvailable(false));
+
+    if (user) {
+      getWalletBalance()
+        .then((res) => { if (res.success) setTokensBalance(res.balance); })
+        .catch(() => {});
+    }
 
     // Resume BTC polling if user navigated away mid-payment
     try {
@@ -304,6 +328,7 @@ export default function Subscribe() {
   // Auto-apply promo from URL once plans load — need plans first so we can lock selection
   const autoAppliedRef = useRef(false);
   const orderPanelRef = useRef<HTMLDivElement>(null);
+  const inFlightRef = useRef(false);
   useEffect(() => {
     if (autoAppliedRef.current) return;
     const urlPromo = searchParams.get("promo");
@@ -365,6 +390,7 @@ export default function Subscribe() {
           setPollingPaymentId(null);
           try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
           setPaymentSuccess(true);
+          trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "polling" });
           await refreshUser();
           return;
         }
@@ -423,7 +449,8 @@ export default function Subscribe() {
   }
 
   const handleBitcoinCheckout = useCallback(async (planId: string) => {
-    if (submitting || !btcAvailable) return;
+    if (submitting || !btcAvailable || inFlightRef.current) return;
+    inFlightRef.current = true;
     setSelectedPlan(planId);
     setError(null);
     try {
@@ -439,14 +466,17 @@ export default function Subscribe() {
       sessionStorage.setItem("pnp_pending_btc_order", JSON.stringify({ ...order, createdAt: Date.now() }));
       const w = window.screen.width, h = window.screen.height;
       const pw = Math.min(560, w), ph = Math.min(780, h);
-      btcPopupRef.current = window.open(result.checkoutUrl, "btcpay_btc", `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes`);
+      btcPopupRef.current = window.open(assertPaymentUrl(result.checkoutUrl), "btcpay_btc", `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
     } catch (err: any) {
       setError(err.message || "Failed to create Bitcoin invoice.");
+    } finally {
+      inFlightRef.current = false;
     }
   }, [submitting, btcAvailable]);
 
   const handleDashCheckout = useCallback(async (planId: string) => {
-    if (submitting || !dashAvailable) return;
+    if (submitting || !dashAvailable || inFlightRef.current) return;
+    inFlightRef.current = true;
     setSelectedPlan(planId);
     setError(null);
     try {
@@ -462,11 +492,45 @@ export default function Subscribe() {
       sessionStorage.setItem("pnp_pending_dash_order", JSON.stringify({ ...order, createdAt: Date.now() }));
       const w = window.screen.width, h = window.screen.height;
       const pw = Math.min(560, w), ph = Math.min(780, h);
-      dashPopupRef.current = window.open(result.checkoutUrl, "btcpay_dash", `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes`);
+      dashPopupRef.current = window.open(assertPaymentUrl(result.checkoutUrl), "btcpay_dash", `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
     } catch (err: any) {
       setError(err.message || "Failed to create Dash invoice.");
+    } finally {
+      inFlightRef.current = false;
     }
   }, [submitting, dashAvailable]);
+
+  async function handleTokensSubscribe(planId: string, planPrice: number) {
+    if (submitting) return;
+    const tokenCost = Math.round(planPrice * 100);
+    if (tokenBalance !== null && tokenBalance < tokenCost) {
+      setError(t.lang === "es" ? `Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.` : `Not enough Tokens. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
+      return;
+    }
+    setSelectedPlan(planId);
+    setError(null);
+    setSubmitting(true);
+    setTokensSuccess(null);
+    try {
+      const result = await paySubscriptionWithTokens(planId);
+      if (!result.success) {
+        if (result.code === "INSUFFICIENT_TOKENS") {
+          setError(t.lang === "es" ? `Tokens insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.` : `Not enough Tokens. Need ${(result.required ?? 0).toLocaleString()} F — you have ${(result.current ?? 0).toLocaleString()} F.`);
+        } else {
+          setError(result.error || (t.lang === "es" ? "No se pudo activar el plan." : "Failed to activate plan."));
+        }
+        return;
+      }
+      if (result.newBalance !== undefined) setTokensBalance(result.newBalance);
+      setTokensSuccess(planId);
+      await refreshUser();
+      setTimeout(() => { setPaymentSuccess(true); trackEvent("payment_success", { plan: planId, provider: "tokens" }); }, 400);
+    } catch (err: any) {
+      setError(err.message || (t.lang === "es" ? "Error al pagar con Tokens." : "Tokens payment error."));
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   // BTC polling effect
   useEffect(() => {
@@ -491,7 +555,7 @@ export default function Subscribe() {
           btcPopupRef.current = null;
           sessionStorage.removeItem("pnp_pending_btc_order");
           await refreshUser();
-          setTimeout(() => setPaymentSuccess(true), 500);
+          setTimeout(() => { setPaymentSuccess(true); trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "btc" }); }, 500);
         } else if (data.failed) {
           clearInterval(btcPollRef.current!);
           setBtcPolling(false);
@@ -529,7 +593,7 @@ export default function Subscribe() {
           dashPopupRef.current = null;
           sessionStorage.removeItem("pnp_pending_dash_order");
           await refreshUser();
-          setTimeout(() => setPaymentSuccess(true), 500);
+          setTimeout(() => { setPaymentSuccess(true); trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "dash" }); }, 500);
         } else if (data.status === 'failed' || data.status === 'expired') {
           clearInterval(dashPollRef.current!);
           setDashPolling(false);
@@ -601,32 +665,6 @@ export default function Subscribe() {
     return name || addOnId;
   }
 
-  // Newsletter opt-in state (shown after payment success)
-  // IMPORTANT: hooks must be before any early returns to satisfy React's rules of hooks
-  const [newsletterDismissed, setNewsletterDismissed] = useState(() => {
-    try { return localStorage.getItem("pnp_newsletter_dismissed") === "1"; } catch { return false; }
-  });
-  const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
-  const [newsletterLoading, setNewsletterLoading] = useState(false);
-
-  const handleNewsletterSubscribe = useCallback(async () => {
-    if (!user?.email) return;
-    setNewsletterLoading(true);
-    try {
-      await fetch("/api/newsletter/subscription", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: user.email, list_ids: [3], name: user.firstName || undefined }),
-      });
-      setNewsletterSubscribed(true);
-    } catch { /* silent */ }
-    finally { setNewsletterLoading(false); }
-  }, [user]);
-
-  const handleNewsletterDismiss = useCallback(() => {
-    try { localStorage.setItem("pnp_newsletter_dismissed", "1"); } catch { /* noop */ }
-    setNewsletterDismissed(true);
-  }, []);
 
   // Loading state
   if (loading) {
@@ -660,30 +698,6 @@ export default function Subscribe() {
             {s.subscriptionNowActive}
           </p>
 
-          {/* Newsletter opt-in */}
-          {!newsletterDismissed && !newsletterSubscribed && user?.email && (
-            <div className="mb-4 p-3 rounded-xl text-left" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.2)" }}>
-              <p className="text-xs font-semibold text-pnp-textPrimary mb-0.5">Stay in the loop</p>
-              <p className="text-xs text-pnp-textSecondary mb-2">Get PNPtv! news, creator drops, and exclusive offers in your inbox.</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleNewsletterSubscribe}
-                  disabled={newsletterLoading}
-                  className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
-                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                >
-                  {newsletterLoading ? "..." : "Subscribe"}
-                </button>
-                <button onClick={handleNewsletterDismiss} className="py-1.5 px-3 rounded-lg text-xs text-pnp-textSecondary hover:text-white/70 transition-colors">
-                  No thanks
-                </button>
-              </div>
-            </div>
-          )}
-          {newsletterSubscribed && (
-            <p className="text-xs text-green-400 mb-4">You're subscribed to the PNPtv! newsletter.</p>
-          )}
-
           <button
             onClick={() => navigate("/welcome")}
             className="btn-gradient px-6 py-2.5 rounded-xl text-white font-medium"
@@ -714,8 +728,8 @@ export default function Subscribe() {
     );
   }
 
-  const memberPlans = plans.filter((p) => MEMBER_PLAN_IDS.has(p.id));
-  const primePlans = plans.filter((p) => !MEMBER_PLAN_IDS.has(p.id));
+  const memberPlans = plans.filter((p) => MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
+  const primePlans = plans.filter((p) => !MEMBER_PLAN_IDS.has(p.id) && !HIDDEN_PLAN_IDS.has(p.id));
 
   return (
     <div className="page-container py-6 px-4 max-w-2xl mx-auto">
@@ -821,9 +835,7 @@ export default function Subscribe() {
           const displayPrice = formatPrice(plan.price, "USD");
           const planLabel = getPlanLabel(plan, true);
           const hasAddOns = plan.addOns && plan.addOns.length > 0;
-          const cryptoDiscount = plan.price > 50;
-          const cryptoPriceUSD = cryptoDiscount ? Math.round(plan.price * 0.80 * 100) / 100 : plan.price;
-          const cryptoDisplayPrice = formatPrice(cryptoPriceUSD, "USD");
+          const cryptoDisplayPrice = formatPrice(plan.price, "USD");
 
           const planDays = plan.duration_days || plan.duration || 30;
           const isBtcPanelActive = !!(btcOrder && selectedPlan === plan.id);
@@ -914,16 +926,6 @@ export default function Subscribe() {
 
               {/* Quick-pay buttons */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {cryptoDiscount && usdcAvailable !== false && (
-                  <div className="w-full flex items-center justify-between rounded-lg bg-green-500/8 border border-green-500/20 px-2.5 py-1.5">
-                    <span className="text-[11px] font-bold text-green-400">🪙 {t.lang === "es" ? "Paga con cripto" : "Pay with crypto"}</span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-pnp-textSecondary/60 line-through">{displayPrice}</span>
-                      <span className="text-[12px] font-black text-green-300">{cryptoDisplayPrice}</span>
-                      <span className="bg-green-500/20 text-green-400 border border-green-500/30 rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none">−20%</span>
-                    </span>
-                  </div>
-                )}
                 {usdcAvailable !== false && (
                   <button
                     disabled={submitting}
@@ -978,6 +980,29 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#4DB8FF] leading-none">{cryptoDisplayPrice}</span>
                   </button>
                 )}
+                {tokenBalance !== null && tokenBalance > 0 && (
+                  <button
+                    disabled={submitting}
+                    onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
+                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                  >
+                    <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
+                      <span>🎫</span>
+                      <span>Tokens</span>
+                    </span>
+                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 100).toLocaleString()} F</span>
+                  </button>
+                )}
+                <button
+                    onClick={(e) => { e.stopPropagation(); setMeruPanelPlanId(meruPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${meruPanelPlanId === plan.id ? "border-pink-400/60 bg-pink-500/20" : "border-pink-500/40 bg-pink-500/10 hover:bg-pink-500/20"}`}
+                  >
+                    <span className="flex items-center gap-1 text-xs font-semibold text-pink-300">
+                      <span>💳</span>
+                      <span>{t.lang === "es" ? "Tarjeta" : "Card"}</span>
+                    </span>
+                    <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
+                  </button>
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-1 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
@@ -1017,6 +1042,28 @@ export default function Subscribe() {
                     </div>
                   </div>
                 )}
+                {meruPanelPlanId === plan.id && (
+                  <div className="w-full mt-1 p-3 rounded-xl bg-pink-500/8 border border-pink-500/30 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-[11px] font-bold text-pink-300 mb-1">💳 {t.lang === "es" ? "Pago con tarjeta vía Meru" : "Card payment via Meru"}</p>
+                    <p className="text-[10px] text-pnp-textSecondary mb-2 leading-relaxed">
+                      {t.lang === "es"
+                        ? `1. Haz clic en el enlace y paga exactamente ${displayPrice} con tu tarjeta, Nequi o PSE.\n2. Envía tu comprobante de pago a support@pnptv.app — aceptamos: factura, captura del comprobante de pago, o captura del estado de cuenta bancario.\n3. Tu membresía se activa en las próximas 12 horas.`
+                        : `1. Click the link and pay exactly ${displayPrice} with your card.\n2. Email your proof of payment to support@pnptv.app — we accept: invoice, payment confirmation screenshot, or bank statement screenshot.\n3. Your membership activates within 12 hours.`}
+                    </p>
+                    <a
+                      href="https://pay.getmeru.com/p/lifetime100-pnptv"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-pink-500 hover:bg-pink-400 text-white text-xs font-bold transition-colors"
+                    >
+                      <span>💳</span>
+                      <span>{t.lang === "es" ? `Pagar ${displayPrice} con tarjeta →` : `Pay ${displayPrice} with card →`}</span>
+                    </a>
+                    <p className="text-[9px] text-pnp-textSecondary/50 mt-1.5 text-center">
+                      {t.lang === "es" ? "No automático · Activación manual en ≤12h" : "Not automatic · Manual activation ≤12h"}
+                    </p>
+                  </div>
+                )}
               </div>
             </button>
             {usdcOrder && selectedPlan === plan.id && (
@@ -1024,6 +1071,7 @@ export default function Subscribe() {
                 <NowPaymentsWaitingPanel
                   order={usdcOrder!}
                   isSuccess={usdcPaymentSuccess}
+                  isConfirming={usdcConfirming}
                   onCancel={cancelNowPayments}
                   lang={t.lang}
                   wrapperClassName="rounded-t-none border-t-0"
@@ -1038,7 +1086,7 @@ export default function Subscribe() {
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { btcPopupRef.current = window.open(btcOrder.checkoutUrl, "btcpay_btc", "width=560,height=780"); }}
+                    onClick={() => { btcPopupRef.current = window.open(assertPaymentUrl(btcOrder.checkoutUrl), "btcpay_btc", "width=560,height=780,noopener,noreferrer"); }}
                     className="flex-1 text-xs bg-orange-500/20 text-orange-300 rounded-lg py-2 px-3 hover:bg-orange-500/30"
                   >
                     Open BTCPay
@@ -1064,7 +1112,7 @@ export default function Subscribe() {
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { dashPopupRef.current = window.open(dashOrder.checkoutUrl, "btcpay_dash", "width=560,height=780"); }}
+                    onClick={() => { dashPopupRef.current = window.open(assertPaymentUrl(dashOrder.checkoutUrl), "btcpay_dash", "width=560,height=780,noopener,noreferrer"); }}
                     className="flex-1 text-xs rounded-lg py-2 px-3 transition-colors"
                     style={{ background: "rgba(0,141,228,0.2)", color: "#4DB8FF" }}
                   >
@@ -1107,9 +1155,7 @@ export default function Subscribe() {
           const planLabel = getPlanLabel(plan, false);
           const hasAddOns = plan.addOns && plan.addOns.length > 0;
           const planDays = plan.duration_days || plan.duration || 30;
-          const cryptoDiscount = plan.price > 50;
-          const cryptoPriceUSD = cryptoDiscount ? Math.round(plan.price * 0.80 * 100) / 100 : plan.price;
-          const cryptoDisplayPrice = formatPrice(cryptoPriceUSD, "USD");
+          const cryptoDisplayPrice = formatPrice(plan.price, "USD");
 
           const isBtcPanelActive = !!(btcOrder && selectedPlan === plan.id);
           const isDashPanelActive = !!(dashOrder && selectedPlan === plan.id);
@@ -1220,16 +1266,6 @@ export default function Subscribe() {
 
               {/* Quick-pay buttons */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {cryptoDiscount && usdcAvailable !== false && (
-                  <div className="w-full flex items-center justify-between rounded-lg bg-green-500/8 border border-green-500/20 px-2.5 py-1.5">
-                    <span className="text-[11px] font-bold text-green-400">🪙 {t.lang === "es" ? "Paga con cripto" : "Pay with crypto"}</span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-pnp-textSecondary/60 line-through">{displayPrice}</span>
-                      <span className="text-[12px] font-black text-green-300">{cryptoDisplayPrice}</span>
-                      <span className="bg-green-500/20 text-green-400 border border-green-500/30 rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none">−20%</span>
-                    </span>
-                  </div>
-                )}
                 {usdcAvailable !== false && (
                   <button
                     disabled={submitting}
@@ -1291,6 +1327,29 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#4DB8FF] leading-none">{cryptoDisplayPrice}</span>
                   </button>
                 )}
+                {tokenBalance !== null && tokenBalance > 0 && (
+                  <button
+                    disabled={submitting}
+                    onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
+                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                  >
+                    <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
+                      <span>🎫</span>
+                      <span>Tokens</span>
+                    </span>
+                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 100).toLocaleString()} F</span>
+                  </button>
+                )}
+                <button
+                    onClick={(e) => { e.stopPropagation(); setMeruPanelPlanId(meruPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${meruPanelPlanId === plan.id ? "border-pink-400/60 bg-pink-500/20" : "border-pink-500/40 bg-pink-500/10 hover:bg-pink-500/20"}`}
+                  >
+                    <span className="flex items-center gap-1 text-xs font-semibold text-pink-300">
+                      <span>💳</span>
+                      <span>{t.lang === "es" ? "Tarjeta" : "Card"}</span>
+                    </span>
+                    <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
+                  </button>
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-1 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
@@ -1331,6 +1390,28 @@ export default function Subscribe() {
                     </div>
                   </div>
                 )}
+                {meruPanelPlanId === plan.id && (
+                  <div className="w-full mt-1 p-3 rounded-xl bg-pink-500/8 border border-pink-500/30 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-[11px] font-bold text-pink-300 mb-1">💳 {t.lang === "es" ? "Pago con tarjeta vía Meru" : "Card payment via Meru"}</p>
+                    <p className="text-[10px] text-pnp-textSecondary mb-2 leading-relaxed">
+                      {t.lang === "es"
+                        ? `1. Haz clic en el enlace y paga exactamente ${displayPrice} con tu tarjeta, Nequi o PSE.\n2. Envía tu comprobante de pago a support@pnptv.app — aceptamos: factura, captura del comprobante de pago, o captura del estado de cuenta bancario.\n3. Tu membresía se activa en las próximas 12 horas.`
+                        : `1. Click the link and pay exactly ${displayPrice} with your card.\n2. Email your proof of payment to support@pnptv.app — we accept: invoice, payment confirmation screenshot, or bank statement screenshot.\n3. Your membership activates within 12 hours.`}
+                    </p>
+                    <a
+                      href="https://pay.getmeru.com/p/lifetime100-pnptv"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-pink-500 hover:bg-pink-400 text-white text-xs font-bold transition-colors"
+                    >
+                      <span>💳</span>
+                      <span>{t.lang === "es" ? `Pagar ${displayPrice} con tarjeta →` : `Pay ${displayPrice} with card →`}</span>
+                    </a>
+                    <p className="text-[9px] text-pnp-textSecondary/50 mt-1.5 text-center">
+                      {t.lang === "es" ? "No automático · Activación manual en ≤12h" : "Not automatic · Manual activation ≤12h"}
+                    </p>
+                  </div>
+                )}
               </div>
             </button>
             {usdcOrder && selectedPlan === plan.id && (
@@ -1338,6 +1419,7 @@ export default function Subscribe() {
                 <NowPaymentsWaitingPanel
                   order={usdcOrder!}
                   isSuccess={usdcPaymentSuccess}
+                  isConfirming={usdcConfirming}
                   onCancel={cancelNowPayments}
                   lang={t.lang}
                   wrapperClassName="rounded-t-none border-t-0"
@@ -1352,7 +1434,7 @@ export default function Subscribe() {
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { btcPopupRef.current = window.open(btcOrder.checkoutUrl, "btcpay_btc", "width=560,height=780"); }}
+                    onClick={() => { btcPopupRef.current = window.open(assertPaymentUrl(btcOrder.checkoutUrl), "btcpay_btc", "width=560,height=780,noopener,noreferrer"); }}
                     className="flex-1 text-xs bg-orange-500/20 text-orange-300 rounded-lg py-2 px-3 hover:bg-orange-500/30"
                   >
                     Open BTCPay
@@ -1378,7 +1460,7 @@ export default function Subscribe() {
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { dashPopupRef.current = window.open(dashOrder.checkoutUrl, "btcpay_dash", "width=560,height=780"); }}
+                    onClick={() => { dashPopupRef.current = window.open(assertPaymentUrl(dashOrder.checkoutUrl), "btcpay_dash", "width=560,height=780,noopener,noreferrer"); }}
                     className="flex-1 text-xs rounded-lg py-2 px-3 transition-colors"
                     style={{ background: "rgba(0,141,228,0.2)", color: "#4DB8FF" }}
                   >
@@ -1436,8 +1518,8 @@ export default function Subscribe() {
           </p>
           <p className="text-xs text-pnp-textSecondary mb-3">
             {t.lang === "es"
-              ? "BTC, ETH, USDT y +100 monedas. Descuento del 20% aplicado automáticamente."
-              : "BTC, ETH, USDT + 100 coins. 20% discount applied automatically."}
+              ? "BTC, ETH, USDT y +100 monedas vía NowPayments."
+              : "BTC, ETH, USDT + 100 coins via NowPayments."}
           </p>
           <button
             disabled={submitting}
@@ -1446,7 +1528,7 @@ export default function Subscribe() {
             style={{ background: "linear-gradient(90deg, #16a34a, #15803d)" }}
           >
             <span>🪙</span>
-            {t.lang === "es" ? "Pagar con Cripto — Ahorra 20%" : "Pay with Crypto — Save 20%"}
+            {t.lang === "es" ? "Pagar con Cripto" : "Pay with Crypto"}
           </button>
         </div>
       )}
@@ -1457,6 +1539,90 @@ export default function Subscribe() {
           {error || nowpaymentsError}
         </div>
       )}
+
+      {/* Activation code */}
+      <div className="mt-4">
+        <button
+          onClick={() => { setActivationExpanded(v => !v); setActivationError(null); }}
+          className="w-full text-center text-xs text-pnp-textSecondary/60 hover:text-pnp-textSecondary transition-colors py-1"
+        >
+          {t.lang === "es" ? "¿Tienes un código de activación?" : "Have an activation code?"}
+          <span className="ml-1 inline-block transition-transform" style={{ transform: activationExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+        </button>
+
+        {activationExpanded && (
+          <div className="mt-2 p-4 rounded-xl border border-white/10" style={{ background: "rgba(255,255,255,0.04)" }}>
+            {activationSuccess ? (
+              <div className="text-center">
+                <p className="text-sm text-green-400 mb-3">
+                  {t.lang === "es"
+                    ? "✅ ¡Acceso activado! Recarga para ver tu nuevo plan."
+                    : "✅ Access activated! Refresh to see your new plan."}
+                </p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
+                  style={{ background: "rgba(255,255,255,0.12)" }}
+                >
+                  {t.lang === "es" ? "Recargar" : "Refresh"}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={activationCode}
+                    onChange={(e) => {
+                      setActivationCode(e.target.value.toUpperCase());
+                      setActivationError(null);
+                    }}
+                    placeholder={t.lang === "es" ? "CÓDIGO-AQUÍ" : "CODE-HERE"}
+                    maxLength={50}
+                    disabled={activationSubmitting}
+                    className="flex-1 px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-white/25 disabled:opacity-50 font-mono tracking-wider"
+                  />
+                  <button
+                    disabled={activationSubmitting || !activationCode.trim()}
+                    onClick={async () => {
+                      setActivationSubmitting(true);
+                      setActivationError(null);
+                      try {
+                        await redeemActivationCode(activationCode.trim());
+                        setActivationSuccess(true);
+                      } catch (err: any) {
+                        const errCode = err?.code || err?.message || "";
+                        if (errCode === "already_used") {
+                          setActivationError(t.lang === "es" ? "Este código ya fue usado." : "This code has already been used.");
+                        } else if (errCode === "expired") {
+                          setActivationError(t.lang === "es" ? "Este código ha vencido. Contacta soporte." : "This code has expired. Contact support.");
+                        } else if (errCode === "use_lifetime100") {
+                          setActivationError(t.lang === "es" ? "Este es un código Lifetime100 — úsalo en la página Lifetime100." : "This is a Lifetime100 code — use the Lifetime100 page to redeem it.");
+                        } else if (errCode === "not_found" || errCode === "invalid_format") {
+                          setActivationError(t.lang === "es" ? "Código inválido." : "Invalid code.");
+                        } else {
+                          setActivationError(err?.message || (t.lang === "es" ? "Error al activar. Intenta de nuevo." : "Activation failed. Try again."));
+                        }
+                      } finally {
+                        setActivationSubmitting(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-40 transition-colors whitespace-nowrap"
+                    style={{ background: "linear-gradient(90deg, #7c3aed, #6d28d9)" }}
+                  >
+                    {activationSubmitting
+                      ? (t.lang === "es" ? "Activando..." : "Activating...")
+                      : (t.lang === "es" ? "Canjear" : "Redeem")}
+                  </button>
+                </div>
+                {activationError && (
+                  <p className="mt-2 text-xs text-red-400">{activationError}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Legal footer */}
       <p className="mt-4 text-center text-[11px] text-pnp-textSecondary/50 leading-relaxed">

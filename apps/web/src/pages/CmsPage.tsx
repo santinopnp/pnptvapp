@@ -39,16 +39,26 @@ export default function CmsPage() {
 
   useEffect(() => {
     if (!slug) return;
+    let cancelled = false;
     setLoading(true);
     setNotFound(false);
-    getPage(slug).then((p) => {
-      if (p) {
-        setPage(p);
-      } else {
-        setNotFound(true);
-      }
-      setLoading(false);
-    });
+    getPage(slug)
+      .then((p) => {
+        if (cancelled) return;
+        if (p) {
+          setPage(p);
+        } else {
+          setNotFound(true);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNotFound(true);
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
   }, [slug]);
 
   if (loading) {
@@ -96,12 +106,22 @@ export default function CmsPage() {
                 prose-a:text-[#D4007A] prose-strong:text-white
                 prose-ul:list-disc prose-ol:list-decimal"
               dangerouslySetInnerHTML={{
-                __html: DOMPurify.sanitize(page.content || '', {
-                  ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'blockquote', 'code', 'pre', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'span', 'div'],
-                  ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class'],
-                  ALLOW_DATA_ATTR: false,
-                  ALLOWED_URI_REGEXP: /^(https?:\/\/|\/)/i,
-                }),
+                __html: (() => {
+                  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+                    if (node.tagName === 'A') {
+                      node.setAttribute('rel', 'noopener noreferrer');
+                      if (!node.getAttribute('target')) node.setAttribute('target', '_blank');
+                    }
+                  });
+                  const clean = DOMPurify.sanitize(page.content || '', {
+                    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'blockquote', 'code', 'pre', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'span', 'div'],
+                    ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class'],
+                    ALLOW_DATA_ATTR: false,
+                    ALLOWED_URI_REGEXP: /^(https?:\/\/|\/)/i,
+                  });
+                  DOMPurify.removeHooks('afterSanitizeAttributes');
+                  return clean;
+                })(),
               }}
             />
           )}

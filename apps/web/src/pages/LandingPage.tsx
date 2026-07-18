@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { LanguageSelector } from "@/components/LanguageSelector";
-import { magicLinkStart, passkeyBegin, passkeyFinish, checkAuthStatus } from "@/lib/api";
+import { magicLinkStart, passkeyBegin, passkeyFinish, checkAuthStatus, passkeyRegisterBegin, passkeyRegisterFinish } from "@/lib/api";
 import { sanitizeReturnTo } from "@/lib/auth";
 
 // ── WebAuthn helpers ──────────────────────────────────────────────────────────
@@ -243,6 +243,12 @@ export function LandingPage() {
     return params.get("magic_error");
   });
 
+  // Surface generic reason banners (?reason=session_expired from App.tsx socket event)
+  const [reasonBanner, setReasonBanner] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("reason");
+  });
+
   // Magic-link send flow state
   type MagicState = "hidden" | "form" | "sending" | "sent";
   const [magicState, setMagicState] = useState<MagicState>("hidden");
@@ -270,6 +276,7 @@ export function LandingPage() {
   const [tgError, setTgError] = useState<string | null>(null);
   const [tgFallbackUrl, setTgFallbackUrl] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingTokenRef = useRef<string | null>(null);
 
   // Returning-user personalization. `pnptv_last_auth` reflects the most recent
   // method; `pnptv_last_telegram_*` persist across other logins so the Telegram
@@ -283,6 +290,16 @@ export function LandingPage() {
   const lastTgPhoto = (() => {
     try { return localStorage.getItem("pnptv_last_telegram_photo"); } catch { return null; }
   })();
+
+  // ── Post-magic-link passkey registration prompt ──────────────────────────
+  // Shown when the backend redirects to /login?magic_verified=1 after the user
+  // clicks the emailed magic link. The user is already authenticated at this
+  // point; we offer to register a passkey before proceeding to the app.
+  const [showPasskeyPrompt, setShowPasskeyPrompt] = useState(false);
+  const [passkeyRegistering, setPasskeyRegistering] = useState(false);
+  const [passkeyPromptCountdown, setPasskeyPromptCountdown] = useState(15);
+  const pendingRedirectRef = useRef<string>("/");
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Active bottom sheet (carousel pills)
   const [activeSheet, setActiveSheet] = useState<string | null>(() => {
@@ -299,6 +316,37 @@ export function LandingPage() {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+  // iOS Safari freezes setInterval when the page is backgrounded (e.g. user switches
+  // to Telegram app). On return, fire an immediate poll so the confirmed token is
+  // picked up without waiting for the next interval tick.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const token = pendingTokenRef.current;
+      if (!token) return;
+      fetch(`${API_BASE}/api/webapp/auth/telegram/check?token=${token}`, { credentials: "include" })
+        .then(r => r.json())
+        .then(result => {
+          if (result.authenticated) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pendingTokenRef.current = null;
+            try {
+              localStorage.setItem("pnptv_last_auth", "telegram");
+              if (result.user?.username) {
+                localStorage.setItem("pnptv_last_username", result.user.username);
+                localStorage.setItem("pnptv_last_telegram_username", result.user.username);
+              }
+            } catch { /* ignore quota */ }
+            const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+            window.location.href = sanitizeReturnTo(returnTo) ?? "/";
+          }
+        })
+        .catch(() => { /* interval will retry */ });
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
   // Auto-redirect already-authenticated users so they don't have to log in again.
   // Runs once on mount; skipped if there is no returnTo (user landed on /login directly).
   useEffect(() => {
@@ -312,8 +360,124 @@ export function LandingPage() {
 
   useEffect(() => {
     document.body.style.overflow = activeSheet ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    if (!activeSheet) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setActiveSheet(null); };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", onKey);
+    };
   }, [activeSheet]);
+
+  // Detect magic-link verified redirect. Browser supports WebAuthn → show prompt;
+  // otherwise proceed immediately to the app.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("magic_verified") !== "1") return;
+
+    // Clean up the query param from the URL without a reload.
+    const clean = window.location.pathname;
+    window.history.replaceState(null, "", clean);
+
+    const returnTo = params.get("returnTo");
+    pendingRedirectRef.current = sanitizeReturnTo(returnTo) ?? "/";
+
+    if (typeof window === "undefined" || !window.PublicKeyCredential) {
+      window.location.href = pendingRedirectRef.current;
+      return;
+    }
+
+    setShowPasskeyPrompt(true);
+    setPasskeyPromptCountdown(15);
+
+    countdownRef.current = setInterval(() => {
+      setPasskeyPromptCountdown((prev) => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          window.location.href = pendingRedirectRef.current;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const proceedAfterPrompt = useCallback(() => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setShowPasskeyPrompt(false);
+    window.location.href = pendingRedirectRef.current;
+  }, []);
+
+  const handleRegisterPasskeyAfterMagicLink = useCallback(async () => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setPasskeyRegistering(true);
+    try {
+      const beginRes = await passkeyRegisterBegin();
+      if (!beginRes.success || !beginRes.options) {
+        proceedAfterPrompt();
+        return;
+      }
+      const opts = beginRes.options;
+      const publicKey: PublicKeyCredentialCreationOptions = {
+        rp: opts.rp,
+        user: {
+          id: b64urlToBuffer(opts.user.id),
+          name: opts.user.name,
+          displayName: opts.user.displayName,
+        },
+        challenge: b64urlToBuffer(opts.challenge),
+        pubKeyCredParams: opts.pubKeyCredParams as PublicKeyCredentialParameters[],
+        timeout: opts.timeout,
+        attestation: (opts.attestation as AttestationConveyancePreference) || "none",
+        excludeCredentials: opts.excludeCredentials?.map((c) => ({
+          id: b64urlToBuffer(c.id),
+          type: "public-key" as const,
+          transports: c.transports as AuthenticatorTransport[] | undefined,
+        })),
+        authenticatorSelection: opts.authenticatorSelection
+          ? {
+              residentKey: (opts.authenticatorSelection.residentKey as ResidentKeyRequirement) || "preferred",
+              userVerification: (opts.authenticatorSelection.userVerification as UserVerificationRequirement) || "preferred",
+            }
+          : undefined,
+      };
+
+      let credential: PublicKeyCredential;
+      try {
+        credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
+      } catch {
+        // User cancelled or device doesn't support it — proceed silently.
+        proceedAfterPrompt();
+        return;
+      }
+      if (!credential) { proceedAfterPrompt(); return; }
+
+      const response = credential.response as AuthenticatorAttestationResponse;
+      const serialized = {
+        id: credential.id,
+        rawId: bufferToB64url(credential.rawId),
+        type: credential.type,
+        response: {
+          clientDataJSON: bufferToB64url(response.clientDataJSON),
+          attestationObject: bufferToB64url(response.attestationObject),
+          transports: typeof response.getTransports === "function" ? response.getTransports() : [],
+        },
+        clientExtensionResults: credential.getClientExtensionResults?.() || {},
+      };
+
+      await passkeyRegisterFinish({ credential: serialized, name: "My Passkey" });
+    } catch {
+      // Any unexpected error — proceed silently.
+    } finally {
+      setPasskeyRegistering(false);
+      proceedAfterPrompt();
+    }
+  }, [proceedAfterPrompt]);
 
   // ── PNPtv ID — inline passkey first, magic-link as fallback ─────────────
   // The primary button drives a WebAuthn ceremony directly (passkeyBegin →
@@ -518,11 +682,15 @@ export function LandingPage() {
         // Popup blocked or sandboxed — fallback link still works.
       }
 
-      // Poll for completion regardless of how the bot was opened
+      // Poll for completion regardless of how the bot was opened.
+      // pendingTokenRef lets the visibilitychange handler fire an immediate
+      // poll when iOS returns focus after the user switches back from Telegram.
+      pendingTokenRef.current = data.token;
       let attempts = 0;
       pollRef.current = setInterval(async () => {
         if (++attempts > 60) {
           if (pollRef.current) clearInterval(pollRef.current);
+          pendingTokenRef.current = null;
           setTgState("error");
           setTgError("Telegram sign-in timed out. If you already confirmed in Telegram, tap the button again.");
           return;
@@ -582,6 +750,86 @@ export function LandingPage() {
       <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center px-4 overflow-y-auto py-4">
         <div className="w-full max-w-xs flex flex-col items-center gap-4">
 
+          {/* ── Post-magic-link passkey prompt ────────────────────────────────
+              Shown only when the user just authenticated via magic link.
+              Replaces the entire login form with a single-action card. */}
+          {showPasskeyPrompt && (
+            <div className="w-full flex flex-col items-center gap-5">
+              <img src="/logo-login.png" alt="PNPtv!" className="w-48 h-auto" />
+
+              <div
+                className="w-full rounded-2xl p-5 text-left space-y-4"
+                style={{
+                  background: "rgba(34,197,94,0.07)",
+                  border: "1px solid rgba(34,197,94,0.25)",
+                }}
+              >
+                {/* Header row */}
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: "rgba(34,197,94,0.15)" }}
+                  >
+                    <svg className="w-5 h-5" style={{ color: "#4ade80" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white">Signed in!</p>
+                    <p className="text-[11px]" style={{ color: "#4ade80" }}>Your email link worked.</p>
+                  </div>
+                </div>
+
+                {/* Pitch */}
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-white">Save a passkey for instant login next time?</p>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary)" }}>
+                    Sign in with Face ID, Touch ID, or your device PIN — no email link needed.
+                  </p>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRegisterPasskeyAfterMagicLink}
+                    disabled={passkeyRegistering}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-70"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >
+                    {passkeyRegistering ? (
+                      <Spinner />
+                    ) : (
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                      </svg>
+                    )}
+                    {passkeyRegistering ? "Setting up…" : "Save passkey"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={proceedAfterPrompt}
+                    disabled={passkeyRegistering}
+                    className="px-4 py-3 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                    style={{ color: "var(--pnp-text-secondary)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  >
+                    Not now →
+                  </button>
+                </div>
+
+                {/* Auto-proceed countdown */}
+                {!passkeyRegistering && (
+                  <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary)" }}>
+                    Continuing to app in {passkeyPromptCountdown}s…
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* All login UI is hidden while the passkey prompt is shown */}
+          {!showPasskeyPrompt && (<>
+
           {/* Logo */}
           <img src="/logo-login.png" alt="PNPtv!" className="w-56 h-auto" />
 
@@ -630,23 +878,49 @@ export function LandingPage() {
             </div>
           )}
 
-          {/* Magic-link verify error banner (?magic_error=...) */}
-          {magicError && (
-            <div className="w-full flex items-start gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-left">
-              <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          {/* Session-expired banner (?reason=session_expired from socket event) */}
+          {reasonBanner === "session_expired" && (
+            <div className="w-full flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-left">
+              <svg className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
               </svg>
-              <p className="text-xs text-red-300 flex-1">
-                {magicError === "expired" ? "That sign-in link expired. Send yourself a new one." :
-                 magicError === "user_gone" ? "That account no longer exists." :
-                 magicError === "invalid" || magicError === "missing" ? "That link is invalid. Send yourself a new one." :
-                 "Sign-in failed. Try again."}
-              </p>
-              <button onClick={() => setMagicError(null)} className="text-red-400 hover:text-red-300" aria-label="Dismiss error">
+              <p className="text-xs text-yellow-300 flex-1">Your session expired. Sign in again to continue.</p>
+              <button onClick={() => setReasonBanner(null)} className="text-yellow-400 hover:text-yellow-300" aria-label="Dismiss">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          )}
+
+          {/* Magic-link verify error banner (?magic_error=...) */}
+          {magicError && (
+            <div className="w-full flex flex-col gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-left">
+              <div className="flex items-start gap-2">
+                <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <p className="text-xs text-red-300 flex-1">
+                  {magicError === "expired" ? "That sign-in link expired." :
+                   magicError === "user_gone" ? "That account no longer exists." :
+                   magicError === "invalid" || magicError === "missing" ? "That link is invalid." :
+                   "Sign-in failed."}
+                </p>
+                <button onClick={() => setMagicError(null)} className="text-red-400 hover:text-red-300" aria-label="Dismiss error">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              {magicError !== "user_gone" && (
+                <button
+                  type="button"
+                  onClick={() => { setMagicError(null); setMagicState("form"); setMagicSendError(null); }}
+                  className="text-xs text-red-300 hover:text-white underline text-left transition-colors ml-6"
+                >
+                  Send a new sign-in link →
+                </button>
+              )}
             </div>
           )}
 
@@ -921,6 +1195,8 @@ export function LandingPage() {
             </form>
           )}
 
+          </>)}
+
         </div>
       </main>
 
@@ -964,6 +1240,7 @@ export function LandingPage() {
             className="fixed bottom-0 left-0 right-0 z-50 glass-nav border-t border-pnp-border rounded-t-2xl overflow-y-auto animate-fade-in-up"
             style={{ maxHeight: "70dvh", animationDuration: "0.2s" }}
             role="dialog"
+            aria-modal="true"
             aria-label={sheet.title}
           >
             {/* Handle */}

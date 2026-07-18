@@ -5,11 +5,13 @@
 
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
-const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS } = require('../config/monetizationConfig');
+const { getRedis, cache } = require('../config/redis');
+const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS, SANTINO_USER_ID } = require('../config/monetizationConfig');
+const { applyCreatorBonus } = require('./tokenService');
 
 class PNPLiveTipsService {
-  // Standard tip amounts
-  static TIP_AMOUNTS = [5, 10, 20, 50, 100];
+  // Standard tip amounts in Tokens (100 Tokens = $1 USD)
+  static TIP_AMOUNTS = [500, 1000, 2000, 5000, 10000];
 
   /**
    * Create a new tip
@@ -23,8 +25,8 @@ class PNPLiveTipsService {
    */
   static async createTip(userId, modelId, bookingId, amount, message = '', performerId = null) {
     // SVC-M2: Validate amount — must be a positive integer within reasonable bounds
-    if (!Number.isInteger(amount) || amount <= 0 || amount > 100000) {
-      const err = new Error('Tip amount must be a positive integer and cannot exceed 100,000');
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 1000000) {
+      const err = new Error('Tip amount must be a positive integer and cannot exceed 1,000,000');
       err.name = 'ValidationError';
       throw err;
     }
@@ -60,7 +62,7 @@ class PNPLiveTipsService {
    * If any step fails the entire operation rolls back (no tokens lost, no ghost tip created).
    *
    * @param {string} userId - User ID
-   * @param {number} amount - Tip amount (positive integer, max 100,000)
+   * @param {number} amount - Tip amount (positive integer, max 1,000,000)
    * @param {string} message - Optional tip message
    * @param {string} performerId - Performer ID
    * @param {string|null} idempotencyKey - Optional caller-supplied dedup key
@@ -68,8 +70,8 @@ class PNPLiveTipsService {
    */
   static async processTipWithTokens(userId, amount, message = '', performerId, idempotencyKey = null) {
     // Validate amount before touching DB
-    if (!Number.isInteger(amount) || amount <= 0 || amount > 100000) {
-      const err = new Error('Tip amount must be a positive integer and cannot exceed 100,000');
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 1000000) {
+      const err = new Error('Tip amount must be a positive integer and cannot exceed 1,000,000');
       err.name = 'ValidationError';
       throw err;
     }
@@ -107,7 +109,7 @@ class PNPLiveTipsService {
       // The route handler checks this first, but we re-check here because
       // processTipWithTokens can be called from any context (tests, admin tools,
       // future routes). A creator tipping themselves produces phantom earnings.
-      const { rows: selfRows } = await q(
+      const { rows: selfRows } = await query(
         'SELECT user_id FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
         [String(performerId)]
       );
@@ -133,17 +135,52 @@ class PNPLiveTipsService {
       await client.query('BEGIN');
 
       // Debit tokens atomically — pool selection depends on performer:
-      // • Allowed performers (Santino/PNPLatinoBoy): gifted_balance first, then regular.
+      // • Santino: creator_gifts['SANTINO'] first, then gifted_balance, then balance_tokens.
+      // • Other allowed performers (PNPLatinoBoy): gifted_balance first, then balance_tokens.
       // • All others: regular balance_tokens only (gifted tokens are not accepted).
       let debitResult;
-      if (isGiftedAllowed) {
+      const isSantino = perfUserId === SANTINO_USER_ID;
+      if (isSantino) {
         debitResult = await client.query(
-          `UPDATE user_token_wallets
-           SET gifted_balance = GREATEST(0, gifted_balance - $2),
-               balance_tokens = balance_tokens - GREATEST(0, $2 - gifted_balance),
-               updated_at = NOW()
-           WHERE user_id = $1 AND (gifted_balance + balance_tokens) >= $2
-           RETURNING balance_tokens, gifted_balance`,
+          `WITH before AS (
+             SELECT COALESCE((creator_gifts->>$3)::numeric, 0) AS cg_val, gifted_balance
+             FROM user_token_wallets WHERE user_id = $1
+           ),
+           upd AS (
+             UPDATE user_token_wallets
+             SET creator_gifts = jsonb_set(
+                   creator_gifts,
+                   ARRAY[$3],
+                   to_jsonb(GREATEST(0.0, COALESCE((creator_gifts->>$3)::numeric, 0) - $2))
+                 ),
+                 gifted_balance = GREATEST(0, gifted_balance - GREATEST(0, $2 - COALESCE((creator_gifts->>$3)::numeric, 0))),
+                 balance_tokens = balance_tokens - GREATEST(0, $2 - COALESCE((creator_gifts->>$3)::numeric, 0) - gifted_balance),
+                 updated_at = NOW()
+             WHERE user_id = $1
+               AND COALESCE((creator_gifts->>$3)::numeric, 0) + gifted_balance + balance_tokens >= $2
+             RETURNING balance_tokens, gifted_balance, creator_gifts
+           )
+           SELECT u.balance_tokens, u.gifted_balance, u.creator_gifts,
+                  GREATEST(0, $2::numeric - b.cg_val - b.gifted_balance)::int AS balance_tokens_spent
+           FROM upd u, before b`,
+          [userId, amount, SANTINO_USER_ID]
+        );
+      } else if (isGiftedAllowed) {
+        debitResult = await client.query(
+          `WITH before AS (
+             SELECT gifted_balance FROM user_token_wallets WHERE user_id = $1
+           ),
+           upd AS (
+             UPDATE user_token_wallets
+             SET gifted_balance = GREATEST(0, gifted_balance - $2),
+                 balance_tokens = balance_tokens - GREATEST(0, $2 - gifted_balance),
+                 updated_at = NOW()
+             WHERE user_id = $1 AND (gifted_balance + balance_tokens) >= $2
+             RETURNING balance_tokens, gifted_balance, creator_gifts
+           )
+           SELECT u.balance_tokens, u.gifted_balance, u.creator_gifts,
+                  GREATEST(0, $2::numeric - b.gifted_balance)::int AS balance_tokens_spent
+           FROM upd u, before b`,
           [userId, amount]
         );
       } else {
@@ -152,7 +189,7 @@ class PNPLiveTipsService {
            SET balance_tokens = balance_tokens - $2,
                updated_at = NOW()
            WHERE user_id = $1 AND balance_tokens >= $2
-           RETURNING balance_tokens, gifted_balance`,
+           RETURNING balance_tokens, gifted_balance, creator_gifts`,
           [userId, amount]
         );
       }
@@ -163,8 +200,16 @@ class PNPLiveTipsService {
         throw err;
       }
 
-      const { balance_tokens: reg, gifted_balance: gift } = debitResult.rows[0];
-      const newBalance = (reg || 0) + (gift || 0);
+      const { balance_tokens: reg, gifted_balance: gift, creator_gifts: cg } = debitResult.rows[0];
+      const cgTotal = cg ? Object.values(cg).reduce((s, v) => s + Number(v), 0) : 0;
+      const newBalance = (reg || 0) + (gift || 0) + cgTotal;
+
+      // Determine how many tokens came from the purchased (balance_tokens) pool.
+      // Santino and isGiftedAllowed paths return balance_tokens_spent from the CTE.
+      // Regular path debits only from balance_tokens, so the full amount is purchased.
+      const balanceTokensSpent = isSantino || isGiftedAllowed
+        ? (debitResult.rows[0].balance_tokens_spent ?? amount)
+        : amount;
 
       // Insert tip record as already paid. transaction_id uses crypto.randomUUID
       // (collision-resistant) instead of `TOKEN-${userId}-${Date.now()}` which
@@ -202,22 +247,47 @@ class PNPLiveTipsService {
 
       const tip = tipResult.rows[0];
 
-      // Record 70/30 earnings split for the performer (holding — matures after EARNINGS_HOLD_HOURS)
-      const amountCreator = Math.round(amount * CREATOR_REVENUE_RATE * 100) / 100;
-      const amountPlatform = Math.round(amount * PLATFORM_COMMISSION_RATE * 100) / 100;
-      // Use the tip's transaction_id as the source_payment_id so a refund can reverse this row.
-      await client.query(
-        `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-         VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
-        [String(performerId), amount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), tip.transaction_id || null]
+      // Record earnings split — only for purchased tokens (real cash obligation).
+      // Gifted / creator_gifts tokens credit the streamer's wallet for UX but do not
+      // generate payout obligations.
+      // creator_earnings stores USD; tokens divide by 100.
+      // creator_earnings.creator_id references users(id), not performers(id) — resolve user_id.
+      const TOKENS_PER_USD = 100;
+      const baseCreatorTokens = Math.round(amount * CREATOR_REVENUE_RATE * 1000) / 1000;
+      const { creatorAmount: creatorTokens, platformAmount: platformTokens, bonusApplied } =
+        await applyCreatorBonus(baseCreatorTokens, amount);
+      if (bonusApplied) {
+        logger.info('Creator weekend bonus applied on tip', { performerId, amount, creatorTokens, platformTokens });
+      }
+      const perfLookup = await client.query(
+        'SELECT user_id FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
+        [String(performerId)]
       );
+      const creatorUserId = perfLookup.rows.length > 0 ? String(perfLookup.rows[0].user_id) : String(performerId);
+      if (balanceTokensSpent > 0) {
+        const earnableUsd = balanceTokensSpent / TOKENS_PER_USD;
+        const baseCreatorEarn = Math.round(balanceTokensSpent * CREATOR_REVENUE_RATE * 1000) / 1000;
+        const { creatorAmount: creatorTokensEarn, platformAmount: platformTokensEarn } =
+          await applyCreatorBonus(baseCreatorEarn, balanceTokensSpent);
+        const amountCreatorEarn = Math.round(creatorTokensEarn / TOKENS_PER_USD * 100) / 100;
+        const amountPlatformEarn = Math.round(platformTokensEarn / TOKENS_PER_USD * 100) / 100;
+        await client.query(
+          `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+           VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+          [creatorUserId, earnableUsd, amountCreatorEarn, amountPlatformEarn, String(EARNINGS_HOLD_HOURS), tip.transaction_id || null]
+        );
+      }
 
       await client.query('COMMIT');
 
-      // Invalidate wallet cache outside the transaction (best-effort)
+      // Invalidate wallet cache outside the transaction (best-effort).
+      // Both keys: `wallet:` (bare number) and `wallet:obj:` (full wallet object).
       try {
         const { cache } = require('../config/redis');
-        await cache.del(`wallet:${userId}`);
+        await Promise.all([
+          cache.del(`wallet:${userId}`),
+          cache.del(`wallet:obj:${userId}`),
+        ]);
       } catch (cacheErr) {
         logger.warn('Failed to invalidate wallet cache after token tip:', { userId, error: cacheErr.message });
       }
@@ -231,7 +301,7 @@ class PNPLiveTipsService {
           io.to(`user:${userId}`).emit('wallet:updated', { balance: newBalance });
 
           // 2. Resolve performer details and update their wallet
-          const { rows: performerRows } = await client.query(
+          const { rows: performerRows } = await query(
             'SELECT user_id, display_name FROM performers WHERE id::text = $1 LIMIT 1',
             [String(performerId)]
           );
@@ -241,7 +311,7 @@ class PNPLiveTipsService {
             const performerName = performerRows[0].display_name;
 
             // Fetch performer's new balance
-            const performerWallet = await client.query(
+            const performerWallet = await query(
               'SELECT balance_tokens FROM user_token_wallets WHERE user_id = $1',
               [String(performerUserId)]
             );
@@ -255,14 +325,15 @@ class PNPLiveTipsService {
                 amount: amount,
                 reason: 'tip',
                 viewerId: userId,
-                message: message
+                message: message,
+                bonusApplied: bonusApplied || false,
               });
             }
 
             // 3. Resolve streamId (channelRef) and tipper info for public broadcast
             const [performerUserRes, tipperUserRes] = await Promise.all([
-              client.query('SELECT live_channel FROM users WHERE id = $1', [String(performerUserId)]),
-              client.query('SELECT username FROM users WHERE id = $1', [String(userId)])
+              query('SELECT live_channel FROM users WHERE id = $1', [String(performerUserId)]),
+              query('SELECT username FROM users WHERE id = $1', [String(userId)])
             ]);
 
             const streamId = performerUserRes.rows[0]?.live_channel;
@@ -279,27 +350,52 @@ class PNPLiveTipsService {
                 paymentMethod: 'tokens'
               });
 
-              // Update tip goal progress if an active goal exists on this stream
+              // Update tip goal progress. Goals live in Redis at
+              // stream:goal:<channelRef> (see routes.js POST /api/webapp/live/goal).
+              // We HINCRBY progress atomically, then HMGET the full state to
+              // decide completion and broadcast. The legacy live_streams UPDATE
+              // still fires below as a fallback for any goals set before the
+              // Redis migration — the two writes are independent.
               try {
-                const { rows: goalRows } = await query(
-                  `UPDATE live_streams
-                     SET tip_goal_progress = LEAST(tip_goal_progress + $1, tip_goal_amount),
-                         tip_goal_completed = (tip_goal_progress + $1 >= tip_goal_amount)
-                   WHERE channel_name = $2 AND status = 'live' AND tip_goal_amount IS NOT NULL
-                   RETURNING tip_goal_amount, tip_goal_label, tip_goal_progress, tip_goal_completed`,
-                  [amount, streamId]
-                );
-                if (goalRows.length > 0) {
-                  const g = goalRows[0];
+                const redis = getRedis();
+                const gKey = `stream:goal:${streamId}`;
+                const amt = await redis.hget(gKey, 'amount');
+                if (amt) {
+                  const goalAmount = parseFloat(amt);
+                  await redis.hincrby(gKey, 'progress', Math.round(amount));
+                  const [rawProgress, label] = await redis.hmget(gKey, 'progress', 'label');
+                  let progress = parseFloat(rawProgress || '0');
+                  const completed = Number.isFinite(goalAmount) && progress >= goalAmount;
+                  if (completed && progress > goalAmount) {
+                    // Cap progress at the goal to match the old LEAST() behavior.
+                    await redis.hset(gKey, 'progress', String(goalAmount));
+                    progress = goalAmount;
+                  }
+                  await redis.hset(gKey, 'completed', completed ? '1' : '0');
+                  // Bust the 30s public read cache so viewers see progress live.
+                  try { await cache.del(`live:goal:${streamId}`); } catch (_) { /* best-effort */ }
                   io.to(`live:${streamId}`).emit('live:goal_update', {
-                    goalAmount: parseFloat(g.tip_goal_amount),
-                    goalLabel: g.tip_goal_label,
-                    progress: parseFloat(g.tip_goal_progress),
-                    completed: g.tip_goal_completed,
+                    goalAmount,
+                    goalLabel: label || null,
+                    progress,
+                    completed,
                   });
                 }
               } catch (goalErr) {
-                logger.warn('Failed to update tip goal progress (non-fatal)', { error: goalErr.message });
+                logger.warn('Failed to update Redis tip goal progress (non-fatal)', { error: goalErr.message });
+              }
+              // Legacy DB path — no-op for OBS creators (no live_streams row),
+              // still updates the row for any pre-migration goals in flight.
+              try {
+                await query(
+                  `UPDATE live_streams
+                     SET tip_goal_progress = LEAST(tip_goal_progress + $1, tip_goal_amount),
+                         tip_goal_completed = (tip_goal_progress + $1 >= tip_goal_amount)
+                   WHERE channel_name = $2 AND status = 'live' AND tip_goal_amount IS NOT NULL`,
+                  [amount, streamId]
+                );
+              } catch (goalErr) {
+                logger.warn('Failed to update legacy DB tip goal (non-fatal)', { error: goalErr.message });
               }
             }
 
@@ -378,11 +474,14 @@ class PNPLiveTipsService {
       // (token-tip path inserts earnings inline at tip creation; Dash-tip path
       // arrives here after webhook settlement). Use transaction_id as the
       // source_payment_id so a future invoice invalidation can void the row.
+      // creator_earnings stores USD; tip.amount is in Tokens, divide by 100.
       const performerId = tip.performer_id || (tip.model_id != null ? String(tip.model_id) : null);
       const tipAmount = parseFloat(tip.amount);
       if (performerId && Number.isFinite(tipAmount) && tipAmount > 0) {
-        const amountCreator = Math.round(tipAmount * CREATOR_REVENUE_RATE * 100) / 100;
-        const amountPlatform = Math.round(tipAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
+        const TOKENS_PER_USD = 100;
+        const tipAmountUsd = tipAmount / TOKENS_PER_USD;
+        const amountCreator = Math.round(tipAmountUsd * CREATOR_REVENUE_RATE * 100) / 100;
+        const amountPlatform = Math.round(tipAmountUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
         const sourcePaymentId = transactionId || tip.transaction_id || null;
         // Skip if an earnings row for this exact source_payment_id already exists
         // (defense-in-depth on top of the WHERE-pending guard above).
@@ -394,10 +493,10 @@ class PNPLiveTipsService {
           await client.query(
             `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
              VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
-            [performerId, tipAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
+            [performerId, tipAmountUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sourcePaymentId]
           );
           logger.info('Tip earnings recorded (70/30, holding)', {
-            tipId, performerId, tipAmount, amountCreator, sourcePaymentId,
+            tipId, performerId, tipAmountUsd, amountCreator, sourcePaymentId,
           });
         } else {
           logger.info('Tip earnings already recorded — idempotent no-op', { tipId, sourcePaymentId });

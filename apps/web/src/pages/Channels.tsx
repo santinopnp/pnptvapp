@@ -23,11 +23,13 @@ import {
   postChannelVideoComment,
   updateVideoTaggedCreators,
   searchCreators,
+  createSocialPost,
   type Channel,
   type ChannelVideo,
   type ChannelVideoComment,
   type CreatorChannel,
   type MentionUser,
+  type SocialPostItem,
 } from "@/lib/api";
 import { connectSocket } from "@/lib/socket";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
@@ -45,6 +47,19 @@ const TIER_COLORS: Record<string, { bg: string; text: string; label: string }> =
 function isValidPhotoUrl(url: string | null | undefined): url is string {
   if (!url) return false;
   return url.startsWith("/uploads/") || url.startsWith("http");
+}
+
+function formatRelativeTime(date: string): string {
+  const diff = Date.now() - new Date(date).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
 }
 
 // ── Creator Channel Card ─────────────────────────────────────────────────────
@@ -187,13 +202,18 @@ function ChannelDetailView({
   onDeleted?: (channelId: number) => void;
 }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [channel, setChannel] = useState<CreatorChannel | null>(null);
   const [videos, setVideos] = useState<ChannelVideo[]>([]);
+  const [posts, setPosts] = useState<SocialPostItem[]>([]);
   const [locked, setLocked] = useState(false);
+  const [lockReason, setLockReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [playingVideo, setPlayingVideo] = useState<{ url: string; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[] } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[] } | null>(null);
+  const [videoPlayerError, setVideoPlayerError] = useState(false);
   const [videoComments, setVideoComments] = useState<ChannelVideoComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentInput, setCommentInput] = useState("");
@@ -215,6 +235,15 @@ function ChannelDetailView({
   const [creatorTagSearch, setCreatorTagSearch] = useState("");
   const [creatorTagResults, setCreatorTagResults] = useState<MentionUser[]>([]);
   const [creatorTagSearching, setCreatorTagSearching] = useState(false);
+
+  // Hype — social post promotion for videos
+  const [hypingVideoId, setHypingVideoId] = useState<number | null>(null);
+  const [hypeText, setHypeText] = useState("");
+  const [hypePosting, setHypePosting] = useState(false);
+  const [hypePosted, setHypePosted] = useState<Set<number>>(new Set());
+  const [modalHypeOpen, setModalHypeOpen] = useState(false);
+  const [hypeError, setHypeError] = useState<string | null>(null);
+  const hypeInFlight = useRef(false);
 
   const openVideoEdit = (v: ChannelVideo) => {
     setEditingVideoId(v.id);
@@ -321,6 +350,89 @@ function ChannelDetailView({
     }
   };
 
+  // ── Hype handlers ────────────────────────────────────────────────────────
+  const buildHypeText = useCallback((v: ChannelVideo) => {
+    // Collect all owner usernames (creator + collaborators), deduped
+    const ownerHandles: string[] = [];
+    if (channel?.creatorUsername) ownerHandles.push(`@${channel.creatorUsername}`);
+    for (const cp of channel?.collaboratorProfiles ?? []) {
+      if (cp.username && !ownerHandles.includes(`@${cp.username}`)) {
+        ownerHandles.push(`@${cp.username}`);
+      }
+    }
+    // Collect tagged performer usernames, skip any already in ownerHandles
+    const performerHandles: string[] = [];
+    for (const tc of v.tagged_creators ?? []) {
+      if (tc.username && !ownerHandles.includes(`@${tc.username}`)) {
+        performerHandles.push(`@${tc.username}`);
+      }
+    }
+    const allHandles = [...ownerHandles, ...performerHandles];
+    const mentions = allHandles.length > 0 ? ` ft. ${allHandles.join(", ")}` : "";
+    return `🔥 Watch "${v.title}"${mentions} — now on ${channel?.name ?? "PNPtv! Channels"} ✨`;
+  }, [channel]);
+
+  const openHypeCard = useCallback((v: ChannelVideo) => {
+    const isOpen = hypingVideoId === v.id;
+    setHypingVideoId(isOpen ? null : v.id);
+    if (!isOpen) setHypeText(buildHypeText(v));
+    setModalHypeOpen(false);
+  }, [buildHypeText, hypingVideoId]);
+
+  const openHypeModal = useCallback((v: ChannelVideo) => {
+    setHypingVideoId(null);
+    setModalHypeOpen((prev) => {
+      if (!prev) setHypeText(buildHypeText(v));
+      return !prev;
+    });
+  }, [buildHypeText]);
+
+  const submitHype = useCallback(async (videoId: number) => {
+    if (!hypeText.trim() || hypePosting || hypeInFlight.current) return;
+    hypeInFlight.current = true;
+    setHypePosting(true);
+    setHypeError(null);
+    try {
+      const v = videos.find((x) => x.id === videoId);
+      // Use the Directus asset URL for playback in the social feed — the /stream
+      // proxy is for the Channels page access gate, not for embedding in posts.
+      const directusId = (v as any).directus_file_id as string | null ?? null;
+      const directusVideoUrl = (v as any).directus_video_url as string | null
+        ?? (directusId ? `https://cms.pnptv.app/assets/${directusId}` : v?.video_url ?? "");
+      const promoMetadata = channel && v ? {
+        kind: "channel_promo" as const,
+        channel_id: channel.id,
+        channel_slug: channel.slug,
+        channel_name: channel.name,
+        creator_id: channel.creatorId,
+        creator_username: channel.creatorUsername ?? null,
+        access_type: (channel.accessType ?? "free") as "free" | "subscription" | "prime" | "paid",
+        price_usd: channel.priceUsd ?? null,
+        video_id: v.id,
+        video_directus_id: directusId ?? "",
+        video_url: directusVideoUrl,
+        has_animated_gif: !!v.gif_url,
+        video_description: v.description ?? null,
+      } : undefined;
+      await createSocialPost(hypeText.trim(), undefined, false, true, {
+        metadata: promoMetadata,
+        videoThumbnailUrl: v?.thumbnail_url ?? undefined,
+        channelId: channel?.isOwner ? channel.id : undefined,
+      });
+      setHypePosted((prev) => new Set(prev).add(videoId));
+      setHypingVideoId(null);
+      setModalHypeOpen(false);
+      setHypeText("");
+    } catch (err: unknown) {
+      console.error('Hype post failed', err);
+      const msg = err instanceof Error ? err.message : '';
+      setHypeError(msg.toLowerCase().includes('already hyped') ? 'You already hyped this.' : 'Failed to post. Try again.');
+    } finally {
+      setHypePosting(false);
+      hypeInFlight.current = false;
+    }
+  }, [hypeText, hypePosting, videos, channel]);
+
   // ── Edit channel ─────────────────────────────────────────────────────────
   const [showEditForm, setShowEditForm] = useState(false);
   const [editForm, setEditForm] = useState<{ name: string; description: string; tags: string; accessType: 'free' | 'prime' | 'subscription' | 'paid'; priceUsd: number; telegramChannelId: string; bridgeEnabled: boolean }>({ name: "", description: "", tags: "", accessType: "free", priceUsd: 0, telegramChannelId: "", bridgeEnabled: false });
@@ -409,7 +521,9 @@ function ChannelDetailView({
           if (res.success) {
             setChannel(res.channel);
             setVideos(res.videos ?? []);
+            setPosts(res.posts ?? []);
             setLocked(res.locked);
+            setLockReason(res.lockReason ?? null);
           }
         })
         .catch((err) => setError(err.message || "Failed to load channel"))
@@ -426,6 +540,26 @@ function ChannelDetailView({
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [channelId]);
+
+  // Auto-open a specific video when arriving via /channels?channel=<slug>&video=<id>
+  // (used by the Videos destacados tiles on creator profiles). Runs once per
+  // videos load, and only when nothing is currently playing.
+  useEffect(() => {
+    const videoParam = searchParams.get("video");
+    if (!videoParam || videos.length === 0 || playingVideo) return;
+    const vidId = parseInt(videoParam, 10);
+    if (!Number.isFinite(vidId)) return;
+    const v = videos.find((x) => x.id === vidId);
+    if (!v || !channel) return;
+    setPlayingVideo({
+      url: v.video_url,
+      title: v.title,
+      videoId: v.id,
+      channelId: channel.id,
+      promoPostId: v.promo_post_id ?? null,
+      taggedCreators: v.tagged_creators || [],
+    });
+  }, [videos, searchParams, playingVideo, channel]);
 
   if (loading) {
     return (
@@ -567,6 +701,29 @@ function ChannelDetailView({
             </div>
           </div>
 
+          {/* Creator nudge: encourage uploading more content */}
+          {channel.isOwner && channel.videoCount != null && channel.videoCount < 5 && (
+            <div
+              className="mx-4 mb-3 rounded-xl p-3 flex items-start gap-3 border border-yellow-500/20"
+              style={{ background: "rgba(234,179,8,0.07)" }}
+            >
+              <span className="text-lg flex-shrink-0">💡</span>
+              <div className="min-w-0">
+                <p className="text-xs text-yellow-300/90 font-medium leading-snug">
+                  You have {channel.videoCount} video{channel.videoCount !== 1 ? "s" : ""} in this channel.
+                  Upload more content to attract more subscribers.
+                </p>
+                <a
+                  href="/creators"
+                  className="text-xs font-semibold underline underline-offset-2 mt-0.5 inline-block"
+                  style={{ color: "#facc15" }}
+                >
+                  See content guidelines →
+                </a>
+              </div>
+            </div>
+          )}
+
           {/* Edit form */}
           {showEditForm && channel.isOwner && (
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
@@ -658,7 +815,7 @@ function ChannelDetailView({
                     <button
                       key={value}
                       type="button"
-                      onClick={() => setEditForm((p) => ({ ...p, accessType: value, priceUsd: value !== "paid" ? 0 : (p.priceUsd || 5) }))}
+                      onClick={() => setEditForm((p) => ({ ...p, accessType: value, priceUsd: value !== "paid" ? 0 : (p.priceUsd || 9.99) }))}
                       className="py-2 px-3 rounded-lg text-xs font-medium transition-all border"
                       style={editForm.accessType === value
                         ? { background: bg, color, borderColor: color }
@@ -673,33 +830,21 @@ function ChannelDetailView({
               {editForm.accessType === "paid" && (
                 <div>
                   <label className="block text-xs text-white/50 mb-2">Price per 30 days (USD)</label>
-                  <div className="flex gap-2 flex-wrap items-center">
-                    {[5, 10, 15, 20, 25].map((price) => (
-                      <button
-                        key={price}
-                        type="button"
-                        onClick={() => setEditForm((p) => ({ ...p, priceUsd: price }))}
-                        className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all border"
-                        style={editForm.priceUsd === price
-                          ? { background: "rgba(230,145,56,0.2)", color: "#E69138", borderColor: "rgba(230,145,56,0.5)" }
-                          : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)", borderColor: "rgba(255,255,255,0.1)" }
-                        }
-                      >
-                        ${price}/mo
-                      </button>
-                    ))}
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold" style={{ color: "#E69138" }}>$</span>
                     <input
                       type="number"
-                      min="0.99"
-                      max="999.99"
+                      min="1.99"
+                      max="499"
                       step="0.01"
                       value={editForm.priceUsd || ""}
                       onChange={(e) => setEditForm((p) => ({ ...p, priceUsd: Number(e.target.value) || 0 }))}
-                      placeholder="Custom"
-                      className="w-24 px-3 py-1.5 rounded-lg text-sm bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-orange-500/50"
+                      placeholder="9.99"
+                      className="w-full pl-7 pr-12 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white placeholder-white/25 focus:outline-none focus:border-orange-500/60"
                     />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30">/mo</span>
                   </div>
-                  <p className="text-[10px] text-white/30 mt-1.5">$0.99 – $999.99 per 30-day pass</p>
+                  <p className="text-[10px] text-white/30 mt-1.5">Mín. $1.99 · Máx. $499 · La mayoría cobra entre $5 y $29/mes</p>
                 </div>
               )}
               {/* Telegram Bridge */}
@@ -754,7 +899,7 @@ function ChannelDetailView({
           {showDeleteConfirm && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 space-y-3">
               <p className="text-sm font-semibold text-red-300">Delete this channel?</p>
-              <p className="text-xs text-white/50">This will permanently delete <span className="text-white/80 font-medium">{channel.name}</span> and remove all its posts. This cannot be undone.</p>
+              <p className="text-xs text-white/50">This will permanently delete <span className="text-white/80 font-medium">{channel.name}</span> and unlink all its posts from this channel. The posts themselves will remain visible in the social feed. This cannot be undone.</p>
               <div className="flex gap-3">
                 <button
                   onClick={handleDelete}
@@ -788,94 +933,106 @@ function ChannelDetailView({
             </div>
           )}
 
-          {/* Creator attribution */}
-          <div className="flex items-center gap-2 pt-1 border-t border-pnp-border/50">
-            {isValidPhotoUrl(channel.creatorPhotoUrl) ? (
-              <img
-                src={channel.creatorPhotoUrl!}
-                alt=""
-                className="w-7 h-7 rounded-full object-cover flex-shrink-0"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
-            ) : (
-              <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
-                {(channel.creatorName || "?").charAt(0).toUpperCase()}
+          {/* Channel owners */}
+          {(() => {
+            const allOwners = [
+              { id: channel.creatorId, name: channel.creatorName || channel.creatorUsername || "Creator", username: channel.creatorUsername, photoUrl: channel.creatorPhotoUrl, verified: channel.creatorVerified ?? false },
+              ...(channel.collaboratorProfiles ?? []),
+            ];
+            return (
+              <div className="pt-1 border-t border-pnp-border/50">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {allOwners.map((owner, i) => (
+                    <a key={owner.id} href={`/profile/${owner.id}`} className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+                      {isValidPhotoUrl(owner.photoUrl) ? (
+                        <img src={owner.photoUrl!} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                          {(owner.name || "?").charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="text-sm text-pnp-textSecondary">{owner.name}</span>
+                      {owner.verified && (
+                        <svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                      {i < allOwners.length - 1 && <span className="text-white/20 text-xs ml-1">&</span>}
+                    </a>
+                  ))}
+                </div>
               </div>
-            )}
-            <span className="text-sm text-pnp-textSecondary">
-              {channel.creatorName || channel.creatorUsername || "Creator"}
-            </span>
-            {channel.creatorVerified && (
-              <svg className="w-3.5 h-3.5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-            )}
-            {channel.collaborators && channel.collaborators.length > 0 && (
-              <span
-                className="ml-auto flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
-                style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}
-              >
-                Joint Channel
-              </span>
-            )}
-          </div>
-
-          {/* Collaborators list */}
-          {channel.collaborators && channel.collaborators.length > 0 && (
-            <div className="pt-2 border-t border-pnp-border/50">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-pnp-textSecondary mb-1.5">
-                Collaborators
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {channel.collaborators.map((uid) => (
-                  <span
-                    key={uid}
-                    className="px-2 py-0.5 rounded-full text-xs text-pnp-textSecondary"
-                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
-                  >
-                    {uid}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 
       {/* Locked overlay */}
       {locked ? (
-        <div className="relative rounded-2xl border border-pnp-border bg-pnp-surface overflow-hidden">
-          {/* Lock overlay */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6"
-            style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(2px)" }}>
-            <div className="w-12 h-12 rounded-full flex items-center justify-center"
-              style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }}>
-              <svg className="w-6 h-6" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-              </svg>
-            </div>
-            <p className="text-white font-semibold text-base">Premium Channel</p>
-            <p className="text-sm text-center" style={{ color: "var(--pnp-text-secondary)" }}>
-              Subscribe to {channel.creatorName || "this creator"} to access this channel
-            </p>
-            <button
-              className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-              onClick={() => {
-                if (channel.creatorId) window.location.href = `/profile/${channel.creatorId}`;
-              }}
-            >
-              Subscribe to Access
-            </button>
+        <div className="rounded-2xl border border-pnp-border bg-pnp-surface flex flex-col items-center justify-center gap-3 p-8 text-center"
+          style={{ minHeight: 240 }}>
+          <div className="w-14 h-14 rounded-full flex items-center justify-center"
+            style={channel.accessType === 'prime'
+              ? { background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)" }
+              : { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }
+            }>
+            <svg className="w-7 h-7" style={{ color: channel.accessType === 'prime' ? "#A78BFA" : "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+            </svg>
           </div>
+          {channel.accessType === 'prime' ? (
+            <>
+              <p className="text-white font-semibold text-base">PRIME Members Only</p>
+              <p className="text-sm max-w-xs" style={{ color: "var(--pnp-text-secondary)" }}>
+                This channel is exclusive to PRIME members. Upgrade your plan to unlock all {channel.videoCount ?? 0} videos.
+              </p>
+              <button
+                className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{ background: "linear-gradient(135deg, #A78BFA, #D4007A)" }}
+                onClick={() => { window.location.href = '/subscribe'; }}
+              >
+                Upgrade to PRIME
+              </button>
+            </>
+          ) : lockReason === 'AUTH_REQUIRED' ? (
+            <>
+              <p className="text-white font-semibold text-base">Members Only</p>
+              <p className="text-sm max-w-xs" style={{ color: "var(--pnp-text-secondary)" }}>
+                Sign in to access this channel.
+              </p>
+              <button
+                className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                onClick={() => { window.location.href = '/login'; }}
+              >
+                Sign In
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-white font-semibold text-base">Premium Channel</p>
+              <p className="text-sm max-w-xs" style={{ color: "var(--pnp-text-secondary)" }}>
+                Subscribe to {channel.creatorName || "this creator"} to access this channel.
+              </p>
+              <button
+                className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                onClick={() => {
+                  if (channel.creatorId) window.location.href = `/profile/${channel.creatorId}`;
+                }}
+              >
+                Subscribe to Access
+              </button>
+            </>
+          )}
         </div>
-      ) : videos.length === 0 ? (
+      ) : videos.length === 0 && posts.length === 0 ? (
         <div className="py-12 text-center text-pnp-textSecondary text-sm">
-          No videos in this channel yet
+          No content in this channel yet
         </div>
       ) : (
-        <div className="space-y-2">
+        <>
+        {videos.length > 0 && <div className="space-y-2">
           {videos.map((v) => {
             const previewSrc = v.gif_url || v.thumbnail_url;
             const isEditing = editingVideoId === v.id;
@@ -885,7 +1042,7 @@ function ChannelDetailView({
                 {/* Thumbnail row */}
                 <div
                   className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer"
-                  onClick={() => setPlayingVideo({ url: v.video_url, title: v.title, videoId: v.id, channelId: channel.id, promoPostId: v.promo_post_id ?? null, taggedCreators: v.tagged_creators || [] })}
+                  onClick={() => { setVideoPlayerError(false); setPlayingVideo({ url: v.video_url, title: v.title, videoId: v.id, channelId: channel.id, promoPostId: v.promo_post_id ?? null, taggedCreators: v.tagged_creators || [] }); }}
                 >
                   {previewSrc ? (
                     <img
@@ -945,29 +1102,79 @@ function ChannelDetailView({
                       </div>
                     )}
                   </div>
-                  {channel.isOwner && (
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {/* Hype — all authenticated users */}
+                    {user && (
                       <button
-                        onClick={() => openVideoEdit(v)}
-                        className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors"
-                        title="Edit video"
+                        onClick={(e) => { e.stopPropagation(); openHypeCard(v); }}
+                        title={hypePosted.has(v.id) ? "Hyped!" : "Hype this video"}
+                        className="p-1.5 rounded-lg transition-colors"
+                        style={hypePosted.has(v.id) || hypingVideoId === v.id
+                          ? { color: "#FF9500", background: "rgba(255,149,0,0.12)" }
+                          : { color: "rgba(255,255,255,0.35)", background: "transparent" }
+                        }
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
                         </svg>
                       </button>
+                    )}
+                    {channel.isOwner && (
+                      <>
+                        <button
+                          onClick={() => openVideoEdit(v)}
+                          className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors"
+                          title="Edit video"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setDeletingVideoId(v.id)}
+                          className="p-1.5 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Delete video"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Inline hype compose */}
+                {hypingVideoId === v.id && !isEditing && !isDeleting && (
+                  <div className="px-3 pb-3 pt-2 border-t border-white/8 space-y-2">
+                    <p className="text-[10px] text-white/40 font-medium tracking-wide uppercase">Hype Post</p>
+                    <textarea
+                      rows={2}
+                      value={hypeText}
+                      onChange={(e) => setHypeText(e.target.value)}
+                      maxLength={280}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none placeholder-white/25"
+                      placeholder="Write your hype post…"
+                    />
+                    {hypeError && <p className="text-xs text-red-400">{hypeError}</p>}
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => setDeletingVideoId(v.id)}
-                        className="p-1.5 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Delete video"
+                        onClick={() => submitHype(v.id)}
+                        disabled={hypePosting || !hypeText.trim()}
+                        className="flex-1 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity min-h-[44px]"
+                        style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                        </svg>
+                        {hypePosting ? "Posting…" : "🔥 Post Hype"}
+                      </button>
+                      <button
+                        onClick={() => { setHypingVideoId(null); setHypeText(""); setHypeError(null); }}
+                        className="px-3 py-2.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5 min-h-[44px]"
+                      >
+                        Cancel
                       </button>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Inline edit form */}
                 {isEditing && (
@@ -1117,7 +1324,80 @@ function ChannelDetailView({
               </div>
             );
           })}
-        </div>
+        </div>}
+        {/* Posts section */}
+        {posts.length > 0 && (
+          <div className="mt-4 space-y-3">
+            {videos.length > 0 && (
+              <h3 className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider px-1">Posts</h3>
+            )}
+            {posts.map((post) => {
+              const authorName = post.author_first_name || post.author_username || "User";
+              const authorPhoto = post.author_photo;
+              const hasPhoto = isValidPhotoUrl(authorPhoto);
+              const primaryMedia = post.media_urls && post.media_urls.length > 0
+                ? post.media_urls[0]
+                : post.media_url ? { url: post.media_url, type: post.media_type ?? "image" } : null;
+              return (
+                <div key={`post-${post.id}`} className="rounded-xl border border-pnp-border bg-pnp-surface p-3 space-y-2">
+                  {/* Author row */}
+                  <div className="flex items-center gap-2">
+                    {hasPhoto ? (
+                      <img
+                        src={authorPhoto!}
+                        alt=""
+                        className="w-7 h-7 rounded-full object-cover flex-shrink-0"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    ) : (
+                      <div className="w-7 h-7 rounded-full bg-pnp-surfaceHover flex items-center justify-center flex-shrink-0 text-xs font-semibold text-pnp-textSecondary">
+                        {authorName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-semibold text-pnp-textPrimary truncate block">
+                        {authorName}
+                        {post.author_username && (
+                          <span className="font-normal text-pnp-textSecondary ml-1">@{post.author_username}</span>
+                        )}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-pnp-textSecondary flex-shrink-0">{formatRelativeTime(post.created_at)}</span>
+                  </div>
+                  {/* Content */}
+                  {post.content && (
+                    <p className="text-sm text-pnp-textPrimary leading-relaxed whitespace-pre-line">{post.content}</p>
+                  )}
+                  {/* Media */}
+                  {primaryMedia && (primaryMedia.type === "image" || primaryMedia.type?.startsWith("image/")) && (
+                    <img
+                      src={primaryMedia.url}
+                      alt=""
+                      className="w-full rounded-lg object-cover max-h-72"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                  )}
+                  {/* Stats row */}
+                  <div className="flex items-center gap-4 pt-0.5">
+                    <span className="flex items-center gap-1 text-[11px] text-pnp-textSecondary">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                      </svg>
+                      {post.likes_count ?? 0}
+                    </span>
+                    <span className="flex items-center gap-1 text-[11px] text-pnp-textSecondary">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                      </svg>
+                      {post.replies_count ?? 0}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        </>
       )}
       {/* Video Player Modal */}
       {playingVideo && (
@@ -1135,9 +1415,24 @@ function ChannelDetailView({
               <p className="text-sm font-semibold text-white truncate flex-1 mr-2">
                 {playingVideo.title || "Video"}
               </p>
+              {user && (
+                <button
+                  onClick={() => { const v = videos.find(x => x.id === playingVideo.videoId); if (v) openHypeModal(v); }}
+                  title={hypePosted.has(playingVideo.videoId) ? "Hyped!" : "Hype this video"}
+                  className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0 mr-1"
+                  style={hypePosted.has(playingVideo.videoId) || modalHypeOpen
+                    ? { color: "#FF9500", background: "rgba(255,149,0,0.15)" }
+                    : { color: "rgba(255,255,255,0.35)", background: "transparent" }
+                  }
+                >
+                  <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+                  </svg>
+                </button>
+              )}
               <button
                 onClick={() => setPlayingVideo(null)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all flex-shrink-0"
+                className="w-11 h-11 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all flex-shrink-0"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1145,17 +1440,42 @@ function ChannelDetailView({
               </button>
             </div>
             {/* Video */}
-            <video
-              src={playingVideo.url}
-              controls
-              autoPlay
-              playsInline
-              controlsList="nodownload"
-              onContextMenu={(e) => e.preventDefault()}
-              className="w-full flex-shrink-0 bg-black"
-              style={{ maxHeight: "50vh" }}
-              preload="metadata"
-            />
+            {!playingVideo.url ? (
+              <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center bg-black" style={{ minHeight: 200 }}>
+                <svg className="w-10 h-10 opacity-30 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <p className="text-sm text-white/60 max-w-xs">Subscribe to this channel to watch this video</p>
+                <button
+                  onClick={() => { setPlayingVideo(null); if (channel.creatorId) { window.location.href = `/profile/${channel.creatorId}`; } else { window.location.href = '/subscribe'; } }}
+                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >
+                  Subscribe to Access
+                </button>
+              </div>
+            ) : videoPlayerError ? (
+              <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 200 }}>
+                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <p className="text-xs text-white/40">Video unavailable</p>
+              </div>
+            ) : (
+              <video
+                key={playingVideo.url}
+                src={playingVideo.url}
+                controls
+                autoPlay
+                playsInline
+                controlsList="nodownload"
+                onContextMenu={(e) => e.preventDefault()}
+                onError={() => setVideoPlayerError(true)}
+                className="w-full flex-shrink-0 bg-black"
+                style={{ maxHeight: "50vh" }}
+                preload="metadata"
+              />
+            )}
             {/* Tagged creators */}
             {playingVideo.taggedCreators.length > 0 && (
               <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
@@ -1175,6 +1495,37 @@ function ChannelDetailView({
                 ))}
               </div>
             )}
+            {/* Hype compose panel in modal */}
+            {modalHypeOpen && (
+              <div className="px-4 py-3 flex-shrink-0 space-y-2" style={{ borderTop: "1px solid rgba(255,149,0,0.2)", background: "rgba(255,149,0,0.04)" }}>
+                <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase">Hype Post</p>
+                <textarea
+                  rows={2}
+                  value={hypeText}
+                  onChange={(e) => setHypeText(e.target.value)}
+                  maxLength={280}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-orange-400 resize-none placeholder-white/25"
+                  placeholder="Write your hype post…"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => submitHype(playingVideo.videoId)}
+                    disabled={hypePosting || !hypeText.trim()}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity"
+                    style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}
+                  >
+                    {hypePosting ? "Posting…" : "🔥 Post Hype"}
+                  </button>
+                  <button
+                    onClick={() => setModalHypeOpen(false)}
+                    className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Comments */}
             {playingVideo.promoPostId && (
               <div className="flex flex-col flex-1 min-h-0">
@@ -1210,7 +1561,7 @@ function ChannelDetailView({
                     videoComments.map((c) => (
                       <div key={c.id} className="flex gap-2.5">
                         <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0 overflow-hidden">
-                          {c.author_photo ? (
+                          {isValidPhotoUrl(c.author_photo) ? (
                             <img src={c.author_photo} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
@@ -1417,7 +1768,7 @@ function ChannelsInner() {
 
   // ── Create channel form (Channels page shortcut) ──
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: "", description: "", tags: "", isPremium: false, telegramChannelId: "", bridgeEnabled: false });
+  const [createForm, setCreateForm] = useState<{ name: string; description: string; tags: string; accessType: "free" | "subscription" | "prime" | "paid"; priceUsd: number; telegramChannelId: string; bridgeEnabled: boolean }>({ name: "", description: "", tags: "", accessType: "free", priceUsd: 0, telegramChannelId: "", bridgeEnabled: false });
   const [createFormSaving, setCreateFormSaving] = useState(false);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
 
@@ -1431,14 +1782,15 @@ function ChannelsInner() {
         name: createForm.name.trim(),
         description: createForm.description.trim() || undefined,
         tags,
-        isPremium: createForm.isPremium,
+        accessType: createForm.accessType,
+        priceUsd: createForm.accessType === "paid" ? createForm.priceUsd : 0,
         telegramChannelId: createForm.telegramChannelId.trim() || null,
         bridgeEnabled: createForm.bridgeEnabled,
       });
       if (res.success) {
         setCreatorChannels((prev) => [res.channel, ...prev]);
         setShowCreateForm(false);
-        setCreateForm({ name: "", description: "", tags: "", isPremium: false, telegramChannelId: "", bridgeEnabled: false });
+        setCreateForm({ name: "", description: "", tags: "", accessType: "free", priceUsd: 0, telegramChannelId: "", bridgeEnabled: false });
         setSelectedChannelId(res.channel.id);
       }
     } catch (err: unknown) {
@@ -1504,6 +1856,14 @@ function ChannelsInner() {
   // Channels drive the main grid; creators feed the pill strip below it.
   useEffect(() => { fetchChannels(); }, [fetchChannels]);
   useEffect(() => { fetchCreatorChannels(0); }, [fetchCreatorChannels]);
+
+  // ── Auto-select channel from URL ?channel=<slug> (e.g. from hype post CTA) ──
+  useEffect(() => {
+    const slugParam = searchParams.get("channel");
+    if (!slugParam || creatorChannels.length === 0 || selectedChannelId !== null) return;
+    const match = creatorChannels.find((ch) => ch.slug === slugParam);
+    if (match) setSelectedChannelId(match.id);
+  }, [searchParams, creatorChannels, selectedChannelId]);
 
   // ── Real-time live status via Socket.IO ──
   useEffect(() => {
@@ -1872,15 +2232,50 @@ function ChannelsInner() {
                     className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
                   />
                 </div>
-                <label className="flex items-center gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={createForm.isPremium}
-                    onChange={(e) => setCreateForm((p) => ({ ...p, isPremium: e.target.checked }))}
-                    className="w-4 h-4 rounded accent-[#D4007A]"
-                  />
-                  <span className="text-sm text-white/80">Premium channel</span>
-                </label>
+                <div>
+                  <label className="block text-xs text-white/50 mb-2">Access Type</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { value: "free" as const, label: "Free", color: "#5ED1C4", bg: "rgba(94,209,196,0.15)" },
+                      { value: "subscription" as const, label: "Incl. with my subscription", color: "#D4007A", bg: "rgba(212,0,122,0.15)" },
+                      { value: "prime" as const, label: "Included with PRIME", color: "#A78BFA", bg: "rgba(167,139,250,0.15)" },
+                      { value: "paid" as const, label: "Paid (monthly)", color: "#E69138", bg: "rgba(230,145,56,0.15)" },
+                    ]).map(({ value, label, color, bg }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCreateForm((p) => ({ ...p, accessType: value, priceUsd: value !== "paid" ? 0 : (p.priceUsd || 9.99) }))}
+                        className="py-2 px-3 rounded-lg text-xs font-medium transition-all border"
+                        style={createForm.accessType === value
+                          ? { background: bg, color, borderColor: color }
+                          : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", borderColor: "rgba(255,255,255,0.1)" }
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {createForm.accessType === "paid" && (
+                    <div className="mt-2">
+                      <label className="block text-xs text-white/50 mb-1.5">Price per 30 days (USD)</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold" style={{ color: "#E69138" }}>$</span>
+                        <input
+                          type="number"
+                          min="1.99"
+                          max="499"
+                          step="0.01"
+                          value={createForm.priceUsd || ""}
+                          onChange={(e) => setCreateForm((p) => ({ ...p, priceUsd: Number(e.target.value) || 0 }))}
+                          placeholder="9.99"
+                          className="w-full pl-7 pr-12 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white placeholder-white/25 focus:outline-none focus:border-orange-500/60"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30">/mo</span>
+                      </div>
+                      <p className="text-[10px] text-white/30 mt-1.5">Mín. $1.99 · Máx. $499 · La mayoría cobra entre $5 y $29/mes</p>
+                    </div>
+                  )}
+                </div>
                 {/* Telegram Bridge */}
                 <div className="pt-1 border-t border-white/10">
                   <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">Telegram Bridge</p>

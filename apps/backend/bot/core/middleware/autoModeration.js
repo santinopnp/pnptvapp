@@ -2,6 +2,42 @@ const WarningService = require('../../../services/warningService');
 const logger = require('../../../utils/logger');
 const MODERATION_CONFIG = require('../../../config/moderationConfig');
 const { autoModerationReasons } = require('../../../config/groupMessages');
+const { query } = require('../../../config/postgres');
+
+// Per-chat filter-settings cache (30s TTL). Avoids hitting Postgres on every message.
+const chatFilterCache = new Map(); // chatId → { filterExternalLinks: bool, ts: number }
+const CHAT_FILTER_TTL = 30 * 1000;
+
+async function getChatFilterPrefs(chatId) {
+  const cached = chatFilterCache.get(String(chatId));
+  const now = Date.now();
+  if (cached && now - cached.ts < CHAT_FILTER_TTL) return cached;
+  try {
+    const r = await query(
+      'SELECT filter_external_links, block_forwarded FROM telegram_group_settings WHERE telegram_chat_id = $1',
+      [String(chatId)]
+    );
+    const prefs = {
+      filterExternalLinks: r.rows[0]?.filter_external_links === true,
+      blockForwarded: r.rows[0]?.block_forwarded === true,
+      ts: now,
+    };
+    chatFilterCache.set(String(chatId), prefs);
+    return prefs;
+  } catch (_) {
+    // On DB error, default to permissive (don't block) — better than false-banning
+    return { filterExternalLinks: false, blockForwarded: false, ts: now };
+  }
+}
+
+// Pre-compiled word-boundary regexes for profanity. Substring matching was
+// false-banning innocent words ("grape" contains "rape", "torpedo" contains "pedo").
+const PROFANITY_REGEXES = (MODERATION_CONFIG.FILTERS.PROFANITY.blacklist || []).map((w) => {
+  // Escape regex specials, then wrap with word boundaries. Works for both
+  // Latin/Spanish word characters (\b is Unicode-aware in modern V8).
+  const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i');
+});
 
 // Store recent messages for spam/flood detection
 const userMessageHistory = new Map();
@@ -61,17 +97,19 @@ function isForwardedMessage(message) {
 /**
  * Enhanced link detection patterns
  */
+// IMPORTANT: No /g flag on any pattern — module-level regex with /g is stateful
+// (lastIndex persists between .test() calls), causing false positives on alternate invocations.
 const ENHANCED_LINK_PATTERNS = [
   // Standard URLs with protocol
-  /https?:\/\/[^\s]+/gi,
+  /https?:\/\/[^\s]+/i,
   // URLs without protocol
-  /(?:www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*/gi,
+  /(?:www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*/i,
   // Short URLs
-  /(?:bit\.ly|t\.me|tinyurl\.com|goo\.gl|ow\.ly|buff\.ly|is\.gd|v\.gd)\/[^\s]+/gi,
+  /(?:bit\.ly|t\.me|tinyurl\.com|goo\.gl|ow\.ly|buff\.ly|is\.gd|v\.gd)\/[^\s]+/i,
   // Telegram invite links (t.me links only - @usernames are allowed for mentions)
-  /t\.me\/[a-zA-Z0-9_]+/gi,
-  // IP addresses
-  /\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g,
+  /t\.me\/[a-zA-Z0-9_]+/i,
+  // IP addresses — deliberately omitted: the X.X.X.X pattern matches Colombian phone
+  // numbers (e.g. 300.123.45.67) and semantic version strings, causing innocent bans.
   // NOTE: email pattern removed — matching user@domain caused permanent bans on innocent messages
 ];
 
@@ -186,11 +224,8 @@ function checkProfanity(messageText) {
   if (!MODERATION_CONFIG.FILTERS.PROFANITY.enabled) {
     return false;
   }
-
-  const { blacklist } = MODERATION_CONFIG.FILTERS.PROFANITY;
-  const lowerText = messageText.toLowerCase();
-
-  return blacklist.some((word) => lowerText.includes(word.toLowerCase()));
+  // Word-boundary match — "grape" no longer trips "rape", "torpedo" no longer trips "pedo".
+  return PROFANITY_REGEXES.some((rx) => rx.test(messageText));
 }
 
 /**
@@ -335,8 +370,12 @@ const autoModerationMiddleware = () => async (ctx, next) => {
     // Get text from message or caption (for photos/videos)
     const messageText = message.text || message.caption || '';
 
-    // ENHANCED: Check for forwarded messages - BLOCK ALL
-    if (isForwardedMessage(message)) {
+    // Fetch group prefs once — used for both forwarded and link checks below.
+    const chatPrefs = await getChatFilterPrefs(ctx.chat.id);
+
+    // Block forwarded messages only when the group has opted-in via
+    // telegram_group_settings.block_forwarded (default OFF).
+    if (chatPrefs.blockForwarded && isForwardedMessage(message)) {
       await deleteAndNotify(ctx, autoModerationReasons.forwarded);
 
       const result = await WarningService.addWarning({
@@ -395,38 +434,26 @@ const autoModerationMiddleware = () => async (ctx, next) => {
       return; // Don't proceed
     }
 
-    // ENHANCED: Check for ANY links - COMPLETE BLOCK
-    // Check both text patterns, URL entities, and captions
-    const hasLink = (messageText && detectAnyLink(messageText)) ||
+    // Check for ANY links — but only when the group has opted-in via
+    // telegram_group_settings.filter_external_links. Global always-on link
+    // blocking was overriding the per-chat toggle in /groupadmin Filters.
+    const hasLink = chatPrefs.filterExternalLinks && (
+                    (messageText && detectAnyLink(messageText)) ||
                     hasUrlEntities(message) ||
-                    (message.caption && detectAnyLink(message.caption));
+                    (message.caption && detectAnyLink(message.caption))
+                    );
     if (hasLink) {
       await deleteAndNotify(ctx, autoModerationReasons.links);
 
-      // Links/spam links → immediate ban (zero tolerance)
-      await ctx.telegram.banChatMember(ctx.chat.id, userId);
-      const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-      const banMsg = await ctx.telegram.sendMessage(
-        ctx.chat.id,
-        `🚫 ${username} ha sido expulsado por enviar enlaces/spam.`
-      );
-      setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, banMsg.message_id).catch(() => {}), 30000);
-
-      await WarningService.addWarning({
+      const result = await WarningService.addWarning({
         userId,
         adminId: 'system',
-        reason: 'Auto-moderation: Link detected - auto-banned',
+        reason: 'Auto-moderation: Link detected',
         groupId: ctx.chat.id,
       });
-      await WarningService.recordAction({
-        userId,
-        adminId: 'system',
-        action: 'ban',
-        reason: 'Auto-ban: Link/spam detected (zero tolerance)',
-        groupId: ctx.chat.id,
-      });
+      await enforceWarningAction(ctx, result);
 
-      logger.info('User auto-banned for link spam', { userId, username: ctx.from.username });
+      logger.info('User warned for link', { userId, username: ctx.from.username, warningCount: result?.warningCount });
 
       return; // Don't proceed
     }

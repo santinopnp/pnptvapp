@@ -9,6 +9,35 @@ const XAutoCampaignService = require('../../../services/xAutoCampaignService');
 const fs = require('fs');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Map a creator_channels DB row to the camelCase shape expected by the frontend
+// CreatorChannel interface (api.ts). All three mutating handlers (create/update/list)
+// must pass rows through this function before sending them in responses.
+function shapeChannel(row) {
+  return {
+    id: row.id,
+    creatorId: row.creator_id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description ?? null,
+    coverImageUrl: row.cover_image_url ?? null,
+    tags: row.tags || [],
+    isPremium: row.is_premium ?? false,
+    featured: row.featured ?? false,
+    accessType: row.access_type ?? 'free',
+    priceUsd: row.price_usd != null ? Number(row.price_usd) : 0,
+    hangoutGroupId: row.hangout_group_id ?? null,
+    postCount: row.post_count ?? 0,
+    videoCount: row.video_count != null ? Number(row.video_count) : undefined,
+    sortOrder: row.sort_order ?? 0,
+    collaborators: row.collaborators || [],
+    telegramChannelId: row.telegram_channel_id ?? null,
+    bridgeEnabled: row.bridge_enabled ?? false,
+    creatorUsername: row.creator_username ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 const VALID_GROK_MODES = new Set(['xPost', 'broadcast', 'salesPost']);
 const VALID_LANGUAGES = new Set(['en', 'es', 'bilingual']);
 const MIN_MONETIZATION_VIDEO_COUNT = 5;
@@ -505,19 +534,22 @@ const submitEnrollment = async (req, res) => {
       ip
     );
 
-    // Auto-create the 2257 identity record — fields are now guaranteed non-empty above
-    if (idDocumentPath) {
+    // FIX 7: Auto-create the 2257 identity record whenever the three required text
+    // fields are present — regardless of whether an ID document was uploaded.
+    // Creators without a doc upload can still pass grace-period review; admin
+    // flags the record for follow-up via the /admin/creator/2257/records panel.
+    if (legalName && dateOfBirth && idType) {
       try {
         await IdentityVerificationService.submit2257Record(req.user.id, {
           legalName: legalName.trim(),
           dateOfBirth,
           idType,
-          idDocumentPath,
+          idDocumentPath: idDocumentPath || null,
           ip,
         });
       } catch (idErr) {
         // Non-fatal: enrollment saved; creator can resubmit 2257 manually on /creators/apply.
-        logger.warn(`submitEnrollment: 2257 auto-create failed for user ${req.user.id}: ${idErr.message}`);
+        logger.warn('[enrollCreator] 2257 record auto-create failed', { userId: req.user.id, error: idErr.message });
       }
     }
 
@@ -912,17 +944,20 @@ const issueStrike = async (req, res) => {
 const listOwnChannels = async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, creator_id, name, slug, description, cover_image_url,
-              tags, is_premium, access_type, price_usd, sort_order,
-              collaborators, is_system, created_at, updated_at
-       FROM creator_channels
-       WHERE is_active = true
-         AND is_system = FALSE
-         AND (creator_id = $1 OR $1 = ANY(collaborators))
-       ORDER BY sort_order ASC NULLS LAST, created_at ASC`,
+      `SELECT cc.id, cc.creator_id, cc.name, cc.slug, cc.description, cc.cover_image_url,
+              cc.tags, cc.is_premium, cc.access_type, cc.price_usd, cc.sort_order,
+              cc.post_count, cc.hangout_group_id, cc.telegram_channel_id, cc.bridge_enabled,
+              cc.collaborators, cc.is_system, cc.created_at, cc.updated_at,
+              u.username AS creator_username
+       FROM creator_channels cc
+       JOIN users u ON u.id = cc.creator_id
+       WHERE cc.is_active = true
+         AND cc.is_system = FALSE
+         AND (cc.creator_id = $1 OR $1 = ANY(cc.collaborators))
+       ORDER BY cc.sort_order ASC NULLS LAST, cc.created_at ASC`,
       [req.user.id]
     );
-    return res.json({ success: true, channels: result.rows });
+    return res.json({ success: true, channels: result.rows.map(shapeChannel) });
   } catch (err) {
     logger.error('listOwnChannels error', err);
     return res.status(500).json({ error: 'Failed to list channels' });
@@ -964,8 +999,8 @@ const createChannel = async (req, res) => {
     let safePriceUsd = 0;
     if (safeAccessType === 'paid') {
       const parsed = Number(priceUsd);
-      if (!Number.isFinite(parsed) || parsed < 0.99 || parsed > 999.99) {
-        return res.status(400).json({ error: 'Paid channel price must be between $0.99 and $999.99' });
+      if (!Number.isFinite(parsed) || parsed < 1.99 || parsed > 499) {
+        return res.status(400).json({ error: 'Paid channel price must be between $1.99 and $499' });
       }
       safePriceUsd = Math.round(parsed * 100) / 100;
       const eligibility = await getCreatorMonetizationEligibility(req.user.id);
@@ -1041,7 +1076,7 @@ const createChannel = async (req, res) => {
        RETURNING *`,
       [req.user.id, trimmedName, slug, (description || '').slice(0, 2000), safeTags, isPremium === true, safeCollaborators, safeTelegramChannelId, safeBridgeEnabled, safeAccessType, safePriceUsd]
     );
-    return res.json({ success: true, channel: result.rows[0] });
+    return res.json({ success: true, channel: shapeChannel(result.rows[0]) });
   } catch (err) {
     logger.error('createChannel error', err);
     return res.status(500).json({ error: 'Failed to create channel' });
@@ -1132,11 +1167,13 @@ const updateChannel = async (req, res) => {
       }
       updates.push(`collaborators = $${idx++}`); params.push(safeCollaborators);
     }
+    let bridgeEnabledSet = false;
     if (telegramChannelId !== undefined) {
       if (telegramChannelId === null || telegramChannelId === '') {
         // Unlink Telegram channel
         updates.push(`telegram_channel_id = $${idx++}`); params.push(null);
         updates.push(`bridge_enabled = $${idx++}`); params.push(false);
+        bridgeEnabledSet = true;
       } else {
         const tgId = String(telegramChannelId).trim().slice(0, 50);
         if (!(/^(-100\d+|@[a-zA-Z][a-zA-Z0-9_]{3,})$/.test(tgId))) {
@@ -1152,7 +1189,7 @@ const updateChannel = async (req, res) => {
         updates.push(`telegram_channel_id = $${idx++}`); params.push(tgId);
       }
     }
-    if (bridgeEnabled !== undefined) {
+    if (bridgeEnabled !== undefined && !bridgeEnabledSet) {
       updates.push(`bridge_enabled = $${idx++}`); params.push(bridgeEnabled === true);
     }
 
@@ -1169,8 +1206,8 @@ const updateChannel = async (req, res) => {
       if (newAccessType === 'paid') {
         const rawPrice = priceUsd !== undefined ? priceUsd : chRes.rows[0].price_usd;
         const parsed = Number(rawPrice);
-        if (!Number.isFinite(parsed) || parsed < 0.99 || parsed > 999.99) {
-          return res.status(400).json({ error: 'Paid channel price must be between $0.99 and $999.99' });
+        if (!Number.isFinite(parsed) || parsed < 1.99 || parsed > 499) {
+          return res.status(400).json({ error: 'Paid channel price must be between $1.99 and $499' });
         }
         newPrice = Math.round(parsed * 100) / 100;
         if (chRes.rows[0].access_type !== 'paid') {
@@ -1194,7 +1231,7 @@ const updateChannel = async (req, res) => {
       `UPDATE creator_channels SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
       params
     );
-    return res.json({ success: true, channel: result.rows[0] });
+    return res.json({ success: true, channel: shapeChannel(result.rows[0]) });
   } catch (err) {
     logger.error('updateChannel error', err);
     return res.status(500).json({ error: 'Failed to update channel' });
@@ -1218,14 +1255,24 @@ const deleteChannel = async (req, res) => {
     }
     if (!ownerCheck.rows[0].is_active) return res.status(404).json({ error: 'Channel not found or not yours' });
 
-    const result = await query(
-      'UPDATE creator_channels SET is_active = false, updated_at = NOW() WHERE id = $1 AND creator_id = $2 AND is_active = true RETURNING id',
-      [channelId, req.user.id]
-    );
+    const client = await getPool().connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+      // Unlink posts first so no post is ever associated with an inactive channel
+      await client.query('UPDATE social_posts SET channel_id = NULL WHERE channel_id = $1', [channelId]);
+      result = await client.query(
+        'UPDATE creator_channels SET is_active = false, updated_at = NOW() WHERE id = $1 AND creator_id = $2 AND is_active = true RETURNING id',
+        [channelId, req.user.id]
+      );
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+      throw txErr;
+    }
+    client.release();
     if (!result.rows.length) return res.status(404).json({ error: 'Channel not found or not yours' });
-
-    // Unassign posts from this channel
-    await query('UPDATE social_posts SET channel_id = NULL WHERE channel_id = $1', [channelId]);
 
     return res.json({ success: true });
   } catch (err) {
@@ -1263,7 +1310,7 @@ const addCollaborator = async (req, res) => {
       [String(userId), channelId]
     );
     const updated = await query('SELECT * FROM creator_channels WHERE id = $1', [channelId]);
-    return res.json({ success: true, channel: updated.rows[0] });
+    return res.json({ success: true, channel: shapeChannel(updated.rows[0]) });
   } catch (err) {
     logger.error('addCollaborator error', err);
     return res.status(500).json({ error: 'Failed to add collaborator' });
@@ -1294,7 +1341,7 @@ const removeCollaborator = async (req, res) => {
       [String(userId), channelId]
     );
     const updated = await query('SELECT * FROM creator_channels WHERE id = $1', [channelId]);
-    return res.json({ success: true, channel: updated.rows[0] });
+    return res.json({ success: true, channel: shapeChannel(updated.rows[0]) });
   } catch (err) {
     logger.error('removeCollaborator error', err);
     return res.status(500).json({ error: 'Failed to remove collaborator' });
@@ -1306,7 +1353,7 @@ const removeCollaborator = async (req, res) => {
 const getMySubscribers = async (req, res) => {
   try {
     const creatorId = req.user.id;
-    const page = Math.max(1, parseInt(req.query.page || '1'));
+    const page = Math.max(1, parseInt(req.query.page || '1') || 1);
     const limit = 20;
     const offset = (page - 1) * limit;
 
@@ -1315,20 +1362,22 @@ const getMySubscribers = async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'active') as active_count,
         COUNT(*) as total_count,
         COUNT(*) FILTER (WHERE started_at >= date_trunc('month', NOW())) as new_this_month,
-        COUNT(*) FILTER (WHERE status IN ('expired', 'cancelled') AND started_at >= NOW() - interval '30 days') as churned_recent,
-        COUNT(*) FILTER (WHERE status = 'active' AND started_at < NOW() - interval '30 days') as base_for_churn
+        COUNT(*) FILTER (WHERE status IN ('cancelled','expired') AND updated_at >= NOW() - INTERVAL '30 days') AS churned_this_month
       FROM creator_subscriptions WHERE creator_id = $1
     `, [creatorId]);
     const s = statsResult.rows[0];
-    const churnRate = Number(s.base_for_churn) > 0 ? Math.round((Number(s.churned_recent) / Number(s.base_for_churn)) * 100) : 0;
+    const active = Number(s.active_count);
+    const churned = Number(s.churned_this_month);
+    const churnRate = active > 0 ? Math.round((churned / active) * 100) : 0;
 
     const subsResult = await query(`
       SELECT cs.id, cs.status, cs.started_at, cs.expires_at, cs.price_usd, cs.auto_renew,
-             u.username as subscriber_username, u.first_name as subscriber_first_name, u.photo_url as subscriber_avatar,
+             u.username as subscriber_username, u.first_name as subscriber_first_name,
+             u.photo_file_id AS subscriber_avatar,
              COALESCE(SUM(ce.amount_creator), 0)::numeric as revenue
       FROM creator_subscriptions cs
       JOIN users u ON u.id = cs.subscriber_id
-      LEFT JOIN creator_earnings ce ON ce.subscription_id = cs.id
+      LEFT JOIN creator_earnings ce ON ce.subscription_id = cs.id AND ce.status = 'available'
       WHERE cs.creator_id = $1
       GROUP BY cs.id, u.id
       ORDER BY cs.started_at DESC
@@ -1341,12 +1390,58 @@ const getMySubscribers = async (req, res) => {
     return res.json({
       success: true,
       subscribers: subsResult.rows,
-      stats: { active_count: Number(s.active_count), total_count: Number(s.total_count), new_this_month: Number(s.new_this_month), churn_rate: churnRate },
+      stats: { active_count: active, total_count: Number(s.total_count), new_this_month: Number(s.new_this_month), churn_rate: churnRate },
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (err) {
     logger.error('getMySubscribers error', err);
     return res.status(500).json({ error: 'Failed to load subscribers' });
+  }
+};
+
+const getMyChannelSubscribers = async (req, res) => {
+  try {
+    const creatorId = req.user.id;
+
+    const channelsResult = await query(`
+      SELECT
+        cc.id, cc.name, cc.slug, cc.access_type, cc.price_usd, cc.cover_image_url,
+        COUNT(cs.user_id) AS subscriber_count,
+        COUNT(cs.user_id) FILTER (WHERE cs.created_at >= date_trunc('month', NOW())) AS new_this_month
+      FROM creator_channels cc
+      LEFT JOIN channel_subscribers cs ON cs.channel_id = cc.id
+      WHERE cc.creator_id = $1 AND cc.is_active = true AND NOT cc.is_system
+      GROUP BY cc.id
+      ORDER BY cc.sort_order ASC, cc.created_at ASC
+    `, [creatorId]);
+
+    const channelsWithSubs = await Promise.all(channelsResult.rows.map(async (ch) => {
+      const subsResult = await query(`
+        SELECT cs.user_id, cs.created_at,
+               u.username, u.first_name,
+               u.photo_file_id AS avatar
+        FROM channel_subscribers cs
+        JOIN users u ON u.id = cs.user_id
+        WHERE cs.channel_id = $1
+        ORDER BY cs.created_at DESC
+        LIMIT 20
+      `, [ch.id]);
+      return { ...ch, subscriber_count: Number(ch.subscriber_count), new_this_month: Number(ch.new_this_month), subscribers: subsResult.rows };
+    }));
+
+    const totalChannelSubs = channelsWithSubs.reduce((acc, ch) => acc + ch.subscriber_count, 0);
+
+    return res.json({
+      success: true,
+      channels: channelsWithSubs,
+      summary: {
+        total_channels: channelsWithSubs.length,
+        total_channel_subscribers: totalChannelSubs,
+      },
+    });
+  } catch (err) {
+    logger.error('getMyChannelSubscribers error', err);
+    return res.status(500).json({ error: 'Failed to load channel subscribers' });
   }
 };
 
@@ -1716,33 +1811,113 @@ const getMyXCampaignHistory = async (req, res) => {
   } catch (err) { logger.error('getMyXCampaignHistory error', err); return res.status(500).json({ error: 'Failed to load history' }); }
 };
 
+// POST /api/webapp/creator/:creatorId/promote (admin)
+// Promotes an eligible creator to active status with a chosen tier.
+// Passes termsAccepted = true on behalf of the admin.
+const adminActivateCreator = async (req, res) => {
+  try {
+    const creatorId = await resolveUserId(req.params.creatorId);
+    if (!creatorId) return res.status(404).json({ error: 'Creator not found' });
+
+    const tier = req.body.tier || 'ice';
+    if (!['ice', 'crystal', 'diamond'].includes(tier)) {
+      return res.status(400).json({ error: 'Invalid tier. Choose ice, crystal, or diamond.' });
+    }
+
+    const statusRes = await query(
+      'SELECT creator_status FROM users WHERE id = $1',
+      [creatorId]
+    );
+    const user = statusRes.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.creator_status !== 'eligible') {
+      return res.status(400).json({
+        error: `Cannot activate: user creator_status is '${user.creator_status}', must be 'eligible'`,
+      });
+    }
+
+    await CreatorService.activateCreator(creatorId, tier, true);
+    return res.json({ success: true, creatorId, tier });
+  } catch (err) {
+    logger.error('adminActivateCreator error', err);
+    return res.status(400).json({ error: err.message });
+  }
+};
+
+// GET /api/webapp/creator/:creatorId/engagement (admin)
+// Returns composite engagement score and tier recommendation for the given creator.
+const getCreatorEngagement = async (req, res) => {
+  try {
+    const creatorId = await resolveUserId(req.params.creatorId);
+    if (!creatorId) return res.status(404).json({ error: 'Creator not found' });
+    const result = await CreatorService.calculateEngagementScore(creatorId);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    logger.error('getCreatorEngagement error', err);
+    return res.status(500).json({ error: 'Failed to compute engagement score' });
+  }
+};
+
+// POST /api/webapp/creator/:creatorId/set-eligible (admin)
+// Marks a user as eligible so they can be promoted via adminActivateCreator.
+const adminSetEligible = async (req, res) => {
+  try {
+    const creatorId = await resolveUserId(req.params.creatorId);
+    if (!creatorId) return res.status(404).json({ error: 'Creator not found' });
+
+    const result = await query(
+      `UPDATE users
+          SET creator_status = 'eligible', updated_at = NOW()
+        WHERE id = $1
+          AND (creator_status IS NULL OR creator_status NOT IN ('active', 'suspended'))
+        RETURNING id`,
+      [creatorId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(400).json({
+        error: 'Cannot set eligible: user is already active or suspended',
+      });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('adminSetEligible error', err);
+    return res.status(500).json({ error: 'Failed to set eligible status' });
+  }
+};
+
 // GET /api/webapp/creator/earnings
 const getCreatorEarnings = async (req, res) => {
   try {
     const creatorId = req.user.id;
+    // FIX 8: Accept ?months= param (3–12), default 6
+    const months = Math.min(Math.max(parseInt(req.query.months, 10) || 6, 1), 12);
 
     const [summaryRes, trendsRes] = await Promise.all([
       query(
+        // FIX 10: Include 'holding' in summary totals so creators see their full lifetime figure
         `SELECT
            COALESCE(SUM(amount_gross), 0)::numeric    AS total_gross,
            COALESCE(SUM(amount_creator), 0)::numeric  AS total_creator,
            COALESCE(SUM(amount_platform), 0)::numeric AS total_platform
          FROM creator_earnings
          WHERE creator_id = $1
-           AND status IN ('available', 'in_payout', 'paid_out')`,
+           AND status IN ('available', 'holding', 'in_payout', 'paid_out')`,
         [creatorId]
       ),
       query(
+        // FIX 8: Use parameterised months interval instead of hardcoded 6
         `SELECT
            date_trunc('month', created_at)::date           AS month,
            COALESCE(SUM(amount_creator), 0)::numeric       AS amount
          FROM creator_earnings
          WHERE creator_id = $1
-           AND status IN ('available', 'in_payout', 'paid_out')
-           AND created_at >= NOW() - INTERVAL '6 months'
+           AND status IN ('available', 'holding', 'in_payout', 'paid_out')
+           AND created_at >= NOW() - ($2 * INTERVAL '1 month')
          GROUP BY 1
          ORDER BY 1 ASC`,
-        [creatorId]
+        [creatorId, months]
       ),
     ]);
 
@@ -1796,6 +1971,7 @@ module.exports = {
   addCollaborator,
   removeCollaborator,
   getMySubscribers,
+  getMyChannelSubscribers,
   getMyConsents,
   acceptCreatorTerms,
   acceptPrivacyPolicy,
@@ -1819,4 +1995,8 @@ module.exports = {
   // Persona hosted-flow
   startPersonaInquiry,
   getPersonaStatus,
+  // Admin creator promotion
+  adminActivateCreator,
+  adminSetEligible,
+  getCreatorEngagement,
 };

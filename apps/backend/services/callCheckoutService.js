@@ -17,7 +17,7 @@ const callPackageService = require('./callPackageService');
 const { sendNotificationViaTelegram } = require('./notificationBotDelivery');
 const emailService = require('./emailservice');
 const logger = require('../utils/logger');
-const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
+const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, EARNINGS_HOLD_HOURS_EFIPAY } = require('../config/monetizationConfig');
 const PaymentSecurityService = require('./paymentSecurityService');
 function getCallNotificationService() {
   return require('./callNotificationService');
@@ -103,7 +103,9 @@ async function createCallCheckout(memberId, packageId, provider, email, slotTime
 
   // Set payment timeout (1-hour window to complete), same as subscription checkout.
   // Without this, the tokenized-charge endpoint returns 400 "expired" immediately.
-  PaymentSecurityService.setPaymentTimeout(payment.id, 3600).catch(() => {});
+  PaymentSecurityService.setPaymentTimeout(payment.id, 3600).catch((err) => {
+    logger.error('[callCheckoutService] Failed to set payment timeout', { paymentId: payment.id, error: err.message });
+  });
 
   // 2c. If slot times are provided, lock the slot + create awaiting_payment
   //     booking row. Same pattern as createCallCheckoutDash so the two
@@ -256,7 +258,8 @@ async function onCallPaymentSuccess(paymentId) {
     // Confirm the bookings row that was pre-created at checkout time (Dash flow).
     // ON CONFLICT: a booking row may not exist when times were not provided — that is OK.
     const bookingMeta = meta.startTimeUtc && meta.endTimeUtc ? meta : null;
-    let confirmedBookingId = meta.bookingId || null;
+    // FIX HIGH-05/HIGH-06: read both camelCase and snake_case keys for resilience.
+    let confirmedBookingId = meta.bookingId ?? meta.booking_id ?? null;
 
     if (!confirmedBookingId) {
       // No pre-created booking row. Create one now if times are provided.
@@ -285,7 +288,16 @@ async function onCallPaymentSuccess(paymentId) {
               meta.clientNotes ? String(meta.clientNotes).slice(0, 1000) : null,
             ]
           );
-          confirmedBookingId = newBooking.rows[0]?.id || null;
+          if (newBooking.rows[0]?.id) {
+            confirmedBookingId = newBooking.rows[0].id;
+          } else {
+            // Idempotent retry — booking already exists for this payment
+            const existing = await client.query(
+              'SELECT id FROM bookings WHERE payment_id = $1 LIMIT 1',
+              [paymentId]
+            );
+            confirmedBookingId = existing.rows[0]?.id || null;
+          }
         }
       }
     } else {
@@ -304,11 +316,12 @@ async function onCallPaymentSuccess(paymentId) {
     const grossAmount = parseFloat(pkg.price_usd);
     const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
     const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
+    const holdHours = meta.source === 'efipay_easybots' ? EARNINGS_HOLD_HOURS_EFIPAY : EARNINGS_HOLD_HOURS;
     await client.query(
       `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
        VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))
        ON CONFLICT (source_payment_id) DO NOTHING`,
-      [creator_id, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), paymentId || null]
+      [creator_id, grossAmount, amountCreator, amountPlatform, String(holdHours), paymentId || null]
     );
     logger.info('[callCheckoutService] creator earnings recorded (holding)', {
       creatorId: creator_id, grossAmount, amountCreator, amountPlatform,
@@ -363,7 +376,7 @@ async function onCallPaymentSuccess(paymentId) {
           const transporter = emailService.transporters.pnptv || emailService.transporters.easybots;
           if (transporter) {
             await transporter.sendMail({
-              from: '"PNPtv" <noreply@pnptv.app>',
+              from: '"PNPtv" <hello@pnptv.app>',
               to: buyerEmail,
               subject: 'Payment Confirmed — Call Credits Ready! — PNPtv',
               html: `
@@ -394,7 +407,7 @@ async function onCallPaymentSuccess(paymentId) {
   </div>
   <p>Visit the creator's profile and click <strong>Book a Call</strong> to schedule your session.</p>
   <div style="text-align:center;margin:20px 0;"><a href="${process.env.APP_PUBLIC_URL || 'https://pnptv.app'}" class="btn">Open PNPtv</a></div>
-  <div class="footer"><p>PNPtv | noreply@pnptv.app</p><p>This is an automated message. Please do not reply.</p></div>
+  <div class="footer"><p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p><p>For help, contact <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p></div>
 </div></body></html>`.trim(),
             }).catch((emailErr) => {
               logger.warn('[callCheckoutService] payment receipt email failed', { to: buyerEmail, error: emailErr.message });
@@ -686,7 +699,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
         order_description: `${pkg.duration_minutes}-min call — PNPtv`,
         ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
       },
-      { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' } }
+      { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
     );
     const { id: nowpaymentsInvoiceId } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('NowPayments returned no invoice id');
@@ -694,7 +707,9 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency || 'usdcsol' };
   } catch (invoiceErr) {
     if (booking?.id) {
-      await query(`UPDATE bookings SET status = 'expired', updated_at = NOW() WHERE id = $1`, [booking.id]).catch(() => {});
+      await query(`UPDATE bookings SET status = 'expired', updated_at = NOW() WHERE id = $1`, [booking.id]).catch((e) => {
+        logger.error('callCheckout: failed to expire booking after NP failure', { bookingId: booking.id, error: e.message });
+      });
     }
     await query(`UPDATE payments SET status = 'failed', updated_at = NOW() WHERE id = $1`, [payment.id]).catch(() => {});
     logger.error('[callCheckoutService] NowPayments invoice creation failed', {
@@ -721,14 +736,17 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
         bookingId: booking?.id ?? null,
         startTimeUtc: startTimeUtc || null,
         endTimeUtc: endTimeUtc || null,
+        nowpaymentsInvoiceId: String(npPayInfo.nowpaymentsInvoiceId || ''),
       }),
     ]
   );
 
   // 7. Stamp orderId + bookingId back onto payment metadata for getBookingPaymentStatus polling
+  // FIX HIGH-05/HIGH-06: stamp BOTH booking_id (snake_case) AND bookingId (camelCase) so
+  // onCallPaymentSuccess (reads camelCase) and getBookingPaymentStatus (reads snake_case) both work.
   await query(
     `UPDATE payments SET metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1`,
-    [payment.id, JSON.stringify({ btcpay_invoice_id: orderId, booking_id: booking?.id ?? null })]
+    [payment.id, JSON.stringify({ btcpay_invoice_id: orderId, booking_id: booking?.id ?? null, bookingId: booking?.id ?? null })]
   );
 
   // NowPayments invoices expire after 30 minutes by default
@@ -896,9 +914,10 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
   );
 
   // 7. Stamp orderId + bookingId back onto payment metadata for getBookingPaymentStatus polling
+  // FIX HIGH-05/HIGH-06: stamp BOTH keys for cross-consumer compatibility.
   await query(
     `UPDATE payments SET metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1`,
-    [payment.id, JSON.stringify({ btcpay_invoice_id: invoice.invoiceId, booking_id: booking?.id ?? null })]
+    [payment.id, JSON.stringify({ btcpay_invoice_id: invoice.invoiceId, booking_id: booking?.id ?? null, bookingId: booking?.id ?? null })]
   );
 
   logger.info('[callCheckoutService] BTC call checkout created', {
@@ -1050,9 +1069,10 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
   );
 
   // 7. Stamp orderId + bookingId back onto payment metadata for getBookingPaymentStatus polling
+  // FIX HIGH-05/HIGH-06: stamp BOTH keys for cross-consumer compatibility.
   await query(
     `UPDATE payments SET metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1`,
-    [payment.id, JSON.stringify({ btcpay_invoice_id: invoice.invoiceId, booking_id: booking?.id ?? null })]
+    [payment.id, JSON.stringify({ btcpay_invoice_id: invoice.invoiceId, booking_id: booking?.id ?? null, bookingId: booking?.id ?? null })]
   );
 
   logger.info('[callCheckoutService] Dash call checkout created', {
@@ -1078,6 +1098,149 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
  *
  * @returns {{ expired: number, errors: number }}
  */
+// ---------------------------------------------------------------------------
+// createCallCheckoutTokens — instant token-based booking (no payment gateway)
+// ---------------------------------------------------------------------------
+
+/**
+ * Book a call package immediately by debiting Tokens from the member's wallet.
+ * 100 Tokens = $1 USD. Grants call_credits + creates a confirmed booking in one transaction.
+ *
+ * @param {object} opts
+ * @param {string} opts.memberId    - users.id of the buyer
+ * @param {number} opts.packageId   - call_packages.id
+ * @param {string} [opts.clientNotes]
+ * @returns {{ creditId: number, bookingId: string|null, newBalance: number }}
+ */
+async function createCallCheckoutTokens({ memberId, packageId, clientNotes = null }) {
+  const pkgResult = await query(
+    'SELECT * FROM call_packages WHERE id = $1 AND is_active = true',
+    [packageId]
+  );
+  const pkg = pkgResult.rows[0];
+  if (!pkg) {
+    throw Object.assign(new Error(`Package ${packageId} not found or inactive`), { code: 'PACKAGE_NOT_FOUND', status: 404 });
+  }
+
+  const selfCheck = await query(
+    `SELECT 1 FROM call_packages cp
+     INNER JOIN users u ON u.id = cp.creator_id
+     WHERE cp.id = $1 AND (u.id = $2 OR u.telegram = $2::text)`,
+    [packageId, memberId]
+  );
+  if (selfCheck.rows.length > 0) {
+    throw Object.assign(new Error('You cannot book your own call package'), { code: 'SELF_BOOKING', status: 400 });
+  }
+
+  const TOKENS_PER_USD = 100;
+  const tokenCost = Math.round(parseFloat(pkg.price_usd) * TOKENS_PER_USD);
+
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Atomically debit tokens — fails cleanly if balance is insufficient
+    const debitResult = await client.query(
+      `UPDATE user_token_wallets
+       SET balance_tokens = balance_tokens - $2, updated_at = NOW()
+       WHERE user_id = $1 AND balance_tokens >= $2
+       RETURNING balance_tokens`,
+      [memberId, tokenCost]
+    );
+    if (debitResult.rows.length === 0) {
+      const err = new Error('Insufficient token balance');
+      err.code = 'INSUFFICIENT_TOKENS';
+      err.status = 402;
+      throw err;
+    }
+    const newBalance = debitResult.rows[0].balance_tokens;
+
+    // Synthetic payment record (status=completed, provider=tokens)
+    // Use separate params for id and reference to avoid 42P08 type-inference conflict
+    // (id is uuid, reference is varchar — same $N used for both confuses Postgres).
+    const syntheticPaymentId = uuidv4();
+    await client.query(
+      `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
+       VALUES ($1::uuid, $2::varchar, $3, NULL, 'manual', $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,
+      [syntheticPaymentId, syntheticPaymentId, memberId, tokenCost, JSON.stringify({
+        type: 'call_package',
+        packageId: pkg.id,
+        tokenCost,
+        clientNotes: clientNotes || null,
+      })]
+    );
+
+    // Grant call_credits
+    const creditResult = await client.query(
+      `INSERT INTO call_credits
+         (member_id, creator_id, package_id, quantity_total, payment_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (payment_id) DO NOTHING
+       RETURNING *`,
+      [memberId, pkg.creator_id, pkg.id, pkg.quantity, syntheticPaymentId]
+    );
+    const credit = creditResult.rows[0];
+
+    // No slot time provided: skip booking row creation. The call_credits grant
+    // is sufficient — user schedules the slot via BookingConfirmation (/booking/:creditId).
+    const bookingId = null;
+
+    // Record 70/30 earnings split (token path — 24-hour hold)
+    const grossAmount = parseFloat(pkg.price_usd);
+    const amountCreator = Math.round(grossAmount * CREATOR_REVENUE_RATE * 100) / 100;
+    const amountPlatform = Math.round(grossAmount * PLATFORM_COMMISSION_RATE * 100) / 100;
+    await client.query(
+      `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+       VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))
+       ON CONFLICT (source_payment_id) DO NOTHING`,
+      [pkg.creator_id, grossAmount, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), syntheticPaymentId]
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('[callCheckoutService] token call checkout completed', {
+      memberId, packageId, tokenCost, newBalance, creditId: credit?.id, bookingId,
+    });
+
+    // Invalidate wallet cache (best-effort, outside transaction).
+    // Both cache keys must be invalidated: `wallet:${id}` (bare number, tokenService.getBalance)
+    // and `wallet:obj:${id}` (full wallet object, DashTokenService.getWallet).
+    try {
+      const { cache } = require('../config/redis');
+      await Promise.all([
+        cache.del(`wallet:${memberId}`),
+        cache.del(`wallet:obj:${memberId}`),
+      ]);
+    } catch (_) {}
+
+    // Notify creator (fire-and-forget)
+    (async () => {
+      try {
+        const creatorInfo = await query('SELECT username, display_name FROM users WHERE id = $1', [pkg.creator_id]);
+        const memberInfo = await query('SELECT username, display_name FROM users WHERE id = $1', [memberId]);
+        const creator = creatorInfo.rows[0];
+        const member = memberInfo.rows[0];
+        if (creator) {
+          const safeNotes = clientNotes ? escapeHtml(String(clientNotes).slice(0, 200)) : '';
+          await sendNotificationViaTelegram(pkg.creator_id, {
+            type: 'call_booking',
+            title: '📞 New Call Booking (Tokens)',
+            body: `@${escapeHtml(member?.username || String(memberId))} booked a ${pkg.duration_minutes}-min call using ${tokenCost} tokens.${safeNotes ? `\nNote: ${safeNotes}` : ''}`,
+          }).catch(() => {});
+        }
+      } catch (_) {}
+    })();
+
+    return { creditId: credit?.id, bookingId, newBalance };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function expireAbandonedBookings() {
   let expired = 0;
   let errors = 0;
@@ -1131,6 +1294,7 @@ module.exports = {
   createCallCheckoutNowPayments,
   createCallCheckoutBtc,
   createCallCheckoutDash,
+  createCallCheckoutTokens,
   onCallPaymentSuccess,
   expireAbandonedBookings,
   _lockSlotAndInsertBooking,

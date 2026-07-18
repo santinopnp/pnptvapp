@@ -34,20 +34,29 @@ const authGuard = (req, res) => {
 // Check if user is a non-banned member of the group
 const isMember = async (groupId, userId) => {
   const { rows } = await query(
-    'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned = false OR is_banned IS NULL)',
+    `SELECT 1 FROM hangout_group_members hgm
+     WHERE hgm.group_id = COALESCE(
+       (SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL),
+       $1
+     )
+     AND hgm.user_id = $2 AND (hgm.is_banned = false OR hgm.is_banned IS NULL)`,
     [groupId, userId]
   );
   return rows.length > 0;
 };
 
-// Auto-join the main community group for everyone
+// Auto-join the main community group for everyone (Redis-cached per user, 1h TTL)
 const ensureMainGroupMembership = async (userId) => {
+  const redis = getRedis();
+  const cacheKey = `hangout:main_member:${userId}`;
+  if (await redis.get(cacheKey)) return;
   await query(
     `INSERT INTO hangout_group_members (group_id, user_id, role)
      SELECT id, $1, 'member' FROM hangout_groups WHERE is_main = true
      ON CONFLICT DO NOTHING`,
     [userId]
   );
+  await redis.set(cacheKey, '1', 'EX', 3600);
 };
 
 // Auto-join the language-specific group (EN or ES) matching the user's preferred language.
@@ -96,9 +105,51 @@ const buildReplyPreviewText = (row) => {
   return '[media]';
 };
 
-// sendHangoutWelcome disabled — was spamming every hangout on join.
-// eslint-disable-next-line no-unused-vars
-async function sendHangoutWelcome(_groupId, _groupName, _groupRules, _userId, _firstName) {}
+// Migration: add first_topic_visit_done column if it doesn't exist yet
+(async () => {
+  try {
+    const { query: pgQuery } = require('../../../config/postgres');
+    await pgQuery(`ALTER TABLE hangout_group_members ADD COLUMN IF NOT EXISTS first_topic_visit_done BOOLEAN NOT NULL DEFAULT false`);
+  } catch (_) {}
+})();
+
+// sendHangoutWelcome — posts a system welcome message to the New Members topic.
+// topicId must be the id of the "New Members" child hangout_group row, not the parent group.
+// Called only on group CREATION (not on every join).
+async function sendHangoutWelcome(topicId, _groupName, groupRules, _userId, _firstName) {
+  if (!topicId) return;
+  try {
+    const welcomeText = [
+      '👋 Bienvenido/a a este hangout!',
+      '',
+      '📋 **Reglas del grupo:**',
+      groupRules || 'Respeta a los demás miembros. Contenido adulto permitido según las normas de la comunidad.',
+      '',
+      '📌 **Instrucciones:**',
+      '• Preséntate aquí en #new-members',
+      '• Explora los demás temas: #general, #pnp-media, #wall-of-fame',
+      '• El #wall-of-fame muestra el contenido más destacado — ¡comparte lo mejor!',
+      '',
+      '🔞 Este espacio es para adultos (+18). Disfruta con respeto. 🏳️‍🌈',
+    ].join('\n');
+
+    await query(
+      `INSERT INTO chat_messages (room, user_id, username, first_name, photo_url, content, reply_to_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        `hangout:${topicId}`,
+        '8552451957',
+        'pnptv',
+        'PNPtv! News',
+        null,
+        welcomeText,
+        null,
+      ]
+    );
+  } catch (err) {
+    logger.warn('sendHangoutWelcome error (non-fatal)', { topicId, error: err.message });
+  }
+}
 
 // GET /api/webapp/hangouts/groups
 // Unread counts are tracked via Redis (set by matrixMessageController + hangoutMediaController).
@@ -123,7 +174,8 @@ const listGroups = async (req, res) => {
               active_call.id::text as active_call_id,
               cc.access_type as channel_access_type,
               cc.price_usd as channel_price_usd,
-              cc.name as channel_name
+              cc.name as channel_name,
+              cc.slug as channel_slug
        FROM hangout_groups g
        JOIN hangout_group_members gm ON gm.group_id = g.id AND gm.user_id = $1
        LEFT JOIN creator_channels cc ON cc.id = g.channel_id
@@ -132,6 +184,7 @@ const listGroups = async (req, res) => {
          WHERE group_id = g.id AND status = 'active'
          ORDER BY created_at DESC LIMIT 1
        ) active_call ON TRUE
+       WHERE g.parent_group_id IS NULL
        ORDER BY g.is_main DESC, g.created_at DESC`,
       [user.id]
     );
@@ -148,6 +201,23 @@ const listGroups = async (req, res) => {
     const activeCallValues = activeCallKeys.length > 0
       ? await redis.mget(...activeCallKeys).catch(() => activeCallKeys.map(() => null))
       : [];
+
+    // Attach topics to each top-level group (single query, grouped in JS)
+    const topLevelIds = rows.filter(r => !r.parent_group_id).map(r => r.id);
+    let topicsMap = {};
+    if (topLevelIds.length > 0) {
+      const { rows: topicRows } = await query(
+        `SELECT id, parent_group_id, name, description, position, is_read_only, is_wall_of_fame
+         FROM hangout_groups
+         WHERE parent_group_id = ANY($1::int[])
+         ORDER BY parent_group_id, position ASC, id ASC`,
+        [topLevelIds]
+      );
+      for (const t of topicRows) {
+        if (!topicsMap[t.parent_group_id]) topicsMap[t.parent_group_id] = [];
+        topicsMap[t.parent_group_id].push({ id: t.id, name: t.name, description: t.description || '', position: t.position, isReadOnly: !!t.is_read_only, isWallOfFame: !!t.is_wall_of_fame });
+      }
+    }
 
     const groups = rows.map((r, i) => {
       // Parse cached active call (if present, skip DB-computed value)
@@ -184,13 +254,15 @@ const listGroups = async (req, res) => {
         tags: r.tags || [],
         rules: r.rules || null,
         telegramChatId: r.telegram_chat_id || null,
-        telegramInviteLink: r.telegram_invite_link || null,
+        // FIX 12: telegram_invite_link must not be exposed in the group list response
         isPaid: !!r.is_paid,
         priceUsd: Number(r.price_usd) || 0,
         channelId: r.channel_id || null,
         channelAccessType: r.channel_access_type || null,
         channelPriceUsd: r.channel_price_usd != null ? Number(r.channel_price_usd) : null,
         channelName: r.channel_name || null,
+        channelSlug: r.channel_slug || null,
+        topics: topicsMap[r.id] || [],
       };
     });
 
@@ -256,24 +328,59 @@ const createGroup = async (req, res) => {
     const finalIsPaid = linkedChannel ? false : !!isPaid;
     const finalPrice = linkedChannel ? 0 : sanitizedPrice;
 
-    // Hangout creation is open to all authenticated users
-    const { rows } = await query(
-      `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, rules, is_paid, price_usd)
-       VALUES ($1, $2, $3, false, $4, 200000, $5, $6, $7)
-       RETURNING *`,
-      [name.trim().slice(0, 100), description.trim().slice(0, 500), user.id, isPublic !== false, sanitizedRules, finalIsPaid, finalPrice]
-    );
+    const createClient = await getClient();
+    let group;
+    let newMembersTopicId = null;
+    try {
+      await createClient.query('BEGIN');
 
-    const group = rows[0];
+      // Hangout creation is open to all authenticated users
+      const { rows } = await createClient.query(
+        `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, rules, is_paid, price_usd)
+         VALUES ($1, $2, $3, false, $4, 200000, $5, $6, $7)
+         RETURNING *`,
+        [name.trim().slice(0, 100), description.trim().slice(0, 500), user.id, isPublic !== false, sanitizedRules, finalIsPaid, finalPrice]
+      );
+      group = rows[0];
 
-    // Add creator as owner
-    await query(
-      `INSERT INTO hangout_group_members (group_id, user_id, role)
-       VALUES ($1, $2, 'owner')`,
-      [group.id, user.id]
-    );
+      // Add creator as owner
+      await createClient.query(
+        `INSERT INTO hangout_group_members (group_id, user_id, role)
+         VALUES ($1, $2, 'owner')`,
+        [group.id, user.id]
+      );
 
-    // Link to channel if requested (update both FKs)
+      // Seed 4 default topics for every new hangout
+      const topicDefs = [
+        { name: 'General',      description: 'General discussion',                              position: 0, is_read_only: false, is_wall_of_fame: false },
+        { name: 'New Members',  description: 'Welcome new members!',                            position: 1, is_read_only: false, is_wall_of_fame: false },
+        { name: 'PNP Media',    description: 'Share media and content',                         position: 2, is_read_only: false, is_wall_of_fame: false },
+        { name: 'Wall of Fame', description: 'Top content highlighted by the community',        position: 3, is_read_only: true,  is_wall_of_fame: true  },
+      ];
+      for (const td of topicDefs) {
+        const { rows: tRows } = await createClient.query(
+          `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position, is_read_only, is_wall_of_fame)
+           VALUES ($1, $2, $3, false, true, 200000, $4, $5, $6, $7)
+           RETURNING id`,
+          [td.name, td.description, user.id, group.id, td.position, td.is_read_only, td.is_wall_of_fame]
+        );
+        const topicId = tRows[0].id;
+        await createClient.query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner')`,
+          [topicId, user.id]
+        );
+        if (td.name === 'New Members') newMembersTopicId = topicId;
+      }
+
+      await createClient.query('COMMIT');
+    } catch (txErr) {
+      await createClient.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      createClient.release();
+    }
+
+    // Link to channel if requested (update both FKs — outside the limit-check tx)
     if (linkedChannel) {
       await Promise.all([
         query(`UPDATE hangout_groups SET channel_id = $1 WHERE id = $2`, [channelId, group.id]),
@@ -296,8 +403,8 @@ const createGroup = async (req, res) => {
       logger.warn('createGroup: Matrix room creation failed (will retry on first chat open)', { groupId: group.id, error: matrixErr.message });
     }
 
-    // Send Cristina welcome message to the creator (fire-and-forget)
-    sendHangoutWelcome(group.id, group.name, group.rules, user.id, user.firstName || user.first_name || user.username);
+    // Send system welcome message to the New Members topic (fire-and-forget)
+    sendHangoutWelcome(newMembersTopicId, group.name, group.rules, user.id, user.firstName || user.first_name || user.username);
 
     return res.json({
       success: true,
@@ -336,20 +443,19 @@ const getGroup = async (req, res) => {
     // Auto-join main group if not already a member
     await ensureMainGroupMembership(user.id);
     await ensureLanguageGroupMembership(user.id, user.language);
-    // Single LATERAL JOINs each replace one correlated subquery for active
-    // call lookup. Two LATERALs (hvc + v) so we still cover both legacy
-    // video_calls and the newer hangout_video_calls tables without firing
-    // four nested subqueries per group.
+    // Single LATERAL JOIN replaces correlated subquery for active call lookup.
+    // video_calls (legacy JaaS table) removed — hangout_video_calls is the only active table.
     const { rows: groupRows } = await query(
       `SELECT g.*,
               g.slow_mode_seconds, g.is_read_only, g.allow_media, g.allow_member_invites,
               g.auto_delete_hours, g.tags, g.invite_code, g.channel_id,
               (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = g.id) as member_count,
-              (hvc.id IS NOT NULL OR vc.id IS NOT NULL) as has_active_call,
-              COALESCE(hvc.id::text, vc.id::text) as active_call_id,
+              (hvc.id IS NOT NULL) as has_active_call,
+              hvc.id::text as active_call_id,
               cc.access_type as channel_access_type,
               cc.price_usd as channel_price_usd,
-              cc.name as channel_name
+              cc.name as channel_name,
+              cc.slug as channel_slug
        FROM hangout_groups g
        LEFT JOIN creator_channels cc ON cc.id = g.channel_id
        LEFT JOIN LATERAL (
@@ -357,12 +463,7 @@ const getGroup = async (req, res) => {
          WHERE group_id = g.id AND status = 'active'
          ORDER BY created_at DESC LIMIT 1
        ) hvc ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT id FROM video_calls
-         WHERE group_id = g.id AND is_active = true
-         ORDER BY created_at DESC LIMIT 1
-       ) vc ON TRUE
-       WHERE g.id = $1`,
+       WHERE g.id = $1 AND g.parent_group_id IS NULL`,
       [groupId]
     );
 
@@ -376,16 +477,38 @@ const getGroup = async (req, res) => {
       return res.status(403).json({ error: 'This group is invite-only' });
     }
 
-    const { rows: members } = await query(
-      `SELECT gm.user_id, gm.role, gm.joined_at, gm.is_muted, gm.muted_until, gm.is_banned, gm.notification_mode,
-              u.username, u.first_name, u.photo_file_id as photo_url
-       FROM hangout_group_members gm
-       JOIN users u ON u.id = gm.user_id
-       WHERE gm.group_id = $1
-       ORDER BY gm.role = 'owner' DESC, gm.role = 'moderator' DESC, gm.joined_at ASC
-       LIMIT 100`,
+    // Non-members of public groups get basic info only — no member moderation state
+    let members = [];
+    if (member) {
+      const { rows: memberRows } = await query(
+        `SELECT gm.user_id, gm.role, gm.joined_at, gm.is_muted, gm.muted_until, gm.is_banned, gm.notification_mode,
+                u.username, u.first_name, u.photo_file_id as photo_url
+         FROM hangout_group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1
+         ORDER BY gm.role = 'owner' DESC, gm.role = 'moderator' DESC, gm.joined_at ASC
+         LIMIT 100`,
+        [groupId]
+      );
+      members = memberRows;
+    }
+
+    // Fetch topics for this group (child groups)
+    const { rows: topicRows } = await query(
+      `SELECT id, name, description, position, is_read_only, is_wall_of_fame
+       FROM hangout_groups
+       WHERE parent_group_id = $1
+       ORDER BY position ASC, id ASC`,
       [groupId]
     );
+    const topics = topicRows.map(t => ({ id: t.id, name: t.name, description: t.description || '', position: t.position, isReadOnly: !!t.is_read_only, isWallOfFame: !!t.is_wall_of_fame }));
+
+    // Fetch caller's first_topic_visit_done flag (defaults true for pre-existing groups without topics)
+    const { rows: myMemberRows } = await query(
+      `SELECT first_topic_visit_done FROM hangout_group_members WHERE group_id = $1 AND user_id = $2`,
+      [groupId, String(user.id)]
+    );
+    const firstTopicVisitDone = myMemberRows[0]?.first_topic_visit_done ?? true;
 
     return res.json({
       success: true,
@@ -408,7 +531,7 @@ const getGroup = async (req, res) => {
         allowMemberInvites: g.allow_member_invites,
         autoDeleteHours: g.auto_delete_hours,
         tags: g.tags || [],
-        inviteCode: g.invite_code,
+        inviteCode: member ? g.invite_code : null,
         feedVisibility: g.feed_visibility || 'public',
         telegramChatId: g.telegram_chat_id || null,
         telegramInviteLink: g.telegram_invite_link || null,
@@ -419,11 +542,68 @@ const getGroup = async (req, res) => {
         channelAccessType: g.channel_access_type || null,
         channelPriceUsd: g.channel_price_usd != null ? Number(g.channel_price_usd) : null,
         channelName: g.channel_name || null,
+        channelSlug: g.channel_slug || null,
+        topics,
+        firstTopicVisitDone: member ? firstTopicVisitDone : true,
       },
-      members: members.map(m => ({ ...m, photo_url: isValidPhotoUrl(m.photo_url) ? m.photo_url : null })),
+      isMember: member,
+      members: member ? members.map(m => ({ ...m, photo_url: isValidPhotoUrl(m.photo_url) ? m.photo_url : null })) : [],
     });
   } catch (err) {
     logger.error('getGroup error', err);
+    return res.status(500).json({ error: 'Failed to load group' });
+  }
+};
+
+// GET /api/webapp/hangouts/groups/:id/public
+// Anonymous read of PUBLIC group metadata (name, description, avatar, topics).
+// No session required — used by Main Stage guest mode to render the topic strip.
+const getPublicGroup = async (req, res) => {
+  const groupId = parseInt(req.params.id);
+  if (!Number.isFinite(groupId) || groupId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+
+  try {
+    const { rows } = await query(
+      `SELECT id, name, description, avatar_url, is_public, is_main,
+              (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = hangout_groups.id) AS member_count
+         FROM hangout_groups
+        WHERE id = $1 AND parent_group_id IS NULL`,
+      [groupId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Group not found' });
+    const g = rows[0];
+    if (!g.is_public) return res.status(403).json({ error: 'This group is invite-only' });
+
+    const { rows: topicRows } = await query(
+      `SELECT id, name, description, position, is_read_only, is_wall_of_fame
+         FROM hangout_groups
+        WHERE parent_group_id = $1
+        ORDER BY position ASC, id ASC`,
+      [groupId]
+    );
+
+    return res.json({
+      success: true,
+      group: {
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        avatarUrl: g.avatar_url,
+        isMain: g.is_main,
+        isPublic: true,
+        memberCount: g.member_count,
+        topics: topicRows.map(t => ({
+          id: t.id,
+          name: t.name,
+          description: t.description || '',
+          position: t.position,
+          isReadOnly: !!t.is_read_only,
+          isWallOfFame: !!t.is_wall_of_fame,
+        })),
+      },
+    });
+  } catch (err) {
+    logger.error('getPublicGroup error', err);
     return res.status(500).json({ error: 'Failed to load group' });
   }
 };
@@ -534,6 +714,15 @@ const joinGroup = async (req, res) => {
          VALUES ($1, $2, 'member') ON CONFLICT (group_id, user_id) DO NOTHING`,
         [groupId, user.id]
       );
+      // Auto-join all topics (child groups) of this group
+      await txClient.query(
+        `INSERT INTO hangout_group_members (group_id, user_id, role)
+         SELECT id, $1, 'member'
+         FROM hangout_groups
+         WHERE parent_group_id = $2
+         ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [String(user.id), groupId]
+      );
       await txClient.query('COMMIT');
     } catch (txErr) {
       await txClient.query('ROLLBACK').catch(() => {});
@@ -554,14 +743,6 @@ const joinGroup = async (req, res) => {
         message: `${user.firstName || user.first_name || user.username} joined ${group.name}`,
         metadata: { groupName: group.name },
       });
-    }
-
-    // Send Cristina welcome message (fire-and-forget)
-    {
-      const { rows: wRows } = await query('SELECT name, rules FROM hangout_groups WHERE id = $1', [groupId]).catch(() => ({ rows: [] }));
-      if (wRows[0]) {
-        sendHangoutWelcome(groupId, wRows[0].name, wRows[0].rules || null, user.id, user.firstName || user.first_name || user.username);
-      }
     }
 
     // Sync Matrix room membership — fire-and-forget (non-blocking, non-fatal)
@@ -596,9 +777,21 @@ const leaveGroup = async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ error: 'Group not found' });
     if (rows[0].is_main) return res.status(400).json({ error: 'Cannot leave the main community group' });
 
-    await query(
-      'DELETE FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
+    // Check membership and ban status before deleting
+    const { rows: memberRows } = await query(
+      `SELECT is_banned FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
       [groupId, user.id]
+    );
+    if (memberRows.length === 0) return res.status(404).json({ error: 'Not a member' });
+    if (memberRows[0].is_banned) return res.status(403).json({ error: 'Banned members cannot leave. Contact the group owner.' });
+
+    await query(
+      `DELETE FROM hangout_group_members
+       WHERE user_id = $1
+         AND group_id IN (
+           SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2
+         )`,
+      [user.id, groupId]
     );
 
     // Sync Matrix room membership — fire-and-forget (non-blocking, non-fatal)
@@ -626,7 +819,11 @@ const deleteGroup = async (req, res) => {
     const { rows } = await query('SELECT * FROM hangout_groups WHERE id=$1', [groupId]);
     if (rows.length === 0) return res.status(404).json({ error: 'Group not found' });
     if (rows[0].is_main) return res.status(400).json({ error: 'Cannot delete the main community group' });
-    if (rows[0].creator_id !== String(user.id)) {
+    if (rows[0].parent_group_id !== null) {
+      return res.status(400).json({ error: 'Use DELETE /groups/:parentId/topics/:topicId to remove a topic' });
+    }
+    const isAdminUser = user.role === 'admin' || user.role === 'superadmin';
+    if (!isAdminUser && rows[0].creator_id !== String(user.id)) {
       return res.status(403).json({ error: 'Only the creator can delete this group' });
     }
 
@@ -640,8 +837,32 @@ const deleteGroup = async (req, res) => {
       [groupId]
     );
 
-    // Clean up chat messages for this group before deleting (not covered by cascade)
-    await query('DELETE FROM chat_messages WHERE room = $1', [`hangout:${groupId}`]);
+    // HG-HIGH-01: Notify all sockets in the hangout room before deleting so
+    // clients can show the closed state and leave the room cleanly.
+    try {
+      const _deleteIo = req.app.get('io');
+      if (_deleteIo) {
+        _deleteIo.to(`hangout:${groupId}`).emit('hangout:closed', {
+          groupId,
+          reason: 'deleted',
+        });
+        // Force all sockets to leave the room so no one remains in a ghost room.
+        const _deleteSockets = await _deleteIo.in(`hangout:${groupId}`).fetchSockets();
+        for (const _deleteSock of _deleteSockets) {
+          _deleteSock.leave(`hangout:${groupId}`);
+        }
+      }
+    } catch (_deleteEmitErr) {
+      logger.warn('deleteGroup: failed to emit hangout:closed', { groupId, error: _deleteEmitErr.message });
+    }
+
+    // Clean up chat messages for this group and all its topic sub-groups
+    await query(
+      `DELETE FROM chat_messages WHERE room = ANY(
+         SELECT 'hangout:'||id::text FROM hangout_groups WHERE id = $1 OR parent_group_id = $1
+       )`,
+      [groupId]
+    );
 
     // Delete group (cascade deletes members, participants, join requests)
     await query('DELETE FROM hangout_groups WHERE id=$1', [groupId]);
@@ -665,6 +886,9 @@ const updateGroup = async (req, res) => {
     const group = groupRows[0];
 
     if (group.is_main) return res.status(400).json({ error: 'Cannot modify the main community group' });
+    if (group.parent_group_id !== null) {
+      return res.status(400).json({ error: 'Use PATCH /groups/:parentId/topics/:topicId to update a topic' });
+    }
 
     // Only creator/owner can update group details
     const { rows: memberRows } = await query(
@@ -832,15 +1056,15 @@ const kickMember = async (req, res) => {
 
     if (group.is_main) return res.status(400).json({ error: 'Cannot kick members from the main community group' });
 
-    // Only creator/owner can kick
-    const { rows: actorRows } = await query(
+    // Owner or admin can kick (admin cannot kick other admins or owner)
+    const { rows: callerRows } = await query(
       `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
-      [groupId, user.id]
+      [groupId, String(user.id)]
     );
-    if (actorRows.length === 0) return res.status(403).json({ error: 'Not a member of this group' });
-    const actorRole = actorRows[0].role;
-    if (actorRole !== 'owner' && String(group.creator_id) !== String(user.id)) {
-      return res.status(403).json({ error: 'Only the group owner can kick members' });
+    if (callerRows.length === 0) return res.status(403).json({ error: 'Not a member of this group' });
+    const callerRole = callerRows[0].role;
+    if (callerRole !== 'owner' && callerRole !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only owner or admin can kick members' });
     }
 
     // Cannot kick yourself
@@ -851,18 +1075,22 @@ const kickMember = async (req, res) => {
     // Confirm target is actually a member
     const { rows: targetRows } = await query(
       `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
-      [groupId, targetUserId]
+      [groupId, String(targetUserId)]
     );
     if (targetRows.length === 0) return res.status(404).json({ error: 'User is not a member of this group' });
-
-    // Cannot kick another owner
-    if (targetRows[0].role === 'owner') {
-      return res.status(403).json({ error: 'Cannot kick the group owner' });
+    const targetRole = targetRows[0].role;
+    if (targetRole === 'owner') return res.status(403).json({ error: 'Cannot kick the group owner' });
+    if (callerRole === 'admin' && (targetRole === 'admin' || targetRole === 'owner')) {
+      return res.status(403).json({ error: 'Admins cannot kick other admins or the owner' });
     }
 
     await query(
-      'DELETE FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
-      [groupId, targetUserId]
+      `DELETE FROM hangout_group_members
+       WHERE user_id = $1
+         AND group_id IN (
+           SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2
+         )`,
+      [targetUserId, groupId]
     );
 
     auditModeration(groupId, user.id, targetUserId, 'kick', req.body.reason || null, null);
@@ -965,7 +1193,7 @@ const getMessages = async (req, res) => {
 
     // In wellness mode, only permit messages from wellness-flagged hangouts
     if (await wellnessModeService.isActive(user.id)) {
-      const { rows: [grp] } = await query('SELECT is_wellness FROM hangout_groups WHERE id = $1', [groupId]);
+      const { rows: [grp] } = await query('SELECT is_wellness FROM hangout_groups WHERE id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)', [groupId]);
       if (!grp?.is_wellness) {
         return res.status(403).json({ error: 'Wellness Mode active — only wellness hangouts accessible', code: 'WELLNESS_MODE' });
       }
@@ -986,7 +1214,7 @@ const getMessages = async (req, res) => {
               rxn.reactions
        FROM chat_messages cm
        LEFT JOIN users u ON u.id = cm.user_id
-       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id
+       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id AND r.room = cm.room
        LEFT JOIN LATERAL (
          SELECT json_agg(json_build_object(
            'emoji', sub.emoji,
@@ -1223,14 +1451,21 @@ const discoverGroups = async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,
-              g.is_public, g.is_paid, g.price_usd, g.created_at,
+              g.is_public, g.is_paid, g.price_usd, g.created_at, g.channel_id,
+              cc.name as channel_name,
+              cc.slug as channel_slug,
+              cc.access_type as channel_access_type,
+              cc.price_usd as channel_price_usd,
+              (CASE WHEN g.channel_id IS NULL THEN 0 ELSE (SELECT COUNT(*)::int FROM channel_videos cv WHERE cv.channel_id = g.channel_id AND cv.status = 'published') END) as channel_video_count,
               (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = g.id) as member_count,
               (SELECT jr.status FROM hangout_join_requests jr
                WHERE jr.group_id = g.id AND jr.user_id = $1
                ORDER BY jr.created_at DESC LIMIT 1) as my_request_status
        FROM hangout_groups g
+       LEFT JOIN creator_channels cc ON cc.id = g.channel_id
        WHERE g.is_main = false
          AND g.is_wall_of_fame = false
+         AND g.parent_group_id IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM hangout_group_members gm WHERE gm.group_id = g.id AND gm.user_id = $1
          )
@@ -1251,6 +1486,12 @@ const discoverGroups = async (req, res) => {
       myRequestStatus: r.my_request_status || null,
       isPaid: !!r.is_paid,
       priceUsd: Number(r.price_usd) || 0,
+      channelId: r.channel_id || null,
+      channelName: r.channel_name || null,
+      channelSlug: r.channel_slug || null,
+      channelAccessType: r.channel_access_type || null,
+      channelPriceUsd: r.channel_price_usd ? Number(r.channel_price_usd) : null,
+      channelVideoCount: r.channel_video_count ?? 0,
     }));
 
     return res.json({ success: true, groups });
@@ -1265,6 +1506,17 @@ const requestJoinGroup = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   const groupId = parseInt(req.params.id);
   if (!Number.isFinite(groupId) || groupId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+
+  // Rate limit: max 10 join requests per user per hour
+  try {
+    const redis = getRedis();
+    const rlKey = `hangout:join-request:rl:${user.id}`;
+    const count = await redis.incr(rlKey);
+    if (count === 1) await redis.expire(rlKey, 3600);
+    if (count > 10) return res.status(429).json({ error: 'Too many join requests. Try again later.' });
+  } catch (_rlErr) {
+    // non-fatal — proceed if Redis is temporarily unavailable
+  }
 
   try {
     const { rows: groupRows } = await query('SELECT * FROM hangout_groups WHERE id=$1', [groupId]);
@@ -1377,55 +1629,74 @@ const handleJoinRequest = async (req, res) => {
       return res.status(403).json({ error: 'Only the group creator can manage requests' });
     }
 
-    // Update request
-    const newStatus = action === 'accept' ? 'accepted' : 'rejected';
-    const { rows } = await query(
-      `UPDATE hangout_join_requests
-       SET status = $1, resolved_at = NOW(), resolved_by = $2
-       WHERE id = $3 AND group_id = $4 AND status = 'pending'
-       RETURNING *`,
-      [newStatus, user.id, requestId, groupId]
-    );
+    // Wrap the accept path in a transaction so UPDATE request + INSERT member are atomic
+    const client = await getClient();
+    let joinRequest;
+    let newStatus;
+    try {
+      await client.query('BEGIN');
 
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Request not found or already handled' });
-    }
+      newStatus = action === 'accept' ? 'accepted' : 'rejected';
+      const { rows } = await client.query(
+        `UPDATE hangout_join_requests
+         SET status = $1, resolved_at = NOW(), resolved_by = $2
+         WHERE id = $3 AND group_id = $4 AND status = 'pending'
+         RETURNING *`,
+        [newStatus, user.id, requestId, groupId]
+      );
 
-    const joinRequest = rows[0];
+      if (rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Request not found or already handled' });
+      }
 
-    // On accept, re-check block status in case a block was placed after the request
-    if (action === 'accept') {
-      if (joinRequest.user_id && String(joinRequest.user_id) !== String(user.id)) {
-        const [blockedByCreator, blockedByRequester] = await Promise.all([
-          BlockedUser.isBlocked(user.id, joinRequest.user_id),
-          BlockedUser.isBlocked(joinRequest.user_id, user.id),
-        ]);
-        if (blockedByCreator || blockedByRequester) {
-          // Silently reject: revert the accept we just wrote
-          await query(
-            `UPDATE hangout_join_requests
-             SET status = 'rejected', resolved_at = NOW(), resolved_by = $1
-             WHERE id = $2`,
-            [user.id, requestId]
-          );
-          return res.status(403).json({ error: 'Cannot accept this request' });
+      joinRequest = rows[0];
+
+      // On accept, re-check block status in case a block was placed after the request
+      if (action === 'accept') {
+        if (joinRequest.user_id && String(joinRequest.user_id) !== String(user.id)) {
+          const [blockedByCreator, blockedByRequester] = await Promise.all([
+            BlockedUser.isBlocked(user.id, joinRequest.user_id),
+            BlockedUser.isBlocked(joinRequest.user_id, user.id),
+          ]);
+          if (blockedByCreator || blockedByRequester) {
+            // Silently reject: revert the accept we just wrote
+            await client.query(
+              `UPDATE hangout_join_requests
+               SET status = 'rejected', resolved_at = NOW(), resolved_by = $1
+               WHERE id = $2`,
+              [user.id, requestId]
+            );
+            await client.query('COMMIT');
+            return res.status(403).json({ error: 'Cannot accept this request' });
+          }
+        }
+
+        const { rowCount } = await client.query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           SELECT $1, $2, 'member'
+           WHERE (SELECT COUNT(*) FROM hangout_group_members WHERE group_id = $1) < (
+             SELECT max_members FROM hangout_groups WHERE id = $1
+           )
+           ON CONFLICT DO NOTHING`,
+          [groupId, joinRequest.user_id]
+        );
+        if (rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Group is full or user is already a member' });
         }
       }
 
-      const { rowCount } = await query(
-        `INSERT INTO hangout_group_members (group_id, user_id, role)
-         SELECT $1, $2, 'member'
-         WHERE (SELECT COUNT(*) FROM hangout_group_members WHERE group_id = $1) < (
-           SELECT max_members FROM hangout_groups WHERE id = $1
-         )
-         ON CONFLICT DO NOTHING`,
-        [groupId, joinRequest.user_id]
-      );
-      if (rowCount === 0) {
-        return res.status(409).json({ error: 'Group is full or user is already a member' });
-      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
-      // Notify the requester
+    if (action === 'accept') {
+      // Notify the requester (fire-and-forget after transaction committed)
       NotificationEmitter.emit({
         type: 'group_request_accepted', category: 'hangouts', priority: 'normal',
         actorId: user.id, targetUserId: joinRequest.user_id,
@@ -1458,7 +1729,7 @@ async function auditModeration(groupId, actorId, targetId, action, reason = null
 // Helper: check if user is owner or moderator (banned moderators are excluded)
 const isOwnerOrMod = async (groupId, userId) => {
   const { rows } = await query(
-    "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND is_banned = FALSE AND role IN ('owner','moderator')",
+    "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND is_banned = FALSE AND role IN ('owner','admin','moderator')",
     [groupId, userId]
   );
   return rows.length > 0;
@@ -1472,17 +1743,34 @@ const banMember = async (req, res) => {
   if (!Number.isFinite(groupId) || !targetId) return res.status(400).json({ error: 'Missing fields' });
 
   try {
-    if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
+    const { rows: callerRows } = await query(
+      "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND is_banned = FALSE",
+      [groupId, user.id]
+    );
+    const callerRole = callerRows[0]?.role;
+    const isSuperAdmin = user.role === 'admin' || user.role === 'superadmin';
+    if (!callerRole && !isSuperAdmin) return res.status(403).json({ error: 'Not authorized' });
+    if (!['owner','admin','moderator'].includes(callerRole) && !isSuperAdmin) return res.status(403).json({ error: 'Not authorized' });
+
     const { rows: targetRows } = await query(
       'SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
       [groupId, targetId]
     );
     if (targetRows.length === 0) return res.status(404).json({ error: 'User not in group' });
-    if (targetRows[0].role === 'owner') return res.status(403).json({ error: 'Cannot ban the owner' });
+    const targetRole = targetRows[0].role;
+    if (targetRole === 'owner') return res.status(403).json({ error: 'Cannot ban the owner' });
+    // Privilege escalation guard: moderator cannot ban admin; only owner/superadmin can ban admin
+    if (targetRole === 'admin' && callerRole !== 'owner' && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Only the group owner can ban an admin' });
+    }
 
     await query(
-      'UPDATE hangout_group_members SET is_banned = true WHERE group_id=$1 AND user_id=$2',
-      [groupId, targetId]
+      `UPDATE hangout_group_members SET is_banned = true
+       WHERE user_id = $1
+         AND group_id IN (
+           SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2
+         )`,
+      [targetId, groupId]
     );
     auditModeration(groupId, user.id, targetId, 'ban', req.body.reason || null, null);
     matrixService.removeFromHangoutRoom(groupId, { id: targetId, matrix_user_id: null }).catch(() => {});
@@ -1518,8 +1806,12 @@ const unbanMember = async (req, res) => {
 const muteMember = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   const groupId = parseInt(req.params.id);
-  const { userId: targetId, durationMinutes = 60 } = req.body;
+  const { userId: targetId } = req.body;
   if (!Number.isFinite(groupId) || !targetId) return res.status(400).json({ error: 'Missing fields' });
+
+  // Clamp durationMinutes: 1 min minimum, 10080 min (7 days) maximum, default 60
+  const rawDuration = req.body.durationMinutes;
+  const durationMinutes = Number.isFinite(Number(rawDuration)) ? Math.min(Math.max(1, Number(rawDuration)), 10080) : 60;
 
   try {
     if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
@@ -1530,7 +1822,7 @@ const muteMember = async (req, res) => {
     if (targetRows.length === 0) return res.status(404).json({ error: 'User not in group' });
     if (targetRows[0].role === 'owner') return res.status(403).json({ error: 'Cannot mute the owner' });
 
-    const mutedUntil = new Date(Date.now() + Math.min(durationMinutes, 10080) * 60000); // max 7 days
+    const mutedUntil = new Date(Date.now() + durationMinutes * 60000);
     await query(
       'UPDATE hangout_group_members SET is_muted = true, muted_until = $3 WHERE group_id=$1 AND user_id=$2',
       [groupId, targetId, mutedUntil]
@@ -1568,28 +1860,47 @@ const unmuteMember = async (req, res) => {
 const promoteMember = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   const groupId = parseInt(req.params.id);
-  const { userId: targetId } = req.body;
+  const { userId: targetId, toRole = 'moderator' } = req.body;
   if (!Number.isFinite(groupId) || !targetId) return res.status(400).json({ error: 'Missing fields' });
+  if (!['admin', 'moderator'].includes(toRole)) return res.status(400).json({ error: 'Invalid role' });
 
   try {
-    // Only owner can promote
     const { rows: callerRows } = await query(
-      "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role='owner'",
+      `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
       [groupId, user.id]
     );
-    if (callerRows.length === 0) return res.status(403).json({ error: 'Only the owner can promote members' });
+    if (!callerRows.length) return res.status(403).json({ error: 'Not a member' });
+    const callerRole = callerRows[0].role;
 
-    const { rowCount } = await query(
-      "UPDATE hangout_group_members SET role = 'moderator' WHERE group_id=$1 AND user_id=$2 AND role='member'",
+    // Only owner can promote to admin. Owner or admin can promote to moderator.
+    if (toRole === 'admin' && callerRole !== 'owner' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only the owner can promote to admin' });
+    }
+    if (toRole === 'moderator' && callerRole !== 'owner' && callerRole !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only owner or admin can promote to moderator' });
+    }
+
+    // Cannot promote owner or someone already at/above the target role
+    const { rows: targetRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
       [groupId, targetId]
     );
-    if (rowCount === 0) return res.status(404).json({ error: 'Member not found or already a moderator' });
+    if (!targetRows.length) return res.status(404).json({ error: 'Target not a member' });
+    const targetRole = targetRows[0].role;
+    if (targetRole === 'owner') return res.status(400).json({ error: 'Cannot change owner role' });
+    if (targetRole === toRole) return res.status(400).json({ error: `Already a ${toRole}` });
 
-    auditModeration(groupId, user.id, targetId, 'promote_moderator', null, { previousRole: 'member' });
+    const { rowCount } = await query(
+      `UPDATE hangout_group_members SET role=$1 WHERE group_id=$2 AND user_id=$3`,
+      [toRole, groupId, targetId]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'Member not found' });
 
-    // Set Matrix power level to 50 (moderator)
+    auditModeration(groupId, user.id, targetId, `promote_to_${toRole}`, null, { previousRole: targetRole });
+
+    const level = toRole === 'admin' ? 75 : 50;
     const matrixUserId = `@pnptv_${targetId}:${process.env.MATRIX_SERVER_NAME || 'matrix.pnptv.app'}`;
-    matrixService.setUserPowerLevel(groupId, matrixUserId, 50).catch(() => {});
+    matrixService.setUserPowerLevel(groupId, matrixUserId, level).catch(() => {});
 
     return res.json({ success: true });
   } catch (err) {
@@ -1602,27 +1913,46 @@ const promoteMember = async (req, res) => {
 const demoteMember = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   const groupId = parseInt(req.params.id);
-  const { userId: targetId } = req.body;
+  const { userId: targetId, toRole = 'member' } = req.body;
   if (!Number.isFinite(groupId) || !targetId) return res.status(400).json({ error: 'Missing fields' });
+  if (!['moderator', 'member'].includes(toRole)) return res.status(400).json({ error: 'Invalid role' });
 
   try {
     const { rows: callerRows } = await query(
-      "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role='owner'",
+      `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
       [groupId, user.id]
     );
-    if (callerRows.length === 0) return res.status(403).json({ error: 'Only the owner can demote moderators' });
+    if (!callerRows.length) return res.status(403).json({ error: 'Not a member' });
+    const callerRole = callerRows[0].role;
 
-    const { rowCount } = await query(
-      "UPDATE hangout_group_members SET role = 'member' WHERE group_id=$1 AND user_id=$2 AND role='moderator'",
+    if (callerRole !== 'owner' && callerRole !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only owner or admin can demote members' });
+    }
+
+    const { rows: targetRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
       [groupId, targetId]
     );
-    if (rowCount === 0) return res.status(404).json({ error: 'Moderator not found' });
+    if (!targetRows.length) return res.status(404).json({ error: 'Target not a member' });
+    const targetRole = targetRows[0].role;
 
-    auditModeration(groupId, user.id, targetId, 'demote_member', null, { previousRole: 'moderator' });
+    if (targetRole === 'owner') return res.status(400).json({ error: 'Cannot demote owner' });
+    // Admin can only demote moderators; only owner can demote admins
+    if (targetRole === 'admin' && callerRole !== 'owner' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only the owner can demote admins' });
+    }
+    if (targetRole === toRole) return res.status(400).json({ error: `Already a ${toRole}` });
 
-    // Set Matrix power level back to 0 (regular member)
+    await query(
+      `UPDATE hangout_group_members SET role=$1 WHERE group_id=$2 AND user_id=$3`,
+      [toRole, groupId, targetId]
+    );
+
+    auditModeration(groupId, user.id, targetId, `demote_to_${toRole}`, null, { previousRole: targetRole });
+
+    const level = toRole === 'moderator' ? 50 : 0;
     const matrixUserId = `@pnptv_${targetId}:${process.env.MATRIX_SERVER_NAME || 'matrix.pnptv.app'}`;
-    matrixService.setUserPowerLevel(groupId, matrixUserId, 0).catch(() => {});
+    matrixService.setUserPowerLevel(groupId, matrixUserId, level).catch(() => {});
 
     return res.json({ success: true });
   } catch (err) {
@@ -1733,6 +2063,15 @@ const updateGroupSettings = async (req, res) => {
 
     const { slowModeSeconds, isReadOnly, allowMedia, allowMemberInvites, autoDeleteHours, tags, isPublic, name, description, feedVisibility, rules } = req.body;
 
+    // Only owners can change visibility and name — moderators cannot
+    if (isPublic !== undefined || name !== undefined) {
+      const { rows: ownerRows } = await query(
+        `SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role='owner'`,
+        [groupId, user.id]
+      );
+      if (ownerRows.length === 0) return res.status(403).json({ error: 'Only the group owner can change visibility and name' });
+    }
+
     const sets = [];
     const vals = [];
     let idx = 1;
@@ -1804,10 +2143,29 @@ const transferOwnership = async (req, res) => {
     // Verify target is a member
     if (!(await isMember(groupId, newOwnerId))) return res.status(404).json({ error: 'Target user is not a member' });
 
-    // Transfer
-    await query('UPDATE hangout_groups SET creator_id = $1 WHERE id = $2', [newOwnerId, groupId]);
-    await query("UPDATE hangout_group_members SET role = 'member' WHERE group_id=$1 AND user_id=$2", [groupId, user.id]);
-    await query("UPDATE hangout_group_members SET role = 'owner' WHERE group_id=$1 AND user_id=$2", [groupId, newOwnerId]);
+    // Cannot transfer ownership to a banned member
+    const { rows: banCheckRows } = await query(
+      `SELECT is_banned FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
+      [groupId, newOwnerId]
+    );
+    if (banCheckRows[0]?.is_banned) {
+      return res.status(400).json({ error: 'Cannot transfer ownership to a banned member' });
+    }
+
+    // Transfer — all three mutations must be atomic
+    const txClient = await getClient();
+    try {
+      await txClient.query('BEGIN');
+      await txClient.query('UPDATE hangout_groups SET creator_id = $1 WHERE id = $2', [newOwnerId, groupId]);
+      await txClient.query("UPDATE hangout_group_members SET role = 'member' WHERE group_id=$1 AND user_id=$2", [groupId, user.id]);
+      await txClient.query("UPDATE hangout_group_members SET role = 'owner' WHERE group_id=$1 AND user_id=$2", [groupId, newOwnerId]);
+      await txClient.query('COMMIT');
+    } catch (txErr) {
+      await txClient.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      txClient.release();
+    }
 
     return res.json({ success: true });
   } catch (err) {
@@ -1859,6 +2217,17 @@ const joinByInvite = async (req, res) => {
   const { code } = req.params;
   if (!code) return res.status(400).json({ error: 'Missing invite code' });
 
+  // Rate limit: max 20 invite join attempts per user per hour
+  try {
+    const redis = getRedis();
+    const rlKey = `hangout:join-invite:rl:${user.id}`;
+    const count = await redis.incr(rlKey);
+    if (count === 1) await redis.expire(rlKey, 3600);
+    if (count > 20) return res.status(429).json({ error: 'Too many join attempts. Try again later.' });
+  } catch (_rlErr) {
+    // non-fatal — proceed if Redis is temporarily unavailable
+  }
+
   try {
     const { rows: groupRows } = await query('SELECT * FROM hangout_groups WHERE invite_code = $1', [code]);
     if (groupRows.length === 0) return res.status(404).json({ error: 'Invalid invite link' });
@@ -1880,6 +2249,25 @@ const joinByInvite = async (req, res) => {
     );
     if (memberCheck.length > 0 && memberCheck[0].is_banned) return res.status(403).json({ error: 'You are banned from this group' });
     if (memberCheck.length > 0) return res.json({ success: true, groupId: group.id }); // already member
+
+    // Paid/channel access gate — invite links do NOT bypass payment walls
+    const isOwnerByCreator = String(group.creator_id) === String(user.id);
+    if (!isOwnerByCreator) {
+      if (group.channel_id) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const hasAccess = await EntitlementAccessService.hasResourceAccess(String(user.id), 'channel', String(group.channel_id));
+        if (!hasAccess.allowed) {
+          return res.status(402).json({ error: 'This hangout requires channel access', channelId: group.channel_id });
+        }
+      }
+      if (group.is_paid && Number(group.price_usd) > 0) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const hasAccess = await EntitlementAccessService.hasResourceAccess(String(user.id), 'hangout', String(group.id));
+        if (!hasAccess.allowed) {
+          return res.status(402).json({ error: 'This hangout requires purchase', priceUsd: group.price_usd, groupId: group.id });
+        }
+      }
+    }
 
     // Capacity check + insert
     const { rowCount } = await query(
@@ -1926,23 +2314,28 @@ const updateNotificationMode = async (req, res) => {
   }
 };
 
-// POST /api/webapp/hangouts/groups/:id/delete-message
+// POST /api/webapp/hangouts/groups/:id/messages/:msgId/admin-delete
+// (also still mounted at the legacy POST /:id/delete-message route for backward compat)
 const adminDeleteMessage = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const groupId = parseInt(req.params.id);
-  const { eventId } = req.body;
-  if (!Number.isFinite(groupId) || !eventId) return res.status(400).json({ error: 'Missing fields' });
-
   try {
-    if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
-    // Look up the Matrix room for this group
-    const { rows: roomRows } = await query(
-      'SELECT matrix_room_id FROM hangout_matrix_rooms WHERE hangout_group_id = $1',
-      [groupId]
-    );
-    if (roomRows.length === 0) return res.status(404).json({ error: 'Matrix room not found' });
+    const groupId = parseInt(req.params.id, 10);
+    const msgId = parseInt(req.params.msgId ?? req.body?.msgId, 10);
+    if (!Number.isFinite(groupId) || !Number.isFinite(msgId)) return res.status(400).json({ error: 'Invalid IDs' });
 
-    await matrixService.redactRoomEvent(roomRows[0].matrix_room_id, eventId, 'Deleted by moderator');
+    if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Moderator access required' });
+
+    const { rowCount } = await query(
+      `UPDATE chat_messages SET is_deleted = true, deleted_at = NOW(), deleted_by = $3
+       WHERE id = $1 AND room = $2`,
+      [msgId, `hangout:${groupId}`, user.id]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'Message not found' });
+
+    auditModeration(groupId, user.id, null, 'admin_delete_message', null, { messageId: msgId });
+
+    // Emit deletion to room members
+    emitToHangoutGroup(groupId, 'hangout:message:deleted', { messageId: msgId, groupId, deletedBy: user.id });
     return res.json({ success: true });
   } catch (err) {
     logger.error('adminDeleteMessage error', err);
@@ -2279,14 +2672,19 @@ const pinGroup = async (req, res) => {
   if (!Number.isFinite(groupId)) return res.status(400).json({ error: 'Invalid group id' });
   const pinned = req.body?.pinned === true;
 
-  const { rowCount } = await query(
-    `UPDATE hangout_group_members
-        SET is_pinned = $3
-      WHERE group_id = $1 AND user_id = $2`,
-    [groupId, user.id, pinned]
-  );
-  if (rowCount === 0) return res.status(403).json({ error: 'Not a member of this group' });
-  return res.json({ success: true, pinned });
+  try {
+    const { rowCount } = await query(
+      `UPDATE hangout_group_members
+          SET is_pinned = $3
+        WHERE group_id = $1 AND user_id = $2`,
+      [groupId, user.id, pinned]
+    );
+    if (rowCount === 0) return res.status(403).json({ error: 'Not a member of this group' });
+    return res.json({ success: true, pinned });
+  } catch (err) {
+    logger.error('pinGroup error', err);
+    return res.status(500).json({ error: 'Operation failed' });
+  }
 };
 
 // PUT /api/webapp/hangouts/groups/:id/mute  body: { until: ISOString | "forever" | null }
@@ -2313,15 +2711,20 @@ const muteGroupForUser = async (req, res) => {
     return res.status(400).json({ error: 'until must be ISO string, "forever", or null' });
   }
 
-  const { rowCount } = await query(
-    `UPDATE hangout_group_members
-        SET is_user_muted  = $3,
-            user_mute_until = $4
-      WHERE group_id = $1 AND user_id = $2`,
-    [groupId, user.id, isMuted, mutedUntil]
-  );
-  if (rowCount === 0) return res.status(403).json({ error: 'Not a member of this group' });
-  return res.json({ success: true, mutedUntil });
+  try {
+    const { rowCount } = await query(
+      `UPDATE hangout_group_members
+          SET is_user_muted  = $3,
+              user_mute_until = $4
+        WHERE group_id = $1 AND user_id = $2`,
+      [groupId, user.id, isMuted, mutedUntil]
+    );
+    if (rowCount === 0) return res.status(403).json({ error: 'Not a member of this group' });
+    return res.json({ success: true, mutedUntil });
+  } catch (err) {
+    logger.error('muteGroupForUser error', err);
+    return res.status(500).json({ error: 'Operation failed' });
+  }
 };
 
 // PUT /api/webapp/hangouts/groups/:id/read-message  body: { messageId: number }
@@ -2333,16 +2736,21 @@ const markMessageRead = async (req, res) => {
     return res.status(400).json({ error: 'Invalid group id or messageId' });
   }
 
-  // Only advance the pointer forward — never rewind
-  const { rowCount } = await query(
-    `UPDATE hangout_group_members
-        SET last_read_message_id = $3,
-            last_read_at         = NOW()
-      WHERE group_id = $1 AND user_id = $2
-        AND (last_read_message_id IS NULL OR last_read_message_id < $3)`,
-    [groupId, user.id, messageId]
-  );
-  return res.json({ success: true, lastReadMessageId: messageId, updated: rowCount > 0 });
+  try {
+    // Only advance the pointer forward — never rewind
+    const { rowCount } = await query(
+      `UPDATE hangout_group_members
+          SET last_read_message_id = $3,
+              last_read_at         = NOW()
+        WHERE group_id = $1 AND user_id = $2
+          AND (last_read_message_id IS NULL OR last_read_message_id < $3)`,
+      [groupId, user.id, messageId]
+    );
+    return res.json({ success: true, lastReadMessageId: messageId, updated: rowCount > 0 });
+  } catch (err) {
+    logger.error('markMessageRead error', err);
+    return res.status(500).json({ error: 'Operation failed' });
+  }
 };
 
 // ── Forward a hangout chat message to DMs and/or other hangouts ──────────────
@@ -2519,7 +2927,7 @@ const forwardMessage = async (req, res) => {
           `SELECT hg.is_read_only,
                   (EXISTS(SELECT 1 FROM hangout_group_members m
                            WHERE m.group_id = hg.id AND m.user_id = $2
-                             AND m.role IN ('owner','mod'))) AS is_mod_or_owner
+                             AND m.role IN ('owner','admin','moderator'))) AS is_mod_or_owner
              FROM hangout_groups hg WHERE hg.id = $1`,
           [gid, user.id]
         );
@@ -2563,10 +2971,372 @@ const forwardMessage = async (req, res) => {
   return res.json({ success: true, results });
 };
 
+// ── Notify online hangout members (push) ──────────────────────────────────────
+
+async function notifyOnlineMembers(req, res) {
+  const user = authGuard(req, res); if (!user) return;
+  const groupId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(groupId) || groupId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+
+  const { type } = req.body || {};
+  if (!['call_started', 'mainstage'].includes(type)) {
+    return res.status(400).json({ error: 'type must be call_started or mainstage' });
+  }
+
+  try {
+    // Must be owner or mod
+    const { rows: memberRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2`,
+      [groupId, user.id],
+    );
+    const role = memberRows[0]?.role;
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    if (!isAdmin && !['owner', 'moderator'].includes(role)) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // Redis-based rate limit: 1 notify per hangout per 5 minutes (survives restarts)
+    const redis = getRedis();
+    const rlKey = `hangout:notify:rl:${groupId}`;
+    const isLimited = await redis.set(rlKey, '1', 'NX', 'EX', 300);
+    if (!isLimited) return res.status(429).json({ error: 'Please wait before notifying again' });
+
+    // Get group name + all member IDs
+    const [groupRes, membersRes] = await Promise.all([
+      query(`SELECT name FROM hangout_groups WHERE id=$1`, [groupId]),
+      query(`SELECT user_id FROM hangout_group_members WHERE group_id=$1 AND is_banned=false AND user_id != $2`, [groupId, user.id]),
+    ]);
+    const groupName = groupRes.rows[0]?.name || 'Hangout';
+    const allMemberIds = membersRes.rows.map(r => r.user_id);
+    if (allMemberIds.length === 0) return res.json({ success: true, sent: 0 });
+
+    // Filter to online members via Redis
+    const onlineIds = [];
+    const BATCH = 20;
+    for (let i = 0; i < allMemberIds.length; i += BATCH) {
+      const batch = allMemberIds.slice(i, i + BATCH);
+      const pipeline = redis.pipeline();
+      batch.forEach(uid => pipeline.exists(`presence:online:${uid}`));
+      const results = await pipeline.exec();
+      results.forEach(([err, exists], idx) => {
+        if (!err && exists) onlineIds.push(batch[idx]);
+      });
+    }
+
+    if (onlineIds.length === 0) return res.json({ success: true, sent: 0 });
+
+    // Build notification
+    const PushNotificationService = require('../../../services/pushNotificationService');
+    const notifUrl = `/hangouts?group=${groupId}`;
+    let title, body;
+    if (type === 'call_started') {
+      title = `📞 Call started in ${groupName}`;
+      body  = 'A video call just started — join now!';
+    } else {
+      title = `🎭 Main Stage active in ${groupName}`;
+      body  = 'Someone just joined the Main Stage. Come watch!';
+    }
+
+    const sent = await PushNotificationService.sendToUsers(onlineIds, { title, body, url: notifUrl });
+
+    logger.info('notifyOnlineMembers', { groupId, type, online: onlineIds.length, sent });
+    return res.json({ success: true, sent });
+  } catch (err) {
+    logger.error('notifyOnlineMembers error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to send notifications' });
+  }
+}
+
+// POST /api/webapp/hangouts/groups/:id/topics
+async function createTopic(req, res) {
+  const user = authGuard(req, res); if (!user) return;
+  const parentId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(parentId) || parentId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+  const { name, description = '' } = req.body;
+
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Topic name required' });
+
+  const sanitizedName = name.trim().replace(/<[^>]*>/g, '').slice(0, 100);
+  const sanitizedDesc = String(description || '').trim().replace(/<[^>]*>/g, '').slice(0, 500);
+
+  // Fix MED-01: content moderation on topic name/description
+  try {
+    const { assertCleanText } = require('../../../services/contentModerationFilter');
+    assertCleanText(sanitizedName, 'name');
+    assertCleanText(sanitizedDesc, 'description');
+  } catch (err) {
+    if (err.code === 'FORBIDDEN_CONTENT') {
+      return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+    }
+    throw err;
+  }
+
+  try {
+    // Only owner/admin of the parent group can create topics
+    const { rows: memberRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id = $1 AND user_id = $2`,
+      [parentId, String(user.id)]
+    );
+    if (!memberRows.length) return res.status(403).json({ error: 'Not a member' });
+    const role = memberRows[0].role;
+    if (role !== 'owner' && role !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only the group owner can create topics' });
+    }
+
+    // Ensure the parent group actually exists and is a top-level group
+    const { rows: parentRows } = await query(
+      `SELECT id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NULL`,
+      [parentId]
+    );
+    if (!parentRows.length) return res.status(404).json({ error: 'Parent group not found or is itself a topic' });
+
+    // Fix HIGH-02+03: wrap in a transaction; compute position atomically via subquery
+    const txClient = await getClient();
+    let topic;
+    try {
+      await txClient.query('BEGIN');
+
+      // Enforce max 20 topics inside the transaction (FOR UPDATE is illegal with aggregates; transaction isolation is sufficient)
+      const { rows: countRows } = await txClient.query(
+        'SELECT COUNT(*)::int AS cnt FROM hangout_groups WHERE parent_group_id = $1',
+        [parentId]
+      );
+      if (countRows[0].cnt >= 20) {
+        await txClient.query('ROLLBACK');
+        txClient.release();
+        return res.status(400).json({ error: 'Maximum 20 topics per group' });
+      }
+
+      // Insert with atomic position (MAX subquery inside VALUES — no separate SELECT)
+      const { rows: newRows } = await txClient.query(
+        `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position)
+         VALUES ($1, $2, $3, false, true, 200000, $4,
+           (SELECT COALESCE(MAX(position), -1) + 1 FROM hangout_groups WHERE parent_group_id = $4))
+         RETURNING *`,
+        [sanitizedName, sanitizedDesc, String(user.id), parentId]
+      );
+      topic = newRows[0];
+
+      // Fix HIGH-01: exclude banned members from bulk propagation
+      await txClient.query(
+        `INSERT INTO hangout_group_members (group_id, user_id, role)
+         SELECT $1, user_id, 'member'
+         FROM hangout_group_members
+         WHERE group_id = $2 AND (is_banned = false OR is_banned IS NULL)
+         ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [topic.id, parentId]
+      );
+
+      await txClient.query('COMMIT');
+    } catch (txErr) {
+      await txClient.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      txClient.release();
+    }
+
+    // Fix CRIT-03: broadcast to all connected members
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`hangout:${parentId}`).emit('hangout:topic:created', {
+        groupId: parentId,
+        topic: { id: topic.id, name: topic.name, description: topic.description || '', position: topic.position, isReadOnly: false, isWallOfFame: false },
+      });
+    }
+
+    return res.json({
+      success: true,
+      topic: {
+        id: topic.id,
+        name: topic.name,
+        description: topic.description || '',
+        position: topic.position,
+        parentGroupId: parentId,
+        isReadOnly: false,
+        isWallOfFame: false,
+      },
+    });
+  } catch (err) {
+    logger.error('createTopic error', { error: err.message, parentId });
+    return res.status(500).json({ error: 'Failed to create topic' });
+  }
+}
+
+// PATCH /api/webapp/hangouts/groups/:id/topics/:topicId
+async function updateTopic(req, res) {
+  const user = authGuard(req, res); if (!user) return;
+  const parentId  = parseInt(req.params.id, 10);
+  const topicId   = parseInt(req.params.topicId, 10);
+  if (!Number.isFinite(parentId) || !Number.isFinite(topicId)) return res.status(400).json({ error: 'Invalid ID' });
+
+  const { name, description } = req.body;
+  if (name !== undefined && !name?.trim()) return res.status(400).json({ error: 'Topic name cannot be empty' });
+
+  // Fix MED-01: content moderation on topic name/description
+  try {
+    const { assertCleanText } = require('../../../services/contentModerationFilter');
+    if (name !== undefined) assertCleanText(name.trim().replace(/<[^>]*>/g, '').slice(0, 100), 'name');
+    if (description !== undefined) assertCleanText(String(description || '').trim().replace(/<[^>]*>/g, '').slice(0, 500), 'description');
+  } catch (err) {
+    if (err.code === 'FORBIDDEN_CONTENT') {
+      return res.status(400).json({ error: err.message, code: err.code, field: err.field, categories: err.categories });
+    }
+    throw err;
+  }
+
+  try {
+    // Must be owner or admin of the PARENT group
+    const { rows: memberRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id = $1 AND user_id = $2`,
+      [parentId, String(user.id)]
+    );
+    if (!memberRows.length) return res.status(403).json({ error: 'Not a member' });
+    const role = memberRows[0].role;
+    if (role !== 'owner' && role !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only owner or admin can edit topics' });
+    }
+
+    // Verify topic belongs to this parent
+    const { rows: topicRows } = await query(
+      `SELECT id FROM hangout_groups WHERE id = $1 AND parent_group_id = $2`,
+      [topicId, parentId]
+    );
+    if (!topicRows.length) return res.status(404).json({ error: 'Topic not found' });
+
+    // Build update fields dynamically
+    const updates = [];
+    const params = [];
+    let updatedName;
+    let updatedDesc;
+    if (name !== undefined) {
+      updatedName = name.trim().replace(/<[^>]*>/g, '').slice(0, 100);
+      params.push(updatedName);
+      updates.push(`name = $${params.length}`);
+    }
+    if (description !== undefined) {
+      updatedDesc = String(description || '').trim().replace(/<[^>]*>/g, '').slice(0, 500);
+      params.push(updatedDesc);
+      updates.push(`description = $${params.length}`);
+    }
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+    params.push(topicId);
+    const { rows: updated } = await query(
+      `UPDATE hangout_groups SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING id, name, description, position, is_read_only, is_wall_of_fame`,
+      params
+    );
+
+    // Fix CRIT-03: broadcast to all connected members
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`hangout:${parentId}`).emit('hangout:topic:updated', {
+        groupId: parentId,
+        topic: {
+          id: topicId,
+          name: updated[0].name,
+          description: updated[0].description || '',
+          position: updated[0].position,
+          isReadOnly: !!updated[0].is_read_only,
+          isWallOfFame: !!updated[0].is_wall_of_fame,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      topic: {
+        id: updated[0].id,
+        name: updated[0].name,
+        description: updated[0].description || '',
+        position: updated[0].position,
+        parentGroupId: parentId,
+        isReadOnly: !!updated[0].is_read_only,
+        isWallOfFame: !!updated[0].is_wall_of_fame,
+      },
+    });
+  } catch (err) {
+    logger.error('updateTopic error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to update topic' });
+  }
+}
+
+// DELETE /api/webapp/hangouts/groups/:id/topics/:topicId
+async function deleteTopic(req, res) {
+  const user = authGuard(req, res); if (!user) return;
+  const parentId  = parseInt(req.params.id, 10);
+  const topicId   = parseInt(req.params.topicId, 10);
+  if (!Number.isFinite(parentId) || !Number.isFinite(topicId)) return res.status(400).json({ error: 'Invalid ID' });
+
+  try {
+    // Must be owner of the parent group (not just admin — deletion is destructive)
+    const { rows: memberRows } = await query(
+      `SELECT role FROM hangout_group_members WHERE group_id = $1 AND user_id = $2`,
+      [parentId, String(user.id)]
+    );
+    if (!memberRows.length) return res.status(403).json({ error: 'Not a member' });
+    const role = memberRows[0].role;
+    if (role !== 'owner' && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Only the group owner can delete topics' });
+    }
+
+    // Delete messages first, then the group row — both in one transaction
+    const txDel = await getClient();
+    let delRowCount;
+    try {
+      await txDel.query('BEGIN');
+      await txDel.query('DELETE FROM chat_messages WHERE room = $1', [`hangout:${topicId}`]);
+      const { rowCount } = await txDel.query(
+        `DELETE FROM hangout_groups WHERE id = $1 AND parent_group_id = $2`,
+        [topicId, parentId]
+      );
+      delRowCount = rowCount;
+      if (delRowCount === 0) {
+        await txDel.query('ROLLBACK');
+        return res.status(404).json({ error: 'Topic not found' });
+      }
+      await txDel.query('COMMIT');
+    } catch (txDelErr) {
+      await txDel.query('ROLLBACK').catch(() => {});
+      throw txDelErr;
+    } finally {
+      txDel.release();
+    }
+
+    // Fix CRIT-03: broadcast to all connected members
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`hangout:${parentId}`).emit('hangout:topic:deleted', { groupId: parentId, topicId });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('deleteTopic error', { error: err.message });
+    return res.status(500).json({ error: 'Failed to delete topic' });
+  }
+}
+
+// PATCH /api/webapp/hangouts/groups/:id/members/me/first-visit
+const markFirstVisitDone = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const groupId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(groupId) || groupId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+  try {
+    await query(
+      `UPDATE hangout_group_members SET first_topic_visit_done = true WHERE group_id = $1 AND user_id = $2`,
+      [groupId, String(user.id)]
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('markFirstVisitDone error', err);
+    return res.status(500).json({ error: 'Failed to update' });
+  }
+};
+
 module.exports = {
   listGroups,
   createGroup,
   getGroup,
+  getPublicGroup,
   joinGroup,
   leaveGroup,
   deleteGroup,
@@ -2576,13 +3346,11 @@ module.exports = {
   updateMemberRole,
   getMessages,
   sendMessage,
-
   markAsRead,
   discoverGroups,
   requestJoinGroup,
   getJoinRequests,
   handleJoinRequest,
-  kickMember,
   banMember,
   unbanMember,
   muteMember,
@@ -2618,6 +3386,11 @@ module.exports = {
   pinGroup,
   muteGroupForUser,
   markMessageRead,
+  notifyOnlineMembers,
+  createTopic,
+  updateTopic,
+  deleteTopic,
+  markFirstVisitDone,
 };
 
 // ── LiveKit video calls ──────────────────────────────────────────────────────
@@ -2875,7 +3648,15 @@ async function joinCall(req, res) {
     );
     if (rows.length === 0) return res.status(404).json({ error: 'No active call for this group' });
 
-    const { id: callId, room_name: roomName } = rows[0];
+    const existingCall = rows[0];
+    const { id: callId, room_name: roomName } = existingCall;
+
+    // Participant cap check
+    const participantCount = await getActiveParticipantCount(existingCall.id);
+    const MAX_CALL_PARTICIPANTS = parseInt(process.env.MAX_CALL_PARTICIPANTS || '50', 10);
+    if (participantCount >= MAX_CALL_PARTICIPANTS) {
+      return res.status(409).json({ error: 'Call is full', code: 'CALL_FULL' });
+    }
 
     const result = await generateCallAccess(groupId, callId, roomName, user);
 

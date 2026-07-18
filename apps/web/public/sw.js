@@ -120,8 +120,33 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
-  const isUpdate = url.includes('update=1');
+  const rawUrl = event.notification.data?.url || '/';
+
+  // If the notification URL had ?update=1, the SW handles cache clearing here
+  // and strips the param before navigating — avoids a blank-page flash in WebViews
+  // where window.location.replace() after body-clear can fail silently.
+  let isUpdate = false;
+  let navUrl = rawUrl;
+  let isExternal = false;
+  try {
+    const u = new URL(rawUrl, self.location.origin);
+    isExternal = u.origin !== self.location.origin;
+    isUpdate = u.searchParams.get('update') === '1' || u.searchParams.get('reset') === '1';
+    if (isUpdate) {
+      u.searchParams.delete('update');
+      u.searchParams.delete('reset');
+      navUrl = u.toString();
+    }
+  } catch {
+    navUrl = '/';
+  }
+
+  // External URL (third-party checkout, etc.): always openWindow — client.navigate
+  // is same-origin only and would no-op, leaving the user staring at PNPtv.
+  if (isExternal) {
+    event.waitUntil(clients.openWindow(navUrl));
+    return;
+  }
 
   event.waitUntil(
     (isUpdate
@@ -131,11 +156,11 @@ self.addEventListener('notificationclick', (event) => {
       clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
         for (const client of clientList) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
-            client.navigate(url);
+            client.navigate(navUrl);
             return client.focus();
           }
         }
-        return clients.openWindow(url);
+        return clients.openWindow(navUrl);
       })
     )
   );

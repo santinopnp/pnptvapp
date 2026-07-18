@@ -27,6 +27,11 @@ try {
   );
 }
 
+// In-memory consecutive timeout counter — resets on successful send or restart.
+// Subscriptions that time out 5+ times in a row are pruned as permanently stale.
+const _timeoutFailures = new Map();
+const TIMEOUT_PRUNE_THRESHOLD = 5;
+
 class PushNotificationService {
   /**
    * Call once at application startup to configure VAPID credentials.
@@ -86,8 +91,8 @@ class PushNotificationService {
       title: title || 'PNPtv!',
       body: body || '',
       url: url || '/',
-      icon: icon || '/icons/icon-192x192.png',
-      badge: '/icons/badge-96x96.png',
+      icon: icon || '/icon-192.png',
+      badge: '/Logo2-50.png',
     };
     if (tag) payload.tag = tag;
     return JSON.stringify(payload);
@@ -123,12 +128,37 @@ class PushNotificationService {
           setTimeout(() => reject(Object.assign(new Error('push send timeout'), { statusCode: 408 })), 8_000)
         ),
       ]);
+      _timeoutFailures.delete(String(sub.id)); // reset on success
       return true;
     } catch (err) {
       if (err.statusCode === 410 || err.statusCode === 404) {
         // Subscription has expired or is invalid — remove it
         logger.info('[PushNotificationService] Removing expired subscription', { id: sub.id });
+        _timeoutFailures.delete(String(sub.id));
         await this.removeSubscription(sub.id);
+      } else if (err.statusCode === 408) {
+        const key = String(sub.id);
+        const count = (_timeoutFailures.get(key) || 0) + 1;
+        if (count >= TIMEOUT_PRUNE_THRESHOLD) {
+          logger.info('[PushNotificationService] Pruning subscription after repeated timeouts', { id: sub.id, count });
+          _timeoutFailures.delete(key);
+          await this.removeSubscription(sub.id);
+        } else {
+          _timeoutFailures.set(key, count);
+          logger.warn(`push send timeout`, { id: String(sub.id), status: 408 });
+        }
+      } else if (err.statusCode === 429) {
+        // Push service rate-limiting this endpoint — track failures and prune if persistent
+        const key = String(sub.id);
+        const count = (_timeoutFailures.get(key) || 0) + 1;
+        if (count >= TIMEOUT_PRUNE_THRESHOLD) {
+          logger.info('[PushNotificationService] Pruning subscription after repeated 429s', { id: sub.id, count });
+          _timeoutFailures.delete(key);
+          await this.removeSubscription(sub.id);
+        } else {
+          _timeoutFailures.set(key, count);
+          logger.warn('[PushNotificationService] Push rate-limited (429)', { id: sub.id, attempt: count });
+        }
       } else {
         logger.warn('[PushNotificationService] Failed to send to subscription', {
           id: sub.id,

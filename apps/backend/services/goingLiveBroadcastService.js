@@ -31,15 +31,21 @@ function todayUtc() {
 
 /**
  * Check (and atomically set) the per-creator dedup key in Redis.
- * Returns true  → already announced today, skip.
+ * Returns true  → already announced for this session, skip.
  * Returns false → first announcement; key is now set.
  *
+ * LIVE-H-03: Key is now session-scoped using streamId so the dedup is per stream
+ * session, not per calendar day. Falls back to date-granular key when no streamId
+ * is supplied (e.g. from the manual broadcast endpoint).
+ *
  * @param {string|number} creatorId
+ * @param {string|null} [streamId]  — session identifier (timestamp or UUID)
  * @returns {Promise<boolean>}
  */
-async function isAlreadyAnnounced(creatorId) {
+async function isAlreadyAnnounced(creatorId, streamId) {
   const redis = getRedis();
-  const key = `pnp:live:announced:${creatorId}:${todayUtc()}`;
+  const suffix = streamId ? streamId : todayUtc();
+  const key = `pnp:live:announced:${creatorId}:${suffix}`;
   // NX = set only if not exists; returns 1 on success, null if key already existed
   const result = await redis.set(key, '1', 'EX', DEDUP_TTL_SECONDS, 'NX');
   return result === null; // null → key existed → already announced
@@ -114,6 +120,8 @@ async function loadPushFollowers(creatorId) {
      FROM user_follows uf
      JOIN users u ON u.id = uf.follower_id
      WHERE uf.following_id = $1
+       AND u.deleted_at IS NULL
+       AND COALESCE(u.tier, 'free') != 'banned'
        AND COALESCE(
              (u.notification_preferences->'going_live'->>'push')::boolean,
              true
@@ -177,6 +185,90 @@ async function sendTelegramDMs(bot, followers, creatorName, channelRef, customMe
   return sent;
 }
 
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+/**
+ * Post the "going live" announcement to every linked Telegram group with
+ * the same format used in the in-app social feed and the DM: a branded
+ * stream snapshot as the header image, a caption with the creator name +
+ * PNPtv tagline, and an inline "Watch Now" button.
+ *
+ * Falls back to a text-only send with link preview if the snapshot fetch
+ * fails (Restreamer down, channel offline for a moment, etc.).
+ *
+ * Dedup key `live:group:notif:{chatId}:{creatorId}` with 1h TTL prevents
+ * spamming a group if the creator toggles live off/on quickly.
+ *
+ * @param {import('telegraf').Telegraf} bot
+ * @param {string|number} creatorId
+ * @param {string} channelRef
+ * @param {string} creatorName
+ * @param {string|null} [customMessage]
+ * @returns {Promise<number>} count of groups notified
+ */
+async function notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage) {
+  if (!bot) return 0;
+  const groupManagerService = require('./groupManagerService');
+  const ogService = require('./ogService');
+  const redis = getRedis();
+
+  const groups = await groupManagerService.getLinkedGroups().catch(() => []);
+  if (!groups || groups.length === 0) return 0;
+
+  const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const watchUrl = channelRef ? `${appUrl}/live/${encodeURIComponent(channelRef)}` : appUrl;
+
+  // Build the branded snapshot once and reuse across every group in this run.
+  let snapshotBuf = null;
+  try {
+    snapshotBuf = await ogService.fetchAndBrandStreamSnapshot(channelRef, creatorName);
+  } catch (err) {
+    logger.warn('goingLiveBroadcast: snapshot fetch failed — text-only fallback', {
+      creatorId, channelRef, error: err.message,
+    });
+  }
+
+  const safeName = escHtml(creatorName || 'A creator');
+  const tagline = 'Real Models. Real Clouds. 🌫️';
+  const caption = customMessage
+    ? `🔴 <b>${safeName} is LIVE!</b>\n\n${escHtml(String(customMessage).slice(0, 400))}\n\n${tagline}\n\n👉 ${escHtml(watchUrl)}`
+    : `🔴 <b>${safeName} is LIVE on PNPtv!</b>\n${tagline}\n\n👉 ${escHtml(watchUrl)}`;
+
+  const kb = Markup.inlineKeyboard([[Markup.button.url('▶️ Watch Now', watchUrl)]]);
+
+  let sent = 0;
+  for (const group of groups) {
+    const chatId = group.telegram_chat_id;
+    const dedupKey = `live:group:notif:${chatId}:${creatorId}`;
+    if (redis && (await redis.get(dedupKey).catch(() => null))) continue;
+
+    try {
+      if (snapshotBuf) {
+        await bot.telegram.sendPhoto(
+          chatId,
+          { source: snapshotBuf },
+          { caption, parse_mode: 'HTML', ...kb },
+        );
+      } else {
+        await bot.telegram.sendMessage(
+          chatId,
+          caption,
+          { parse_mode: 'HTML', disable_web_page_preview: false, ...kb },
+        );
+      }
+      sent++;
+      if (redis) await redis.set(dedupKey, '1', 'EX', 3600).catch(() => {});
+    } catch (err) {
+      logger.warn('goingLiveBroadcast: group notify failed', {
+        chatId, creatorId, error: err?.response?.description || err.message,
+      });
+    }
+  }
+  return sent;
+}
+
 /**
  * Fan-out web-push notifications to opted-in followers.
  * Silently no-ops if PushNotificationService is unavailable.
@@ -197,16 +289,16 @@ async function sendPushNotifications(followers, creatorName, channelRef) {
   const watchPath = channelRef ? `/live/${encodeURIComponent(channelRef)}` : '/live';
   const watchUrl  = `${appUrl}${watchPath}`;
 
-  let sent = 0;
-  for (const follower of followers) {
-    const n = await PushNotificationService.sendToUser(follower.id, {
-      title: `${creatorName} is live!`,
-      body:  'Watch now before the room fills up.',
-      url:   watchUrl,
-      tag:   `going-live-${follower.id}`,
-    }).catch(() => 0);
-    sent += n;
-  }
+  const followerIds = followers.map(f => f.id);
+  if (followerIds.length === 0) return 0;
+
+  // Single batched query for all follower subscriptions instead of N per-user queries.
+  const sent = await PushNotificationService.sendToUsers(followerIds, {
+    title: `${creatorName} is live!`,
+    body:  'Watch now before the room fills up.',
+    url:   watchUrl,
+    tag:   `going-live-${channelRef}`,
+  }).catch(() => 0);
   return sent;
 }
 
@@ -218,11 +310,12 @@ async function sendPushNotifications(followers, creatorName, channelRef) {
  * @param {string|number} creatorId
  * @param {string} channelRef
  * @param {{ message?: string }} [opts]  — Optional overrides
+ * @param {string|null} [streamId]  — Session-scoped dedup identifier (LIVE-H-03)
  * @returns {Promise<{ dispatched: number, skippedDedup: boolean }>}
  */
-async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}) {
+async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamId = null) {
   try {
-    const alreadyAnnounced = await isAlreadyAnnounced(creatorId);
+    const alreadyAnnounced = await isAlreadyAnnounced(creatorId, streamId);
     if (alreadyAnnounced) {
       logger.info('goingLiveBroadcast: skipped (dedup)', { creatorId, channelRef });
       return { dispatched: 0, skippedDedup: true };
@@ -234,15 +327,28 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}) {
       loadPushFollowers(creatorId),
     ]);
 
+    const customMessage = opts?.message || null;
+
     if (dmFollowers.length === 0 && pushFollowers.length === 0) {
-      logger.info('goingLiveBroadcast: no opted-in followers', { creatorId });
+      logger.info('goingLiveBroadcast: no opted-in followers — feed+X+groups announce only', { creatorId });
+      setImmediate(() => {
+        const cristinaFeedService = require('./cristinaFeedService');
+        cristinaFeedService.announceLiveStream(creatorId, creatorName, channelRef).catch((err) => {
+          logger.warn('goingLiveBroadcast: announceLiveStream error', { creatorId, error: err.message });
+        });
+      });
+      setImmediate(() => {
+        notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage).catch((err) => {
+          logger.warn('goingLiveBroadcast: notifyLinkedGroups error', { creatorId, error: err.message });
+        });
+      });
       return { dispatched: 0, skippedDedup: false };
     }
 
-    const customMessage = opts?.message || null;
-
     const [dmSent, pushSent] = await Promise.all([
-      bot ? sendTelegramDMs(bot, dmFollowers, creatorName, channelRef, customMessage) : Promise.resolve(0),
+      // Telegram notification mirroring disabled — notifications are in-app and push only
+      // bot ? sendTelegramDMs(bot, dmFollowers, creatorName, channelRef, customMessage) : Promise.resolve(0),
+      Promise.resolve(0),
       sendPushNotifications(pushFollowers, creatorName, channelRef),
     ]);
 
@@ -254,6 +360,23 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}) {
       dmSent,
       pushSent,
     });
+
+    // Fire-and-forget: feed post + X announcement (branded snapshot card)
+    setImmediate(() => {
+      const cristinaFeedService = require('./cristinaFeedService');
+      cristinaFeedService.announceLiveStream(creatorId, creatorName, channelRef).catch((err) => {
+        logger.warn('goingLiveBroadcast: announceLiveStream error', { creatorId, error: err.message });
+      });
+    });
+
+    // Fire-and-forget: Telegram group notifications with the same branded
+    // snapshot + tagline + Watch Now button as the feed post and DM.
+    setImmediate(() => {
+      notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage).catch((err) => {
+        logger.warn('goingLiveBroadcast: notifyLinkedGroups error', { creatorId, error: err.message });
+      });
+    });
+
     return { dispatched: dmSent + pushSent, skippedDedup: false };
   } catch (err) {
     logger.error('goingLiveBroadcast: error', { creatorId, channelRef, error: err.message });
@@ -261,4 +384,4 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}) {
   }
 }
 
-module.exports = { broadcastGoingLive };
+module.exports = { broadcastGoingLive, notifyLinkedGroups };

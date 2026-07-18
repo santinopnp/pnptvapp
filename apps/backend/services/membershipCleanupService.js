@@ -10,12 +10,19 @@ const BusinessNotificationService = require('./businessNotificationService');
 class MembershipCleanupService {
   static bot = null;
   static primeChannelId = process.env.PRIME_CHANNEL_ID;
+  static _initialized = false;
 
   /**
-   * Initialize the service with bot instance
+   * Initialize the service with bot instance.
+   * Guarded: safe to call multiple times — only the first call takes effect.
    * @param {Telegraf} bot - Bot instance
    */
   static initialize(bot) {
+    if (this._initialized) {
+      logger.warn('MembershipCleanupService.initialize() called more than once — ignoring duplicate');
+      return;
+    }
+    this._initialized = true;
     this.bot = bot;
     logger.info('Membership cleanup service initialized', {
       primeChannelId: this.primeChannelId
@@ -83,17 +90,8 @@ class MembershipCleanupService {
       const statusResults = await this.updateAllSubscriptionStatuses();
       results.statusUpdates = statusResults;
 
-      // Step 2: PRIME-channel auto-restore disabled — PRIME migrated to webapp 2026-04-28.
-      // Previously DM'd users a one-time invite link to the legacy Telegram PRIME channel,
-      // which is no longer the access surface. Keep status updates + expiry kicks active.
-
-      // Step 3: Kick churned/expired users from PRIME channel
-      if (this.bot && this.primeChannelId) {
-        const kickResults = await this.kickExpiredUsersFromPrimeChannel();
-        results.channelKicks = kickResults;
-      } else {
-        logger.warn('Skipping channel kicks: Bot or PRIME_CHANNEL_ID not configured');
-      }
+      // PRIME channel fully migrated to webapp 2026-04-28.
+      // Channel kicks and auto-restore are both disabled — Telegram PRIME channel is dead.
 
       results.endTime = new Date();
       const duration = (results.endTime - results.startTime) / 1000;
@@ -215,9 +213,10 @@ class MembershipCleanupService {
               expire_date: Math.floor(Date.now() / 1000) + 3600 // 1 hour expiry
             });
 
-            await this.bot.telegram.sendMessage(telegramId,
-              `🎉 ¡Tu acceso al canal PRIME ha sido restaurado!\n\nUsa este enlace de un solo uso para unirte:\n${inviteLink.invite_link}`
-            );
+            // Telegram notification mirroring disabled — notifications are in-app and push only
+            // await this.bot.telegram.sendMessage(telegramId,
+            //   `🎉 ¡Tu acceso al canal PRIME ha sido restaurado!\n\nUsa este enlace de un solo uso para unirte:\n${inviteLink.invite_link}`
+            // );
 
             results.added++;
             logger.info(`Sent invite link to user ${user.id} (${user.username || 'no username'}) for PRIME channel`);
@@ -300,6 +299,10 @@ class MembershipCleanupService {
           AND tier = 'PRIME'
           AND plan_expiry IS NOT NULL
           AND plan_expiry <= NOW()
+          AND id NOT IN (
+            SELECT DISTINCT user_id FROM user_entitlements
+            WHERE is_lifetime = true AND is_consumed = false
+          )
       `);
 
       for (const user of lifetime100ExpiredPrime.rows) {
@@ -343,6 +346,27 @@ class MembershipCleanupService {
           logger.error(`Error updating user ${user.id} from expired to churned:`, error);
         }
       }
+
+      // Repair any tier drift caused by churning users who still have active entitlements
+      try {
+        const driftResult = await query(`
+          SELECT DISTINCT u.id FROM users u
+          WHERE u.tier = 'free'
+            AND EXISTS (
+              SELECT 1 FROM user_entitlements ue
+              WHERE ue.user_id = u.id::text
+                AND ue.is_consumed = false
+                AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+            )
+        `);
+        if (driftResult.rowCount > 0) {
+          const EntitlementAccessService = require('./entitlementAccessService');
+          for (const row of driftResult.rows) {
+            try { await EntitlementAccessService.recomputeUserTier(String(row.id)); } catch (_) {}
+          }
+          logger.info(`updateAllSubscriptionStatuses: repaired tier drift for ${driftResult.rowCount} users`);
+        }
+      } catch (_) {}
 
       logger.info('Subscription status updates completed', results);
       return results;
@@ -452,7 +476,8 @@ Reactivate your membership to regain access to:
 
 Type /subscribe to view membership plans and reactivate your access!`;
 
-    await this.bot.telegram.sendMessage(userId, message, { parse_mode: 'Markdown' });
+    // Telegram notification mirroring disabled — notifications are in-app and push only
+    // await this.bot.telegram.sendMessage(userId, message, { parse_mode: 'Markdown' });
   }
 
   /**
@@ -577,9 +602,10 @@ Type /subscribe to view membership plans and reactivate your access!`;
             updated_at = NOW()
         WHERE plan_expiry IS NOT NULL
           AND plan_expiry > NOW()
-          AND (plan_id IS NULL OR plan_id != 'member_monthly')
+          AND plan_id IS NOT NULL
+          AND plan_id != 'member_monthly'
           AND (subscription_status != 'active' OR tier != 'PRIME')
-          AND (plan_id IS NULL OR plan_id != ALL($LIFETIME_PLANS))
+          AND plan_id != ALL($LIFETIME_PLANS)
           ${lifetimeExclusionTemplate}
         RETURNING id, username
       `);
@@ -713,6 +739,8 @@ Type /subscribe to view membership plans and reactivate your access!`;
       }
 
       // Step 5: Ensure 'free' tier for all churned users
+      // Exclude users who have active entitlements — they are managed by recomputeUserTier,
+      // not by the legacy plan_id/plan_expiry columns.
       const q5 = buildQuery(`
         UPDATE users
         SET tier = 'free',
@@ -721,6 +749,12 @@ Type /subscribe to view membership plans and reactivate your access!`;
           AND tier != 'free'
           AND (plan_id IS NULL OR plan_id != ALL($LIFETIME_PLANS))
           ${lifetimeExclusionTemplate}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_entitlements ue
+            WHERE ue.user_id = users.id::text
+              AND ue.is_consumed = false
+              AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+          )
         RETURNING id
       `);
       const fixChurnedTierResult = await query(q5.text, q5.values);
@@ -747,6 +781,8 @@ Type /subscribe to view membership plans and reactivate your access!`;
       }
 
       // Step 7: Ensure users without any plan are set to 'free'
+      // Exclude users who have active entitlements (e.g. free-trial users) — their
+      // tier is managed by recomputeUserTier, not by the legacy plan_id/plan_expiry columns.
       const q7 = buildQuery(`
         UPDATE users
         SET subscription_status = 'free',
@@ -756,6 +792,12 @@ Type /subscribe to view membership plans and reactivate your access!`;
           AND plan_expiry IS NULL
           AND subscription_status NOT IN ('free')
           ${lifetimeExclusionTemplate}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_entitlements ue
+            WHERE ue.user_id = users.id::text
+              AND ue.is_consumed = false
+              AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+          )
         RETURNING id
       `);
       const freeResult = await query(q7.text, q7.values);
@@ -783,6 +825,7 @@ Type /subscribe to view membership plans and reactivate your access!`;
       }
 
       // Rule: churned/free status MUST NOT have PRIME or member tier
+      // Exclude users who have active entitlements — recomputeUserTier keeps those in sync.
       const q8b = buildQuery(`
         UPDATE users
         SET tier = 'free',
@@ -791,6 +834,12 @@ Type /subscribe to view membership plans and reactivate your access!`;
           AND tier IN ('PRIME', 'member')
           AND tier != 'banned'
           ${lifetimeExclusionTemplate}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_entitlements ue
+            WHERE ue.user_id = users.id::text
+              AND ue.is_consumed = false
+              AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+          )
         RETURNING id, username, tier AS old_tier
       `);
       const fixChurnedPrime = await query(q8b.text, q8b.values);
@@ -798,6 +847,36 @@ Type /subscribe to view membership plans and reactivate your access!`;
         logger.warn(`Fixed ${fixChurnedPrime.rowCount} churned/free users with wrong tier`, {
           users: fixChurnedPrime.rows.map(r => ({ id: r.id, oldTier: r.old_tier }))
         });
+      }
+
+      // Step 9: Repair tier drift — any user that ended up tier='free' but still has
+      // active entitlements was incorrectly downgraded (most commonly by step 4 churning
+      // an expired plan without considering concurrent entitlements). Call recomputeUserTier
+      // for each to restore the correct tier atomically.
+      try {
+        const driftResult = await query(`
+          SELECT DISTINCT u.id FROM users u
+          WHERE u.tier = 'free'
+            AND EXISTS (
+              SELECT 1 FROM user_entitlements ue
+              WHERE ue.user_id = u.id::text
+                AND ue.is_consumed = false
+                AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+            )
+        `);
+        if (driftResult.rowCount > 0) {
+          logger.info(`MembershipSync: repairing tier drift for ${driftResult.rowCount} users with active entitlements`);
+          const EntitlementAccessService = require('./entitlementAccessService');
+          for (const row of driftResult.rows) {
+            try {
+              await EntitlementAccessService.recomputeUserTier(String(row.id));
+            } catch (_) { /* non-critical */ }
+          }
+          logger.info(`MembershipSync: tier drift repair complete for ${driftResult.rowCount} users`);
+          results.toActive += driftResult.rowCount;
+        }
+      } catch (repairErr) {
+        logger.warn('MembershipSync: tier drift repair failed (non-fatal)', { error: repairErr.message });
       }
 
       results.endTime = new Date();

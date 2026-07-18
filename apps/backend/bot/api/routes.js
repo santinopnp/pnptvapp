@@ -126,13 +126,30 @@ const requireSessionAuth = async (req, res, next) => {
     const cachedBan = await cache.get(banKey);
     if (cachedBan === 'true') return res.status(403).json({ success: false, error: 'Account suspended.', code: 'BANNED' });
     const { rows } = await getPool().query(
-      'SELECT role, terms_accepted, age_verified FROM users WHERE id = $1',
+      'SELECT role, terms_accepted, age_verified, is_active, is_deleted, session_version FROM users WHERE id = $1',
       [userId]
     );
     const userRow = rows[0];
     if (userRow?.role === 'banned') {
       await cache.set(banKey, 'true', 120);
       return res.status(403).json({ success: false, error: 'Account suspended.', code: 'BANNED' });
+    }
+    // is_active / is_deleted check
+    if (!userRow || !userRow.is_active || userRow.is_deleted) {
+      req.session?.destroy?.(() => {});
+      return res.status(401).json({ success: false, error: 'Account not found or deactivated.', code: 'ACCOUNT_DEACTIVATED' });
+    }
+    // session_version check (invalidates sessions after password reset)
+    if (userRow.session_version !== undefined && req.session.user.sessionVersion !== undefined
+        && userRow.session_version !== req.session.user.sessionVersion) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: 'Session invalidated. Please log in again.', code: 'SESSION_INVALIDATED' });
+    }
+    // Absolute session lifetime (90 days)
+    const MAX_SESSION_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+    if (req.session.user.sessionCreatedAt && (Date.now() - req.session.user.sessionCreatedAt) > MAX_SESSION_AGE_MS) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ error: 'Session expired. Please log in again.', code: 'SESSION_EXPIRED' });
     }
     // Consent gate — admins bypass; all other authenticated users must have completed
     // the VerificationGate (age self-declaration + terms acceptance).
@@ -230,6 +247,8 @@ const COLOMBIA_EXEMPT_PREFIXES = [
   '/api/main-stage/',
   // Onboarding must complete before a Colombian user can even purchase pnp-col
   '/api/verify-age-self', '/api/complete-onboarding',
+  // Invite links — socios redeem co_only links and claim pending PRIME without pnp-col
+  '/api/invite/',
 ];
 
 async function colombiaAccessGate(req, res, next) {
@@ -254,9 +273,14 @@ async function colombiaAccessGate(req, res, next) {
   const country = geo?.country || user.country || null;
   if (country !== 'CO') return next();
 
+  // Whitelist: pnp-col = Socio Colombia program member; pnp-member/prime = existing member
   try {
-    const has = await EntitlementAccessService.hasEntitlement(user.id, 'pnp-col');
-    if (has) return next();
+    const [hasCol, hasMember, hasPrime] = await Promise.all([
+      EntitlementAccessService.hasEntitlement(user.id, 'pnp-col').catch(() => false),
+      EntitlementAccessService.hasEntitlement(user.id, 'pnp-member').catch(() => false),
+      EntitlementAccessService.hasEntitlement(user.id, 'prime').catch(() => false),
+    ]);
+    if (hasCol || hasMember || hasPrime) return next();
   } catch (err) {
     logger.error('[ColombiaGate] entitlement check failed', { userId: user.id, error: err.message });
     // Fail closed for CO users when the check errors — safer than leaking access
@@ -264,10 +288,9 @@ async function colombiaAccessGate(req, res, next) {
 
   return res.status(403).json({
     success: false,
-    error: 'PNP Col subscription required for users in Colombia',
-    code: 'PNP_COL_REQUIRED',
+    error: 'PNPtv! is not currently available in Colombia',
+    code: 'CO_REGION_GATED',
     country: 'CO',
-    upgradeUrl: '/subscribe?plan=pnp_col',
   });
 }
 
@@ -695,12 +718,21 @@ app.use(conditionalMiddleware(helmet({
 // tus preflight — must run before the global CORS middleware which would absorb OPTIONS
 // and not forward it to our app.options() route handler.
 app.options('/api/webapp/creator/media/tus', (req, res) => {
+  const ALLOWED_TUS_ORIGINS = new Set([
+    'https://pnptv.app',
+    'https://www.pnptv.app',
+    'https://app.pnptv.app',
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173'] : []),
+  ]);
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_TUS_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Tus-Resumable', '1.0.0');
   res.setHeader('Tus-Version', '1.0.0');
   res.setHeader('Tus-Max-Size', '10737418240');
   res.setHeader('Tus-Extension', 'creation,termination');
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'OPTIONS, POST, HEAD, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Length, X-CSRF-Token');
   res.setHeader('Access-Control-Expose-Headers', 'Location, Tus-Resumable, Upload-Offset, Upload-Length');
@@ -714,7 +746,6 @@ app.use(conditionalMiddleware(cors({
     'https://app.pnptv.app',
     'https://pnptv.app',
     'https://www.pnptv.app',
-    'https://studio.pnptv.app',
     'https://t.me',
     ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'] : [])
   ],
@@ -729,7 +760,10 @@ app.use(conditionalMiddleware(compression()));
 
 // Logging (before other middleware for accurate request tracking)
 // 'short' omits the Authorization header that 'combined' would include in logs
-app.use(morgan('short', { stream: logger.stream }));
+app.use(morgan('short', {
+  stream: logger.stream,
+  skip: (req, res) => req.path === '/api/auth/validate-hls' && res.statusCode === 401,
+}));
 
 // Track user last_active — throttled to once per hour per user via Redis
 app.use((req, res, next) => {
@@ -980,8 +1014,8 @@ app.use(async (req, res, next) => {
       );
       const r = rows[0];
       entry = {
-        // Treat unknown rows as non-exclusive (legacy uploads not tied to a post)
-        isExclusive: r ? (r.is_exclusive === true || (r.tier || '').toLowerCase() === 'prime') : false,
+        // Treat unknown rows as exclusive (fail-closed: unknown content is gated)
+        isExclusive: r ? (r.is_exclusive === true || (r.tier || '').toLowerCase() === 'prime') : true,
         authorId: r ? String(r.author_id) : null,
         expiresAt: now + 60_000,
       };
@@ -1081,12 +1115,21 @@ app.use(async (req, res, next) => {
 // ── Private upload auth guard ──────────────────────────────────────────────
 // DM media, chat files, and hangout media are private — require a valid
 // session. Registered BEFORE express.static so the check runs first.
-const PRIVATE_UPLOAD_PREFIXES = ['/uploads/dm-media/', '/uploads/chat/', '/uploads/hangouts/', '/uploads/creator-media/'];
+const PRIVATE_UPLOAD_PREFIXES = ['/uploads/dm-media/', '/uploads/chat/', '/uploads/hangouts/', '/uploads/creator-media/', '/uploads/support/', '/uploads/recordings/'];
 app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (!PRIVATE_UPLOAD_PREFIXES.some(p => req.path.startsWith(p))) return next();
   if (!req.session?.user?.id) return res.status(401).json({ error: 'Authentication required' });
   return next();
+});
+
+// Force SVG overlays to download, not execute in browser
+app.use('/uploads/overlays', (req, res, next) => {
+  if (req.path.toLowerCase().endsWith('.svg')) {
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', 'attachment');
+  }
+  next();
 });
 
 // Serve static files from public directory with blocking
@@ -1341,13 +1384,20 @@ const limiter = rateLimit({
       '/api/webapp/notifications/counts',
       '/api/webapp/dm/presence',
     ];
+    // Skip high-frequency streaming endpoints that poll every 2-5s while a
+    // user watches a live stream — otherwise watchers exhaust their 600/15min
+    // quota and get 429 on unrelated page requests (schedule, performers).
+    const skipPrefixes = [
+      '/api/proxy/live/hls/',   // HLS segment/manifest (~every 2-3s)
+      '/api/webapp/streams/',   // stream health checks (~every 5s)
+    ];
     const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
-    return skipPaths.includes(pathOnly);
+    return skipPaths.includes(pathOnly) || skipPrefixes.some((p) => pathOnly.startsWith(p));
   },
 });
 app.use('/api/', limiter);
-// Colombia gate lifted 2026-05-24 — CO users now access the full platform
-// app.use(colombiaAccessGate);
+// Colombia Socio gate — blocks CO IPs; whitelists existing members + Socios
+app.use(colombiaAccessGate);
 
 const ageVerificationUpload = multer({
   storage: multer.memoryStorage(),
@@ -1451,8 +1501,9 @@ const creatorVideoTmpDir = '/tmp/pnp-creator-videos';
 if (!fs.existsSync(creatorVideoTmpDir)) fs.mkdirSync(creatorVideoTmpDir, { recursive: true });
 
 const CHUNK_DIR = '/tmp/pnp-chunks';
-if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR, { recursive: true });
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+fs.mkdirSync(CHUNK_DIR, { recursive: true });
+try { fs.chmodSync(CHUNK_DIR, 0o777); } catch (_) {}
+const CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
 // Cleanup chunk dirs older than 24h on startup
 (async () => {
@@ -1471,7 +1522,11 @@ const chunkUpload = multer({
   storage: multer.diskStorage({
     destination: (req, _file, cb) => {
       const uploadId = req.body.uploadId || req.headers['x-upload-id'] || '';
-      const dir = path.join(CHUNK_DIR, uploadId.replace(/[^a-zA-Z0-9_-]/g, ''));
+      const sanitizedId = uploadId.replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!sanitizedId) {
+        return cb(new Error('Missing or empty uploadId'));
+      }
+      const dir = path.join(CHUNK_DIR, sanitizedId);
       fs.mkdirSync(dir, { recursive: true });
       cb(null, dir);
     },
@@ -1480,7 +1535,7 @@ const chunkUpload = multer({
       cb(null, `${idx}.part`);
     },
   }),
-  limits: { fileSize: 6 * 1024 * 1024 },
+  limits: { fileSize: 110 * 1024 * 1024 }, // 110 MB — 10% headroom over 100 MB chunks
 });
 
 const creatorVideoUpload = multer({
@@ -1513,7 +1568,8 @@ const verifyDiskFileType = async (req, res, next) => {
       const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
       const isPng  = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
       const isGif  = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38;
-      const isWebp = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46; // RIFF
+      const isWebp = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46  // RIFF
+                  && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50; // WEBP
       const isWebm = buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3;
       const isFtyp = buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70; // mp4/mov/hevc
 
@@ -1983,6 +2039,19 @@ app.get('/api/auth-status', authStatusLimiter, (req, res, next) => {
 const adminCheckLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, keyGenerator: (req) => req.ip, standardHeaders: true, legacyHeaders: false });
 const paymentCreateLimiter = rateLimit({ windowMs: 60 * 1000, max: 8, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Demasiados intentos. Espera un minuto antes de intentar nuevamente.' }), standardHeaders: true, legacyHeaders: false });
 const creatorSubscriptionLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a minute and try again.' }), standardHeaders: true, legacyHeaders: false });
+const channelVideoViewLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
+const channelPurchaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 3, keyGenerator: (req) => req.session?.user?.id || req.ip, message: { error: 'Too many purchase attempts. Please wait.' }, standardHeaders: true, legacyHeaders: false });
+// Token-wallet spend routes: cap at 10/5min per user. Prevents a script from
+// hammering the connection pool via rapid debit→grant cycles.
+const walletSpendLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a few minutes and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
+// Token-buy invoice-creation endpoints: cap at 5 / 10 min per user. Each call
+// creates a real BTCPay/NowPayments invoice; keep this tighter than walletSpendLimiter
+// to avoid provider-side quota noise and pending-row pollution.
+const walletBuyLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many invoice attempts. Please wait a few minutes.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
+// Status-poll limiter for the checkout modals. BuyTokens modal polls the NP
+// order every 6s for up to 30 min = 300 polls/session. Cap at 200 req / min
+// per user to allow the poll cadence + a bit of jitter.
+const walletStatusLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
 app.get('/api/admin/check', adminCheckLimiter, adminGuard, (req, res) => {
   res.json({ isAdmin: true });
 });
@@ -1999,7 +2068,7 @@ app.use('/api/creator/x/oauth', requireSessionAuth, creatorGuardForOAuth, xOAuth
 // NOTE: superadminGuard and roleController are required again in the RBAC section
 // below for clarity but the auditLog registration must live here to fire first.
 const { auditLog } = require('../../middleware/auditLogger');
-app.use('/api/admin/', auditLog);
+app.use(['/api/admin/', '/api/webapp/admin/'], auditLog);
 
 // Client error logging endpoint (used by ErrorBoundary)
 app.post('/api/log-error', limiter, requireSessionAuth, (req, res) => {
@@ -2073,6 +2142,7 @@ app.post(
   requireSessionAuth,
   uploadLimiter,
   uploadAgeVerificationPhoto,
+  verifyMagicBytes(IMAGE_MIMES),
   asyncHandler(ageVerificationController.verifyAge)
 );
 
@@ -2169,7 +2239,7 @@ app.post('/api/webhooks/persona', webhookLimiter, asyncHandler(async (req, res) 
 const PNPLiveService = require('../../services/pnpLiveService');
 const ModelService = require('../../services/modelService');
 const PaymentService = require('../../services/paymentService');
-app.get('/api/pnp-live/booking/:bookingId', authenticateUser, asyncHandler(async (req, res) => {
+app.get('/api/pnp-live/booking/:bookingId', requireSessionAuth, asyncHandler(async (req, res) => {
   const { bookingId } = req.params;
 
   const booking = await PNPLiveService.getBookingById(bookingId);
@@ -2201,7 +2271,7 @@ app.get('/api/pnp-live/booking/:bookingId', authenticateUser, asyncHandler(async
   });
 }));
 
-app.post('/api/pnp-live/booking/:bookingId/confirm', authenticateUser, asyncHandler(async (req, res) => {
+app.post('/api/pnp-live/booking/:bookingId/confirm', requireSessionAuth, asyncHandler(async (req, res) => {
   const { bookingId } = req.params;
   const { transactionId } = req.body;
   const actorId = getActorId(req);
@@ -2240,23 +2310,33 @@ app.get('/api/stats', requireSessionAuth, asyncHandler(async (req, res) => {
   res.json(stats);
 }));
 
-
+// Analytics: visibility-hide audit event (Layer 2 screen-capture detection)
+// Fire-and-forget from the frontend; logs userId + timestamp for audit trail.
+app.post('/api/webapp/analytics/visibility-hide',
+  softAuth,
+  asyncHandler(async (req, res) => {
+    const userId = req.session?.user?.id || null;
+    const safeTs = String(req.body?.ts ?? '').replace(/[^\d\-T:.Z]/g, '').slice(0, 30);
+    logger.info('visibility-hide event', { userId, ts: safeTs, ip: req.ip });
+    return res.json({ ok: true });
+  })
+);
 
 // Playlist API routes (PROTECTED: require authentication)
-app.get('/api/playlists/user', authenticateUser, asyncHandler(playlistController.getUserPlaylists));
+app.get('/api/playlists/user', requireSessionAuth, asyncHandler(playlistController.getUserPlaylists));
 app.get('/api/playlists/public', asyncHandler(playlistController.getPublicPlaylists));
-app.post('/api/playlists', authenticateUser, asyncHandler(playlistController.createPlaylist));
-app.post('/api/playlists/:playlistId/videos', authenticateUser, asyncHandler(playlistController.addToPlaylist));
-app.delete('/api/playlists/:playlistId/videos/:videoId', authenticateUser, asyncHandler(playlistController.removeFromPlaylist));
-app.patch('/api/playlists/:playlistId', authenticateUser, asyncHandler(playlistController.updatePlaylist));
-app.delete('/api/playlists/:playlistId', authenticateUser, asyncHandler(playlistController.deletePlaylist));
+app.post('/api/playlists', requireSessionAuth, asyncHandler(playlistController.createPlaylist));
+app.post('/api/playlists/:playlistId/videos', requireSessionAuth, asyncHandler(playlistController.addToPlaylist));
+app.delete('/api/playlists/:playlistId/videos/:videoId', requireSessionAuth, asyncHandler(playlistController.removeFromPlaylist));
+app.patch('/api/playlists/:playlistId', requireSessionAuth, asyncHandler(playlistController.updatePlaylist));
+app.delete('/api/playlists/:playlistId', requireSessionAuth, asyncHandler(playlistController.deletePlaylist));
 
 
 
 // Podcasts uploads (local storage under /public/uploads/podcasts)
 app.post(
   '/api/podcasts/upload',
-  authenticateUser,
+  requireSessionAuth,
   uploadLimiter,
   podcastController.upload.single('audio'),
   asyncHandler(podcastController.uploadAudio)
@@ -2268,7 +2348,8 @@ app.get('/recurring-checkout/:userId/:planId', pageLimiter, (req, res) => {
 });
 
 // Subscription API routes
-app.get('/api/subscription/plans', asyncHandler(subscriptionController.getPlans));
+const plansLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+app.get('/api/subscription/plans', plansLimiter, asyncHandler(subscriptionController.getPlans));
 app.get('/api/subscription/subscriber/:identifier', verifyAdminJWT, asyncHandler(subscriptionController.getSubscriber));
 app.get('/api/subscription/stats', verifyAdminJWT, asyncHandler(subscriptionController.getStatistics));
 
@@ -2280,14 +2361,16 @@ const MediaPlayerModel = require('../../models/mediaPlayerModel');
 
 // Get media library
 app.get('/api/media/library', asyncHandler(async (req, res) => {
-  const { type = 'all', category, limit = 50 } = req.query;
+  const { type = 'all', category } = req.query;
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Math.min(Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 50), 200);
 
   try {
     let media;
     if (category) {
-      media = await MediaPlayerModel.getMediaByCategory(category, parseInt(limit));
+      media = await MediaPlayerModel.getMediaByCategory(category, limit);
     } else {
-      media = await MediaPlayerModel.getMediaLibrary(type, parseInt(limit));
+      media = await MediaPlayerModel.getMediaLibrary(type, limit);
     }
 
     res.json({
@@ -2479,7 +2562,7 @@ app.get('/api/radio/now-playing', asyncHandler(async (req, res) => {
 // Get radio history
 app.get('/api/radio/history', asyncHandler(async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 20;
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 100);
     const result = await getPool().query(
       'SELECT * FROM radio_history ORDER BY played_at DESC LIMIT $1',
       [limit]
@@ -2505,7 +2588,7 @@ app.get('/api/radio/schedule', asyncHandler(async (req, res) => {
 }));
 
 // Submit song request (PROTECTED: require authentication)
-app.post('/api/radio/request', authenticateUser, asyncHandler(async (req, res) => {
+app.post('/api/radio/request', requireSessionAuth, asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.id; // Use authenticated user's ID, not from body
     const { songName, artist } = req.body;
@@ -2618,6 +2701,11 @@ app.post('/api/webapp/auth/magic/start', magicLinkLimiter, asyncHandler(webAppCo
 app.get('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkVerify));
 app.get('/api/webapp/auth/passkey/begin', authLimiter, asyncHandler(webAppController.passkeyBegin));
 app.post('/api/webapp/auth/passkey/finish', authLimiter, asyncHandler(webAppController.passkeyFinish));
+// Passkey management (for authenticated users adding/removing passkeys)
+app.get('/api/webapp/auth/passkey/register/begin', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterBegin));
+app.post('/api/webapp/auth/passkey/register/finish', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterFinish));
+app.get('/api/webapp/auth/passkeys', requireSessionAuth, asyncHandler(webAppController.passkeyListDevices));
+app.delete('/api/webapp/auth/passkeys/:devicePk', requireSessionAuth, asyncHandler(webAppController.passkeyDeleteDevice));
 
 // Request account recovery — Authentik-based password reset.
 // Why this path exists: most users (especially Telegram-shadow accounts) have a
@@ -2816,7 +2904,6 @@ const oidcCallbackLimiter = rateLimit({
 const OIDC_ALLOWED_RETURN_HOSTS = new Set([
   'pnptv.app',
   'app.pnptv.app',
-  'studio.pnptv.app',
 ]);
 
 function sanitizeOidcReturnTo(raw) {
@@ -3050,44 +3137,6 @@ app.get('/api/webapp/auth/oidc/callback', oidcCallbackLimiter, asyncHandler(asyn
     }
   }
 
-  // Fallback #3 — username match. Telegram-widget users have placeholder
-  // @telegram.pnptv.app emails in Authentik that don't match their real email
-  // in our users table, so the email lookup misses. Match by preferred_username
-  // before falling through to INSERT (otherwise the unique-username constraint
-  // throws 500 on every login attempt).
-  if (!userRow && preferred_username) {
-    const usernameLookup = await pool.query(
-      `SELECT id, pnptv_id, username, first_name, last_name, subscription_status,
-              tier, terms_accepted, age_verified, photo_file_id, bio, language, role,
-              creator_status, content_disclaimer, telegram, twitter, x_user_id, x_id,
-              email, last_login_method
-       FROM users
-       WHERE LOWER(username) = LOWER($1) AND is_deleted = false
-       LIMIT 1`,
-      [preferred_username]
-    );
-    if (usernameLookup.rows.length > 0) {
-      userRow = usernameLookup.rows[0];
-      const displayName = name || preferred_username || userRow.first_name || null;
-      await pool.query(
-        `UPDATE users
-         SET pnptv_id = $1,
-             last_login_method = 'oidc',
-             last_login_at = NOW(),
-             first_name = COALESCE(NULLIF($2, ''), first_name),
-             photo_file_id = COALESCE(NULLIF($3, ''), photo_file_id),
-             email = COALESCE(NULLIF($4, ''), email)
-         WHERE id = $5
-           AND NOT EXISTS (SELECT 1 FROM users WHERE pnptv_id = $1 AND id != $5)`,
-        [sub, displayName, picture || null, email || null, userRow.id]
-      );
-      userRow.pnptv_id = sub;
-      userRow.first_name = displayName || userRow.first_name;
-      userRow.last_login_method = 'oidc';
-      logger.info('[OIDC] Linked pnptv_id to existing username account', { userId: userRow.id, sub, username: preferred_username });
-    }
-  }
-
   if (!userRow) {
     // No existing user — create a new PNPtv account linked to this Authentik identity
     const baseUsername = (preferred_username || (email ? email.split('@')[0] : null) || `user_${crypto.randomBytes(4).toString('hex')}`)
@@ -3211,6 +3260,8 @@ app.get('/api/webapp/auth/oidc/callback', oidcCallbackLimiter, asyncHandler(asyn
       oidc: true,
     },
     last_login_method: 'oidc',
+    sessionCreatedAt: Date.now(),
+    sessionVersion: userRow.session_version || 0,
   };
 
   // Persist session before redirect
@@ -3482,6 +3533,8 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
     oidc_refresh_token: null,
     auth_methods: { telegram: false, x: false, oidc: false },
     last_login_method: 'native_register',
+    sessionCreatedAt: Date.now(),
+    sessionVersion: userRow.session_version || 0,
   };
 
   await new Promise((resolve, reject) => {
@@ -3980,12 +4033,205 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
   });
 }));
 
+// GET /api/webapp/admin/service-status — ops dashboard: pings + platform + payment stats
+app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req, res) => {
+  const { query: q } = require('../../config/postgres');
+
+  async function ping(url, timeoutMs = 4000) {
+    const start = Date.now();
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+      const r = await fetch(url, { method: 'HEAD', signal: ctrl.signal, redirect: 'follow' });
+      clearTimeout(tid);
+      return { ok: r.ok || r.status < 500, status: r.status, ms: Date.now() - start };
+    } catch {
+      return { ok: false, status: 0, ms: Date.now() - start };
+    }
+  }
+
+  // Public URLs only — never expose internal env-var addresses to the browser
+  const PING_URLS = {
+    btcpay:      'https://btcpay.pnptv.app',
+    restreamer:  'https://live.pnptv.app',
+    livekit:     'https://livekit.pnptv.app',
+    authentik:   'https://auth.pnptv.app',
+    analytics:   'https://analytics.pnptv.app',
+    metabase:    'https://metabase.pnptv.app',
+    uptime:      'https://status.pnptv.app',
+    calcom:      'https://booking.pnptv.app',
+    cms:         'https://cms.pnptv.app',
+    backend:     'https://pnptv.app/health',
+    nowpayments: 'https://api.nowpayments.io/v1/status',
+    ampache:     'http://ampache:80',
+  };
+
+  const { getRedis } = require('../../config/redis');
+  async function pingRedis() {
+    const start = Date.now();
+    try {
+      const client = getRedis();
+      await client.ping();
+      return { ok: true, status: 200, ms: Date.now() - start };
+    } catch {
+      return { ok: false, status: 0, ms: Date.now() - start };
+    }
+  }
+
+  const [pings, platform, payments] = await Promise.all([
+    Promise.all([
+      ...Object.entries(PING_URLS).map(async ([k, url]) => [k, await ping(url)]),
+      pingRedis().then(r => ['redis', r]),
+    ]).then(Object.fromEntries),
+
+    q(`
+      SELECT
+        (SELECT COUNT(*)::int FROM users)                                                AS users_total,
+        (SELECT COUNT(*)::int FROM users WHERE created_at > NOW() - INTERVAL '24 hours') AS users_new_24h,
+        (SELECT COUNT(*)::int FROM users WHERE created_at > NOW() - INTERVAL '7 days')  AS users_new_7d,
+        (SELECT COUNT(DISTINCT user_id)::int FROM user_entitlements
+           WHERE add_on_id IN ('prime','pnp-member')
+             AND (is_lifetime OR expires_at > NOW())
+             AND NOT is_consumed)                                                         AS prime_members,
+        0                                                                                AS open_tickets,
+        0                                                                                AS new_tickets_24h,
+        (SELECT COUNT(*)::int FROM social_posts WHERE is_deleted = false AND created_at > NOW() - INTERVAL '24 hours') AS posts_24h,
+        (SELECT COUNT(*)::int FROM hangouts WHERE is_active = true)                      AS active_hangouts,
+        (SELECT COUNT(*)::int FROM live_streams WHERE status = 'live')                   AS live_streams_active,
+        (SELECT COUNT(*)::int FROM users WHERE creator_status = 'active' AND role IN ('model','creator')) AS active_creators,
+        (SELECT COUNT(*)::int FROM model_applications WHERE status = 'pending')           AS creator_apps_pending
+    `).then(r => r.rows[0]),
+
+    q(`
+      SELECT
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND completed_at > NOW() - INTERVAL '7 days')
+          + (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='used' AND used_at > NOW() - INTERVAL '7 days') AS completed_7d,
+        (SELECT COALESCE(SUM(usd_amount),0)::numeric FROM dash_subscription_orders WHERE status='completed' AND completed_at > NOW() - INTERVAL '7 days')
+          + (SELECT COUNT(*) * 95 FROM meru_payment_links WHERE status='used' AND used_at > NOW() - INTERVAL '7 days') AS revenue_7d,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND completed_at > NOW() - INTERVAL '24 hours') AS completed_24h,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND created_at > NOW() - INTERVAL '24 hours') AS pending_24h,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='partially_paid') AS partial_all,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND metadata->>'provider'='nowpayments' AND created_at > NOW() - INTERVAL '24 hours') AS np_pending_24h,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND metadata->>'provider'='nowpayments' AND completed_at > NOW() - INTERVAL '7 days') AS np_completed_7d,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND (metadata->>'provider' IS NULL OR metadata->>'provider'='btcpay') AND created_at > NOW() - INTERVAL '24 hours') AS btcpay_pending_24h,
+        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND (metadata->>'provider' IS NULL OR metadata->>'provider'='btcpay') AND completed_at > NOW() - INTERVAL '7 days') AS btcpay_completed_7d,
+        (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='used' AND used_at > NOW() - INTERVAL '7 days') AS meru_completed_7d,
+        (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='active' AND reserved_for_user_id IS NULL) AS meru_available
+    `).then(r => r.rows[0]),
+  ]);
+
+  return res.json({
+    success: true,
+    pings,
+    platform,
+    payments,
+    generated_at: new Date().toISOString(),
+  });
+}));
+
 // GET /api/webapp/admin/hangout-telegram-health — verify linked Telegram chats
 // still exist and surface stale chat IDs before operators hit posting failures.
 app.get('/api/webapp/admin/hangout-telegram-health', adminGuard, asyncHandler(async (_req, res) => {
   const HangoutTelegramHealthService = require('../../services/hangoutTelegramHealthService');
   const snapshot = await HangoutTelegramHealthService.getSnapshot();
   return res.json(snapshot);
+}));
+
+// GET /api/webapp/admin/monitoring — service health dashboard
+app.get('/api/webapp/admin/monitoring', adminGuard, asyncHandler(async (_req, res) => {
+  const http = require('http');
+  const { getPool } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  function httpPing(url, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const parsed = new URL(url);
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || 80,
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        timeout: timeoutMs,
+      };
+      const req = http.request(options, (r) => {
+        r.resume();
+        resolve({ ok: r.statusCode < 500, status: r.statusCode, ms: Date.now() - start });
+      });
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, status: 0, ms: timeoutMs }); });
+      req.on('error', () => resolve({ ok: false, status: 0, ms: Date.now() - start }));
+      req.end();
+    });
+  }
+
+  async function dbPing() {
+    const start = Date.now();
+    try {
+      const client = await getPool().connect();
+      await client.query('SELECT 1');
+      client.release();
+      return { ok: true, ms: Date.now() - start };
+    } catch { return { ok: false, ms: Date.now() - start }; }
+  }
+
+  async function redisPing() {
+    const start = Date.now();
+    try {
+      await cache.ping();
+      return { ok: true, ms: Date.now() - start };
+    } catch { return { ok: false, ms: Date.now() - start }; }
+  }
+
+  async function healthchecksJobs() {
+    const { Pool } = require('pg');
+    const hcPool = new Pool({
+      host: process.env.POSTGRES_HOST || 'pg-pnptv',
+      port: 5432,
+      user: process.env.POSTGRES_USER || 'pnptvbot',
+      password: process.env.POSTGRES_PASSWORD,
+      database: 'healthchecks',
+      max: 1,
+      connectionTimeoutMillis: 3000,
+    });
+    try {
+      const { rows } = await hcPool.query(
+        `SELECT slug, name, timeout, status, last_ping FROM api_check ORDER BY name`,
+      );
+      return rows;
+    } catch { return []; }
+    finally { await hcPool.end().catch(() => {}); }
+  }
+
+  const [db, redis, botSelf, web, restreamer, btcpay, livekit, cms, kuma, calcom, hcJobs] = await Promise.all([
+    dbPing(),
+    redisPing(),
+    httpPing('http://localhost:3001/health'),
+    httpPing('http://pnptv-web:80/'),
+    httpPing('http://restreamer:8080/api/v1/ping'),
+    httpPing('http://btcpay-server:23000/'),
+    httpPing('http://livekit-pnptv:7880/'),
+    httpPing('http://directus:8055/server/health'),
+    httpPing('http://uptime-kuma:3001/api/entry-page'),
+    httpPing('http://calcom:3000/'),
+    healthchecksJobs(),
+  ]);
+
+  return res.json({
+    checkedAt: new Date().toISOString(),
+    services: [
+      { key: 'db',          label: 'PostgreSQL',   category: 'core',     ...db },
+      { key: 'redis',       label: 'Redis',        category: 'core',     ...redis },
+      { key: 'bot',         label: 'API / Bot',    category: 'core',     ...botSelf },
+      { key: 'web',         label: 'Web Frontend', category: 'core',     ...web },
+      { key: 'restreamer',  label: 'Restreamer',   category: 'stream',   ...restreamer },
+      { key: 'livekit',     label: 'LiveKit',      category: 'stream',   ...livekit },
+      { key: 'btcpay',      label: 'BTCPay',       category: 'payment',  ...btcpay },
+      { key: 'cms',         label: 'CMS (Directus)', category: 'infra',  ...cms },
+      { key: 'kuma',        label: 'Uptime Kuma',  category: 'infra',    ...kuma },
+      { key: 'calcom',      label: 'Cal.com',      category: 'infra',    ...calcom },
+    ],
+    cronJobs: hcJobs,
+  });
 }));
 
 // GET /api/webapp/admin/reports — admin list
@@ -4070,12 +4316,14 @@ app.get('/api/webapp/users/me/tokens', requireSessionAuth, asyncHandler(async (r
   const userId = req.session?.user?.id;
   if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
   const { rows } = await getPool().query(
-    'SELECT balance_tokens, gifted_balance FROM user_token_wallets WHERE user_id = $1',
+    'SELECT balance_tokens, gifted_balance, creator_gifts FROM user_token_wallets WHERE user_id = $1',
     [String(userId)]
   );
   const regular = rows.length ? (Number(rows[0].balance_tokens) || 0) : 0;
   const gifted  = rows.length ? (Number(rows[0].gifted_balance)  || 0) : 0;
-  return res.json({ success: true, balance: regular + gifted, regularBalance: regular, giftedBalance: gifted });
+  const creatorGifts = (rows.length && rows[0].creator_gifts) ? rows[0].creator_gifts : {};
+  const creatorGiftsTotal = Object.values(creatorGifts).reduce((s, v) => s + Number(v), 0);
+  return res.json({ success: true, balance: regular + gifted + creatorGiftsTotal, regularBalance: regular, giftedBalance: gifted, creatorGifts });
 }));
 
 // ── My active scoped subscriptions (paid channel/hangout 30-day passes) ────
@@ -4227,13 +4475,72 @@ app.get('/api/webapp/live/rules-status', requireSessionAuth, asyncHandler(liveRu
 app.post('/api/webapp/live/acknowledge-rules', requireSessionAuth, asyncHandler(liveRulesController.acknowledgeRules));
 app.post('/api/webapp/live/stream-rules', requireSessionAuth, creatorGuardForOAuth, asyncHandler(liveRulesController.saveStreamRules));
 
+// STUDIO-H-03: BRB emits Socket.IO events to all viewers — cap at 3 toggles per 5 s
+const brbLimiter = rateLimit({ windowMs: 5 * 1000, max: 3, keyGenerator: (req) => String(req.session?.user?.id || req.ip), standardHeaders: true, legacyHeaders: false });
+// STUDIO-H-03: stream-meta writes Redis key read by all viewers — cap at 5 per 10 s
+const streamMetaLimiter = rateLimit({ windowMs: 10 * 1000, max: 5, keyGenerator: (req) => String(req.session?.user?.id || req.ip), standardHeaders: true, legacyHeaders: false });
+// STUDIO-SEC: credential endpoints (rtmp-key, provision-channel) — 10 per minute
+const credentialLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => String(req.session?.user?.id || req.ip), standardHeaders: true, legacyHeaders: false });
+// STUDIO-SEC: tip-menu write and goal delete — 5 per 10 s
+const tipMenuLimiter = rateLimit({ windowMs: 10 * 1000, max: 5, keyGenerator: (req) => String(req.session?.user?.id || req.ip), standardHeaders: true, legacyHeaders: false });
+
 // Web App Live Streaming Routes
 const webappLiveController = require('./controllers/webappLiveController');
-app.get('/api/webapp/live/streams', requireSessionAuth, requireMemberTier, asyncHandler(webappLiveController.listStreams));
-app.get('/api/webapp/live/rtmp-key', requireSessionAuth, asyncHandler(webappLiveController.getRtmpKey));
+app.get('/api/webapp/live/streams', requireSessionAuth, asyncHandler(webappLiveController.listStreams));
+app.get('/api/webapp/live/rtmp-key', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.getRtmpKey));
 app.get('/api/webapp/me/creator-eligibility', requireSessionAuth, asyncHandler(webappLiveController.getCreatorEligibility));
 // Self-serve channel provisioning: creator gets a Restreamer channel on first "Go Live"
-app.post('/api/webapp/live/provision-channel', requireSessionAuth, asyncHandler(webappLiveController.provisionChannel));
+app.post('/api/webapp/live/provision-channel', requireSessionAuth, credentialLimiter, asyncHandler(webappLiveController.provisionChannel));
+
+// ── Cal.com: creator availability slots ──
+const calcomSlotsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.session?.user?.id ? String(req.session.user.id) : req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many slot requests — try again shortly' },
+});
+app.get('/api/webapp/creator/:creatorId/calcom-slots', softAuth, calcomSlotsLimiter, asyncHandler(async (req, res) => {
+  try {
+    const calcomService = require('../../services/calcomService');
+    const { creatorId } = req.params;
+    const { dateFrom, dateTo, duration } = req.query;
+    if (!dateFrom || !dateTo) return res.json({ slots: [] });
+    const durationMin = Number(duration) === 60 ? 60 : 30;
+    const slots = await calcomService.getCreatorAvailability(creatorId, dateFrom, dateTo, durationMin);
+    return res.json({ slots: slots || [] });
+  } catch (err) {
+    logger.error('[calcom-slots] error', { error: err.message });
+    return res.json({ slots: [] });
+  }
+}));
+
+// ── Cal.com: admin provisioning ──
+app.post('/api/admin/calcom/provision-all', adminGuard, asyncHandler(async (req, res) => {
+  try {
+    const calcomService = require('../../services/calcomService');
+    const result = await calcomService.provisionAllCreators();
+    return res.json({ success: true, provisioned: result?.provisioned ?? 0 });
+  } catch (err) {
+    logger.error('[calcom] provision-all error', { error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
+app.post('/api/admin/calcom/provision/:userId', adminGuard, asyncHandler(async (req, res) => {
+  try {
+    const calcomService = require('../../services/calcomService');
+    const { userId } = req.params;
+    const { username, email } = req.body;
+    if (!username || !email) return res.status(400).json({ success: false, error: 'username and email required' });
+    await calcomService.provisionCreator(userId, username, email);
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('[calcom] provision-user error', { error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}));
 // Raid: creator sends all viewers to another live stream
 app.post('/api/webapp/live/raid', requireSessionAuth, asyncHandler(webappLiveController.initiateRaid));
 // Host mode: embed another channel's stream when offline
@@ -4249,6 +4556,116 @@ app.get('/api/webapp/live/schedule/notify/:slotId', requireSessionAuth, asyncHan
 // Admin: manage Restreamer channel assignments
 app.get('/api/webapp/admin/live/channels', adminGuard, asyncHandler(webappLiveController.listChannels));
 app.post('/api/webapp/admin/live/assign-channel', adminGuard, asyncHandler(webappLiveController.assignChannel));
+
+// GET /api/webapp/live/viewers/:channelRef — creator dashboard: live viewer roster with token balances + fan scores
+app.get('/api/webapp/live/viewers/:channelRef', requireSessionAuth, asyncHandler(async (req, res) => {
+  const { channelRef } = req.params;
+  if (!/^[a-z][a-z0-9_-]{2,}$/.test(channelRef)) {
+    return res.status(400).json({ success: false, error: 'Invalid channel ref' });
+  }
+  const sessionUser = req.session.user;
+  const isAdmin = sessionUser.role === 'admin' || sessionUser.role === 'superadmin';
+
+  // Verify caller owns this channel (or is admin) — read fresh from DB
+  const { rows: ownerRows } = await query(
+    'SELECT id FROM users WHERE live_channel = $1 AND is_deleted = FALSE LIMIT 1',
+    [channelRef]
+  );
+  const channelOwnerId = ownerRows[0]?.id ? String(ownerRows[0].id) : null;
+  if (!isAdmin && String(sessionUser.id) !== channelOwnerId) {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
+  }
+
+  const redis = getRedis();
+  const rosterRaw = await redis.hgetall(`live:roster:${channelRef}`).catch(() => null);
+  if (!rosterRaw || Object.keys(rosterRaw).length === 0) {
+    return res.json({ success: true, viewers: [] });
+  }
+
+  const viewerUserIds = Object.keys(rosterRaw);
+  const { rows } = await query(
+    `SELECT
+       u.id::text AS user_id,
+       COALESCE(w.balance_tokens, 0) + COALESCE(w.gifted_balance, 0) AS token_balance,
+       COALESCE((
+         SELECT SUM(t.amount)
+         FROM pnp_tips t
+         WHERE t.user_id = u.id::text
+           AND t.performer_id = $2::text
+           AND t.payment_status = 'completed'
+       ), 0) AS total_tips_given
+     FROM unnest($1::text[]) AS ids(id)
+     JOIN users u ON u.id::text = ids.id
+     LEFT JOIN user_token_wallets w ON w.user_id = u.id::text`,
+    [viewerUserIds, channelOwnerId || '0']
+  );
+
+  const walletMap = new Map(rows.map((r) => [r.user_id, r]));
+  const viewers = viewerUserIds.map((uid) => {
+    let entry = {};
+    try { entry = JSON.parse(rosterRaw[uid] || '{}'); } catch { /* ignore */ }
+    const wallet = walletMap.get(uid) || {};
+    const tokenBalance = Number(wallet.token_balance) || 0;
+    const totalTips = Number(wallet.total_tips_given) || 0;
+    return {
+      userId: uid,
+      username: entry.username || 'Viewer',
+      joinedAt: entry.joinedAt || null,
+      tokenBalance,
+      totalTipsGiven: totalTips,
+      fanScore: tokenBalance + Math.round(totalTips * 5),
+    };
+  }).sort((a, b) => b.fanScore - a.fanScore);
+
+  return res.json({ success: true, viewers });
+}));
+
+// ── Admin: 2257 compliance record management ──────────────────────────────────
+
+app.get('/api/webapp/creator/2257/records', adminGuard, asyncHandler(async (req, res) => {
+  const IVS = require('../../services/identityVerificationService');
+  const VALID = new Set(['pending', 'approved', 'rejected']);
+  const status = VALID.has(req.query.status) ? req.query.status : null;
+  const records = await IVS.list2257Records(status);
+  const { rows: graceRows } = await query(
+    `SELECT COUNT(*)::int AS count FROM users
+     WHERE creator_status = 'active'
+       AND identity_verified = FALSE
+       AND identity_verification_required_by IS NOT NULL
+       AND identity_verification_required_by > NOW()`
+  );
+  return res.json({ success: true, records, graceCount: graceRows[0]?.count || 0 });
+}));
+
+app.get('/api/webapp/creator/2257/records/export', adminGuard, asyncHandler(async (req, res) => {
+  const IVS = require('../../services/identityVerificationService');
+  const data = await IVS.export2257Records();
+  logger.info('2257: records exported by admin', { adminId: String(req.session.user.id), count: data.records.length });
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="2257-records-${Date.now()}.json"`);
+  return res.json(data);
+}));
+
+app.post('/api/webapp/creator/2257/records/:userId/approve', adminGuard, asyncHandler(async (req, res) => {
+  const IVS = require('../../services/identityVerificationService');
+  const userId = String(req.params.userId);
+  const adminId = String(req.session.user.id);
+  const { notes } = req.body;
+  const record = await IVS.approve2257Record(userId, adminId, notes || null);
+  return res.json({ success: true, record });
+}));
+
+app.post('/api/webapp/creator/2257/records/:userId/reject', adminGuard, asyncHandler(async (req, res) => {
+  const IVS = require('../../services/identityVerificationService');
+  const userId = String(req.params.userId);
+  const adminId = String(req.session.user.id);
+  const { notes } = req.body;
+  if (!notes || !String(notes).trim()) {
+    return res.status(400).json({ success: false, error: 'Rejection reason (notes) is required' });
+  }
+  const record = await IVS.reject2257Record(userId, adminId, String(notes).trim());
+  return res.json({ success: true, record });
+}));
 
 // ── Admin: 2257 ID document download — protected, admin-only ─────────────────
 // Serves ID documents from creator-2257 and creator-enrollments upload dirs.
@@ -4648,12 +5065,29 @@ app.get('/api/webapp/creators/:creatorId/recordings', softAuth, asyncHandler(web
 app.delete('/api/webapp/recordings/:id', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(webappLiveController.deleteRecordingEndpoint));
 app.patch('/api/webapp/recordings/:id', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(webappLiveController.updateRecordingEndpoint));
 
+// GET /api/webapp/live/replay/:channelRef — latest completed recording for a channel (member+ required)
+app.get('/api/webapp/live/replay/:channelRef', requireSessionAuth, asyncHandler(async (req, res) => {
+  const channelRef = req.params.channelRef;
+  if (!channelRef || !/^[a-zA-Z0-9_-]+$/.test(channelRef)) return res.status(400).json({ error: 'invalid_channel_ref' });
+  const userRes = await getPool().query('SELECT id FROM users WHERE live_channel = $1 AND is_deleted = FALSE LIMIT 1', [channelRef]);
+  if (!userRes.rows[0]) return res.json({ success: true, recording: null });
+  const recRes = await getPool().query(
+    `SELECT manifest_url AS "manifestUrl", started_at AS "startedAt", ended_at AS "endedAt",
+            duration_seconds AS "durationSeconds", thumb_path AS "thumbUrl"
+     FROM stream_recordings
+     WHERE creator_id = $1 AND status = 'completed' AND is_deleted = false
+     ORDER BY started_at DESC LIMIT 1`,
+    [String(userRes.rows[0].id)]
+  );
+  return res.json({ success: true, recording: recRes.rows[0] || null });
+}));
+
 // Streamer Settings: persistent encoder + filter preferences
 const streamerSettingsController = require('./controllers/streamerSettingsController');
 app.get('/api/webapp/live/settings', requireSessionAuth, asyncHandler(streamerSettingsController.getSettings));
 app.put('/api/webapp/live/settings', requireSessionAuth, asyncHandler(streamerSettingsController.updateSettings));
 // Gap 2: Persistent thumbnail upload
-app.post('/api/webapp/live/thumbnail', requireSessionAuth, express.json({ limit: '4mb' }), asyncHandler(streamerSettingsController.uploadThumbnail));
+app.post('/api/webapp/live/thumbnail', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '4mb' }), asyncHandler(streamerSettingsController.uploadThumbnail));
 // MED-02: 6 MB body limit for snapshot uploads (base64-encoded frame); role guard restricts to creators only
 app.post('/api/webapp/live/snapshot', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), express.json({ limit: '6mb' }), asyncHandler(webappLiveController.uploadSnapshot));
 
@@ -4714,8 +5148,8 @@ const connectionTestLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.get('/api/webapp/live/stream-profile', requireSessionAuth, asyncHandler(streamAutoController.getStreamProfile));
-app.post('/api/webapp/live/stream-profile', requireSessionAuth, grokStreamChatLimiter, asyncHandler(streamAutoController.saveStreamProfile));
+app.get('/api/webapp/live/stream-profile', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(streamAutoController.getStreamProfile));
+app.post('/api/webapp/live/stream-profile', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), grokStreamChatLimiter, asyncHandler(streamAutoController.saveStreamProfile));
 // CR-SQ-02: 10 start/stop per minute per user — each triggers a Grok API call
 const autoStreamLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -4727,6 +5161,107 @@ const autoStreamLimiter = rateLimit({
 });
 app.post('/api/webapp/live/stream-auto-start', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), autoStreamLimiter, asyncHandler(streamAutoController.startAutoMessages));
 app.post('/api/webapp/live/stream-auto-stop', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), autoStreamLimiter, asyncHandler(streamAutoController.stopAutoMessages));
+
+// ── Stream Metadata (title / description / tags visible on the Live page) ──
+// Stored in Redis stream:meta:{channelRef} as JSON — the same key that
+// listStreams() enriches public stream listings with.
+app.get('/api/webapp/live/stream-meta', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), streamMetaLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user?.id;
+  if (!userId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  try {
+    const { rows } = await getPool().query(
+      'SELECT live_channel FROM users WHERE id = $1 LIMIT 1',
+      [String(userId)]
+    );
+    const channelRef = rows[0]?.live_channel;
+    if (!channelRef) return res.json({ success: true, meta: null });
+
+    const redis = getRedis();
+    const raw = await redis.get(`stream:meta:${channelRef}`);
+    let meta = null;
+    if (raw) {
+      try { meta = JSON.parse(raw); } catch { /* ignore */ }
+    }
+    res.json({ success: true, meta });
+  } catch (err) {
+    logger.error('GET stream-meta error', { userId, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to fetch stream metadata' });
+  }
+}));
+
+app.post('/api/webapp/live/stream-meta', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), streamMetaLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user?.id;
+  if (!userId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  const { title, description, tags } = req.body || {};
+  if (!title || String(title).trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'title is required' });
+  }
+  const safeTitle = String(title).slice(0, 80).trim();
+  const safeDesc = description ? String(description).slice(0, 200).trim() : '';
+  const safeTags = Array.isArray(tags)
+    ? tags.slice(0, 5).map((t) => String(t).slice(0, 30).trim()).filter(Boolean)
+    : [];
+
+  try {
+    const { rows } = await getPool().query(
+      'SELECT live_channel FROM users WHERE id = $1 LIMIT 1',
+      [String(userId)]
+    );
+    const channelRef = rows[0]?.live_channel;
+    if (!channelRef) return res.status(400).json({ success: false, error: 'No streaming channel assigned yet' });
+
+    const redis = getRedis();
+    await redis.set(
+      `stream:meta:${channelRef}`,
+      JSON.stringify({ title: safeTitle, description: safeDesc, tags: safeTags }),
+      'EX',
+      86400
+    );
+    res.json({ success: true });
+  } catch (err) {
+    logger.error('POST stream-meta error', { userId, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to save stream metadata' });
+  }
+}));
+
+// ── BRB (Be Right Back) toggle — creator emits live:brb to all viewers ──
+app.post('/api/webapp/live/brb', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), brbLimiter, asyncHandler(async (req, res) => {
+  const userId = req.session.user?.id;
+  if (!userId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  const on = req.body?.on === true;
+
+  try {
+    const { rows } = await getPool().query(
+      'SELECT live_channel FROM users WHERE id = $1 LIMIT 1',
+      [String(userId)]
+    );
+    const channelRef = rows[0]?.live_channel;
+    if (!channelRef) return res.status(400).json({ success: false, error: 'No streaming channel assigned yet' });
+
+    // Persist BRB state in Redis so late-joining viewers can know
+    const redis = getRedis();
+    if (on) {
+      await redis.set(`stream:brb:${channelRef}`, '1', 'EX', 7200);
+    } else {
+      await redis.del(`stream:brb:${channelRef}`);
+    }
+
+    // Broadcast to everyone watching this stream
+    const socketSingleton = require('../../services/socketSingleton');
+    const io = socketSingleton.get();
+    if (io) {
+      io.to(`live:${channelRef}`).emit('live:brb', { on });
+    }
+
+    res.json({ success: true, on });
+  } catch (err) {
+    logger.error('POST brb error', { userId, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to set BRB state' });
+  }
+}));
 
 // Connection quality test — server echoes received byte count so the studio
 // can compute throughput from its own round-trip timing (performance.now()).
@@ -4798,7 +5333,9 @@ const overlayAssetStorage = multer.diskStorage({
     cb(new Error('type must be logo or banner'));
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.png';
+    const ALLOWED_OVERLAY_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']);
+    const rawExt = path.extname(file.originalname || '').toLowerCase();
+    const ext = ALLOWED_OVERLAY_EXTS.has(rawExt) ? rawExt : '.png';
     const base = path.basename(file.originalname, path.extname(file.originalname))
       .replace(/[^a-z0-9_-]/gi, '_')
       .slice(0, 40)
@@ -4928,7 +5465,7 @@ const supportChatLimiter = rateLimit({
 });
 app.post('/api/webapp/support/chat', requireSessionAuth, supportChatLimiter, asyncHandler(supportController.chat));
 app.get('/api/webapp/support/suggestions', asyncHandler(supportController.suggestions));
-app.delete('/api/webapp/support/history', authenticateUser, asyncHandler(supportController.clearHistory));
+app.delete('/api/webapp/support/history', requireSessionAuth, asyncHandler(supportController.clearHistory));
 // Support Tickets (web → Telegram support group)
 app.post('/api/webapp/support/ticket', requireSessionAuth, supportChatLimiter, asyncHandler(supportController.createTicket));
 app.get('/api/webapp/support/ticket', requireSessionAuth, asyncHandler(supportController.getTicket));
@@ -4951,6 +5488,10 @@ app.post('/api/webapp/support/ticket/upload', requireSessionAuth, handleSupportA
     const dest = path.join(supportAttachUploadDir, filename);
 
     if (isPdf) {
+      const pdfMagic = file.buffer.slice(0, 4);
+      if (pdfMagic.toString('ascii') !== '%PDF') {
+        return res.status(400).json({ success: false, error: 'Invalid PDF file.' });
+      }
       await fs.promises.writeFile(dest, file.buffer);
     } else {
       await sharp(file.buffer, { failOn: 'none' }).webp({ quality: 85 }).toFile(dest);
@@ -4981,6 +5522,82 @@ app.post('/api/admin/support/cristina/run', verifyAdminJWT, asyncHandler(async (
     logger.error('Admin-triggered cristina ticket worker error', { error: err.message });
   });
   return res.json({ success: true, message: 'Cristina ticket worker run triggered' });
+}));
+
+// ─── Activation code redemption ────────────────────────────────────────────
+app.post('/api/webapp/user/activate', requireSessionAuth, asyncHandler(async (req, res) => {
+  const rawCode = (req.body?.code ?? '');
+  const code = rawCode.toString().trim().toUpperCase().replace(/\s+/g, '');
+
+  if (!code || !/^[A-Z0-9-]{6,50}$/.test(code)) {
+    return res.status(400).json({ success: false, error: 'invalid_format' });
+  }
+
+  const { rows } = await query(
+    'SELECT code, product, used, used_at, expires_at FROM activation_codes WHERE code = $1',
+    [code]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ success: false, error: 'not_found' });
+  }
+
+  const record = rows[0];
+
+  if (record.used) {
+    return res.status(409).json({ success: false, error: 'already_used' });
+  }
+
+  if (record.expires_at && new Date(record.expires_at) < new Date()) {
+    return res.status(410).json({ success: false, error: 'expired' });
+  }
+
+  if (record.product === 'lifetime100-promo' || record.product === 'lifetime100_promo') {
+    return res.status(422).json({ success: false, error: 'use_lifetime100', redirect: '/lifetime100' });
+  }
+
+  const { cache: activationCache } = require('../../config/redis');
+  const lockKey = `activation:code:${code}`;
+  const gotLock = await activationCache.acquireLock(lockKey, 30);
+  if (!gotLock) {
+    return res.status(409).json({ success: false, error: 'already_used' });
+  }
+
+  try {
+    const userId = req.session.userId;
+    const username = req.session.user?.username || req.session.user?.name || null;
+
+    const updateResult = await query(
+      'UPDATE activation_codes SET used=true, used_at=NOW(), used_by=$2, used_by_username=$3 WHERE code=$1 AND used=false',
+      [code, userId, username]
+    );
+
+    if (!updateResult.rowCount) {
+      return res.status(409).json({ success: false, error: 'already_used' });
+    }
+
+    await PaymentService.grantEntitlementsForPlan(userId, 'lifetime-pass', 'activation_code', { activationCode: code });
+
+    await query(
+      'INSERT INTO activation_logs (user_id, username, code, product, success) VALUES ($1,$2,$3,$4,$5)',
+      [userId, username, code, record.product, true]
+    ).catch((logErr) => {
+      logger.warn('activation_logs insert failed', { error: logErr.message, userId, code });
+    });
+
+    logger.info('Activation code redeemed via webapp', { userId, code, product: record.product });
+
+    return res.json({ success: true, product: record.product, message: 'Lifetime PRIME access activated!' });
+  } catch (err) {
+    logger.error('Activation code redemption error', { error: err.message, code, userId: req.session.userId });
+    await query(
+      'INSERT INTO activation_logs (user_id, username, code, product, success) VALUES ($1,$2,$3,$4,$5)',
+      [req.session.userId, req.session.user?.username || null, code, record.product, false]
+    ).catch(() => {});
+    throw err;
+  } finally {
+    await activationCache.releaseLock(lockKey).catch(() => {});
+  }
 }));
 
 // Web App Payments (session auth → PaymentService)
@@ -5181,20 +5798,20 @@ app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHa
   const meruLockKey = `meru:activate:${code}`;
   const gotLock = await cache.acquireLock(meruLockKey, 30);
   if (!gotLock) {
-    return res.status(409).json({ success: false, error: 'Activation already in progress for this code' });
+    return res.status(423).json({ success: false, error: 'Activation already in progress for this code. Wait a moment and try again.' });
   }
 
   try {
     // Validate reservation state
     const reservation = await meruLinkService.getReservation(code);
     if (!reservation) {
-      return res.status(404).json({ success: false, error: 'Code not found' });
+      return res.status(404).json({ success: false, error: 'Code not found. Double-check that you entered it correctly.' });
     }
     if (reservation.status === 'used') {
-      return res.status(409).json({ success: false, error: 'Code already used' });
+      return res.status(409).json({ success: false, error: 'This code has already been redeemed. Contact support if you believe this is an error.' });
     }
     if (reservation.status !== 'reserved' || !reservation.reserved_until || new Date(reservation.reserved_until) < new Date()) {
-      return res.status(410).json({ success: false, error: 'Code expired. Request a new one at /lifetime100' });
+      return res.status(410).json({ success: false, error: 'This code has expired. Please request a new payment link at /lifetime100.' });
     }
     const userId = reservation.reserved_for_user_id;
     const email = reservation.reserved_for_email;
@@ -5211,23 +5828,15 @@ app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHa
     // Atomic claim — marks status='used'
     const claim = await meruLinkService.claimReservedCode({ code, userId, username: null, email });
     if (!claim.success) {
-      return res.status(409).json({ success: false, error: claim.message || 'Code not found, expired, or already used' });
+      return res.status(409).json({ success: false, error: 'This code has already been redeemed or your session expired. Contact support if you completed payment.' });
     }
 
-    // Grant membership — mirrors the existing /api/webapp/activate/meru pattern
-    const UserModel = require('../../models/userModel');
+    // Grant entitlements first — source of truth, must succeed before touching users table
+    const EntitlementModel = require('../../models/entitlementModel');
+    const EntitlementAccessService = require('../../services/entitlementAccessService');
     const primeExpiry = new Date();
     primeExpiry.setDate(primeExpiry.getDate() + 60);
-    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
-    await pool.query(
-      `UPDATE users SET tier='PRIME', plan_expiry=$2, updated_at=NOW() WHERE id=$1`,
-      [userId, primeExpiry.toISOString()]
-    );
-
-    // Grant entitlements — pnp-member (lifetime) + prime (60 days)
     try {
-      const EntitlementModel = require('../../models/entitlementModel');
-      const EntitlementAccessService = require('../../services/entitlementAccessService');
       await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
         isLifetime: true, source: 'meru', actorId: 'system',
         reason: 'Meru lifetime100 activation (public flow)',
@@ -5236,9 +5845,39 @@ app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHa
         isLifetime: false, durationDays: 60, source: 'meru', actorId: 'system',
         reason: 'Meru lifetime100 activation — 2 month PRIME bonus (public)',
       });
+      await EntitlementAccessService.recomputeUserTier(userId);
       await EntitlementAccessService.invalidateCache(userId);
     } catch (entErr) {
       logger.error('public lifetime100 activate: entitlement grant failed', { userId, error: entErr.message });
+    }
+
+    // Sync users table — cosmetic/legacy; never block on failure
+    const UserModel = require('../../models/userModel');
+    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
+    try {
+      const { getClient: _getClient } = require('../../config/postgres');
+      const _txClient = await _getClient();
+      try {
+        await _txClient.query('BEGIN');
+        await _txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+        // Best-plan-wins: keep NULL (lifetime), keep later date, else set new expiry
+        await _txClient.query(
+          `UPDATE users SET plan_expiry = CASE
+             WHEN plan_expiry IS NULL THEN NULL
+             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
+             ELSE $2::timestamptz
+           END, updated_at = NOW() WHERE id = $1`,
+          [userId, primeExpiry.toISOString()]
+        );
+        await _txClient.query('COMMIT');
+      } catch (txErr) {
+        await _txClient.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        _txClient.release();
+      }
+    } catch (planExpiryErr) {
+      logger.warn('public lifetime100 activate: plan_expiry update failed (non-critical)', { userId, error: planExpiryErr.message });
     }
 
     // Award founder gamification badge (non-blocking)
@@ -5322,7 +5961,7 @@ app.post('/api/webapp/activate/meru', requireSessionAuth, asyncHandler(async (re
   const meruLockKey = `meru:activate:${meruCode}`;
   const meruLockAcquired = await cache.acquireLock(meruLockKey, 30);
   if (!meruLockAcquired) {
-    return res.status(409).json({ success: false, error: 'Activation already in progress for this code' });
+    return res.status(423).json({ success: false, error: 'Activation already in progress for this code. Wait a moment and try again.' });
   }
 
   try {
@@ -5367,41 +6006,54 @@ app.post('/api/webapp/activate/meru', requireSessionAuth, asyncHandler(async (re
       return res.status(409).json({ success: false, error: 'Code not found or already used' });
     }
 
-    // 3. Activate membership — set lifetime100 (member tier) + 2 months PRIME bonus
-    const UserModel = require('../../models/userModel');
+    // 3. Activate membership — entitlements first, users table sync after
     const primeExpiry = new Date();
     primeExpiry.setDate(primeExpiry.getDate() + 60); // 2 months PRIME bonus
 
-    // Start with PRIME tier (for the 2-month bonus period), then cron/expiry will downgrade to member
-    await UserModel.updateSubscription(userId, {
-      status: 'active',
-      planId: 'lifetime100',
-      expiry: null, // lifetime member — no expiry on the base plan
-    });
-
-    // Grant PRIME for 2 months by temporarily setting tier to PRIME with expiry
-    // The plan_expiry tracks when PRIME expires; after that the user stays as lifetime member
-    const pool = getPool();
-    await pool.query(
-      `UPDATE users SET tier = 'PRIME', plan_expiry = $2, updated_at = NOW() WHERE id = $1`,
-      [userId, primeExpiry.toISOString()]
-    );
-
     // 3b. Grant entitlements (pnp-member lifetime + prime 60 days) — sole source of truth for access
+    // Must run before any users-table update to avoid trigger failures killing the grant
     try {
       const EntitlementModel = require('../../models/entitlementModel');
-      // Lifetime pnp-member
       await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
         isLifetime: true, source: 'meru', actorId: 'system', reason: 'Meru lifetime100 activation',
       });
-      // 60-day prime bonus
       await EntitlementModel.grantEntitlement(userId, 'prime', {
         isLifetime: false, durationDays: 60, source: 'meru', actorId: 'system', reason: 'Meru lifetime100 activation — 2 month PRIME bonus',
       });
+      await EntitlementAccessService.recomputeUserTier(userId);
       await EntitlementAccessService.invalidateCache(userId);
     } catch (entErr) {
-      logger.error('Meru entitlement grant failed (user has tier but no entitlements)', { userId, error: entErr.message });
-      // Continue — users.tier is set, so legacy paths still work; entitlements will be synced by daily cleanup
+      logger.error('Meru entitlement grant failed', { userId, error: entErr.message });
+    }
+
+    // Sync users table — cosmetic/legacy; never block on failure
+    const UserModel = require('../../models/userModel');
+    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
+    const pool = getPool();
+    try {
+      const { getClient: _getClientMeru } = require('../../config/postgres');
+      const _txClientMeru = await _getClientMeru();
+      try {
+        await _txClientMeru.query('BEGIN');
+        await _txClientMeru.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+        // Best-plan-wins: keep NULL (lifetime), keep later date, else set new expiry
+        await _txClientMeru.query(
+          `UPDATE users SET plan_expiry = CASE
+             WHEN plan_expiry IS NULL THEN NULL
+             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
+             ELSE $2::timestamptz
+           END, updated_at = NOW() WHERE id = $1`,
+          [userId, primeExpiry.toISOString()]
+        );
+        await _txClientMeru.query('COMMIT');
+      } catch (txErr) {
+        await _txClientMeru.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        _txClientMeru.release();
+      }
+    } catch (planExpiryErr) {
+      logger.warn('Meru webapp activate: plan_expiry update failed (non-critical)', { userId, error: planExpiryErr.message });
     }
 
     // Award founder gamification badge (non-blocking)
@@ -5655,6 +6307,16 @@ const primeController = require('./controllers/primeController');
 // Admin endpoints with session-based authentication
 app.get('/api/webapp/admin/stats', adminGuard, asyncHandler(webappAdminController.getStats));
 app.get('/api/webapp/admin/demographics', adminGuard, asyncHandler(webappAdminController.getDemographics));
+app.get('/api/webapp/admin/churn-trend', adminGuard, asyncHandler(webappAdminController.getChurnTrend));
+app.get('/api/webapp/admin/creator-leaderboard', adminGuard, asyncHandler(webappAdminController.getCreatorLeaderboard));
+app.get('/api/webapp/admin/analytics/umami', adminGuard, asyncHandler(webappAdminController.getUmamiStats));
+app.get('/api/webapp/admin/analytics/metabase', adminGuard, asyncHandler(webappAdminController.getMetabaseCard));
+app.get('/api/webapp/admin/analytics/usage', adminGuard, asyncHandler(webappAdminController.getUsageAnalytics));
+app.get('/api/webapp/admin/analytics/tier-features', adminGuard, asyncHandler(webappAdminController.getTierFeatureSplit));
+// EfiPay reseller endpoints — called by easybots.store, auth via x-reseller-secret header
+const efiPayResellerLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+app.get('/api/internal/efipay-reseller/product', efiPayResellerLimiter, asyncHandler(webappAdminController.efiPayResellerProduct));
+app.post('/api/internal/efipay-reseller/grant', efiPayResellerLimiter, asyncHandler(webappAdminController.efiPayResellerGrant));
 app.get('/api/webapp/admin/users', adminGuard, asyncHandler(webappAdminController.listUsers));
 // Bulk user operations — registered BEFORE :id routes to avoid route shadowing
 app.post('/api/webapp/admin/users/bulk-update', adminGuard, asyncHandler(webappAdminController.bulkUpdateUsers));
@@ -6099,6 +6761,22 @@ app.patch('/api/webapp/admin/support/tickets/:userId', adminGuard, asyncHandler(
   });
 }));
 
+// Quick Reply Templates — hardcoded, no DB needed
+app.get('/api/webapp/admin/support/quick-replies', adminGuard, asyncHandler(async (req, res) => {
+  const templates = [
+    { id: 'payment_pending',      label: 'Payment Pending',       category: 'payment', body: 'Hi! We can see your payment is being processed. Crypto payments typically confirm within 10–30 minutes. You\'ll receive a notification as soon as it\'s confirmed. 🙏' },
+    { id: 'payment_confirmed',    label: 'Payment Confirmed',     category: 'payment', body: 'Great news! Your payment has been confirmed and your access has been activated. Welcome to PNPtv PRIME! 🌟 If you have any questions, we\'re here to help.' },
+    { id: 'refund_policy',        label: 'Refund Policy',         category: 'payment', body: 'Refunds are available within 24 hours of payment — including crypto. Please confirm you\'d like to proceed with the refund and we\'ll process it within 72 hours.' },
+    { id: 'account_access',       label: 'Account Access Issue',  category: 'account', body: 'Let me look into your account access issue. Could you confirm the email address or Telegram username associated with your account?' },
+    { id: 'activation_code',      label: 'Activation Code Help',  category: 'account', body: 'To redeem your activation code, go to pnptv.app/subscribe and scroll down to \'Have an activation code?\' — enter your code there. If you run into any issues, reply here with your code and we\'ll activate it manually.' },
+    { id: 'technical_issue',      label: 'Technical Issue',       category: 'bug',     body: 'Thanks for reporting this! Could you tell us which device/browser you\'re using, and describe the exact steps to reproduce the issue? A screenshot would also help a lot.' },
+    { id: 'closing_resolved',     label: 'Closing – Resolved',    category: 'general', body: 'I\'m glad we could help! I\'ll mark this ticket as resolved. If you need anything else, don\'t hesitate to reach out. Take care! 👋' },
+    { id: 'closing_no_response',  label: 'Closing – No Response', category: 'general', body: 'We haven\'t heard back in a while, so we\'ll close this ticket for now. Feel free to open a new one if you need further assistance!' },
+    { id: 'escalating',           label: 'Escalating to Team',    category: 'general', body: 'I\'m escalating this to our team for further review. We\'ll get back to you within 24 hours with an update. Thanks for your patience! 🙏' },
+  ];
+  res.json({ success: true, templates });
+}));
+
 // Plan Builder — create, list, update, deactivate plans with auto-derived metadata
 const planBuilderController = require('./controllers/planBuilderController');
 app.get('/api/webapp/admin/plans',        adminGuard, asyncHandler(planBuilderController.listPlans));
@@ -6117,6 +6795,10 @@ app.get('/api/webapp/admin/users/:userId/entitlements', adminGuard, asyncHandler
 app.post('/api/webapp/admin/users/:userId/entitlements', adminGuard, asyncHandler(webappAdminController.grantUserEntitlement));
 // One-shot plan assignment — grants all entitlements + syncs plan_id/plan_expiry/tier in one call.
 app.post('/api/webapp/admin/users/:userId/assign-plan', adminGuard, asyncHandler(webappAdminController.assignUserPlan));
+// Gift a plan to a user (free, immediate, tracked in gifts table)
+app.post('/api/webapp/admin/users/:userId/gift-plan', adminGuard, asyncHandler(webappAdminController.giftUserPlan));
+// Gift history
+app.get('/api/webapp/admin/gifts', adminGuard, asyncHandler(webappAdminController.getAdminGifts));
 // Resource picker for the admin scoped grant form. Returns channels, hangouts, or creators.
 app.get('/api/webapp/admin/resources', adminGuard, asyncHandler(webappAdminController.searchResources));
 app.delete('/api/webapp/admin/users/:userId/entitlements/:addOnId', adminGuard, asyncHandler(webappAdminController.revokeUserEntitlement));
@@ -6342,15 +7024,15 @@ app.get('/api/webapp/hangouts/groups', requireSessionAuth, asyncHandler(hangoutG
 // wellness shell when wellness-mode is active (the regular /hangouts/groups
 // endpoint would be blocked by the wellness guard for non-allowlisted paths).
 app.get('/api/webapp/hangouts/wellness', requireSessionAuth, asyncHandler(async (req, res) => {
-  const { query: q } = require('../../config/postgres');
-  const { rows } = await q(`
-    SELECT g.id, g.name, g.description, g.avatar_url, g.is_public, g.is_paid,
-           g.created_at,
+  const userId = req.session.user.id;
+  const { rows } = await getPool().query(`
+    SELECT g.id, g.name, g.description, g.avatar_url, g.is_public,
            (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = g.id) AS member_count
     FROM hangout_groups g
+    JOIN hangout_group_members hgm ON hgm.group_id = g.id AND hgm.user_id = $1
+      AND (hgm.is_banned = false OR hgm.is_banned IS NULL)
     WHERE g.is_wellness = true
-    ORDER BY g.created_at ASC
-  `);
+  `, [userId]);
   return res.json({ success: true, groups: rows });
 }));
 
@@ -6435,6 +7117,8 @@ app.post('/api/webapp/hangouts/groups', requireSessionAuth, asyncHandler(hangout
 app.get('/api/webapp/hangouts/groups/discover', requireSessionAuth, asyncHandler(hangoutGroupController.discoverGroups));
 // join-by-invite must be before /:id to avoid :code being captured as :id
 app.post('/api/webapp/hangouts/groups/join-by-invite/:code', requireSessionAuth, asyncHandler(hangoutGroupController.joinByInvite));
+// Anonymous public read — name + topics for public groups only (used by Main Stage guest mode)
+app.get('/api/webapp/hangouts/groups/:id/public', asyncHandler(hangoutGroupController.getPublicGroup));
 app.get('/api/webapp/hangouts/groups/:id', requireSessionAuth, asyncHandler(hangoutGroupController.getGroup));
 app.post('/api/webapp/hangouts/groups/:id/join', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.joinGroup));
 app.post('/api/webapp/hangouts/groups/:id/leave', requireSessionAuth, asyncHandler(hangoutGroupController.leaveGroup));
@@ -6455,26 +7139,33 @@ app.get('/api/webapp/hangouts/groups/:id/messages/search', requireSessionAuth, r
 app.patch('/api/webapp/hangouts/groups/:id/messages/:msgId', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.editMessage));
 app.delete('/api/webapp/hangouts/groups/:id/messages/:msgId', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.deleteMessage));
 app.post('/api/webapp/hangouts/groups/:id/messages/:msgId/react', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.toggleReaction));
-app.post('/api/webapp/hangouts/groups/:id/link-telegram', requireSessionAuth, asyncHandler(hangoutGroupController.linkTelegramGroup));
-app.post('/api/webapp/hangouts/groups/:id/unlink-telegram', requireSessionAuth, asyncHandler(hangoutGroupController.unlinkTelegramGroup));
+app.post('/api/webapp/hangouts/groups/:id/link-telegram', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.linkTelegramGroup));
+app.post('/api/webapp/hangouts/groups/:id/unlink-telegram', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.unlinkTelegramGroup));
 app.get('/api/webapp/hangouts/groups/:id/video-chat-status', requireSessionAuth, asyncHandler(hangoutGroupController.getVideoChatStatus));
 app.get('/api/webapp/hangouts/groups/:id/messages/:msgId/reactions', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.getReactions));
 app.post('/api/webapp/hangouts/groups/:id/messages', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.sendMessage));
 // Media upload for hangout group chat (images 10 MB / videos 50 MB, per-hangout dirs)
+const HANGOUT_MEDIA_MIMES = new Set([
+  ...IMAGE_MIMES,
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'audio/mpeg', 'audio/ogg', 'audio/webm', 'audio/mp4',
+]);
 app.post(
   '/api/webapp/hangouts/groups/:id/media',
   requireSessionAuth,
   requireHangoutAccess,
   uploadLimiter,
   uploadHangoutMedia,
+  verifyMagicBytes(HANGOUT_MEDIA_MIMES),
   asyncHandler(hangoutMediaController.uploadHangoutMedia)
 );
 // Mark group messages as read
 app.post('/api/webapp/hangouts/groups/:id/read', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.markAsRead));
 // Per-user thread state: pin, user-mute, message-read cursor, forward
-app.put('/api/webapp/hangouts/groups/:id/pin', requireSessionAuth, asyncHandler(hangoutGroupController.pinGroup));
-app.put('/api/webapp/hangouts/groups/:id/mute', requireSessionAuth, asyncHandler(hangoutGroupController.muteGroupForUser));
-app.put('/api/webapp/hangouts/groups/:id/read-message', requireSessionAuth, asyncHandler(hangoutGroupController.markMessageRead));
+app.put('/api/webapp/hangouts/groups/:id/pin', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.pinGroup));
+app.put('/api/webapp/hangouts/groups/:id/mute', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.muteGroupForUser));
+app.put('/api/webapp/hangouts/groups/:id/read-message', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.markMessageRead));
+// Auth checked in controller — source group validated internally
 app.post('/api/webapp/hangouts/messages/:messageId/forward', requireSessionAuth, asyncHandler(hangoutGroupController.forwardMessage));
 // Hangout group management (kick is registered above at line 4268 — duplicate removed)
 app.post('/api/webapp/hangouts/groups/:id/ban', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.banMember));
@@ -6483,21 +7174,29 @@ app.post('/api/webapp/hangouts/groups/:id/mute', requireSessionAuth, requireHang
 app.post('/api/webapp/hangouts/groups/:id/unmute', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.unmuteMember));
 app.post('/api/webapp/hangouts/groups/:id/promote', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.promoteMember));
 app.post('/api/webapp/hangouts/groups/:id/demote', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.demoteMember));
-app.get('/api/webapp/hangouts/groups/:id/moderation/audit', requireSessionAuth, asyncHandler(hangoutGroupController.getModerationAudit));
-app.post('/api/webapp/hangouts/groups/:id/pin', requireSessionAuth, asyncHandler(hangoutGroupController.pinMessage));
-app.delete('/api/webapp/hangouts/groups/:id/pin/:eventId', requireSessionAuth, asyncHandler(hangoutGroupController.unpinMessage));
-app.get('/api/webapp/hangouts/groups/:id/pins', requireSessionAuth, asyncHandler(hangoutGroupController.getPinnedMessages));
+app.get('/api/webapp/hangouts/groups/:id/moderation/audit', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.getModerationAudit));
+app.post('/api/webapp/hangouts/groups/:id/pin', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.pinMessage));
+app.delete('/api/webapp/hangouts/groups/:id/pin/:eventId', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.unpinMessage));
+app.get('/api/webapp/hangouts/groups/:id/pins', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.getPinnedMessages));
 app.put('/api/webapp/hangouts/groups/:id/settings', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.updateGroupSettings));
 app.post('/api/webapp/hangouts/groups/:id/transfer', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.transferOwnership));
+app.post('/api/webapp/hangouts/groups/:id/notify-online', requireSessionAuth, asyncHandler(hangoutGroupController.notifyOnlineMembers));
 app.get('/api/webapp/hangouts/groups/:id/invite-link', requireSessionAuth, asyncHandler(hangoutGroupController.getInviteLink));
 app.put('/api/webapp/hangouts/groups/:id/notification', requireSessionAuth, asyncHandler(hangoutGroupController.updateNotificationMode));
 app.post('/api/webapp/hangouts/groups/:id/delete-message', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.adminDeleteMessage));
 // ── Hangout Feed Integration ────────────────────────────────────────────────
-app.get('/api/webapp/hangouts/groups/:id/feed', requireSessionAuth, asyncHandler(socialController.getHangoutFeed));
-app.post('/api/webapp/hangouts/groups/:id/drop-to-feed', requireSessionAuth, asyncHandler(socialController.dropToFeed));
+app.get('/api/webapp/hangouts/groups/:id/feed', requireSessionAuth, requireHangoutAccess, asyncHandler(socialController.getHangoutFeed));
+app.post('/api/webapp/hangouts/groups/:id/drop-to-feed', requireSessionAuth, requireHangoutAccess, asyncHandler(socialController.dropToFeed));
+
+// Hangout topics (sub-channels)
+app.post('/api/webapp/hangouts/groups/:id/topics', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.createTopic));
+app.patch('/api/webapp/hangouts/groups/:id/topics/:topicId', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.updateTopic));
+app.delete('/api/webapp/hangouts/groups/:id/topics/:topicId', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.deleteTopic));
+app.patch('/api/webapp/hangouts/groups/:id/members/me/first-visit', requireSessionAuth, asyncHandler(hangoutGroupController.markFirstVisitDone));
 
 // Hangout video calls — LiveKit
 const { startCall, joinCall, endCall, leaveCall, refreshCallToken, muteCallParticipant, kickCallParticipant } = require('./controllers/hangoutGroupController');
+app.post('/api/webapp/hangouts/groups/:id/calls', requireSessionAuth, asyncHandler(startCall));
 app.post('/api/webapp/hangouts/groups/:id/call/start', requireSessionAuth, asyncHandler(startCall));
 app.post('/api/webapp/hangouts/groups/:id/call/join', requireSessionAuth, asyncHandler(joinCall));
 app.post('/api/webapp/hangouts/groups/:id/call/end', requireSessionAuth, asyncHandler(endCall));
@@ -6902,7 +7601,66 @@ const require2257ForCreators = asyncHandler(async (req, res, next) => {
   return next();
 });
 
-app.post('/api/webapp/social/posts', requireSessionAuth, require2257ForCreators, asyncHandler(socialController.createPost));
+app.post('/api/webapp/social/posts', requireSessionAuth, socialActionLimiter, require2257ForCreators, asyncHandler(socialController.createPost));
+
+// ── X (Twitter) oEmbed post ───────────────────────────────────────────────────
+// Creators paste a tweet URL; backend fetches oEmbed metadata and stores a
+// content_type='x_embed' row in social_posts. No API key required.
+app.post('/api/webapp/creator/posts/x-embed', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), require2257ForCreators, asyncHandler(async (req, res) => {
+  const { tweetUrl } = req.body;
+
+  if (!tweetUrl || typeof tweetUrl !== 'string') {
+    return res.status(400).json({ success: false, error: 'tweetUrl is required' });
+  }
+
+  const tweetPattern = /^https:\/\/(twitter\.com|x\.com)\/[A-Za-z0-9_]+\/status\/\d+/;
+  if (!tweetPattern.test(tweetUrl.trim())) {
+    return res.status(400).json({ success: false, error: 'URL must be a twitter.com or x.com status link' });
+  }
+
+  const cleanUrl = tweetUrl.trim();
+
+  let oEmbed;
+  try {
+    const oEmbedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(cleanUrl)}&omit_script=true&dnt=true`;
+    const oEmbedRes = await axios.get(oEmbedUrl, { timeout: 8000 });
+    oEmbed = oEmbedRes.data;
+  } catch (oEmbedErr) {
+    if (oEmbedErr.response?.status === 404) {
+      return res.status(404).json({ success: false, error: 'Tweet not found or has been deleted' });
+    }
+    if (oEmbedErr.response?.status === 403) {
+      return res.status(400).json({ success: false, error: 'Tweet is from a private account' });
+    }
+    logger.error('x-embed oEmbed fetch failed', { url: cleanUrl, err: oEmbedErr.message });
+    return res.status(502).json({ success: false, error: 'Could not fetch tweet data. Please try again.' });
+  }
+
+  const authorName = oEmbed.author_name || 'X post';
+  const postContent = `${authorName} on X`;
+
+  const { query: dbQ } = require('../../config/postgres');
+  const { rows } = await dbQ(
+    `WITH ins AS (
+       INSERT INTO social_posts (user_id, content, content_type, x_embed_url, is_shareable, category)
+       VALUES ($1, $2, 'x_embed', $3, true, 'social')
+       RETURNING id, user_id, content, content_type, x_embed_url, created_at,
+                 likes_count, reposts_count, replies_count, is_exclusive, is_shareable, content_tier
+     )
+     SELECT ins.id, ins.content, ins.content_type, ins.x_embed_url, ins.created_at,
+            ins.likes_count, ins.reposts_count, ins.replies_count,
+            ins.is_exclusive, ins.is_shareable, ins.content_tier,
+            u.id::text AS author_id, u.username AS author_username,
+            u.first_name AS author_first_name, u.photo_file_id AS author_photo,
+            false AS liked_by_me, null AS reply_to_id, null AS repost_of_id
+     FROM ins
+     JOIN users u ON u.id = ins.user_id`,
+    [user.id, postContent, cleanUrl]
+  );
+
+  return res.json({ success: true, post: rows[0] });
+}));
+
 app.post('/api/webapp/social/posts/with-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
 app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
 app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLimiter, uploadPerformerVideos, asyncHandler(socialController.bulkCreateVideos));
@@ -7520,33 +8278,15 @@ app.get('/api/proxy/media/tracks', requireSessionAuth, asyncHandler(async (req, 
 }));
 
 // --- Restreamer Live Proxy ---
-app.get('/api/proxy/live/streams', requireSessionAuth, requireMemberTier, asyncHandler(async (req, res) => {
+app.get('/api/proxy/live/streams', requireSessionAuth, asyncHandler(async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   try {
-    const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
-    // Use undefined-check: a deliberately empty password string must still be passed to login.
-    // The || '' fallback would make an empty RESTREAMER_PASSWORD falsy, skipping auth entirely
-    // and causing Restreamer to reject the unauthenticated /api/v3/process request with a 401,
-    // which surfaces as an empty streams list with no error logged.
-    const restreamerUser = process.env.RESTREAMER_USER !== undefined ? process.env.RESTREAMER_USER : 'admin';
-    const restreamerPass = process.env.RESTREAMER_PASSWORD !== undefined ? process.env.RESTREAMER_PASSWORD : null;
+    const restreamerUrl = (process.env.RESTREAMER_URL || 'http://restreamer:8080').replace(/\/$/, '');
+    const restreamerService = require('../../services/restreamerService');
+    const token = await restreamerService.getToken().catch(() => null);
 
-    let token = null;
-    if (restreamerUser && restreamerPass !== null) {
-      try {
-        const loginResp = await axios.post(`${restreamerUrl}/api/login`, {
-          username: restreamerUser,
-          password: restreamerPass,
-        }, { timeout: 5000 });
-        token = loginResp.data?.access_token;
-      } catch (loginErr) {
-        logger.warn(`Restreamer login failed, trying without auth: ${loginErr.message}`);
-      }
-    }
-
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await axios.get(`${restreamerUrl}/api/v3/process`, {
-      headers,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       timeout: 10000,
     });
 
@@ -7566,37 +8306,51 @@ app.get('/api/proxy/live/streams', requireSessionAuth, requireMemberTier, asyncH
           logger.warn('proxy listStreams: rejected process with unsafe reference ID', { rawRefId });
           return null;
         }
+        // isLive requires both the FFmpeg process to be running AND active bitrate > 0.
+        // A process can be exec:'running' while waiting for RTMP reconnect with 0 bitrate —
+        // that state must not surface as "live" to viewers.
+        // Restreamer v3 API: state.progress.bitrate_kbit (number), NOT state.runtime.bitrate (string).
+        const bitrateKbps = typeof p.state?.progress?.bitrate_kbit === 'number' ? Math.round(p.state.progress.bitrate_kbit) : 0;
         return {
           id: refId,
           name: p.metadata?.['restreamer-ui']?.meta?.name || 'Live Stream',
           description: p.metadata?.['restreamer-ui']?.meta?.description || '',
-          hlsUrl: `${publicUrl}/memfs/${refId}.m3u8`,
-          isLive: p.state?.exec === 'running',
+          hlsUrl: `/api/proxy/live/master/${refId}.m3u8`,
+          isLive: p.state?.exec === 'running' && bitrateKbps > 0,
         };
       })
       .filter(Boolean);
 
-    // Filter out streams owned by creators who have not completed onboarding.
+    // Keep only streams that belong to a verified, active creator in DB.
+    // Orphaned channels (no matching DB user) are excluded for non-admins.
+    // Also inject the owner's userId + pnptv_id onto each stream so the Live
+    // page's findLiveStream() fallback can match performer cards to streams
+    // when the featured-endpoint snapshot is stale (creator went live AFTER
+    // the viewer opened the page).
     const proxyUser = req.session?.user;
-    if (proxyUser && !['admin', 'superadmin'].includes(proxyUser.role) && rawStreams.length > 0) {
-      const refIds = rawStreams.map((s) => s.id);
-      const { rows: blockedRows } = await getPool().query(
-        `SELECT live_channel FROM users
-         WHERE live_channel = ANY($1::text[])
-           AND NOT (
-             creator_status = 'active'
-             AND creator_locked = FALSE
-             AND (
-               identity_verified = TRUE
-               OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
-             )
-           )`,
+    const refIds = rawStreams.map((s) => s.id);
+    if (refIds.length > 0) {
+      const { rows: ownerRows } = await getPool().query(
+        `SELECT id::text AS user_id, pnptv_id::text AS pnptv_id, live_channel
+           FROM users
+          WHERE live_channel = ANY($1::text[])
+            AND is_deleted = FALSE
+            AND creator_status = 'active'
+            AND creator_locked = FALSE
+            AND (
+              identity_verified = TRUE
+              OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
+            )`,
         [refIds]
       );
-      if (blockedRows.length > 0) {
-        const blockedRefs = new Set(blockedRows.map((r) => r.live_channel));
-        rawStreams = rawStreams.filter((s) => !blockedRefs.has(s.id));
-      }
+      const channelToOwner = new Map(ownerRows.map(r => [r.live_channel, { userId: r.user_id, pnptvId: r.pnptv_id }]));
+      const isAdmin = proxyUser && ['admin', 'superadmin'].includes(proxyUser.role);
+      rawStreams = rawStreams
+        .filter((s) => isAdmin || channelToOwner.has(s.id))
+        .map((s) => {
+          const owner = channelToOwner.get(s.id);
+          return owner ? { ...s, userId: owner.userId, pnptvId: owner.pnptvId } : s;
+        });
     }
 
     // Enrich each live stream with the viewer count and metadata stored in Redis.
@@ -7639,6 +8393,121 @@ app.get('/api/proxy/live/streams', requireSessionAuth, requireMemberTier, asyncH
   }
 }));
 
+// Master HLS playlist — returns a multi-variant (ABR) playlist when the channel
+// has a transcoded 720p output, otherwise a single-rendition playlist.
+// Cached per-refId for 30s to avoid hammering Restreamer on every segment poll.
+const _abrCache = new Map(); // refId -> { hasABR: bool, expiresAt: number }
+const _ABR_CACHE_MAX = 200;
+async function _getMasterHasABR(refId, restreamerService) {
+  const cached = _abrCache.get(refId);
+  if (cached && Date.now() < cached.expiresAt) return cached.hasABR;
+  const proc = await restreamerService.getProcess(refId);
+  const hasABR = (proc?.config?.output?.length || 0) >= 2;
+  if (_abrCache.size >= _ABR_CACHE_MAX) _abrCache.delete(_abrCache.keys().next().value);
+  _abrCache.set(refId, { hasABR, expiresAt: Date.now() + 30_000 });
+  return hasABR;
+}
+
+app.get('/api/proxy/live/master/:refId', requireSessionAuth, asyncHandler(async (req, res) => {
+  const raw = (req.params.refId || '').replace(/\.m3u8$/, '');
+  if (!/^[a-zA-Z0-9_-]+$/.test(raw) || raw.includes('..')) {
+    return res.status(400).json({ error: 'invalid_ref' });
+  }
+  try {
+    const restreamerService = require('../../services/restreamerService');
+    const hasABR = await _getMasterHasABR(raw, restreamerService);
+
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+
+    let playlist = '#EXTM3U\n#EXT-X-VERSION:3\n';
+    if (hasABR) {
+      playlist += `#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720,NAME="720p"\n`;
+      playlist += `/api/proxy/live/hls/${raw}_720p.m3u8\n`;
+    }
+    playlist += `#EXT-X-STREAM-INF:BANDWIDTH=4000000,NAME="source"\n`;
+    playlist += `/api/proxy/live/hls/${raw}.m3u8\n`;
+
+    res.send(playlist);
+  } catch (err) {
+    logger.warn(`master playlist ${raw}: ${err.message}`);
+    res.redirect(302, `/api/proxy/live/hls/${raw}.m3u8`);
+  }
+}));
+
+// HLS segment/manifest proxy — avoids cross-origin cookie issues.
+// Clients request /api/proxy/live/hls/<filename> (same-origin) and this
+// route validates the session then fetches from Restreamer's internal memfs.
+//
+// Restreamer wraps HLS output in a two-level structure:
+//   GET /memfs/pnptv-X.m3u8           → variant playlist: "pnptv-X.m3u8?session=ABC"
+//   GET /memfs/pnptv-X.m3u8?session=  → actual media playlist with #EXTINF + .ts files
+//   GET /memfs/pnptv-X_NNNN.ts?session= → video segment
+//
+// HLS.js only handles two levels (master → media). When this proxy is called
+// as the rendition URL from our master playlist, Restreamer's nested variant
+// would create a three-level chain HLS.js can't parse. We detect this case
+// (response body contains #EXT-X-STREAM-INF without #EXTINF) and transparently
+// follow the session redirect, rewriting segment filenames to stay on-proxy.
+app.get('/api/proxy/live/hls/:filename', requireSessionAuth, asyncHandler(async (req, res) => {
+  const raw = req.params.filename || '';
+  // Strict allowlist: alphanumeric, hyphens, underscores, dots only; must end in .m3u8 or .ts
+  if (!/^[a-zA-Z0-9_-]+\.(m3u8|ts)$/.test(raw) || raw.includes('..')) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  try {
+    const restreamerUrl = (process.env.RESTREAMER_URL || 'http://restreamer:8080').replace(/\/$/, '');
+    const restreamerService = require('../../services/restreamerService');
+    const token = await restreamerService.getToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const qs = new URLSearchParams(req.query).toString();
+    const upstreamUrl = `${restreamerUrl}/memfs/${raw}${qs ? `?${qs}` : ''}`;
+    const timeout = raw.endsWith('.m3u8') ? 4000 : 8000;
+
+    // For .m3u8 files: read as text so we can detect and resolve Restreamer's
+    // variant-playlist wrapper before handing the playlist off to HLS.js.
+    if (raw.endsWith('.m3u8')) {
+      const upstream = await axios.get(upstreamUrl, { headers, responseType: 'text', timeout });
+      const body = upstream.data || '';
+      const isVariantPlaylist = body.includes('#EXT-X-STREAM-INF') && !body.includes('#EXTINF');
+
+      if (isVariantPlaylist) {
+        // Restreamer returned a variant/session wrapper — find the real media URL.
+        const sessionLine = body.split('\n').find(l => l.trim() && !l.startsWith('#'));
+        if (sessionLine) {
+          const sessionUrl = `${restreamerUrl}/memfs/${sessionLine.trim()}`;
+          const mediaResp = await axios.get(sessionUrl, { headers, responseType: 'text', timeout: 4000 });
+          let mediaBody = mediaResp.data || '';
+          // Rewrite segment filenames (pnptv-X_NNNN.ts?session=...) so they
+          // stay on-proxy. Only rewrite bare filename lines (not #EXT tags).
+          mediaBody = mediaBody.replace(/^([a-zA-Z0-9_-]+\.ts(\?[^\s]*)?)$/gm, '/api/proxy/live/hls/$1');
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.send(mediaBody);
+        }
+      }
+
+      // Already a media playlist (has session param or direct access) — rewrite segments.
+      let mediaBody = body;
+      mediaBody = mediaBody.replace(/^([a-zA-Z0-9_-]+\.ts(\?[^\s]*)?)$/gm, '/api/proxy/live/hls/$1');
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      return res.send(mediaBody);
+    }
+
+    // .ts segments — stream directly (no body inspection needed).
+    const upstream = await axios.get(upstreamUrl, { headers, responseType: 'stream', timeout });
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('Content-Type', upstream.headers['content-type'] || 'video/mp2t');
+    if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
+    upstream.data.on('error', () => { if (!res.headersSent) res.destroy(); });
+    upstream.data.pipe(res);
+  } catch (err) {
+    const status = err.response?.status || 502;
+    if (!res.headersSent) res.status(status).json({ error: 'hls_proxy_error' });
+  }
+}));
+
 
 // Directus CMS internal URL (used by live performers and other CMS-backed routes)
 const DIRECTUS_INTERNAL_URL = process.env.DIRECTUS_URL || 'http://172.20.0.18:8055';
@@ -7669,6 +8538,11 @@ const DIRECTUS_PERFORMER_FIELDS = ['id', 'name', 'slug', 'bio', 'photo', 'is_fea
 // Fetch the set of Restreamer ingest reference IDs that are currently `running`.
 // Cached in Redis for 20s to avoid hammering Restreamer on every /featured request.
 // Returns an empty Set on any failure so callers can degrade gracefully.
+function parseLiveChannelBitrateKbps(bitrateStr) {
+  const m = String(bitrateStr || '').match(/([\d.]+)\s*kbits/i);
+  return m ? parseFloat(m[1]) : 0;
+}
+
 async function fetchRunningLiveChannels() {
   const redis = getRedis();
   const cacheKey = 'featured:live-channels';
@@ -7680,34 +8554,28 @@ async function fetchRunningLiveChannels() {
   } catch { /* cache miss is fine */ }
 
   try {
-    const restreamerUrl = process.env.RESTREAMER_URL || 'http://restreamer:8080';
-    const restreamerUser = process.env.RESTREAMER_USER !== undefined ? process.env.RESTREAMER_USER : 'admin';
-    const restreamerPass = process.env.RESTREAMER_PASSWORD !== undefined ? process.env.RESTREAMER_PASSWORD : null;
-
-    let token = null;
-    if (restreamerUser && restreamerPass !== null) {
-      try {
-        const loginResp = await axios.post(`${restreamerUrl}/api/login`, {
-          username: restreamerUser,
-          password: restreamerPass,
-        }, { timeout: 5000 });
-        token = loginResp.data?.access_token;
-      } catch { /* fall through to unauth GET */ }
-    }
-
-    const resp = await axios.get(`${restreamerUrl}/api/v3/process`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      timeout: 5000,
-    });
-    const running = (resp.data || [])
-      .filter(p => p.id?.startsWith('restreamer-ui:ingest:') && p.state?.exec === 'running')
+    const restreamerService = require('../../services/restreamerService');
+    // Use listProcesses() which has built-in 401-retry + token-cache invalidation.
+    // The raw getToken()+axios path was returning stale cached tokens (55 min TTL)
+    // against a Restreamer access_token that expires in ~10 min (exi:600), causing
+    // sustained 401 errors for the full cache window.
+    const processes = await restreamerService.listProcesses();
+    const running = processes
+      .filter(p => {
+        if (p.state?.exec !== 'running') return false;
+        // Require actual bitrate > 0: eliminates processes that are "running"
+        // (FFmpeg started, waiting for RTMP) but have no active ingest signal.
+        // Restreamer v3 API: state.progress.bitrate_kbit (number), NOT state.runtime.bitrate (string).
+        return (typeof p.state?.progress?.bitrate_kbit === 'number' ? p.state.progress.bitrate_kbit : 0) > 0;
+      })
       .map(p => {
         const ref = typeof (p.reference || p.id) === 'string' ? (p.reference || p.id) : '';
         return ref.replace(/[^a-zA-Z0-9\-_.]/g, '');
       })
       .filter(Boolean);
 
-    try { await redis.set(cacheKey, JSON.stringify(running), 'EX', 20); } catch { /* non-fatal */ }
+    // 5-second TTL: fast enough for near-real-time status without hammering Restreamer.
+    try { await redis.set(cacheKey, JSON.stringify(running), 'EX', 5); } catch { /* non-fatal */ }
     return new Set(running);
   } catch (err) {
     logger.warn(`fetchRunningLiveChannels failed: ${err.message}`);
@@ -7730,7 +8598,7 @@ async function fetchPerformerPhotos(performers) {
     const map = new Map();
     for (const r of rows) {
       const photo = r.photo_file_id;
-      if (photo) map.set(r.id, photo.startsWith('/') ? photo : `/${photo}`);
+      if (photo) map.set(r.id, (photo.startsWith('/') || photo.startsWith('http')) ? photo : `/${photo}`);
     }
     return map;
   } catch (err) {
@@ -7770,7 +8638,7 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
              OR (identity_verification_required_by IS NOT NULL AND identity_verification_required_by > NOW())
            )
          ORDER BY creator_subscriber_count DESC NULLS LAST
-         LIMIT 20`
+         LIMIT 50`
       ),
     ]);
 
@@ -7808,7 +8676,7 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
     for (const c of dbCreators) {
       if (coveredUserIds.has(String(c.id))) continue;
       const photo = c.photo_file_id
-        ? (c.photo_file_id.startsWith('/') ? c.photo_file_id : `/${c.photo_file_id}`)
+        ? (c.photo_file_id.startsWith('/') || c.photo_file_id.startsWith('http') ? c.photo_file_id : `/${c.photo_file_id}`)
         : null;
       mapped.push({
         id: `db-${c.id}`,
@@ -7819,7 +8687,7 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
         city: c.city || null,
         country: c.country || null,
         photoUrl: photo,
-        isFeatured: false,
+        isFeatured: true,
         isAvailable: true,
         basePrice: c.creator_price_usd || 100,
         totalCalls: 0,
@@ -7828,63 +8696,71 @@ app.get('/api/performers/featured', softAuth, asyncHandler(async (req, res) => {
       });
     }
 
-    // Inject live status: cross-reference each performer's live_channel against
-    // the set of currently-running Restreamer ingest processes. Only performers
-    // who are actually streaming get isLive=true and an hlsUrl. The Social-feed
-    // "Featured / LIVE" strip filters on isLive so it never shows offline users.
+    // Inject live status + tier + online presence in a single pass.
+    // Cross-reference each performer's live_channel against currently-running
+    // Restreamer processes, and their Telegram ID against the socket-heartbeat
+    // Redis presence key. Both userToX maps are keyed by BOTH telegram_id AND
+    // pnptv_id so lookups work regardless of which one the performer.userId is
+    // (dbCreators expose Telegram ID, Directus performers expose pnptv_id).
     try {
       const userIds = mapped.map(p => p.userId).filter(Boolean).map(String);
       if (userIds.length > 0) {
         const [runningChannels, { rows: userRows }] = await Promise.all([
           fetchRunningLiveChannels(),
           getPool().query(
-            `SELECT id::text AS id, live_channel, tier
+            `SELECT id::text AS telegram_id, pnptv_id::text AS pnptv_id, live_channel, tier
                FROM users
-              WHERE id = ANY($1::text[])`,
+              WHERE id = ANY($1::text[]) OR pnptv_id::text = ANY($1::text[])`,
             [userIds]
           ),
         ]);
+        // Presence keys are stored ONLY under Telegram ID (socketHandlers.js:376
+        // uses `user:${user.id}:active`), so we must always look up by telegram_id
+        // even when the performer's userId is a UUID.
+        const redis = getRedis();
+        const telegramIds = userRows.map(r => r.telegram_id);
+        const presence = telegramIds.length > 0
+          ? await Promise.all(telegramIds.map(id => redis.get(`user:${id}:active`)))
+          : [];
+        const onlineTelegramIds = new Set(
+          telegramIds.filter((_, i) => presence[i] !== null && presence[i] !== '0')
+        );
+
         const userToChannel = new Map();
         const userToTier = new Map();
+        const userToOnline = new Map();
         for (const row of userRows) {
-          if (row.live_channel) userToChannel.set(row.id, row.live_channel);
-          if (row.tier) userToTier.set(row.id, row.tier);
+          const online = onlineTelegramIds.has(row.telegram_id);
+          if (row.live_channel) {
+            userToChannel.set(row.telegram_id, row.live_channel);
+            if (row.pnptv_id) userToChannel.set(row.pnptv_id, row.live_channel);
+          }
+          if (row.tier) {
+            userToTier.set(row.telegram_id, row.tier);
+            if (row.pnptv_id) userToTier.set(row.pnptv_id, row.tier);
+          }
+          userToOnline.set(row.telegram_id, online);
+          if (row.pnptv_id) userToOnline.set(row.pnptv_id, online);
         }
         for (const entry of mapped) {
           if (!entry.userId) continue;
           const uid = String(entry.userId);
-          // Live check
           const channel = userToChannel.get(uid);
           if (channel && runningChannels.has(channel)) {
             entry.isLive = true;
-            entry.hlsUrl = `${restreamerPublicUrl}/memfs/${channel}.m3u8`;
+            entry.hlsUrl = `/api/proxy/live/master/${channel}.m3u8`;
           }
-          // PRIME tier (overrides the DB-creator fallback set earlier if needed)
           const tier = userToTier.get(uid);
           if (tier && String(tier).toUpperCase() === 'PRIME') {
             entry.isPrime = true;
           }
-        }
-      }
-    } catch (liveErr) {
-      logger.warn(`featured: live/tier check failed (non-fatal): ${liveErr.message}`);
-    }
-
-    // Inject online presence: check Redis Socket.IO active keys for each performer
-    try {
-      const redis = getRedis();
-      const userIds = mapped.map(p => p.userId).filter(Boolean).map(String);
-      if (userIds.length > 0) {
-        const results = await Promise.all(userIds.map(id => redis.get(`user:${id}:active`)));
-        const onlineIds = new Set(userIds.filter((_, i) => results[i] !== null && results[i] !== '0'));
-        for (const entry of mapped) {
-          if (entry.userId && onlineIds.has(String(entry.userId))) {
+          if (userToOnline.get(uid) === true) {
             entry.isOnline = true;
           }
         }
       }
-    } catch (presenceErr) {
-      logger.warn(`featured: presence check failed (non-fatal): ${presenceErr.message}`);
+    } catch (liveErr) {
+      logger.warn(`featured: live/tier/presence check failed (non-fatal): ${liveErr.message}`);
     }
 
     // Sort by discovery score:
@@ -8088,8 +8964,8 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
   if (!Number.isFinite(hangoutId)) {
     return res.status(400).json({ error: 'Invalid hangout ID' });
   }
-  if (provider !== 'dash') {
-    return res.status(400).json({ error: 'Provider must be dash' });
+  if (!provider || !['dash', 'nowpayments'].includes(provider)) {
+    return res.status(400).json({ error: 'Provider must be dash or nowpayments' });
   }
 
   const { rows: groups } = await getPool().query(
@@ -8120,27 +8996,24 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
   }
 
   const hangoutPrice = Number(hangout.price_usd);
+  const userId = String(user.telegram_id || user.id);
+  const webappUrlHangout = process.env.WEBAPP_URL || 'https://pnptv.app';
   const scopeMetadata = {
     hangoutGroupId: hangout.id,
     hangoutName: hangout.name,
     ...(email ? { email } : {}),
   };
 
-  // ── Dash branch ───────────────────────────────────────────────────────────
-  // Open a BTCPay invoice and stash the hangout scope on the dash order. The
-  // BTCPay webhook reads order.metadata and routes through
-  // grantEntitlementsForPlan(..., 'dash', metadata) — same code path the
-  // ePayco webhook uses for hangout-access grants.
+  // ── Dash / BTCPay branch ──────────────────────────────────────────────────
   if (provider === 'dash') {
     try {
-      const userId = String(user.telegram_id || user.id);
       const orderId = `pnptv-hangout-${userId}-${hangout.id}-${Date.now()}`;
       const invoice = await createDashInvoice({
         usdAmount: hangoutPrice,
         userId,
         orderId,
         description: 'Community access',
-        redirectUrl: `${process.env.WEBAPP_URL || 'https://pnptv.app'}/chat/${hangout.id}`,
+        redirectUrl: `${webappUrlHangout}/chat/${hangout.id}`,
       });
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
@@ -8166,13 +9039,60 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
     }
   }
 
+  // ── NowPayments branch ────────────────────────────────────────────────────
+  if (provider === 'nowpayments') {
+    const npApiKey = process.env.NOWPAYMENTS_API_KEY || '';
+    if (!npApiKey) {
+      return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+    }
+    const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
+      ? 'https://api-sandbox.nowpayments.io/v1'
+      : 'https://api.nowpayments.io/v1';
+    try {
+      const orderId = `pnptv-nowp-hangout-${userId}-${hangout.id}-${Date.now()}`;
+      const paymentResp = await axios.post(`${npUrl}/invoice`, {
+        price_amount: hangoutPrice,
+        price_currency: 'usd',
+        order_id: orderId,
+        order_description: `Hangout access: ${hangout.name}`,
+        ipn_callback_url: `${webappUrlHangout}/api/webhooks/nowpayments`,
+        success_url: `${webappUrlHangout}/chat/${hangout.id}?payment=success`,
+        ...(email ? { customer_email: email } : {}),
+      }, {
+        headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
+        timeout: 10000,
+      });
+      const { id: npInvoiceId } = paymentResp.data;
+      if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
+      const invoiceUrl = `https://nowpayments.io/payment?iid=${npInvoiceId}`;
+      const insertRes = await getPool().query(
+        `INSERT INTO dash_subscription_orders
+           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
+         VALUES ($1, 'hangout_access', $2, $3, $4, 'pending', $5)
+         ON CONFLICT (btcpay_invoice_id) DO UPDATE
+           SET status = dash_subscription_orders.status
+         RETURNING id`,
+        [userId, email || null, hangoutPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl })]
+      );
+      return res.json({
+        success: true,
+        paymentId: String(insertRes.rows[0].id),
+        invoiceId: orderId,
+        checkoutUrl: invoiceUrl,
+      });
+    } catch (err) {
+      logger.error(`Hangout nowpayments purchase failed: ${err.message}`);
+      return res.status(502).json({ error: 'Could not reach payment provider. Please try again.', code: 'NOWPAYMENTS_ERROR' });
+    }
+  }
+
   return res.status(400).json({ error: 'Unsupported provider' });
 }));
 
 // Purchase access to a paid channel (and its linked hangout).
 // Creates a channel_access payment with channelId + hangoutGroupId in metadata
 // so the webhook handler can scope the channel-access entitlement.
-app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHandler(async (req, res) => {
+app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channelPurchaseLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user || req.user;
   const channelId = parseInt(req.params.channelId, 10);
   const { provider, email } = req.body || {};
@@ -8180,8 +9100,8 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHa
   if (!Number.isFinite(channelId)) {
     return res.status(400).json({ error: 'Invalid channel ID' });
   }
-  if (provider !== 'dash') {
-    return res.status(400).json({ error: 'Provider must be dash' });
+  if (!provider || !['dash', 'nowpayments'].includes(provider)) {
+    return res.status(400).json({ error: 'Provider must be dash or nowpayments' });
   }
 
   const { rows: channels } = await getPool().query(
@@ -8207,6 +9127,8 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHa
   }
 
   const channelPrice = Number(channel.price_usd);
+  const userId = String(user.telegram_id || user.id);
+  const webappUrlChannel = process.env.WEBAPP_URL || 'https://pnptv.app';
   const scopeMetadata = {
     channelId: channel.id,
     hangoutGroupId: channel.hangout_group_id,
@@ -8214,10 +9136,9 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHa
     ...(email ? { email } : {}),
   };
 
-  // ── Dash branch ───────────────────────────────────────────────────────────
+  // ── Dash / BTCPay branch (5% crypto discount) ─────────────────────────────
   if (provider === 'dash') {
     try {
-      const userId = String(user.telegram_id || user.id);
       const discountedChannelPrice = Math.round(channelPrice * 0.95 * 100) / 100;
       const orderId = `pnptv-channel-${userId}-${channel.id}-${Date.now()}`;
       const invoice = await createDashInvoice({
@@ -8225,7 +9146,7 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHa
         userId,
         orderId,
         description: `Channel access: ${channel.name}`,
-        redirectUrl: `${process.env.WEBAPP_URL || 'https://pnptv.app'}/chat/${channel.hangout_group_id || ''}`,
+        redirectUrl: `${webappUrlChannel}/chat/${channel.hangout_group_id || ''}`,
       });
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
@@ -8248,6 +9169,53 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, asyncHa
         return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'BTCPAY_NOT_CONFIGURED' });
       }
       return res.status(500).json({ error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
+    }
+  }
+
+  // ── NowPayments branch ────────────────────────────────────────────────────
+  if (provider === 'nowpayments') {
+    const npApiKey = process.env.NOWPAYMENTS_API_KEY || '';
+    if (!npApiKey) {
+      return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+    }
+    const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
+      ? 'https://api-sandbox.nowpayments.io/v1'
+      : 'https://api.nowpayments.io/v1';
+    try {
+      const orderId = `pnptv-nowp-channel-${userId}-${channel.id}-${Date.now()}`;
+      const paymentResp = await axios.post(`${npUrl}/invoice`, {
+        price_amount: channelPrice,
+        price_currency: 'usd',
+        order_id: orderId,
+        order_description: `Channel access: ${channel.name}`,
+        ipn_callback_url: `${webappUrlChannel}/api/webhooks/nowpayments`,
+        success_url: `${webappUrlChannel}/chat/${channel.hangout_group_id || ''}?payment=success`,
+        ...(email ? { customer_email: email } : {}),
+      }, {
+        headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
+        timeout: 10000,
+      });
+      const { id: npInvoiceId } = paymentResp.data;
+      if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
+      const invoiceUrl = `https://nowpayments.io/payment?iid=${npInvoiceId}`;
+      const insertRes = await getPool().query(
+        `INSERT INTO dash_subscription_orders
+           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
+         VALUES ($1, 'channel_access', $2, $3, $4, 'pending', $5)
+         ON CONFLICT (btcpay_invoice_id) DO UPDATE
+           SET status = dash_subscription_orders.status
+         RETURNING id`,
+        [userId, email || null, channelPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl })]
+      );
+      return res.json({
+        success: true,
+        paymentId: String(insertRes.rows[0].id),
+        invoiceId: orderId,
+        checkoutUrl: invoiceUrl,
+      });
+    } catch (err) {
+      logger.error(`Channel nowpayments purchase failed: ${err.message}`);
+      return res.status(502).json({ error: 'Could not reach payment provider. Please try again.', code: 'NOWPAYMENTS_ERROR' });
     }
   }
 
@@ -8282,6 +9250,29 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       `SELECT COUNT(*)::int AS cnt FROM channel_videos WHERE channel_id = $1 AND status = 'published'`,
       [channelId]
     );
+    // Resolve collaborator IDs to display info
+    const collaboratorIds = Array.isArray(ch.collaborators) ? ch.collaborators.filter(Boolean) : [];
+    let collaboratorProfiles = [];
+    if (collaboratorIds.length > 0) {
+      const collabRes = await getPool().query(
+        `SELECT id::text AS id, username, first_name, last_name, photo_file_id, creator_verified
+         FROM users WHERE id::text = ANY($1)`,
+        [collaboratorIds]
+      );
+      collaboratorProfiles = collabRes.rows.map((u) => {
+        const p = u.photo_file_id
+          ? (u.photo_file_id.startsWith('/') || u.photo_file_id.startsWith('http') ? u.photo_file_id : `/${u.photo_file_id}`)
+          : null;
+        return {
+          id: u.id,
+          name: [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Creator',
+          username: u.username,
+          photoUrl: p,
+          verified: u.creator_verified === true,
+        };
+      });
+    }
+
     const channel = {
       id: ch.id,
       creatorId: ch.creator_id,
@@ -8301,6 +9292,8 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       creatorVerified: ch.creator_verified === true,
       telegramChannelId: ch.telegram_channel_id || null,
       bridgeEnabled: ch.bridge_enabled === true,
+      collaborators: collaboratorIds,
+      collaboratorProfiles,
       isOwner,
       isCollaborator,
     };
@@ -8343,7 +9336,7 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       if (allTaggedIds.length > 0) {
         const tcRes = await getPool().query(
           `SELECT id::text AS id, username, first_name,
-                  CASE WHEN photo_file_id IS NOT NULL THEN '/uploads/avatars/' || photo_file_id ELSE NULL END AS avatar_url
+                  CASE WHEN photo_file_id IS NULL THEN NULL WHEN photo_file_id LIKE 'http%' THEN photo_file_id ELSE '/uploads/avatars/' || photo_file_id END AS avatar_url
            FROM users WHERE id::text = ANY($1)`,
           [allTaggedIds]
         );
@@ -8360,6 +9353,8 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           duration_sec: cv.duration_sec,
           thumbnail_url: cv.thumbnail_url,
           gif_url: cv.gif_url,
+          directus_file_id: cv.directus_file_id ?? null,
+          directus_video_url: cv.directus_file_id ? `${directusBase}/assets/${cv.directus_file_id}` : null,
           video_url: `/api/webapp/channels/${channelId}/videos/${cv.id}/stream`,
           status: cv.status,
           created_at: cv.created_at,
@@ -8371,7 +9366,53 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       });
     }
 
-    res.json({ success: true, channel, videos, locked, lockReason });
+    // Fetch channel posts (if not locked)
+    let posts = [];
+    if (!locked) {
+      const postsRes = await getPool().query(
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.created_at,
+                sp.likes_count, sp.replies_count, sp.is_exclusive, sp.content_tier, sp.metadata,
+                sp.content_type, sp.x_embed_url, sp.channel_id,
+                u.id::text AS author_id, u.username, u.first_name, u.last_name,
+                u.photo_file_id, u.creator_verified
+         FROM social_posts sp
+         JOIN users u ON u.id = sp.user_id
+         WHERE sp.channel_id = $1 AND sp.is_deleted = false
+         ORDER BY sp.created_at DESC
+         LIMIT 100`,
+        [channelId]
+      );
+      posts = postsRes.rows.map((sp) => {
+        const authorPhoto = sp.photo_file_id
+          ? (sp.photo_file_id.startsWith('/') || sp.photo_file_id.startsWith('http') ? sp.photo_file_id : `/${sp.photo_file_id}`)
+          : null;
+        return {
+          id: sp.id,
+          content: sp.content,
+          media_url: sp.media_url,
+          media_type: sp.media_type,
+          created_at: sp.created_at,
+          likes_count: sp.likes_count ?? 0,
+          replies_count: sp.replies_count ?? 0,
+          reposts_count: 0,
+          reply_to_id: null,
+          repost_of_id: null,
+          liked_by_me: false,
+          is_exclusive: sp.is_exclusive ?? false,
+          content_tier: sp.content_tier ?? 'free',
+          metadata: sp.metadata ?? null,
+          content_type: sp.content_type ?? null,
+          x_embed_url: sp.x_embed_url ?? null,
+          channel_id: sp.channel_id ?? null,
+          author_id: sp.author_id,
+          author_username: sp.username,
+          author_first_name: sp.first_name || sp.username || '',
+          author_photo: authorPhoto,
+        };
+      });
+    }
+
+    res.json({ success: true, channel, videos, posts, locked, lockReason });
   } catch (err) {
     logger.error('Channel detail error:', err);
     res.status(500).json({ error: 'Failed to load channel' });
@@ -8407,29 +9448,60 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
       if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
     }
 
-    const directusInternal = process.env.DIRECTUS_URL || process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055';
-    const upstreamUrl = `${directusInternal}/assets/${video.directus_file_id}`;
-
-    const upstreamHeaders = {};
-    if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'];
-    if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
-
-    const upstream = await axios({
-      method: 'GET',
-      url: upstreamUrl,
-      responseType: 'stream',
-      headers: upstreamHeaders,
-      validateStatus: (s) => s < 500,
-      timeout: 10000,
-    });
-
-    res.status(upstream.status);
-    for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
-      if (upstream.headers[h]) res.set(h, upstream.headers[h]);
+    if (video.directus_file_id) {
+      const directusInternal = process.env.DIRECTUS_URL || process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055';
+      const upstreamUrl = `${directusInternal}/assets/${video.directus_file_id}`;
+      const upstreamHeaders = {};
+      if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'];
+      if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
+      const upstream = await axios({
+        method: 'GET',
+        url: upstreamUrl,
+        responseType: 'stream',
+        headers: upstreamHeaders,
+        validateStatus: (s) => s < 500,
+        timeout: 10000,
+      });
+      res.status(upstream.status);
+      for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
+        if (upstream.headers[h]) res.set(h, upstream.headers[h]);
+      }
+      res.set('Cache-Control', 'private, max-age=3600');
+      upstream.data.pipe(res);
+    } else if (video.video_url && video.video_url.startsWith('/uploads/')) {
+      const localPath = path.join(__dirname, '../../../../public', video.video_url);
+      if (!fs.existsSync(localPath)) {
+        return res.status(404).json({ error: 'Video file not found on disk' });
+      }
+      const stat = fs.statSync(localPath);
+      const total = stat.size;
+      const ext = path.extname(video.video_url).toLowerCase();
+      const mime = ext === '.mov' ? 'video/quicktime' : ext === '.webm' ? 'video/webm' : 'video/mp4';
+      const range = req.headers.range;
+      if (range) {
+        const [s, e] = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(s, 10);
+        const end = e ? parseInt(e, 10) : total - 1;
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${total}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(end - start + 1),
+          'Content-Type': mime,
+          'Cache-Control': 'private, max-age=3600',
+        });
+        fs.createReadStream(localPath, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': String(total),
+          'Content-Type': mime,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'private, max-age=3600',
+        });
+        fs.createReadStream(localPath).pipe(res);
+      }
+    } else {
+      return res.status(404).json({ error: 'Video has no playable source' });
     }
-    res.set('Cache-Control', 'private, max-age=3600');
-
-    upstream.data.pipe(res);
   } catch (err) {
     logger.error('Channel video stream error', { videoId, channelId, error: err.message });
     if (!res.headersSent) res.status(502).json({ error: 'Video unavailable' });
@@ -8494,7 +9566,7 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
       if (coveredUserIds.has(String(c.id))) continue;
       if (c.username && coveredSlugs.has(String(c.username).toLowerCase())) continue;
       const photo = c.photo_file_id
-        ? (c.photo_file_id.startsWith('/') ? c.photo_file_id : `/${c.photo_file_id}`)
+        ? (c.photo_file_id.startsWith('/') || c.photo_file_id.startsWith('http') ? c.photo_file_id : `/${c.photo_file_id}`)
         : null;
       mapped.push({
         id: `db-${c.id}`,
@@ -8511,17 +9583,23 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
       });
     }
 
-    // Inject online presence: check Redis Socket.IO active keys for each performer
+    // Inject online presence + accepting-calls flag: check Redis keys for each performer
     try {
       const redis = getRedis();
       const userIds = mapped.map(p => p.userId).filter(Boolean).map(String);
       if (userIds.length > 0) {
-        const results = await Promise.all(userIds.map(id => redis.get(`user:${id}:active`)));
-        const onlineIds = new Set(userIds.filter((_, i) => results[i] !== null && results[i] !== '0'));
+        // FIX HIGH-08: fetch both active and accepting_calls keys in parallel
+        const [onlineResults, acceptingResults] = await Promise.all([
+          Promise.all(userIds.map(id => redis.get(`user:${id}:active`))),
+          Promise.all(userIds.map(id => redis.get(`user:${id}:accepting_calls`))),
+        ]);
+        const onlineIds = new Set(userIds.filter((_, i) => onlineResults[i] !== null && onlineResults[i] !== '0'));
+        const acceptingIds = new Set(userIds.filter((_, i) => acceptingResults[i] !== null && acceptingResults[i] !== '0'));
         for (const entry of mapped) {
           if (entry.userId && onlineIds.has(String(entry.userId))) {
             entry.isOnline = true;
           }
+          entry.isAcceptingCalls = !!(entry.userId && acceptingIds.has(String(entry.userId)));
         }
       }
     } catch (presenceErr) {
@@ -8610,7 +9688,7 @@ app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter,
 
 // POST /api/proxy/live/tips — Create a tip (member+ required)
 // paymentMethod: 'tokens' (instant, deducts from wallet) | 'dash' (BTCPay invoice)
-app.post('/api/proxy/live/tips', requireSessionAuth, requireMemberTier, tipLimiter, asyncHandler(async (req, res) => {
+app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
 
   let { paymentMethod = 'tokens' } = req.body;
@@ -8758,6 +9836,21 @@ app.post('/api/proxy/live/tips', requireSessionAuth, requireMemberTier, tipLimit
     if (paymentMethod === 'dash') {
       const { createInvoice: createBtcpayInvoiceForTip } = require('../../config/btcpay');
 
+      // LIVE-H-05: Redis dedup lock — prevents double-submission of Dash tips.
+      // Key is scoped to creatorId + userId; 10s TTL covers the invoice-creation window.
+      const dashTipLockKey = `live:tip:dash:${resolvedPerformerId}:${userId}`;
+      try {
+        const dashLockRedis = getRedis();
+        if (dashLockRedis) {
+          const dashLockAcquired = await dashLockRedis.set(dashTipLockKey, '1', 'NX', 'EX', 10);
+          if (!dashLockAcquired) {
+            return res.status(429).json({ success: false, error: 'Tip already in progress. Please wait a moment.' });
+          }
+        }
+      } catch (dashLockErr) {
+        logger.warn('Dash tip dedup lock check failed (fail-open)', { userId, performerId: resolvedPerformerId, error: dashLockErr.message });
+      }
+
       // Create tip record first (pending)
       const tip = await PNPLiveTipsService.createTip(
         userId, null, null,
@@ -8774,11 +9867,13 @@ app.post('/api/proxy/live/tips', requireSessionAuth, requireMemberTier, tipLimit
       // metadata is threaded into BTCPay's record. The webhook handler reads
       // event.metadata.{type,tipId,userId,performerId} on InvoiceSettled.
       // planId='tip' is required by createInvoice but is informational only here.
+      // numAmount is in Tokens (100 Tokens = $1 USD); BTCPay expects USD.
+      const TOKENS_PER_USD = 100;
       try {
         const inv = await createBtcpayInvoiceForTip({
-          amount: numAmount,
+          amount: numAmount / TOKENS_PER_USD,
           currency: 'USD',
-          orderId: `pnptv-tip-${tip.id}-${Date.now()}`,
+          orderId: `pnptv-tips-${userId}-${tip.id}`,
           userId,
           planId: 'tip',
           metadata: {
@@ -8829,7 +9924,7 @@ app.post('/api/proxy/live/tips', requireSessionAuth, requireMemberTier, tipLimit
 }));
 
 // GET /api/proxy/live/tips/recent — Recent completed tips (auth required)
-app.get('/api/proxy/live/tips/recent', requireSessionAuth, requireMemberTier, asyncHandler(async (req, res) => {
+app.get('/api/proxy/live/tips/recent', requireSessionAuth, asyncHandler(async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
     const tips = await PNPLiveTipsService.getRecentTips(limit, 30);
@@ -8850,6 +9945,23 @@ app.get('/api/proxy/live/tips/recent', requireSessionAuth, requireMemberTier, as
   }
 }));
 
+// POST /api/webapp/live/heartbeat — deduct 1 token/min from viewer while watching a live stream.
+// Returns new balance; INSUFFICIENT_FUNDS signals frontend to pause and show buy-tokens prompt.
+app.post('/api/webapp/live/heartbeat', requireSessionAuth, rateLimit({ windowMs: 50 * 1000, max: 3, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => { const u = req.session?.user; return u ? String(u.telegram_id || u.id) : req.ip; } }), asyncHandler(async (req, res) => {
+  const { channelRef } = req.body;
+  if (!channelRef || typeof channelRef !== 'string') {
+    return res.status(400).json({ success: false, error: 'channelRef is required' });
+  }
+  const userId = String(req.session.user.telegram_id || req.session.user.id);
+  const { processStreamHeartbeat } = require('../../services/tokenService');
+  const result = await processStreamHeartbeat(userId, channelRef);
+  if (!result.success) {
+    const status = result.error === 'INSUFFICIENT_FUNDS' ? 402 : 400;
+    return res.status(status).json({ success: false, error: result.error });
+  }
+  res.json({ success: true, newBalance: result.newBalance });
+}));
+
 // ==========================================
 // TIP GOALS
 // ==========================================
@@ -8864,16 +9976,38 @@ const goalUpdateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// POST /api/webapp/live/goal — creator sets a tip goal on their active stream
+// Tip-goal storage lives in Redis at `stream:goal:<channelRef>` as a hash with
+// { amount, label, progress, completed, updated_at }. This decouples the goal
+// from `live_streams` DB rows (which are NOT created for OBS-based creators),
+// lets creators prep a goal BEFORE going live, and survives across stream
+// sessions. TTL is 7 days; the creator's DELETE clears it explicitly.
+const GOAL_TTL_SECONDS = 7 * 24 * 60 * 60;
+const goalKey = (channelRef) => `stream:goal:${channelRef}`;
+
+async function readGoalFromRedis(channelRef) {
+  const redis = getRedis();
+  const h = await redis.hgetall(goalKey(channelRef));
+  if (!h || !h.amount) return null;
+  const goalAmount = parseFloat(h.amount);
+  const progress = parseFloat(h.progress || '0');
+  return {
+    goalAmount: Number.isFinite(goalAmount) ? goalAmount : null,
+    goalLabel: h.label || null,
+    progress: Number.isFinite(progress) ? progress : 0,
+    completed: h.completed === '1' || h.completed === 'true',
+  };
+}
+
+// POST /api/webapp/live/goal — creator sets a tip goal. Works whether the
+// creator is currently live or prepping in advance.
 app.post('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), goalUpdateLimiter, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const userId = String(user.id);
   const { amount, label } = req.body;
 
-  // Validate inputs
   const parsedAmount = parseFloat(amount);
-  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 10000) {
-    return res.status(400).json({ success: false, error: 'amount must be a positive number ≤ 10000' });
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 1000000) {
+    return res.status(400).json({ success: false, error: 'amount must be a positive number ≤ 1000000' });
   }
   if (!label || typeof label !== 'string' || label.trim().length === 0 || label.trim().length > 120) {
     return res.status(400).json({ success: false, error: 'label must be a non-empty string ≤ 120 characters' });
@@ -8881,7 +10015,6 @@ app.post('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'creato
   const safeLabel = label.trim();
 
   try {
-    // Resolve the creator's assigned channel
     const { rows: userRows } = await query(
       'SELECT live_channel FROM users WHERE id = $1',
       [userId]
@@ -8891,62 +10024,44 @@ app.post('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'creato
       return res.status(400).json({ success: false, error: 'No channel assigned to your account' });
     }
 
-    // Find the active stream for this channel
-    const { rows: streamRows } = await query(
-      `SELECT id FROM live_streams WHERE channel_name = $1 AND status = 'live' ORDER BY created_at DESC LIMIT 1`,
-      [channelRef]
-    );
-    if (streamRows.length === 0) {
-      return res.status(400).json({ success: false, error: 'No active stream' });
-    }
-    const streamDbId = streamRows[0].id;
+    // Reset progress + completed on every new-goal write. Existing progress
+    // (from prior partial goal) is deliberately discarded when the creator
+    // sets a fresh goal — mirrors the old DB behavior on 9814-9815.
+    const redis = getRedis();
+    const key = goalKey(channelRef);
+    await redis.hset(key, {
+      amount: String(parsedAmount),
+      label: safeLabel,
+      progress: '0',
+      completed: '0',
+      updated_at: new Date().toISOString(),
+    });
+    await redis.expire(key, GOAL_TTL_SECONDS);
 
-    // Set the goal
-    const { rows: goalRows } = await query(
-      `UPDATE live_streams
-         SET tip_goal_amount = $1,
-             tip_goal_label = $2,
-             tip_goal_progress = COALESCE(tip_goal_progress, 0),
-             tip_goal_completed = false
-       WHERE id = $3
-       RETURNING tip_goal_amount, tip_goal_label, tip_goal_progress, tip_goal_completed`,
-      [parsedAmount, safeLabel, streamDbId]
-    );
-    const g = goalRows[0];
+    // Also invalidate the 30s public read cache so viewers see the new goal
+    // immediately instead of waiting for TTL.
+    try { await cache.del(`live:goal:${channelRef}`); } catch (_) { /* best-effort */ }
 
-    // Broadcast goal state to all viewers in the stream room
+    const payload = { goalAmount: parsedAmount, goalLabel: safeLabel, progress: 0, completed: false };
+
     try {
       const socketSingleton = require('../../services/socketSingleton');
       const io = socketSingleton.get();
-      if (io) {
-        io.to(`live:${channelRef}`).emit('live:goal_update', {
-          goalAmount: parseFloat(g.tip_goal_amount),
-          goalLabel: g.tip_goal_label,
-          progress: parseFloat(g.tip_goal_progress),
-          completed: g.tip_goal_completed,
-        });
-      }
+      if (io) io.to(`live:${channelRef}`).emit('live:goal_update', payload);
     } catch (sockErr) {
       logger.warn('live/goal POST: socket emit failed (non-fatal)', { error: sockErr.message });
     }
 
-    return res.json({
-      success: true,
-      goal: {
-        goalAmount: parseFloat(g.tip_goal_amount),
-        goalLabel: g.tip_goal_label,
-        progress: parseFloat(g.tip_goal_progress),
-        completed: g.tip_goal_completed,
-      },
-    });
+    return res.json({ success: true, goal: payload });
   } catch (err) {
     logger.error('POST /api/webapp/live/goal error', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to set tip goal' });
   }
 }));
 
-// DELETE /api/webapp/live/goal — creator clears the tip goal on their active stream
-app.delete('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(async (req, res) => {
+// DELETE /api/webapp/live/goal — creator clears the tip goal. Same rate-limit
+// bucket as POST since they're paired ops on the same resource.
+app.delete('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), goalUpdateLimiter, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const userId = String(user.id);
 
@@ -8960,15 +10075,9 @@ app.delete('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'crea
       return res.status(400).json({ success: false, error: 'No channel assigned to your account' });
     }
 
-    await query(
-      `UPDATE live_streams
-         SET tip_goal_amount = NULL,
-             tip_goal_label = NULL,
-             tip_goal_progress = 0,
-             tip_goal_completed = false
-       WHERE channel_name = $1 AND status = 'live'`,
-      [channelRef]
-    );
+    const redis = getRedis();
+    await redis.del(goalKey(channelRef));
+    try { await cache.del(`live:goal:${channelRef}`); } catch (_) { /* best-effort */ }
 
     try {
       const socketSingleton = require('../../services/socketSingleton');
@@ -9007,23 +10116,28 @@ app.get('/api/proxy/live/goal/:channelRef', overlayPublicLimiter, asyncHandler(a
     }
   } catch (_) { /* cache miss, continue */ }
 
+  // Primary read: Redis hash written by the creator's POST /goal. Fall back to
+  // the legacy live_streams row so any goals set before this migration still
+  // render for viewers watching that stream.
   try {
-    const { rows } = await query(
-      `SELECT tip_goal_amount, tip_goal_label, tip_goal_progress, tip_goal_completed
-         FROM live_streams
-        WHERE channel_name = $1 AND status = 'live'
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [channelRef]
-    );
-
-    const row = rows[0];
-    const payload = {
-      goalAmount: row?.tip_goal_amount != null ? parseFloat(row.tip_goal_amount) : null,
-      goalLabel: row?.tip_goal_label || null,
-      progress: row?.tip_goal_progress != null ? parseFloat(row.tip_goal_progress) : 0,
-      completed: row?.tip_goal_completed || false,
-    };
+    let payload = await readGoalFromRedis(channelRef);
+    if (!payload) {
+      const { rows } = await query(
+        `SELECT tip_goal_amount, tip_goal_label, tip_goal_progress, tip_goal_completed
+           FROM live_streams
+          WHERE channel_name = $1 AND status = 'live'
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [channelRef]
+      );
+      const row = rows[0];
+      payload = {
+        goalAmount: row?.tip_goal_amount != null ? parseFloat(row.tip_goal_amount) : null,
+        goalLabel: row?.tip_goal_label || null,
+        progress: row?.tip_goal_progress != null ? parseFloat(row.tip_goal_progress) : 0,
+        completed: row?.tip_goal_completed || false,
+      };
+    }
 
     try {
       await cache.set(cacheKey, JSON.stringify(payload), 30);
@@ -9090,7 +10204,7 @@ app.get('/api/webapp/live/tip-menu/:performerId', overlayPublicLimiter, asyncHan
 }));
 
 // POST /api/webapp/live/tip-menu — creator saves tip menu (full replace)
-app.post('/api/webapp/live/tip-menu', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), asyncHandler(async (req, res) => {
+app.post('/api/webapp/live/tip-menu', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), tipMenuLimiter, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const userId = String(user.id);
   const { items } = req.body;
@@ -9122,7 +10236,6 @@ app.post('/api/webapp/live/tip-menu', requireSessionAuth, roleGuard('model', 'cr
       [userId]
     );
     if (perfRows.length === 0) {
-      client.release();
       return res.status(403).json({ success: false, error: 'No performer profile found' });
     }
     const performerId = String(perfRows[0].id);
@@ -9153,7 +10266,7 @@ app.post('/api/webapp/live/tip-menu', requireSessionAuth, roleGuard('model', 'cr
     await client.query('COMMIT');
 
     const { rows: savedItems } = await client.query(
-      `SELECT id, tokens_amount, label, sort_order
+      `SELECT id, tokens_amount AS "tokensAmount", label, sort_order AS "sortOrder"
          FROM tip_menu_items
         WHERE performer_id = $1 AND is_active = true
         ORDER BY sort_order ASC, tokens_amount ASC`,
@@ -9491,13 +10604,15 @@ app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res)
     `INSERT INTO user_token_wallets (user_id)
      VALUES ($1)
      ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
-     RETURNING balance_tokens, gifted_balance, dash_dpns`,
+     RETURNING balance_tokens, gifted_balance, creator_gifts, dash_dpns`,
     [userId]
   );
-  const row = rows[0] || { balance_tokens: 0, gifted_balance: 0, dash_dpns: null };
+  const row = rows[0] || { balance_tokens: 0, gifted_balance: 0, creator_gifts: {}, dash_dpns: null };
   const regular = Number(row.balance_tokens) || 0;
   const gifted  = Number(row.gifted_balance)  || 0;
-  res.json({ success: true, balance: regular + gifted, regularBalance: regular, giftedBalance: gifted, dpnsHandle: row.dash_dpns || null });
+  const creatorGifts = row.creator_gifts || {};
+  const creatorGiftsTotal = Object.values(creatorGifts).reduce((s, v) => s + Number(v), 0);
+  res.json({ success: true, balance: regular + gifted + creatorGiftsTotal, regularBalance: regular, giftedBalance: gifted, creatorGifts, dpnsHandle: row.dash_dpns || null });
 }));
 
 // GET /api/wallet/packages — available token packages (auth required to prevent
@@ -9517,7 +10632,7 @@ app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res)
 const TokenCheckoutService = require('../../services/tokenCheckoutService');
 
 // POST /api/wallet/buy — create a BTCPay Dash invoice for token purchase
-app.post('/api/wallet/buy', requireSessionAuth, asyncHandler(async (req, res) => {
+app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
 
   const { packageId } = req.body;
@@ -9543,9 +10658,57 @@ app.post('/api/wallet/buy', requireSessionAuth, asyncHandler(async (req, res) =>
   }
 }));
 
-// POST /api/wallet/buy-nowpayments — create a NowPayments invoice for token purchase (20% discount)
-// Replaces the defunct /api/wallet/buy-btc (BTCPay BTC route).
-app.post('/api/wallet/buy-nowpayments', requireSessionAuth, asyncHandler(async (req, res) => {
+// GET /api/wallet/presale-status — public, returns presale + creator bonus window state
+// End timestamps come from Redis (set alongside the active flag):
+//   pnpapp:presale:endsAt          — ISO8601 string
+//   pnpapp:creator_bonus:startsAt  — ISO8601 string
+//   pnpapp:creator_bonus:endsAt    — ISO8601 string
+// The endpoint stays operational if the operator forgets to set them — the
+// presale/bonus is simply reported without an end date rather than tied to a
+// stale hardcoded one.
+app.get('/api/wallet/presale-status', limiter, asyncHandler(async (req, res) => {
+  const now = new Date();
+  try {
+    const redisClient = getRedis();
+    const [presaleRaw, presaleEndsRaw, bonusRaw, bonusStartsRaw, bonusEndsRaw] = await Promise.all([
+      redisClient.get('pnpapp:presale:active').catch(() => null),
+      redisClient.get('pnpapp:presale:endsAt').catch(() => null),
+      redisClient.get('pnpapp:creator_bonus:active').catch(() => null),
+      redisClient.get('pnpapp:creator_bonus:startsAt').catch(() => null),
+      redisClient.get('pnpapp:creator_bonus:endsAt').catch(() => null),
+    ]);
+    const presaleEnd = presaleEndsRaw ? new Date(presaleEndsRaw) : null;
+    const bonusStart = bonusStartsRaw ? new Date(bonusStartsRaw) : null;
+    const bonusEnd = bonusEndsRaw ? new Date(bonusEndsRaw) : null;
+    // Active only if Redis flag is set AND (no end date OR now <= end date)
+    const presaleActive = presaleRaw === '1' && (!presaleEnd || now <= presaleEnd);
+    const bonusActive = bonusRaw === '1'
+      && (!bonusStart || now >= bonusStart)
+      && (!bonusEnd || now <= bonusEnd);
+    return res.json({
+      success: true,
+      presale: {
+        active: presaleActive,
+        endsAt: presaleEnd ? presaleEnd.toISOString() : null,
+        discountPct: 10,
+      },
+      creatorBonus: {
+        active: bonusActive,
+        startsAt: bonusStart ? bonusStart.toISOString() : null,
+        endsAt: bonusEnd ? bonusEnd.toISOString() : null,
+        bonusPct: 10,
+      },
+    });
+  } catch (err) {
+    logger.error('[wallet/presale-status]', { error: err.message });
+    return res.json({ success: true, presale: { active: false }, creatorBonus: { active: false } });
+  }
+}));
+
+// POST /api/wallet/buy-nowpayments — create a NowPayments invoice for token purchase
+// Presale: when pnpapp:presale:active Redis key is set, charges 90% of USD price (10% off)
+// but credits full token amount — giving users more tokens per dollar.
+app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const { packageId, payCurrency: rawPayCurrency } = req.body;
   if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
@@ -9556,9 +10719,17 @@ app.post('/api/wallet/buy-nowpayments', requireSessionAuth, asyncHandler(async (
 
   const userId = String(user.telegram_id || user.id);
 
+  // Check presale: 10% off the USD price (user still receives full token amount)
+  // Use raw Redis client — cache.get() runs JSON.parse which converts '1' → 1 (number)
+  let presaleDiscount = false;
   try {
-    const result = await TokenCheckoutService.createNowPaymentsCheckout(userId, packageId, payCurrency);
-    return res.json({ success: true, ...result });
+    const presaleFlag = await getRedis().get('pnpapp:presale:active');
+    if (presaleFlag === '1') presaleDiscount = true;
+  } catch (_) { /* Redis unavailable — skip discount */ }
+
+  try {
+    const result = await TokenCheckoutService.createNowPaymentsCheckout(userId, packageId, payCurrency, presaleDiscount);
+    return res.json({ success: true, ...result, presaleDiscount });
   } catch (err) {
     logger.error('[wallet/buy-nowpayments]', { error: err.message, code: err.code });
     if (err.code === 'PACKAGE_NOT_FOUND' || err.code === 'INVALID_PACKAGE') {
@@ -9571,59 +10742,33 @@ app.post('/api/wallet/buy-nowpayments', requireSessionAuth, asyncHandler(async (
   }
 }));
 
-
-// GET /api/token-checkout/:purchaseId — return checkout page data (ePayco widget config)
-app.get('/api/token-checkout/:purchaseId', requireSessionAuth, asyncHandler(async (req, res) => {
-  const { purchaseId } = req.params;
-  // Strict UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-  if (!purchaseId || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(purchaseId)) {
-    return res.status(400).json({ success: false, error: 'Invalid purchaseId' });
+// GET /api/wallet/np-status/:orderId — poll the NowPayments DSO by order id.
+// Frontend uses this instead of watching the wallet-balance delta (which false-
+// positives when any other credit lands — tip, admin grant, refund reversal —
+// during the poll window). Returns the DSO status and computed completed flag.
+app.get('/api/wallet/np-status/:orderId', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const { orderId } = req.params;
+  if (!orderId || !/^[A-Za-z0-9_-]{5,120}$/.test(orderId)) {
+    return res.status(400).json({ success: false, error: 'Invalid orderId' });
   }
-
-  try {
-    const data = await TokenCheckoutService.getCheckoutData(purchaseId);
-    if (!data) {
-      return res.status(404).json({ success: false, error: 'Token purchase not found or uses external checkout page' });
-    }
-
-    // Ownership check: the requesting session must own this purchase.
-    // token_purchases.user_id is the integer PK from the users table.
-    // Session exposes both telegram_id (Telegram numeric ID string) and id (users PK integer).
-    const sessionUser = req.session.user;
-    const sessionUserId = sessionUser.id ?? null;
-    if (!sessionUserId || String(data.userId) !== String(sessionUserId)) {
-      logger.warn('Token checkout ownership mismatch', {
-        purchaseId,
-        purchaseOwner: data.userId,
-        requestingUser: sessionUserId,
-      });
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-
-    // Strip the internal userId field before sending to the client.
-    const { userId: _userId, ...clientData } = data;
-    res.json({ success: true, ...clientData });
-  } catch (err) {
-    if (err.code === 'FX_RATE_UNAVAILABLE') {
-      logger.error('[ePayco FX] Rate unavailable for token checkout page', { error: err.message, purchaseId });
-      return res.status(503).json({
-        success: false,
-        error: 'FX rate unavailable, please retry in a few minutes',
-        code: 'FX_RATE_UNAVAILABLE',
-      });
-    }
-    logger.error(`Token checkout data error: ${err.message}`, { purchaseId });
-    res.status(500).json({ success: false, error: 'Failed to load checkout data. Please try again.' });
-  }
+  const { query: dbQuery } = require('../../config/postgres');
+  const result = await dbQuery(
+    `SELECT status FROM dash_subscription_orders
+      WHERE btcpay_invoice_id = $1 AND user_id = $2
+      LIMIT 1`,
+    [orderId, String(user.telegram_id || user.id)]
+  );
+  if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Order not found' });
+  const status = String(result.rows[0].status || '');
+  return res.json({
+    success: true,
+    status,
+    completed: status === 'completed',
+    confirming: status === 'confirming' || status === 'confirmed' || status === 'partially_paid' || status === 'processing',
+    failed: status === 'failed' || status === 'expired' || status === 'invalid',
+  });
 }));
-
-// GET /token-checkout/:purchaseId — redirect to the React SPA token-checkout
-// page. The React version handles ePayco only.
-app.get('/token-checkout/:purchaseId', (req, res) => {
-  const purchaseId = encodeURIComponent(req.params.purchaseId);
-  const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-  res.redirect(302, `https://pnptv.app/token-checkout/${purchaseId}${qs}`);
-});
 
 // POST /api/wallet/link-dpns — link a Dash DPNS handle
 app.post('/api/wallet/link-dpns', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -9638,6 +10783,193 @@ app.post('/api/wallet/link-dpns', requireSessionAuth, asyncHandler(async (req, r
     res.json({ success: true, dpnsHandle: dpnsHandle.toLowerCase() });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
+  }
+}));
+
+// POST /api/wallet/pay-subscription — pay for a platform plan (PRIME, member, etc.) with Tokens
+app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const userId = String(user.telegram_id || user.id);
+  const { planId } = req.body;
+  if (!planId || typeof planId !== 'string' || planId.length > 100 || !/^[a-z0-9_-]+$/.test(planId)) {
+    return res.status(400).json({ success: false, error: 'planId is required' });
+  }
+  const { query: dbQuery } = require('../../config/postgres');
+  const PlanModel = require('../../models/planModel');
+  const plan = await PlanModel.getById(planId);
+  if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
+  const basePrice = parseFloat(plan.price);
+  if (!Number.isFinite(basePrice) || basePrice <= 0) {
+    return res.status(400).json({ success: false, error: 'Plan has no payable price' });
+  }
+  // 100 Tokens = $1 USD
+  const tokenCost = Math.round(basePrice * 100);
+  // Atomic debit — fails if balance insufficient
+  const debitResult = await dbQuery(
+    `UPDATE user_token_wallets
+     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
+     WHERE user_id = $1 AND balance_tokens >= $2
+     RETURNING balance_tokens`,
+    [userId, tokenCost]
+  );
+  if (!debitResult.rows.length) {
+    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [userId]);
+    const current = walletRow.rows[0]?.bal ?? 0;
+    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+  }
+  const newBalance = Number(debitResult.rows[0].balance_tokens);
+  try {
+    const PS = require('../../services/paymentService');
+    await PS.grantEntitlementsForPlan(userId, plan.id, 'tokens', { tokenCost, planSku: plan.sku || plan.name }, `tokens:sub:${userId}:${plan.id}:${Date.now()}`);
+    // Invalidate wallet cache
+    const { cache } = require('../../config/redis');
+    await Promise.all([
+      cache.del(`wallet:${userId}`).catch(() => {}),
+      cache.del(`wallet:obj:${userId}`).catch(() => {}),
+    ]);
+    logger.info('[wallet/pay-subscription] Tokens sub granted', { userId, planId, tokenCost, newBalance });
+    return res.json({ success: true, newBalance, planName: plan.display_name || plan.name });
+  } catch (grantErr) {
+    // Refund on failure — direct SQL because there is no token_purchases row for Tokens
+    await dbQuery(
+      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
+      [userId, tokenCost]
+    ).catch(() => {});
+    logger.error('[wallet/pay-subscription] grant failed, Tokens refunded', { userId, planId, err: grantErr.message });
+    return res.status(500).json({ success: false, error: 'No se pudo activar el plan. Tus Tokens han sido reembolsadas.' });
+  }
+}));
+
+// POST /api/wallet/pay-creator-sub — pay for a creator subscription with Tokens
+app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const subscriberId = String(user.telegram_id || user.id);
+  const { creatorId } = req.body;
+  if (!creatorId) return res.status(400).json({ success: false, error: 'creatorId is required' });
+  if (String(creatorId) === subscriberId) {
+    return res.status(400).json({ success: false, error: 'You cannot subscribe to yourself' });
+  }
+  const EAS = require('../../services/entitlementAccessService');
+  const hasMember = await EAS.hasEntitlement(String(subscriberId), 'pnp-member');
+  if (!hasMember) {
+    return res.status(403).json({ success: false, error: 'Se requiere membresía Basic para suscribirse a un creador.', code: 'MEMBER_REQUIRED' });
+  }
+  const { query: dbQuery } = require('../../config/postgres');
+  const creatorRes = await dbQuery(
+    'SELECT id, creator_status, creator_locked, creator_subscription_paused, creator_price_usd FROM users WHERE id = $1',
+    [String(creatorId)]
+  );
+  const creator = creatorRes.rows[0];
+  if (!creator || creator.creator_status !== 'active') return res.status(404).json({ success: false, error: 'Creator not found or not active' });
+  if (creator.creator_locked) return res.status(423).json({ success: false, error: 'Este creador está completando su incorporación.', code: 'CREATOR_LOCKED' });
+  if (creator.creator_subscription_paused) return res.status(423).json({ success: false, error: 'Este creador pausó sus membresías.', code: 'SUBSCRIPTIONS_PAUSED' });
+  const priceUsd = parseFloat(creator.creator_price_usd);
+  if (!Number.isFinite(priceUsd) || priceUsd <= 0) return res.status(400).json({ success: false, error: 'Creator has no subscription price' });
+  const tokenCost = Math.round(priceUsd * 100);
+  // Atomic debit
+  const debitResult = await dbQuery(
+    `UPDATE user_token_wallets
+     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
+     WHERE user_id = $1 AND balance_tokens >= $2
+     RETURNING balance_tokens`,
+    [subscriberId, tokenCost]
+  );
+  if (!debitResult.rows.length) {
+    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [subscriberId]);
+    const current = walletRow.rows[0]?.bal ?? 0;
+    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+  }
+  const newBalance = Number(debitResult.rows[0].balance_tokens);
+  // Generate a deterministic payment ID so creator_earnings ON CONFLICT works
+  const tokenPaymentId = `tokens:csub:${subscriberId}:${creatorId}:${Date.now()}`;
+  try {
+    const CreatorService = require('../../services/creatorService');
+    await CreatorService.subscribeToCreator(subscriberId, String(creatorId), tokenPaymentId);
+    const { cache } = require('../../config/redis');
+    await Promise.all([
+      cache.del(`wallet:${subscriberId}`).catch(() => {}),
+      cache.del(`wallet:obj:${subscriberId}`).catch(() => {}),
+    ]);
+    logger.info('[wallet/pay-creator-sub] Tokens creator sub granted', { subscriberId, creatorId, tokenCost, newBalance });
+    return res.json({ success: true, newBalance, priceUsd });
+  } catch (subErr) {
+    // Refund
+    await dbQuery(
+      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
+      [subscriberId, tokenCost]
+    ).catch(() => {});
+    logger.error('[wallet/pay-creator-sub] sub failed, Tokens refunded', { subscriberId, creatorId, err: subErr.message });
+    const code = subErr.code || 'SUB_FAILED';
+    const statusCode = subErr.statusCode || 500;
+    return res.status(statusCode).json({ success: false, error: subErr.message || 'No se pudo activar la suscripción. Tus Tokens han sido reembolsadas.', code });
+  }
+}));
+
+// POST /api/wallet/pay-call — pay for a call package with Tokens (instant — no webhook needed)
+app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const memberId = String(user.telegram_id || user.id);
+  const { packageId, startTimeUtc, endTimeUtc, clientNotes } = req.body;
+  if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
+  const { query: dbQuery } = require('../../config/postgres');
+  const pkgResult = await dbQuery('SELECT * FROM call_packages WHERE id = $1 AND is_active = true', [Number(packageId)]);
+  const pkg = pkgResult.rows[0];
+  if (!pkg) return res.status(404).json({ success: false, error: 'Call package not found or inactive' });
+  const priceUsd = parseFloat(pkg.price_usd);
+  const tokenCost = Math.round(priceUsd * 100);
+  // Atomic debit
+  const debitResult = await dbQuery(
+    `UPDATE user_token_wallets
+     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
+     WHERE user_id = $1 AND balance_tokens >= $2
+     RETURNING balance_tokens`,
+    [memberId, tokenCost]
+  );
+  if (!debitResult.rows.length) {
+    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [memberId]);
+    const current = walletRow.rows[0]?.bal ?? 0;
+    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+  }
+  const newBalance = Number(debitResult.rows[0].balance_tokens);
+  // Create a payment record so onCallPaymentSuccess can run its full flow
+  const PaymentModel = require('../../models/paymentModel');
+  const paymentId = require('crypto').randomUUID();
+  await PaymentModel.create({
+    paymentId,
+    userId: memberId,
+    planId: null,
+    amount: priceUsd,
+    currency: 'USD',
+    provider: 'tokens',
+    metadata: {
+      type: 'call_package',
+      packageId: pkg.id,
+      packageSku: pkg.sku,
+      ...(startTimeUtc ? { startTimeUtc } : {}),
+      ...(endTimeUtc ? { endTimeUtc } : {}),
+      ...(clientNotes ? { clientNotes } : {}),
+    },
+  });
+  try {
+    const CallCheckoutSvc = require('../../services/callCheckoutService');
+    await CallCheckoutSvc.onCallPaymentSuccess(paymentId);
+    const { cache } = require('../../config/redis');
+    await Promise.all([
+      cache.del(`wallet:${memberId}`).catch(() => {}),
+      cache.del(`wallet:obj:${memberId}`).catch(() => {}),
+    ]);
+    logger.info('[wallet/pay-call] Tokens call credits granted', { memberId, packageId: pkg.id, tokenCost, newBalance });
+    return res.json({ success: true, newBalance, packageId: pkg.id, priceUsd, paymentId });
+  } catch (callErr) {
+    // Refund
+    await dbQuery(
+      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
+      [memberId, tokenCost]
+    ).catch(() => {});
+    // Mark payment void so it doesn't show as completed in history
+    await dbQuery(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]).catch(() => {});
+    logger.error('[wallet/pay-call] call credits failed, Tokens refunded', { memberId, pkg: pkg.id, err: callErr.message });
+    return res.status(500).json({ success: false, error: 'No se pudieron aplicar los créditos. Tus Tokens han sido reembolsadas.' });
   }
 }));
 
@@ -9704,12 +11036,52 @@ const dashCreateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// GET /api/webapp/payments/dash/available — check if Dash/BTCPay is configured
-// Uses config-only check (no outbound HTTP) to avoid live BTCPay calls on every page load.
+// GET /api/webapp/payments/dash/available — check if DASH-CHAIN is actually operational.
+// Probes BTCPay's wallet endpoint (not just env-var presence) to detect dashd sync state.
+// Result is cached for 90 s in Redis so every page load doesn't hammer BTCPay.
 app.get('/api/webapp/payments/dash/available', dashAvailableLimiter, asyncHandler(async (req, res) => {
   const { isConfigured } = require('../../config/btcpay');
-  const configured = !!isConfigured;
-  return res.json({ available: configured, configured });
+  if (!isConfigured) return res.json({ available: false, configured: false });
+
+  const cacheKey = 'btcpay:dash:health';
+  try {
+    const hit = await cache.get(cacheKey);
+    if (hit !== null) return res.json(hit);
+  } catch { /* Redis miss — fall through to live probe */ }
+
+  const BTCPAY_URL   = process.env.BTCPAY_URL || 'http://btcpay-server:23000';
+  const BTCPAY_KEY   = process.env.BTCPAY_API_KEY;
+  const BTCPAY_STORE = process.env.BTCPAY_STORE_ID;
+
+  let available = false;
+  let reason    = null;
+  try {
+    const resp = await axios.get(
+      `${BTCPAY_URL}/api/v1/stores/${BTCPAY_STORE}/payment-methods/onchain/DASH/wallet`,
+      { headers: { Authorization: `token ${BTCPAY_KEY}` }, timeout: 5000 }
+    );
+    // BTCPay returns 200 + { code: "not-available" } while dashd is syncing
+    if (resp.data?.code === 'not-available') {
+      available = false;
+      reason = 'syncing';
+    } else {
+      available = true;
+    }
+  } catch (err) {
+    const body = err.response?.data;
+    if (body?.code === 'not-available') {
+      reason = 'syncing';
+    } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
+      reason = 'unreachable';
+    } else {
+      reason = 'error';
+    }
+    available = false;
+  }
+
+  const result = { available, configured: true, ...(reason ? { reason } : {}) };
+  try { await cache.set(cacheKey, result, 90); } catch { /* non-critical */ }
+  return res.json(result);
 }));
 
 // POST /api/webapp/payments/dash/create — create a BTCPay Dash invoice for a subscription plan.
@@ -9755,6 +11127,16 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
     if (creator.creator_subscription_paused) {
       return res.status(423).json({ success: false, error: 'This creator has paused new memberships.', code: 'SUBSCRIPTIONS_PAUSED' });
     }
+    // CS-PAY-M-02: require pnp-member before creating a creator_monthly BTCPay invoice
+    const EASDash = require('../../services/entitlementAccessService');
+    const hasMemberDash = await EASDash.hasEntitlement(String(userId), 'pnp-member');
+    if (!hasMemberDash) {
+      return res.status(403).json({
+        success: false,
+        error: 'Se requiere membresía Basic para suscribirse a un creador.',
+        code: 'MEMBER_REQUIRED',
+      });
+    }
     const price = parseFloat(creator.creator_price_usd);
     if (!Number.isFinite(price) || price <= 0) {
       return res.status(400).json({ success: false, error: 'Creator has no active subscription price' });
@@ -9766,6 +11148,12 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
     const plan = await PlanModel.getById(planId);
     if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
     const basePrice = parseFloat(plan.price);
+    // $0 plans (free trials) must never reach BTCPay — grant directly and return.
+    if (basePrice <= 0) {
+      const EASFree = require('../../services/entitlementAccessService');
+      await EASFree.grantTrialPrime(userId);
+      return res.json({ success: true, free: true, planName: plan.display_name || plan.name });
+    }
     // crypto payment_method = fixed promo price, no stacking discount
     if (plan.payment_method === 'crypto') {
       usdAmount = basePrice;
@@ -9808,11 +11196,17 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
     });
   } catch (err) {
     logger.error(`Dash subscription invoice error: ${err.message}`);
+    // Invalidate the health cache so the next /available probe reflects reality
+    cache.del('btcpay:dash:health').catch(() => {});
     if (err.message?.includes('not configured')) {
       return res.status(503).json({ success: false, error: 'Crypto payments are not available yet. Please use another payment method.', code: 'BTCPAY_NOT_CONFIGURED' });
     }
     if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
       return res.status(503).json({ success: false, error: 'Payment server is temporarily unavailable. Please try again later.', code: 'BTCPAY_UNREACHABLE' });
+    }
+    const btcpayMsg = err.response?.data?.message || '';
+    if (btcpayMsg.includes('Full node not available') || btcpayMsg.includes('Payment method unavailable')) {
+      return res.status(503).json({ success: false, error: 'Dash payments are temporarily unavailable while the network syncs. Please try Bitcoin or USDT instead.', code: 'DASH_NODE_SYNCING' });
     }
     return res.status(500).json({ success: false, error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
   }
@@ -9828,6 +11222,8 @@ const dashStatusLimiter = rateLimit({
 });
 
 // GET /api/webapp/payments/dash/status/:invoiceId — poll invoice status
+// Searches both dash_subscription_orders (plans) and token_purchases (token buys).
+// Maps token_purchases.status = 'paid' to canonical 'completed' the frontend expects.
 app.get('/api/webapp/payments/dash/status/:invoiceId', requireSessionAuth, dashStatusLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
@@ -9838,12 +11234,17 @@ app.get('/api/webapp/payments/dash/status/:invoiceId', requireSessionAuth, dashS
   }
   const { query: dbQuery } = require('../../config/postgres');
   const result = await dbQuery(
-    `SELECT status FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 AND user_id = $2`,
+    `(SELECT status FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 AND user_id = $2)
+     UNION ALL
+     (SELECT status FROM token_purchases WHERE btcpay_invoice_id = $1 AND user_id = $2)
+     LIMIT 1`,
     [invoiceId, String(user.telegram_id || user.id)]
   );
 
   if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Order not found' });
-  return res.json({ success: true, status: result.rows[0].status });
+  const raw = String(result.rows[0].status || '');
+  const status = raw === 'paid' ? 'completed' : raw;
+  return res.json({ success: true, status });
 }));
 
 // GET /api/webapp/payments/dash/details/:invoiceId — fetch Dash payment address + amount for a pending invoice
@@ -10313,11 +11714,13 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
   );
   if (tokResult.rows.length > 0) {
     const { status } = tokResult.rows[0];
+    // token_purchases.status is one of pending|paid|expired|invalid|failed —
+    // 'paid' is the terminal success state (no 'completed' value in this table).
     return res.json({
       success: true, status,
-      completed: status === 'completed',
+      completed: status === 'paid' || status === 'completed',
       confirming: status === 'confirming' || status === 'confirmed',
-      failed: status === 'failed' || status === 'expired',
+      failed: status === 'failed' || status === 'expired' || status === 'invalid',
     });
   }
 
@@ -10325,7 +11728,7 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
 }));
 
 // POST /api/wallet/buy-btc — BTCPay BTC+Lightning invoice for token purchase (20% discount)
-app.post('/api/wallet/buy-btc', requireSessionAuth, asyncHandler(async (req, res) => {
+app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const { packageId } = req.body;
   if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
@@ -10605,6 +12008,16 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     if (creator.creator_subscription_paused) {
       return res.status(423).json({ success: false, error: 'This creator has paused new memberships.', code: 'SUBSCRIPTIONS_PAUSED' });
     }
+    // CS-PAY-M-01: require pnp-member before creating a creator_monthly invoice
+    const EASPrepare = require('../../services/entitlementAccessService');
+    const hasMemberPrepare = await EASPrepare.hasEntitlement(String(userId), 'pnp-member');
+    if (!hasMemberPrepare) {
+      return res.status(403).json({
+        success: false,
+        error: 'Se requiere membresía Basic para suscribirse a un creador.',
+        code: 'MEMBER_REQUIRED',
+      });
+    }
     const price = parseFloat(creator.creator_price_usd);
     if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, error: 'Creator has no active subscription price' });
     usdAmount = price;
@@ -10721,6 +12134,91 @@ app.get('/api/webapp/payments/usdc/status/:orderId', requireSessionAuth, usdcSta
   });
 }));
 
+// POST /api/webapp/payments/efipay/checkout — proxy to easybots.store EfiPay checkout
+// Supports: creator_membership, channel_access, call_package, token_package
+app.post('/api/webapp/payments/efipay/checkout', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const VALID_TYPES = ['creator_membership', 'channel_access', 'call_package', 'token_package'];
+  const { product_type, resource_id, email: bodyEmail } = req.body ?? {};
+
+  // Session email preferred; accept a body-supplied email for Telegram users who have none
+  const rawEmail = user.email || bodyEmail;
+  if (!rawEmail || !EMAIL_RE.test(String(rawEmail).trim())) {
+    return res.status(400).json({ success: false, error: 'no_email_on_account' });
+  }
+  const email = String(rawEmail).trim().toLowerCase().slice(0, 255);
+  if (!product_type || !VALID_TYPES.includes(product_type)) {
+    return res.status(400).json({ success: false, error: 'invalid_product_type', valid: VALID_TYPES });
+  }
+  if (!resource_id) return res.status(400).json({ success: false, error: 'resource_id_required' });
+
+  const easybotsUrl = (process.env.EASYBOTS_API_URL ?? 'https://easybots.store') + '/api/pnptv/checkout';
+  const upstream = await fetch(easybotsUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, product_type, resource_id: String(resource_id) }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    // Only forward the safe error code — never spread internal easybots fields
+    const safeError = typeof data.error === 'string' ? data.error : 'checkout_unavailable';
+    return res.status(upstream.status < 500 ? upstream.status : 502).json({ success: false, error: safeError });
+  }
+  return res.json({ success: true, checkout_url: data.checkout_url, order_id: data.order_id,
+    amount_usd: data.amount_usd, label: data.label });
+}));
+
+
+// GET /api/webapp/payments/history -- user's own payment history (subscriptions, calls, donations, tokens)
+app.get('/api/webapp/payments/history', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  const userId = String(user.id || user.telegram_id);
+  const { query: dbQuery } = require('../../config/postgres');
+
+  const result = await dbQuery(
+    `SELECT p.id, p.plan_id, p.plan_name, p.amount, p.currency, p.status,
+            p.provider, p.payment_method, p.created_at, p.completed_at, p.metadata
+     FROM payments p
+     WHERE p.user_id = $1
+       AND p.status NOT IN ('pending', 'abandoned')
+     ORDER BY p.created_at DESC
+     LIMIT 50`,
+    [userId]
+  );
+
+  const payments = result.rows.map(row => {
+    let label = row.plan_name || null;
+    if (!label && row.plan_id) label = row.plan_id;
+    if (!label && row.metadata) {
+      const m = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+      if (m.type === 'call_package' && m.packageSku) label = m.packageSku;
+      else if (m.type === 'token_package') label = 'Token Purchase';
+      else if (m.label) label = m.label;
+    }
+    return {
+      id: row.id,
+      plan_id: row.plan_id || null,
+      plan_name: label || 'Payment',
+      amount: row.amount,
+      currency: row.currency || 'USD',
+      status: row.status,
+      provider: row.provider || null,
+      payment_method: row.payment_method || null,
+      created_at: row.created_at,
+      completed_at: row.completed_at || null,
+      metadata: row.metadata || {},
+    };
+  });
+
+  return res.json({ success: true, payments });
+}));
+
 // POST /api/webhooks/nowpayments — NOWPayments IPN webhook
 // Processes synchronously so NOWPayments retries on any 5xx (no fire-and-forget).
 // Grant runs BEFORE marking completed so a crash leaves the order retryable.
@@ -10773,10 +12271,66 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     if (payment_status === 'refunded') {
       try {
         const orderRes = await dbQuery(
-          `SELECT user_id, creator_id, plan_id FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
+          `SELECT user_id, creator_id, plan_id, metadata FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
           [order_id]
         );
         const order = orderRes.rows[0];
+
+        // Token purchases have no creator_id — claw back credited tokens.
+        // Regular balance goes back to zero (clamped), bonus tokens (creator_gifts)
+        // are voided by decrementing the Santino pool by the same amount.
+        if (order && order.plan_id === 'token_purchase') {
+          const meta = order.metadata || {};
+          const totalTokens = Math.max(0, Number(meta.tokens) || 0);
+          const bonusTokens = Math.max(0, Number(meta.bonusTokens) || 0);
+          const baseTokens = Math.max(0, totalTokens - bonusTokens);
+          try {
+            if (baseTokens > 0) {
+              await dbQuery(
+                `UPDATE user_token_wallets
+                   SET balance_tokens = GREATEST(0, balance_tokens - $2), updated_at = NOW()
+                 WHERE user_id = $1`,
+                [String(order.user_id), baseTokens]
+              );
+            }
+            if (bonusTokens > 0) {
+              const { SANTINO_USER_ID: SANTINO_ID } = require('../../config/monetizationConfig');
+              await dbQuery(
+                `UPDATE user_token_wallets
+                   SET creator_gifts = jsonb_set(
+                         creator_gifts,
+                         ARRAY[$2::text],
+                         to_jsonb(GREATEST(0, COALESCE((creator_gifts->>$2)::int, 0) - $3))
+                       ),
+                       updated_at = NOW()
+                 WHERE user_id = $1`,
+                [String(order.user_id), String(SANTINO_ID), bonusTokens]
+              );
+            }
+            await dbQuery(
+              `UPDATE dash_subscription_orders SET status = 'failed', notes = $2 WHERE btcpay_invoice_id = $1`,
+              [order_id, `nowpayments:refunded:${payment_id}:reversed:${totalTokens}`]
+            );
+            await dbQuery(
+              `UPDATE token_purchases SET status = 'invalid'
+               WHERE btcpay_invoice_id = $1 AND status = 'paid'`,
+              [order_id]
+            ).catch(() => {});
+            try {
+              const io = require('../../services/socketSingleton').get();
+              if (io) io.to(`user:${order.user_id}`).emit('wallet:updated', { refunded: totalTokens });
+            } catch (_) { /* non-fatal */ }
+            logger.info('[NOWPayments] Refund: tokens clawed back', {
+              order_id, userId: order.user_id, baseTokens, bonusTokens,
+            });
+          } catch (clawbackErr) {
+            logger.error('[NOWPayments] Refund: token clawback failed', {
+              order_id, error: clawbackErr.message,
+            });
+          }
+          return res.json({ received: true });
+        }
+
         if (order && order.creator_id) {
           const { user_id: refundUserId, creator_id: refundCreatorId } = order;
           await dbQuery(
@@ -10790,11 +12344,48 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
              WHERE subscriber_id = $1 AND creator_id = $2 AND status = 'active'`,
             [String(refundUserId), String(refundCreatorId)]
           );
+          // Also revoke any channel-access entitlement tied to this payment
+          // and refresh subscriber_count for the affected channel(s)
+          const revokedChannelRes = await dbQuery(
+            `UPDATE user_entitlements SET expires_at = NOW(), updated_at = NOW()
+             WHERE user_id = $1 AND add_on_id = 'channel-access'
+               AND source_payment_id = $2 AND expires_at > NOW()
+             RETURNING creator_id`,
+            [String(refundUserId), order_id]
+          );
+          if (revokedChannelRes.rows.length > 0) {
+            const affectedChannelIds = [...new Set(revokedChannelRes.rows.map(r => r.creator_id).filter(Boolean))];
+            for (const chId of affectedChannelIds) {
+              try {
+                await dbQuery(
+                  `UPDATE creator_channels
+                     SET subscriber_count = (
+                       SELECT COUNT(*) FROM user_entitlements
+                       WHERE add_on_id = 'channel-access'
+                         AND creator_id = $1::text
+                         AND is_consumed = false
+                         AND (is_lifetime = true OR expires_at > NOW())
+                     )
+                   WHERE id = $1::integer`,
+                  [chId]
+                );
+              } catch (_scErr) { /* non-critical */ }
+            }
+          }
           await dbQuery(
             `UPDATE creator_earnings SET status = 'void'
              WHERE source_payment_id = $1 AND status IN ('holding', 'pending')`,
             [order_id]
           );
+          // Revoke all non-lifetime entitlements sourced from this order
+          try {
+            await dbQuery(
+              `DELETE FROM user_entitlements WHERE user_id = $1 AND source_payment_id = $2 AND is_lifetime = false`,
+              [String(refundUserId), order_id]
+            );
+          } catch (revokeErr) {
+            logger.error('[NOWPayments] Failed to revoke entitlements on refund', { order_id, error: revokeErr.message });
+          }
           try {
             await EntitlementAccessService.invalidateCache(String(refundUserId));
           } catch (_) { /* non-fatal */ }
@@ -10827,30 +12418,31 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
-  // For stablecoins (USDC/USDT), 'confirmed' = on-chain confirmed = settlement guaranteed.
-  // Treat as 'finished' immediately — no conversion risk, no need to wait for the payout leg.
-  // For volatile assets, just record the status and wait for 'finished'.
-  const STABLECOIN_CURRENCIES = new Set(['usdcerc20', 'usdcmatic', 'usdcbase', 'usdcsol', 'usdtbsc', 'usdterc20', 'usdtmatic', 'usdtsol', 'usdcbsc', 'usdttrc20']);
-  let isStablecoinConfirmed = false;
+  // For stablecoins, on-chain confirmation = settled — treat as finished immediately.
+  const STABLECOIN_CURRENCIES = new Set(['usdttrc20', 'usdterc20', 'usdcsol', 'usdcerc20', 'usdcmatic', 'usdc', 'usdt', 'usdcbsc', 'usdtbsc']);
+  const isStablecoin = pay_currency && STABLECOIN_CURRENCIES.has(pay_currency.toLowerCase());
+
   if (payment_status === 'confirmed') {
-    const isStablecoin = pay_currency && STABLECOIN_CURRENCIES.has(pay_currency.toLowerCase());
+    await dbQuery(
+      `UPDATE dash_subscription_orders SET status = 'confirmed' WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed')`,
+      [order_id]
+    );
     if (!isStablecoin) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'confirmed' WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed')`,
-        [order_id]
-      );
       return res.json({ received: true });
     }
-    logger.info('[NOWPayments] IPN: stablecoin confirmed — treating as finished', { order_id, pay_currency });
-    isStablecoinConfirmed = true;
-    // Fall through to the grant logic below (the payment_status !== 'finished' guard is bypassed by the flag)
+    if (actually_paid == null) {
+      logger.warn('[NOWPayments] IPN: stablecoin confirmed but actually_paid missing — deferring to finished event', { order_id });
+      return res.json({ received: true, deferred: true });
+    }
+    logger.info('[NOWPayments] IPN: stablecoin confirmed — falling through to grant', { order_id, pay_currency });
+    // fall through to the grant path below
   }
 
   if (payment_status === 'waiting') {
     return res.json({ received: true });
   }
 
-  if (payment_status !== 'finished' && !isStablecoinConfirmed) {
+  if (payment_status !== 'finished' && !(payment_status === 'confirmed' && isStablecoin)) {
     logger.warn('[NOWPayments] IPN: unknown payment_status', { payment_status, order_id });
     return res.json({ received: true });
   }
@@ -10944,6 +12536,23 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       try {
         const PaymentServiceRenewal = require('../../services/paymentService');
         const isRenewalDonation = existing.plan_id?.startsWith('donation');
+
+        // CS-PAY-M-02: creator_monthly renewal must still hold pnp-member — same gate as initial purchase
+        if (existing.plan_id === 'creator_monthly') {
+          const EAS = require('../../services/entitlementAccessService');
+          const hasMember = await EAS.hasEntitlement(String(existing.user_id), 'pnp-member');
+          if (!hasMember) {
+            logger.warn('[NOWPayments] IPN: creator_monthly renewal — user lost pnp-member, skipping grant', {
+              userId: existing.user_id, renewalOrderId,
+            });
+            await dbQuery(
+              `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+              [renewalOrderId, 'creator_monthly_renewal:no_pnp_member']
+            ).catch(() => {});
+            return res.json({ received: true });
+          }
+        }
+
         const renewalGrantResult = await PaymentServiceRenewal.grantEntitlementsForPlan(
           existing.user_id,
           existing.plan_id,
@@ -11000,6 +12609,16 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   }
 
   const order = lockRes.rows[0];
+
+  // NP-M-06: price_amount mismatch guard when actually_paid is null
+  if (actually_paid == null && price_amount != null) {
+    const dbExpected = parseFloat(order.usd_amount);
+    const reportedPrice = parseFloat(price_amount);
+    if (dbExpected > 0 && Number.isFinite(reportedPrice) && Math.abs(reportedPrice - dbExpected) > 0.01) {
+      logger.error('[NOWPayments] IPN: price_amount mismatch vs DB order amount', { order_id, dbExpected, reportedPrice });
+      return res.status(422).json({ error: 'price_mismatch' });
+    }
+  }
 
   // NP-M-01: amount validation — reject underpayments > 2%
   // For cross-currency payments (e.g. BTC paying a USD invoice) compare actually_paid
@@ -11066,6 +12685,158 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
+  // token_purchase orders: credit tokens directly, do not call grantEntitlementsForPlan
+  if (order.plan_id === 'token_purchase') {
+    const tokenMeta = order.metadata || {};
+    const tokensToCredit = Number(tokenMeta.tokens);
+    if (!tokensToCredit || tokensToCredit <= 0) {
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, 'token_purchase:missing_tokens_in_metadata']
+      ).catch(() => {});
+      throw new Error(`token_purchase IPN: missing or zero tokens in DSO metadata for order ${order_id}`);
+    }
+    // Split: package-tier bonus tokens go to creator_gifts (Santino-restricted);
+    // base tokens (usd×100) go to regular balance_tokens.
+    const bonusTokens = Math.max(0, Math.floor(Number(tokenMeta.bonusTokens) || 0));
+    const baseTokens = tokensToCredit - bonusTokens;
+    const creditLockKey = `nowpayments:token_credit:${order_id}`;
+    const lockAcquired = await cache.acquireLock(creditLockKey, 120).catch(() => true);
+    if (!lockAcquired) {
+      logger.warn('[NOWPayments] IPN: token_purchase credit already in flight, skipping', { order_id });
+      return res.json({ received: true });
+    }
+    // Atomic credit: the DSO status flip and the wallet credit must succeed or
+    // fail together. Otherwise a crash between them would allow the reconciler
+    // to replay creditTokens, double-crediting the user. (Audit finding H-01.)
+    let newBalance = null;
+    const creditClient = await getPool().connect();
+    try {
+      const { SANTINO_USER_ID: SANTINO_ID } = require('../../config/monetizationConfig');
+      await creditClient.query('BEGIN');
+      // Row-lock the DSO so a concurrent reconciler cannot re-enter the credit
+      // path; the outer signature+processing gate above already scopes concurrency
+      // to a single winner, but this guarantees crash-safety.
+      const dsoUpd = await creditClient.query(
+        `UPDATE dash_subscription_orders
+            SET status = 'completed',
+                completed_at = NOW(),
+                notes = $2
+          WHERE btcpay_invoice_id = $1
+            AND status IN ('pending','processing')
+         RETURNING id`,
+        [order_id, `nowpayments:tokens:${payment_id}:credited:${tokensToCredit}${bonusTokens > 0 ? `:bonus:${bonusTokens}` : ''}`]
+      );
+      if (dsoUpd.rowCount === 0) {
+        // Another worker already completed this order — nothing to credit.
+        await creditClient.query('ROLLBACK');
+        logger.info('[NOWPayments] IPN: token_purchase already completed elsewhere', { order_id });
+        cache.releaseLock(creditLockKey).catch(() => {});
+        return res.json({ received: true });
+      }
+      const balRow = await creditClient.query(
+        `INSERT INTO user_token_wallets (user_id, balance_tokens)
+              VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE
+           SET balance_tokens = user_token_wallets.balance_tokens + $2,
+               updated_at = NOW()
+         RETURNING balance_tokens, gifted_balance`,
+        [String(order.user_id), baseTokens]
+      );
+      newBalance = (Number(balRow.rows[0].balance_tokens) || 0) + (Number(balRow.rows[0].gifted_balance) || 0);
+      if (bonusTokens > 0) {
+        await creditClient.query(
+          `INSERT INTO user_token_wallets (user_id, creator_gifts)
+                VALUES ($1, jsonb_build_object($2::text, $3::numeric))
+           ON CONFLICT (user_id) DO UPDATE
+             SET creator_gifts = jsonb_set(
+                   COALESCE(user_token_wallets.creator_gifts, '{}'),
+                   ARRAY[$2],
+                   to_jsonb(COALESCE((user_token_wallets.creator_gifts->>$2)::numeric, 0) + $3)
+                 ),
+                 updated_at = NOW()`,
+          [String(order.user_id), String(SANTINO_ID), bonusTokens]
+        );
+      }
+      await creditClient.query('COMMIT');
+      await Promise.all([
+        cache.del(`wallet:${order.user_id}`).catch(() => {}),
+        cache.del(`wallet:obj:${order.user_id}`).catch(() => {}),
+      ]);
+      try {
+        const io = require('../../services/socketSingleton').get();
+        if (io) io.to(`user:${order.user_id}`).emit('wallet:updated', { balance: newBalance, credited: tokensToCredit });
+      } catch (_) { /* non-fatal */ }
+      logger.info('[NOWPayments] IPN: token_purchase credited', { order_id, userId: order.user_id, tokens: tokensToCredit, baseTokens, bonusTokens, newBalance });
+    } catch (txErr) {
+      try { await creditClient.query('ROLLBACK'); } catch (_) {}
+      logger.error('[NOWPayments] IPN: token_purchase credit transaction failed', { order_id, error: txErr.message });
+      throw txErr;
+    } finally {
+      creditClient.release();
+      cache.releaseLock(creditLockKey).catch(() => {});
+    }
+    try {
+      const PaymentNotifSvcTok = require('../../services/paymentNotificationService');
+      await PaymentNotifSvcTok.deliverPurchaseConfirmation(order.user_id, {
+        planId: 'token_purchase',
+        planName: `${tokensToCredit} PNP Tokens`,
+        amount: parseFloat(order.usd_amount) || 0,
+        transactionId: String(payment_id),
+        provider: 'nowpayments',
+      });
+    } catch (_) { /* non-fatal */ }
+    return res.json({ received: true });
+  }
+
+  // Scoped resource purchase (channel_access / hangout_access via NowPayments)
+  const orderMetaScoped = order.metadata || {};
+  if ((order.plan_id === 'channel_access' || order.plan_id === 'hangout_access') &&
+      (orderMetaScoped.channelId || orderMetaScoped.hangoutGroupId)) {
+    try {
+      const PaymentServiceScoped = require('../../services/paymentService');
+      const scopedGrant = await PaymentServiceScoped.grantEntitlementsForPlan(
+        order.user_id,
+        order.plan_id,
+        'nowpayments',
+        orderMetaScoped,
+        order_id
+      );
+      if (!scopedGrant || scopedGrant.granted === 0) {
+        await dbQuery(
+          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+          [order_id, `nowpayments:scoped_grant_zero:${order.plan_id}`]
+        ).catch(() => {});
+        throw new Error(`grantEntitlementsForPlan returned zero grants for scoped plan ${order.plan_id}`);
+      }
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:scoped:${payment_id}`]
+      );
+      logger.info('[NOWPayments] IPN: scoped purchase granted', {
+        order_id, planId: order.plan_id,
+        channelId: orderMetaScoped.channelId, hangoutGroupId: orderMetaScoped.hangoutGroupId,
+      });
+      return res.json({ received: true });
+    } catch (scopedErr) {
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:scoped_failed:${scopedErr.message}`.slice(0, 500)]
+      ).catch(() => {});
+      throw scopedErr;
+    }
+  }
+
+  // CS-PAY-C-03: creator_monthly requires pnp-member — gate before any grant attempt
+  if (order.plan_id === 'creator_monthly') {
+    const EAS = require('../../services/entitlementAccessService');
+    const hasMember = await EAS.hasEntitlement(String(order.user_id), 'pnp-member');
+    if (!hasMember) {
+      logger.error('[NOWPayments] IPN: creator_monthly order but user has no pnp-member — skipping grant', { userId: order.user_id, order_id });
+      return res.json({ received: true }); // Ack without granting — do not 400
+    }
+  }
+
   // Grant FIRST — if this throws, roll back to pending so NOWPayments retries
   let creatorSubExpiresAt = null;
   try {
@@ -11073,29 +12844,30 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     // Donation plans (donation-10, donation-25, etc.) have no plan_add_ons and
     // intentionally return zero grants — treat as a successful no-op, not an error.
     const isDonationPlan = order.plan_id?.startsWith('donation');
-    const grantResult = await PaymentServiceGf.grantEntitlementsForPlan(
-      order.user_id,
-      order.plan_id,
-      'nowpayments',
-      order.creator_id ? { creatorId: String(order.creator_id) } : null,
-      order_id
-    );
 
-    // NP-H-03: zero-grant guard — roll back so NOWPayments retries (skip for donations)
-    if (!isDonationPlan && (!grantResult || grantResult.granted === 0)) {
-      await dbQuery(
-        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-        [order_id, `nowpayments:grant_zero:${order.plan_id}`.slice(0, 500)]
-      ).catch(() => {});
-      throw new Error(`grantEntitlementsForPlan returned zero grants for plan ${order.plan_id}`);
-    }
-
-    // NP-H-02: wire up creator subscription relationship for creator_monthly orders
-    // No try/catch — let failure propagate to outer catch so order rolls back to 'pending' for retry
+    // CS-PAY-C-02: for creator_monthly, subscribeToCreator is the sole entitlement grant path.
+    // Do NOT also call grantEntitlementsForPlan — it would double-extend the expiry.
     if (order.plan_id === 'creator_monthly' && order.creator_id) {
       const CreatorService = require('../../services/creatorService');
       const subResult = await CreatorService.subscribeToCreator(order.user_id, String(order.creator_id), order_id);
       creatorSubExpiresAt = subResult?.expiresAt || null;
+    } else {
+      const grantResult = await PaymentServiceGf.grantEntitlementsForPlan(
+        order.user_id,
+        order.plan_id,
+        'nowpayments',
+        order.creator_id ? { creatorId: String(order.creator_id) } : null,
+        order_id
+      );
+
+      // NP-H-03: zero-grant guard — roll back so NOWPayments retries (skip for donations)
+      if (!isDonationPlan && (!grantResult || grantResult.granted === 0)) {
+        await dbQuery(
+          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+          [order_id, `nowpayments:grant_zero:${order.plan_id}`.slice(0, 500)]
+        ).catch(() => {});
+        throw new Error(`grantEntitlementsForPlan returned zero grants for plan ${order.plan_id}`);
+      }
     }
   } catch (grantErr) {
     // Roll back lock so this IPN delivery can be retried
@@ -11112,23 +12884,55 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     [order_id, `nowpayments:${payment_id}`]
   );
 
-  // Update users.tier — skip for creator_monthly (must not clobber buyer's own subscription)
+  // Sync users.plan_id + plan_expiry for admin visibility — skip for creator_monthly.
+  // NP-NOTE: tier + subscription_status are already synced by recomputeUserTier inside
+  // grantEntitlementsForPlan above. We only need plan_id + plan_expiry here.
+  // Uses bypass transaction so the lifetime-fields trigger never blocks a legitimate grant.
   if (order.plan_id !== 'creator_monthly') {
-    const PlanModel = require('../../models/planModel');
-    const plan = await PlanModel.getById(order.plan_id).catch((err) => {
-      logger.error('[NOWPayments] IPN: plan lookup failed, tier not updated', { error: err.message, planId: order.plan_id, order_id });
-      return null;
-    });
-    if (plan) {
-      const expiry = plan.duration_days
-        ? new Date(Date.now() + plan.duration_days * 86400000).toISOString()
-        : null;
-      await dbQuery(
-        `UPDATE users SET tier = $2, subscription_status = 'active', plan_id = $3, plan_expiry = $4, updated_at = NOW() WHERE id = $1`,
-        [order.user_id, plan.tier || 'prime', plan.id, expiry]
-      );
+    const isDonationForTier = order.plan_id?.startsWith('donation');
+    if (isDonationForTier) {
+      // Donation plans have no plan_add_ons; recomputeUserTier (already called inside
+      // grantEntitlementsForPlan) handles tier. Nothing else to do.
     } else {
-      logger.error('[NOWPayments] IPN: plan not found, users.tier not updated', { planId: order.plan_id, order_id });
+      try {
+        const PlanModelNpTier = require('../../models/planModel');
+        const planForTier = await PlanModelNpTier.getById(order.plan_id).catch(() => null);
+        if (planForTier) {
+          // NP-H-02: lifetime plans store NULL expiry
+          const isLifetimePlan = planForTier.is_lifetime === true || (planForTier.duration_days && planForTier.duration_days >= 36500);
+          const newExpiry = isLifetimePlan
+            ? null
+            : planForTier.duration_days
+              ? new Date(Date.now() + planForTier.duration_days * 86400000).toISOString()
+              : null;
+          const { getClient: _npGetClient } = require('../../config/postgres');
+          const _npTx = await _npGetClient();
+          try {
+            await _npTx.query('BEGIN');
+            await _npTx.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+            await _npTx.query(
+              `UPDATE users SET plan_id = $2,
+                 plan_expiry = CASE
+                   WHEN plan_expiry IS NULL THEN NULL
+                   WHEN $3::timestamptz IS NULL THEN NULL
+                   WHEN plan_expiry > $3::timestamptz THEN plan_expiry
+                   ELSE $3::timestamptz
+                 END,
+                 updated_at = NOW()
+               WHERE id = $1`,
+              [order.user_id, planForTier.id, newExpiry]
+            );
+            await _npTx.query('COMMIT');
+          } catch (txErr) {
+            await _npTx.query('ROLLBACK').catch(() => {});
+            throw txErr;
+          } finally {
+            _npTx.release();
+          }
+        }
+      } catch (planSyncErr) {
+        logger.warn('[NOWPayments] IPN: plan_id/plan_expiry sync failed (non-critical)', { userId: order.user_id, planId: order.plan_id, error: planSyncErr.message });
+      }
     }
   }
 
@@ -11185,6 +12989,9 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       transactionId: String(payment_id),
       customerName: customerNameAlert,
       customerEmail: 'N/A',
+      planType: order.plan_id === 'token_purchase' ? 'token_purchase'
+        : order.plan_id === 'call_package' ? 'call_package'
+        : 'subscription',
     });
     await BusinessNotificationServiceNP.notifyPayment({
       userId: order.user_id,
@@ -11250,6 +13057,19 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   return res.json({ received: true });
 }));
 
+// POST /api/webhooks/nowpayments/payout — NowPayments creator payout status webhook
+app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asyncHandler(async (req, res) => {
+  const sig = req.headers['x-nowpayments-sig'];
+  if (!validateNowpaymentsIpn(req.body, sig)) {
+    logger.warn('[NowPayments Payout Webhook] Invalid IPN signature');
+    return res.status(400).json({ error: 'invalid_signature' });
+  }
+  const { handlePayoutWebhook } = require('../../services/nowpaymentsPayoutService');
+  const { id: npPayoutId, batch_withdrawal_id, status } = req.body;
+  await handlePayoutWebhook(npPayoutId || batch_withdrawal_id, status, req.body);
+  return res.json({ ok: true });
+}));
+
 // POST /api/webhooks/btcpay — BTCPay Server webhook (Dash payment confirmed)
 // Full handler extracted to btcpayWebhookController for maintainability.
 const btcpayWebhookController = require('./controllers/btcpayWebhookController');
@@ -11258,29 +13078,42 @@ app.post('/api/webhooks/btcpay', webhookLimiter, asyncHandler(btcpayWebhookContr
 // --- Self-declaration age verification (for gate, not AI-photo) ---
 app.post('/api/verify-age-self', authLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
-  if (!user) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  const { dateOfBirth } = req.body || {};
+  if (!dateOfBirth || typeof dateOfBirth !== 'string') {
+    return res.status(400).json({ success: false, error: 'Date of birth is required' });
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+    return res.status(400).json({ success: false, error: 'Invalid date format' });
+  }
+  const [dobYear, dobMonth, dobDay] = dateOfBirth.split('-').map(Number);
+  const now = new Date();
+  let age = now.getUTCFullYear() - dobYear;
+  if (now.getUTCMonth() + 1 < dobMonth || (now.getUTCMonth() + 1 === dobMonth && now.getUTCDate() < dobDay)) age--;
+  if (age < 18) return res.status(400).json({ success: false, error: 'You must be at least 18 years old' });
+  if (dateOfBirth > now.toISOString().split('T')[0]) {
+    return res.status(400).json({ success: false, error: 'Date of birth cannot be in the future' });
+  }
+
   try {
-    const UserModel = require('../../models/userModel');
-    const updated = await UserModel.updateAgeVerification(user.id, {
-      verified: true,
-      method: 'self_declaration',
-      expiresHours: 168,
-    });
-    if (!updated) {
-      return res.status(500).json({ success: false, error: 'Verification failed' });
-    }
+    await getPool().query(
+      `UPDATE users SET date_of_birth = $1, age_verified = true, age_verified_at = NOW() WHERE id = $2`,
+      [dateOfBirth, user.id]
+    );
+
     req.session.user.ageVerified = true;
-    await new Promise((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    await new Promise((resolve, reject) => req.session.save((err) => (err ? reject(err) : resolve())));
+
     await getPool().query(
       `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, metadata, ip_address, user_agent, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-      [user.id, 'age_verified_self', 'user', user.id, JSON.stringify({ method: 'self_declaration' }), req.ip || 'unknown', req.headers['user-agent'] || 'unknown']
+      [user.id, 'age_verified_self', 'user', user.id,
+       JSON.stringify({ method: 'self_declaration_with_dob', dateOfBirth }),
+       req.ip || 'unknown', req.headers['user-agent'] || 'unknown']
     );
-    logger.info(`User ${user.id} self-declared age verification`);
+
+    logger.info(`User ${user.id} verified age with DOB ${dateOfBirth}`);
     res.json({ success: true });
   } catch (error) {
     logger.error(`Age self-verification error: ${error.message}`);
@@ -11402,7 +13235,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   );
   if (!chRes.rows.length) return res.status(404).json({ error: 'Channel not found' });
   const ch = chRes.rows[0];
-  const isOwner = ch.creator_id === userId;
+  const isOwner = String(ch.creator_id) === String(userId);
   const isCollaborator = Array.isArray(ch.collaborators) && ch.collaborators.includes(String(userId));
   if (!isOwner && !isCollaborator) return res.status(403).json({ error: 'Channel not found or not yours' });
 
@@ -11436,7 +13269,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
         cb(null, `ch-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
       },
     }),
-    limits: { fileSize: 4 * 1024 * 1024 * 1024 }, // 4 GB matches PRIME upload
+    limits: { fileSize: 20 * 1024 * 1024 * 1024 }, // 20 GB
     fileFilter: (req, file, cb) => {
       if (/^video\//i.test(file.mimetype || '')) return cb(null, true);
       cb(new Error('Only video files are allowed'));
@@ -11485,6 +13318,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   // POST /api/webapp/channels/:channelId/videos/init
   app.post('/api/webapp/channels/:channelId/videos/init',
     requireSessionAuth,
+    channelVideoLimiter,
     asyncHandler(async (req, res) => {
       const channelId = parseInt(req.params.channelId, 10);
       if (!Number.isFinite(channelId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });
@@ -11492,10 +13326,24 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       if (!fileName || !fileSize || !totalChunks) {
         return res.status(400).json({ success: false, error: 'fileName, fileSize, totalChunks required' });
       }
-      if (Number(fileSize) > 4 * 1024 * 1024 * 1024) {
-        return res.status(400).json({ success: false, error: 'File too large (max 4 GB)' });
+      if (typeof fileName !== 'string' || fileName.length > 512) {
+        return res.status(400).json({ success: false, error: 'fileName must be a string under 512 characters' });
+      }
+      const ALLOWED_VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.wmv', '.flv', '.ts']);
+      const fileExt = require('path').extname(fileName).toLowerCase();
+      if (!ALLOWED_VIDEO_EXTS.has(fileExt)) {
+        return res.status(400).json({ success: false, error: `File type not allowed: ${fileExt || '(none)'}` });
+      }
+      if (Number(fileSize) > 20 * 1024 * 1024 * 1024) {
+        return res.status(400).json({ success: false, error: 'File too large (max 20 GB)' });
       }
       const { userId, isAdmin } = userCtx(req);
+      // Ownership gate — verify caller owns or collaborates on this channel
+      try {
+        await channelVideoService.loadOwnedChannel(String(channelId), String(userId), isAdmin);
+      } catch (ownerErr) {
+        return res.status(ownerErr.status || 403).json({ success: false, error: ownerErr.message || 'Access denied', code: ownerErr.code || 'FORBIDDEN' });
+      }
       // 2257 compliance gate
       if (!isAdmin) {
         const IdentityVerificationService = require('../../services/identityVerificationService');
@@ -11581,6 +13429,17 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       await new Promise((resolve, reject) => ws.end(err => err ? reject(err) : resolve()));
       // Clean up chunk directory
       await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      // Validate assembled file is actually a video
+      const headerBuf = Buffer.alloc(12);
+      const videoFd = require('fs').openSync(assembledPath, 'r');
+      require('fs').readSync(videoFd, headerBuf, 0, 12, 0);
+      require('fs').closeSync(videoFd);
+      const isAssembledWebM = headerBuf[0] === 0x1a && headerBuf[1] === 0x45 && headerBuf[2] === 0xdf && headerBuf[3] === 0xa3;
+      const isAssembledMp4 = headerBuf[4] === 0x66 && headerBuf[5] === 0x74 && headerBuf[6] === 0x79 && headerBuf[7] === 0x70;
+      if (!isAssembledWebM && !isAssembledMp4) {
+        await require('fs').promises.unlink(assembledPath).catch(() => {});
+        return res.status(400).json({ success: false, error: 'File content does not match a valid video format.' });
+      }
       const mimeForExt = /\.mov$/i.test(meta.fileName) ? 'video/quicktime' : /\.webm$/i.test(meta.fileName) ? 'video/webm' : 'video/mp4';
       try {
         const video = await channelVideoService.uploadVideo({
@@ -11614,6 +13473,17 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       if (!Number.isFinite(channelId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });
       const { userId, isAdmin } = userCtx(req);
       try {
+        // Magic bytes validation for single-shot upload
+        const singleHeaderBuf = Buffer.alloc(12);
+        const singleFd = require('fs').openSync(req.file.path, 'r');
+        require('fs').readSync(singleFd, singleHeaderBuf, 0, 12, 0);
+        require('fs').closeSync(singleFd);
+        const isSingleWebM = singleHeaderBuf[0] === 0x1a && singleHeaderBuf[1] === 0x45 && singleHeaderBuf[2] === 0xdf && singleHeaderBuf[3] === 0xa3;
+        const isSingleMp4 = singleHeaderBuf[4] === 0x66 && singleHeaderBuf[5] === 0x74 && singleHeaderBuf[6] === 0x79 && singleHeaderBuf[7] === 0x70;
+        if (!isSingleWebM && !isSingleMp4) {
+          await fs.promises.unlink(req.file.path).catch(() => {});
+          return res.status(400).json({ success: false, error: 'File content does not match a valid video format.' });
+        }
         // 2257 compliance gate — enforce for active creators (admins bypass)
         if (!isAdmin) {
           const IdentityVerificationService = require('../../services/identityVerificationService');
@@ -11808,6 +13678,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   // Grok is allowed to suggest.
   app.get(
     '/api/webapp/channels/:channelId/videos/tag-taxonomy',
+    requireSessionAuth,
     asyncHandler(async (_req, res) => {
       res.json({ success: true, tags: channelVideoService.TAG_TAXONOMY });
     })
@@ -11818,9 +13689,36 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   app.post(
     '/api/webapp/channels/:channelId/videos/:videoId/view',
     softAuth,
+    channelVideoViewLimiter,
     asyncHandler(async (req, res) => {
+      const channelId = parseInt(req.params.channelId, 10);
       const videoId = parseInt(req.params.videoId, 10);
       if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+      if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel id' });
+
+      // Access gate: for non-free channels require entitlement; free channels allow unauthenticated views
+      try {
+        const { rows: chRows } = await getPool().query(
+          'SELECT access_type FROM creator_channels WHERE id = $1 AND is_active = true',
+          [channelId]
+        );
+        if (chRows.length && chRows[0].access_type !== 'free') {
+          const viewerId = req.session?.user?.id;
+          if (!viewerId) return res.status(401).json({ error: 'Authentication required' });
+          const viewerRole = req.session?.user?.role || '';
+          const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
+          if (!isAdmin) {
+            const decision = await EntitlementAccessService.hasResourceAccess(
+              String(viewerId), 'channel', String(channelId)
+            );
+            if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
+          }
+        }
+      } catch (gateErr) {
+        logger.error('channel video view access gate failed', { channelId, error: gateErr.message });
+        return res.status(500).json({ error: 'Failed to verify access' });
+      }
+
       const viewerKey = (req.session?.user?.id) || (req.ip || 'anon').replace(/[^a-zA-Z0-9.:_-]/g, '_');
       const dedupeKey = `view:chanvid:${videoId}:${viewerKey}`;
       try {
@@ -11848,8 +13746,22 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     '/api/webapp/channels/:channelId/videos/:videoId/comments',
     requireSessionAuth,
     asyncHandler(async (req, res) => {
+      const channelId = parseInt(req.params.channelId, 10);
       const videoId = parseInt(req.params.videoId, 10);
       if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+      if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel id' });
+
+      // Channel access gate
+      const viewerId = req.session.user.id;
+      const viewerRole = req.session.user.role || '';
+      const isAdmin = viewerRole === 'admin' || viewerRole === 'superadmin';
+      if (!isAdmin) {
+        const decision = await EntitlementAccessService.hasResourceAccess(
+          String(viewerId), 'channel', String(channelId)
+        );
+        if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
+      }
+
       const SocialPostService = require('../../services/socialPostService');
       const { rows } = await getPool().query(
         `SELECT promo_post_id FROM channel_videos WHERE id = $1 AND status = 'published'`,
@@ -11858,7 +13770,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       if (!rows.length) return res.status(404).json({ error: 'Video not found' });
       const promoPostId = rows[0].promo_post_id;
       if (!promoPostId) return res.json({ success: true, replies: [], nextCursor: null });
-      const result = await SocialPostService.getReplies(promoPostId, req.session.user.id, req.query.cursor || null);
+      const result = await SocialPostService.getReplies(promoPostId, viewerId, req.query.cursor || null);
       return res.json({ success: true, ...result });
     })
   );
@@ -11870,8 +13782,22 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     requireSessionAuth,
     socialActionLimiter,
     asyncHandler(async (req, res) => {
+      const channelId = parseInt(req.params.channelId, 10);
       const videoId = parseInt(req.params.videoId, 10);
       if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+      if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel id' });
+
+      // Channel access gate
+      const commenterId = req.session.user.id;
+      const commenterRole = req.session.user.role || '';
+      const isAdminCommenter = commenterRole === 'admin' || commenterRole === 'superadmin';
+      if (!isAdminCommenter) {
+        const decision = await EntitlementAccessService.hasResourceAccess(
+          String(commenterId), 'channel', String(channelId)
+        );
+        if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
+      }
+
       const content = String(req.body.content || '').trim();
       if (!content || content.length > 500) return res.status(400).json({ error: 'Comment must be 1–500 characters' });
       const SocialPostService = require('../../services/socialPostService');
@@ -11883,7 +13809,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       const promoPostId = rows[0].promo_post_id;
       if (!promoPostId) return res.status(400).json({ error: 'Comments not available for this video yet' });
       const post = await SocialPostService.createPost(
-        req.session.user.id, content, null, null, promoPostId,
+        commenterId, content, null, null, promoPostId,
         null, false, false, false, null, null, null, null, null, null
       );
       return res.json({ success: true, comment: post });
@@ -11933,6 +13859,11 @@ const bookCallLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Please wait before booking again' },
 });
+
+// Resolve call packages by Restreamer channel ref (for the live stream page)
+app.get('/api/webapp/book-call/by-channel/:channelRef/packages',
+  requireSessionAuth,
+  asyncHandler(callPackageController.getPackagesByChannelRef));
 
 // Member: get booking options — paginated (5 per page), live-status aware
 // Query: ?duration=30|60  ?offset=0
@@ -11992,6 +13923,11 @@ app.post('/api/webapp/book-call/checkout/btc',
 app.post('/api/webapp/book-call/checkout/dash',
   requireSessionAuth, checkoutLimiter,
   asyncHandler(callBookingController.createCheckoutDash));
+
+// Token checkout for call packages (instant, no payment gateway)
+app.post('/api/webapp/book-call/checkout/tokens',
+  requireSessionAuth, checkoutLimiter,
+  asyncHandler(callBookingController.createCheckoutTokens));
 
 // Member: upcoming confirmed bookings — must be before /:bookingId catch-all
 app.get('/api/webapp/bookings/upcoming',
@@ -12102,6 +14038,7 @@ app.put('/api/webapp/creator/next-show-date',
   requireSessionAuth, creatorGuard,
   asyncHandler(callBookingController.setNextShowDate));
 
+// GET /api/webapp/creator/subscribers — handled by creatorRoutes.js (mounted above)
 
 // ==========================================
 // X (TWITTER) CROSS-POST ENDPOINTS
@@ -12935,14 +14872,31 @@ app.delete('/api/webapp/creators/media/:id',
   // tus capability headers are returned without being swallowed by the cors preflight handler.
   // ----------------------------------------
 
+  const TUS_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB — matches Directus FILES_MAX_SIZE
+  const TUS_UPLOAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // 10 TUS session creations / hour per creator (same limit as multipart upload)
+  const tusUploadLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+    skip: (req) => req.session?.user?.role === 'admin' || req.session?.user?.role === 'superadmin',
+    handler: (_req, res) => res.status(429).json({ success: false, error: 'Upload rate limit reached — try again in an hour.' }),
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // POST /api/webapp/creator/media/tus — create upload session at Directus, store metadata in Redis
   app.post('/api/webapp/creator/media/tus',
-    requireSessionAuth, creatorGuard,
+    requireSessionAuth, creatorGuard, tusUploadLimiter,
     asyncHandler(async (req, res) => {
       const userId = String(req.session.user.id);
       const uploadLength = parseInt(req.headers['upload-length'] || '0', 10);
       if (!Number.isFinite(uploadLength) || uploadLength <= 0) {
         return res.status(400).json({ error: 'Missing or invalid Upload-Length header' });
+      }
+      if (uploadLength > TUS_MAX_UPLOAD_BYTES) {
+        return res.status(413).json({ error: 'File too large. Maximum 2 GB.' });
       }
 
       // Parse tus metadata header: "key base64value,key base64value"
@@ -12955,8 +14909,9 @@ app.delete('/api/webapp/creators/media/:id',
         }
       });
 
-      const filename = metadata.filename || `upload-${Date.now()}`;
-      const filetype = metadata.filetype || 'video/mp4';
+      // Accept both standard TUS key names and Directus-native equivalents
+      const filename = metadata.filename || metadata.filename_download || `upload-${Date.now()}`;
+      const filetype = metadata.filetype || metadata.type || 'video/mp4';
       const caption = metadata.caption || null;
       const isPremium = metadata.is_premium === 'true';
       const mediaType = filetype.startsWith('video/') ? 'video' : 'photo';
@@ -12969,10 +14924,11 @@ app.delete('/api/webapp/creators/media/:id',
         return res.status(400).json({ error: `Unsupported file type: ${filetype}` });
       }
 
-      // Create tus upload session at Directus — passes only filename + filetype in metadata
+      // Directus TUS data-store requires `filename_download` and `type` (not the
+      // standard `filename`/`filetype` TUS field names) — see data-store.js:38-41.
       const tusMeta = [
-        `filename ${Buffer.from(filename).toString('base64')}`,
-        `filetype ${Buffer.from(filetype).toString('base64')}`,
+        `filename_download ${Buffer.from(filename).toString('base64')}`,
+        `type ${Buffer.from(filetype).toString('base64')}`,
       ].join(',');
 
       let tusRes;
@@ -13007,7 +14963,7 @@ app.delete('/api/webapp/creators/media/:id',
       const redis = getRedis();
       await redis.set(
         `creator:tus:${uploadId}`,
-        JSON.stringify({ userId, caption, isPremium, uploadLength, mediaType }),
+        JSON.stringify({ userId, caption, isPremium, uploadLength, mediaType, filetype }),
         'EX', 86400
       );
 
@@ -13022,6 +14978,7 @@ app.delete('/api/webapp/creators/media/:id',
   app.head('/api/webapp/creator/media/tus/:uploadId',
     requireSessionAuth,
     asyncHandler(async (req, res) => {
+      if (!TUS_UPLOAD_ID_RE.test(req.params.uploadId)) return res.status(400).end();
       const redis = getRedis();
       const metaStr = await redis.get(`creator:tus:${req.params.uploadId}`);
       if (!metaStr) return res.status(404).end();
@@ -13059,6 +15016,7 @@ app.delete('/api/webapp/creators/media/:id',
     requireSessionAuth,
     express.raw({ type: 'application/offset+octet-stream', limit: '500mb' }),
     asyncHandler(async (req, res) => {
+      if (!TUS_UPLOAD_ID_RE.test(req.params.uploadId)) return res.status(400).end();
       const redis = getRedis();
       const metaStr = await redis.get(`creator:tus:${req.params.uploadId}`);
       if (!metaStr) return res.status(404).end();
@@ -13074,6 +15032,15 @@ app.delete('/api/webapp/creators/media/:id',
 
       // req.body is a Buffer when express.raw() is used
       const chunk = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+
+      // Magic bytes check on the first chunk — prevents MIME-type spoofing where
+      // a client declares video/mp4 in the POST but uploads a webshell/SVG.
+      if (uploadOffset === 0 && chunk.length >= 4) {
+        const declaredMime = meta.filetype || (meta.mediaType === 'video' ? 'video/mp4' : 'image/jpeg');
+        if (!creatorMediaMagicOk(chunk, declaredMime)) {
+          return res.status(415).json({ error: 'File content does not match declared type' });
+        }
+      }
 
       let patchRes;
       try {
@@ -13452,12 +15419,13 @@ app.get('/api/public/creator/:username',
         id: String(m.id),
         mediaType: m.media_type,
         url: canView ? m.url : null,
-        thumbUrl: m.thumb_url,
+        thumbUrl: canView ? m.thumb_url : null,
         caption: m.caption,
         isPremium: m.is_premium,
         sortOrder: m.sort_order,
         createdAt: m.created_at,
         canView,
+        drmContentId: null,
       };
     });
 
@@ -13473,10 +15441,10 @@ app.get('/api/public/creator/:username',
       );
       callPackages = pkgRows.map((p) => ({
         id: p.id,
-        durationMinutes: p.duration_minutes,
-        priceUsd: parseFloat(p.price_usd),
-        title: p.title,
-        isActive: p.is_active,
+        duration_minutes: p.duration_minutes,
+        price_usd: parseFloat(p.price_usd),
+        label: p.title || `${p.duration_minutes} min`,
+        is_active: p.is_active,
       }));
     } catch (pkgErr) {
       // call_packages table may not exist in all environments — non-fatal
@@ -13567,6 +15535,89 @@ app.get('/api/public/creator/:username',
       logger.warn('Public creator profile: availability fetch failed', { creatorId, error: availErr.message });
     }
 
+    // 9. Count total videos across all creator channels
+    let videoCount = 0;
+    try {
+      const { rows: vcRows } = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM channel_videos cv
+         JOIN creator_channels cc ON cc.id = cv.channel_id
+         WHERE cc.creator_id = $1 AND cv.is_deleted = false AND cv.status = 'published'`,
+        [creatorId]
+      );
+      videoCount = vcRows[0]?.cnt ?? 0;
+    } catch (_) { /* non-fatal */ }
+
+    // 10. Count exclusive photos and videos in creator_media (gated by is_premium)
+    let photoCount = 0;
+    let exclusiveMediaVideoCount = 0;
+    try {
+      const { rows: mcRows } = await pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE media_type IN ('image', 'photo')) AS photos,
+           COUNT(*) FILTER (WHERE media_type = 'video') AS videos
+         FROM creator_media
+         WHERE creator_id = $1 AND is_premium = true`,
+        [creatorId]
+      );
+      photoCount = Number(mcRows[0]?.photos ?? 0);
+      exclusiveMediaVideoCount = Number(mcRows[0]?.videos ?? 0);
+    } catch (_) { /* non-fatal */ }
+
+    // 11. Creator's active channels — displayed as covers on the public profile
+    // in place of the individual-video grid.
+    let channels = [];
+    try {
+      const { rows: chRows } = await pool.query(
+        `SELECT id, name, slug, cover_image_url, access_type, price_usd,
+                post_count, subscriber_count
+         FROM creator_channels
+         WHERE creator_id = $1 AND is_active = true
+         ORDER BY sort_order ASC, id ASC`,
+        [creatorId]
+      );
+      channels = chRows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        cover_image_url: c.cover_image_url || null,
+        access_type: c.access_type,
+        price_usd: c.price_usd != null ? parseFloat(c.price_usd) : 0,
+        post_count: Number(c.post_count) || 0,
+        subscriber_count: Number(c.subscriber_count) || 0,
+      }));
+    } catch (chErr) {
+      logger.warn('Public creator profile: channels fetch failed (non-fatal)', { creatorId, error: chErr.message });
+    }
+
+    // 12. Featured videos — most recent 3 published videos across all active channels
+    let featuredVideos = [];
+    try {
+      const { rows: fvRows } = await pool.query(
+        `SELECT cv.id, cv.title, cv.thumbnail_url, cv.duration_sec, cv.view_count, cv.created_at,
+                cc.slug AS channel_slug, cc.name AS channel_name
+         FROM channel_videos cv
+         JOIN creator_channels cc ON cc.id = cv.channel_id
+         WHERE cc.creator_id = $1
+           AND cc.is_active = true
+           AND cv.status = 'published'
+         ORDER BY cv.created_at DESC
+         LIMIT 3`,
+        [creatorId]
+      );
+      featuredVideos = fvRows.map((v) => ({
+        id: Number(v.id),
+        title: v.title,
+        thumb_url: v.thumbnail_url || null,
+        duration_seconds: v.duration_sec != null ? Number(v.duration_sec) : null,
+        channel_slug: v.channel_slug,
+        channel_name: v.channel_name,
+        view_count: Number(v.view_count) || 0,
+        created_at: v.created_at,
+      }));
+    } catch (fvErr) {
+      logger.warn('Public creator profile: featuredVideos fetch failed (non-fatal)', { creatorId, error: fvErr.message });
+    }
+
     return res.json({
       success: true,
       creator: {
@@ -13580,9 +15631,13 @@ app.get('/api/public/creator/:username',
         creator_subscriber_count: creator.creator_subscriber_count || 0,
         creator_verified: creator.creator_verified || false,
         creator_subscription_paused: creator.creator_subscription_paused || false,
+        videoCount: videoCount + exclusiveMediaVideoCount,
+        photoCount,
       },
       isSubscribed,
       media,
+      channels,
+      featuredVideos,
       callPackages,
       recentPosts,
       socialLinks,
@@ -13638,6 +15693,68 @@ app.get('/v/:postId/:slug?', asyncHandler(async (req, res, next) => {
   }
 
   return ogController.renderVideoPreview(req, res);
+}));
+
+// JSON preview endpoint for in-app chat link unfurling
+app.get('/api/webapp/og-preview', requireSessionAuth, asyncHandler(ogController.getOgPreview));
+
+// Live-stream snapshot proxy — public, no auth. Serves the Restreamer JPG
+// snapshot for a channel, falling back to the creator's profile photo, and
+// then to the default OG image. Used as og:image by social crawlers, so any
+// 401/404 from upstream must degrade gracefully instead of bubbling up.
+app.get('/api/og/snapshot/:refId.jpg', asyncHandler(async (req, res) => {
+  const raw = String(req.params.refId || '').trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(raw) || raw.length > 60) {
+    return res.status(400).end();
+  }
+  const APP_URL = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const defaultOg = `${APP_URL}/og-image.png`;
+
+  const sendRedirect = (url) => {
+    res.setHeader('Cache-Control', 'public, max-age=15');
+    res.redirect(302, url);
+  };
+
+  // Look up creator name for overlay text
+  let displayName = null;
+  try {
+    const { rows } = await getPool().query(
+      `SELECT first_name, username FROM users WHERE live_channel = $1 OR username = $1 LIMIT 1`,
+      [raw]
+    );
+    if (rows[0]) displayName = rows[0].first_name || rows[0].username || null;
+  } catch (_) { /* best-effort */ }
+
+  try {
+    const ogService = require('../../services/ogService');
+    const branded = await ogService.fetchAndBrandStreamSnapshot(raw, displayName);
+    if (branded) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=10');
+      return res.status(200).end(branded);
+    }
+  } catch (err) {
+    logger.debug('og snapshot: branded composite failed, falling back', { refId: raw, error: err.message });
+  }
+
+  // Fall back: redirect to creator profile photo or default OG image
+  try {
+    const { rows } = await getPool().query(
+      `SELECT photo_file_id FROM users WHERE live_channel = $1 OR username = $1 LIMIT 1`,
+      [raw]
+    );
+    const photo = rows[0]?.photo_file_id;
+    if (photo) {
+      const url = photo.startsWith('http')
+        ? photo
+        : `${APP_URL}${photo.startsWith('/') ? '' : '/'}${photo}`;
+      return sendRedirect(url);
+    }
+  } catch (err) {
+    logger.debug('og snapshot: profile photo lookup failed', { refId: raw, error: err.message });
+  }
+
+  return sendRedirect(defaultOg);
 }));
 
 // Player endpoint must be registered BEFORE the wildcard /og/* route
@@ -13707,14 +15824,14 @@ app.get('/api/main-stage/viewer-token', mainStageViewerTokenLimiter, mainStageCo
 
 app.get(
   '/api/main-stage/join-check',
-  authenticateUser,
+  requireSessionAuth,
   mainStageStateLimiter,
   mainStageController.getJoinCheck
 );
 
 app.post(
   '/api/main-stage/accept-consents',
-  authenticateUser,
+  requireSessionAuth,
   mainStageMutatorLimiter,
   mainStageController.acceptConsents
 );
@@ -13722,7 +15839,7 @@ app.post(
 // Auth required — issue a LiveKit token
 app.post(
   '/api/main-stage/token',
-  authenticateUser,
+  requireSessionAuth,
   mainStageTokenLimiter,
   mainStageController.token
 );
@@ -13731,7 +15848,7 @@ app.post(
 // changed by arbitrary authenticated users.
 app.post(
   '/api/main-stage/mode',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageMutatorLimiter,
   mainStageController.setMode
@@ -13740,7 +15857,7 @@ app.post(
 // Shuffle spotlight order — admin-only shared-state mutation.
 app.post(
   '/api/main-stage/shuffle',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageMutatorLimiter,
   mainStageController.shuffle
@@ -13748,7 +15865,7 @@ app.post(
 
 app.post(
   '/api/main-stage/media',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageController.setMedia
@@ -13759,7 +15876,7 @@ app.post(
 // to prevent toggle-spam griefing.
 app.post(
   '/api/main-stage/autoplay',
-  authenticateUser,
+  requireSessionAuth,
   requireMemberTier,
   mainStageMutatorLimiter,
   mainStageController.setAutoplay
@@ -13767,7 +15884,7 @@ app.post(
 
 app.post(
   '/api/main-stage/volume',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageController.setVolume
@@ -13775,7 +15892,7 @@ app.post(
 
 app.post(
   '/api/main-stage/spotlight',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageController.setSpotlight
@@ -13783,7 +15900,7 @@ app.post(
 
 app.post(
   '/api/main-stage/moderate',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageController.moderate
@@ -13830,7 +15947,7 @@ const mainStagePreviewLimiter = rateLimit({
 // Admin CRUD — auth + role guard
 app.post(
   '/api/main-stage/invites',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageInviteCreateLimiter,
   mainStageInvitesController.createInvite
@@ -13838,7 +15955,7 @@ app.post(
 
 app.post(
   '/api/main-stage/invites/permanent',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageInvitesController.createPermanentInvite
@@ -13846,7 +15963,7 @@ app.post(
 
 app.get(
   '/api/main-stage/invites',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageInvitesController.listInvites
@@ -13854,7 +15971,7 @@ app.get(
 
 app.delete(
   '/api/main-stage/invites/:id',
-  authenticateUser,
+  requireSessionAuth,
   roleGuard('admin', 'superadmin'),
   mainStageAdminLimiter,
   mainStageInvitesController.revokeInvite
@@ -13876,37 +15993,301 @@ app.post(
 // Video skip-vote — auth + member+; PRIME play-next — auth + PRIME/admin
 app.post(
   '/api/main-stage/vote-skip',
-  authenticateUser,
+  requireSessionAuth,
   mainStageController.voteSkip
 );
 
 app.post(
   '/api/main-stage/play-next',
-  authenticateUser,
+  requireSessionAuth,
   mainStageController.playNext
 );
 
 // Member invite CRUD — auth + pnp-member entitlement (checked inside handler)
 app.post(
   '/api/main-stage/member-invites',
-  authenticateUser,
+  requireSessionAuth,
   mainStageInviteCreateLimiter,
   mainStageInvitesController.createMemberInvite
 );
 
 app.get(
   '/api/main-stage/member-invites',
-  authenticateUser,
+  requireSessionAuth,
   mainStageAdminLimiter,
   mainStageInvitesController.listMemberInvites
 );
 
 // ── End Main Stage ────────────────────────────────────────────────────────────
 
+// ── Moderation Dashboard ──────────────────────────────────────────────────────
+
+app.get('/api/webapp/admin/moderation/bans', adminGuard, asyncHandler(async (req, res) => {
+  const { status = 'all', search = '', limit = '50', offset = '0' } = req.query;
+  const lim = Math.min(parseInt(limit, 10) || 50, 200);
+  const off = parseInt(offset, 10) || 0;
+  const searchParam = search ? `%${search}%` : null;
+
+  let whereClause = '';
+  const params = [];
+
+  if (status === 'active') {
+    params.push(true);
+    whereClause += `WHERE pb.is_active = $${params.length}`;
+  } else if (status === 'inactive') {
+    params.push(false);
+    whereClause += `WHERE pb.is_active = $${params.length}`;
+  }
+
+  if (searchParam) {
+    params.push(searchParam);
+    const idx = params.length;
+    whereClause += whereClause ? ` AND (pb.username ILIKE $${idx} OR pb.reason ILIKE $${idx})` : `WHERE (pb.username ILIKE $${idx} OR pb.reason ILIKE $${idx})`;
+  }
+
+  const countParams = [...params];
+  const rowParams = [...params, lim, off];
+
+  const [countResult, rowsResult] = await Promise.all([
+    query(`SELECT COUNT(*) FROM platform_bans pb ${whereClause}`, countParams),
+    query(
+      `SELECT pb.*, u.username AS resolved_username, u.email AS resolved_email
+       FROM platform_bans pb
+       LEFT JOIN users u ON u.id = pb.user_id
+       ${whereClause}
+       ORDER BY pb.banned_at DESC
+       LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`,
+      rowParams
+    ),
+  ]);
+
+  res.json({ bans: rowsResult.rows, total: parseInt(countResult.rows[0].count, 10) });
+}));
+
+app.post('/api/webapp/admin/moderation/bans/:id/unban', adminGuard, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+  const adminId = req.session && req.session.userId;
+
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: 'Reason is required' });
+  }
+
+  const result = await query(
+    `UPDATE platform_bans
+     SET is_active = false, unbanned_at = NOW(), unbanned_by = $1, unban_reason = $2
+     WHERE id = $3 AND is_active = true
+     RETURNING id`,
+    [adminId, reason.trim(), id]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: 'Ban not found or already lifted' });
+  }
+
+  logger.info({ adminId, banId: id, reason }, 'Ban lifted by admin');
+  res.json({ success: true });
+}));
+
+app.get('/api/webapp/admin/moderation/audit-log', adminGuard, asyncHandler(async (req, res) => {
+  const { action = '', resource_type = '', limit = '50', offset = '0' } = req.query;
+  const lim = Math.min(parseInt(limit, 10) || 50, 200);
+  const off = parseInt(offset, 10) || 0;
+
+  const conditions = [];
+  const params = [];
+
+  if (action) {
+    params.push(`%${action}%`);
+    conditions.push(`al.action ILIKE $${params.length}`);
+  }
+  if (resource_type) {
+    params.push(resource_type);
+    conditions.push(`al.resource_type = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const countParams = [...params];
+  const rowParams = [...params, lim, off];
+
+  const [countResult, rowsResult] = await Promise.all([
+    query(`SELECT COUNT(*) FROM audit_logs al ${whereClause}`, countParams),
+    query(
+      `SELECT al.*, u.username AS actor_username
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.actor_id
+       ${whereClause}
+       ORDER BY al.created_at DESC
+       LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`,
+      rowParams
+    ),
+  ]);
+
+  res.json({ logs: rowsResult.rows, total: parseInt(countResult.rows[0].count, 10) });
+}));
+
+app.get('/api/webapp/admin/moderation/username-history', adminGuard, asyncHandler(async (req, res) => {
+  const { search = '', flagged = '', limit = '100', offset = '0' } = req.query;
+  const lim = Math.min(parseInt(limit, 10) || 100, 500);
+  const off = parseInt(offset, 10) || 0;
+
+  const conditions = [];
+  const params = [];
+
+  if (flagged === 'true') {
+    conditions.push(`uh.flagged = true`);
+  } else if (flagged === 'false') {
+    conditions.push(`uh.flagged = false`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    const idx = params.length;
+    conditions.push(`(uh.old_username ILIKE $${idx} OR uh.new_username ILIKE $${idx} OR uh.user_id ILIKE $${idx})`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const countParams = [...params];
+  const rowParams = [...params, lim, off];
+
+  const [countResult, rowsResult] = await Promise.all([
+    query(`SELECT COUNT(*) FROM username_history uh ${whereClause}`, countParams),
+    query(
+      `SELECT uh.*, u.username AS current_username, u.id AS resolved_user_id
+       FROM username_history uh
+       LEFT JOIN users u ON u.id::text = uh.user_id
+       ${whereClause}
+       ORDER BY uh.changed_at DESC
+       LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}`,
+      rowParams
+    ),
+  ]);
+
+  res.json({ changes: rowsResult.rows, total: parseInt(countResult.rows[0].count, 10) });
+}));
+
+app.patch('/api/webapp/admin/moderation/username-history/:id/flag', adminGuard, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { flagged } = req.body || {};
+
+  if (typeof flagged !== 'boolean') {
+    return res.status(400).json({ error: 'flagged must be a boolean' });
+  }
+
+  await query('UPDATE username_history SET flagged = $1 WHERE id = $2', [flagged, id]);
+  res.json({ success: true });
+}));
+
+app.get('/api/webapp/admin/moderation/warnings', adminGuard, asyncHandler(async (req, res) => {
+  const { limit = '50', offset = '0' } = req.query;
+  const lim = Math.min(parseInt(limit, 10) || 50, 200);
+  const off = parseInt(offset, 10) || 0;
+
+  const [countResult, rowsResult] = await Promise.all([
+    query('SELECT COUNT(*) FROM user_warnings'),
+    query(
+      `SELECT uw.*, u.username AS actor_username, u.email AS actor_email
+       FROM user_warnings uw
+       LEFT JOIN users u ON u.id = uw.user_id
+       ORDER BY uw.timestamp DESC
+       LIMIT $1 OFFSET $2`,
+      [lim, off]
+    ),
+  ]);
+
+  res.json({ warnings: rowsResult.rows, total: parseInt(countResult.rows[0].count, 10) });
+}));
+
+// ── End Moderation Dashboard ──────────────────────────────────────────────────
+
 // Sentry error handler - must be last
 if (process.env.SENTRY_DSN) {
   app.use(Sentry.Handlers.errorHandler());
 }
+
+// ── DRM License Proxy ──────────────────────────────────────────────────────────
+// Proxies Widevine and FairPlay license requests to EZDRM.
+// Gated behind EZDRM_USERNAME env var — silently 501 if not configured.
+// Clients never talk directly to EZDRM; this hides the license server URL.
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post('/api/webapp/drm/widevine-license',
+  requireSessionAuth,
+  express.raw({ type: 'application/octet-stream', limit: '64kb' }),
+  asyncHandler(async (req, res) => {
+    const ezdrmUser = process.env.EZDRM_USERNAME;
+    const ezdrmPass = process.env.EZDRM_PASSWORD;
+    if (!ezdrmUser || !ezdrmPass) return res.status(501).json({ error: 'DRM not configured' });
+
+    const contentId = req.query.contentId;
+    if (!contentId || !/^[a-zA-Z0-9_-]{1,64}$/.test(contentId)) {
+      return res.status(400).json({ error: 'Invalid contentId' });
+    }
+
+    try {
+      const licenseUrl = `https://widevine-dash.ezdrm.com/proxy?pX=${encodeURIComponent(ezdrmUser)}&contentId=${encodeURIComponent(contentId)}`;
+      const licenseRes = await axios.post(licenseUrl, req.body, {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          Authorization: 'Basic ' + Buffer.from(`${ezdrmUser}:${ezdrmPass}`).toString('base64'),
+        },
+        responseType: 'arraybuffer',
+        validateStatus: () => true,
+      });
+      res.status(licenseRes.status)
+        .set('Content-Type', 'application/octet-stream')
+        .send(Buffer.from(licenseRes.data));
+    } catch (err) {
+      logger.error('DRM Widevine license proxy error', { error: err.message });
+      return res.status(502).json({ error: 'License server error' });
+    }
+  })
+);
+
+app.post('/api/webapp/drm/fairplay-license',
+  requireSessionAuth,
+  express.raw({ type: 'application/octet-stream', limit: '64kb' }),
+  asyncHandler(async (req, res) => {
+    const ezdrmUser = process.env.EZDRM_USERNAME;
+    const ezdrmPass = process.env.EZDRM_PASSWORD;
+    if (!ezdrmUser || !ezdrmPass) return res.status(501).json({ error: 'DRM not configured' });
+
+    const contentId = req.query.contentId;
+    if (!contentId || !/^[a-zA-Z0-9_-]{1,64}$/.test(contentId)) {
+      return res.status(400).json({ error: 'Invalid contentId' });
+    }
+
+    try {
+      const licenseUrl = `https://fps.ezdrm.com/api/licenses/${encodeURIComponent(contentId)}`;
+      const licenseRes = await axios.post(licenseUrl, req.body, {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          Authorization: 'Basic ' + Buffer.from(`${ezdrmUser}:${ezdrmPass}`).toString('base64'),
+        },
+        responseType: 'arraybuffer',
+        validateStatus: () => true,
+      });
+      res.status(licenseRes.status)
+        .set('Content-Type', 'application/octet-stream')
+        .send(Buffer.from(licenseRes.data));
+    } catch (err) {
+      logger.error('DRM FairPlay license proxy error', { error: err.message });
+      return res.status(502).json({ error: 'License server error' });
+    }
+  })
+);
+
+app.get('/api/webapp/drm/fairplay-cert',
+  requireSessionAuth,
+  asyncHandler(async (req, res) => {
+    const certB64 = process.env.FAIRPLAY_CERT_BASE64;
+    if (!certB64) return res.status(501).json({ error: 'FairPlay cert not configured' });
+    const certBuf = Buffer.from(certB64, 'base64');
+    res.set('Content-Type', 'application/octet-stream').send(certBuf);
+  })
+);
+
+// ── End DRM License Proxy ──────────────────────────────────────────────────────
 
 // ==========================================
 // OG PRERENDER — serves dynamic meta tags for social media crawlers

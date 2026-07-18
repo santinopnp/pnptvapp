@@ -49,6 +49,10 @@ class DmService {
     const { content, mediaUrl, mediaType, mediaMime, mediaThumbUrl, messageType, meta, replyToId } = data;
     const { isAdmin = false } = options;
 
+    const DM_INTRO_LIMIT = 5;
+    let dmIntroKey = null;
+    let dmIntroUsed = 0;
+
     const resolvedRecipientId = await resolveUserId(recipientId);
     if (!resolvedRecipientId) {
       throw { statusCode: 404, message: 'Recipient not found' };
@@ -66,7 +70,7 @@ class DmService {
       }
       await query(
         `INSERT INTO support_ticket_messages (user_id, sender_type, sender_name, content)
-         VALUES ($1, 'user', (SELECT COALESCE(first_name, username, 'User') FROM users WHERE id = $1), $2)`,
+         VALUES ($1::text, 'user', (SELECT COALESCE(first_name, username, 'User') FROM users WHERE id = $1::text), $2)`,
         [senderId, text]
       );
       return {
@@ -112,32 +116,50 @@ class DmService {
       }
 
       if (recipientRow.role === 'model' && recipientRow.creator_status === 'active') {
-        const dmPolicy = privacy.creatorDmPolicy || 'subscribers_and_mutuals';
-        if (dmPolicy === 'subscribers_and_mutuals') {
-          const [subscriberCheck, mutualCheck] = await Promise.all([
-            query(
-              `SELECT 1 FROM user_entitlements
-               WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2
-                 AND (is_lifetime = true OR expires_at > NOW())
-               LIMIT 1`,
-              [String(senderId), String(resolvedRecipientId)]
-            ),
-            query(
-              `SELECT 1 FROM user_follows f1
-               JOIN user_follows f2
-                 ON f1.follower_id = f2.following_id AND f1.following_id = f2.follower_id
-               WHERE f1.follower_id = $1 AND f1.following_id = $2
-               LIMIT 1`,
-              [senderId, resolvedRecipientId]
-            ),
-          ]);
+        const dmPolicy = privacy.creatorDmPolicy || 'prime_or_subscriber';
+        if (dmPolicy !== 'open') {
+          const senderTier = (options.senderTier || 'free').toLowerCase();
+          if (senderTier !== 'prime') {
+            const [subscriberCheck, creatorMsgFirst] = await Promise.all([
+              query(
+                `SELECT 1 FROM user_entitlements
+                 WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2
+                   AND (is_lifetime = true OR expires_at > NOW())
+                 LIMIT 1`,
+                [String(senderId), String(resolvedRecipientId)]
+              ),
+              query(
+                `SELECT 1 FROM direct_messages
+                 WHERE sender_id = $1 AND recipient_id = $2 AND is_deleted = false
+                 LIMIT 1`,
+                [resolvedRecipientId, senderId]
+              ),
+            ]);
 
-          if (subscriberCheck.rows.length === 0 && mutualCheck.rows.length === 0) {
-            throw {
-              statusCode: 403,
-              message: 'Only subscribers and mutual follows can message this creator',
-              code: 'CREATOR_DM_RESTRICTED',
-            };
+            const isSubscriber = subscriberCheck.rows.length > 0;
+            const creatorReplied = creatorMsgFirst.rows.length > 0;
+
+            if (!isSubscriber && !creatorReplied) {
+              // Free users get DM_INTRO_LIMIT intro messages per creator before the upsell.
+              // Counter lives in Redis with no TTL (lifetime pool, not daily).
+              dmIntroKey = `dm:intro:${senderId}:${resolvedRecipientId}`;
+              try {
+                const { getRedis } = require('../config/redis');
+                dmIntroUsed = parseInt(await getRedis().get(dmIntroKey) || '0', 10);
+              } catch (_) {
+                // Redis unavailable — fail closed to prevent gate bypass
+                dmIntroUsed = DM_INTRO_LIMIT;
+              }
+
+              if (dmIntroUsed >= DM_INTRO_LIMIT) {
+                throw {
+                  statusCode: 403,
+                  message: `You've used all ${DM_INTRO_LIMIT} free messages with this creator. Upgrade to PRIME for unlimited access.`,
+                  code: 'CREATOR_DM_RESTRICTED',
+                  remaining: 0,
+                };
+              }
+            }
           }
         }
       }
@@ -176,6 +198,15 @@ class DmService {
     );
 
     const message = rows[0];
+
+    if (dmIntroKey) {
+      try {
+        const { getRedis } = require('../config/redis');
+        await getRedis().incr(dmIntroKey);
+      } catch (_) {}
+      message._remaining = DM_INTRO_LIMIT - dmIntroUsed - 1;
+    }
+
     const [a, b] = [senderId, resolvedRecipientId].sort();
     const threadPreview = DmService._buildThreadPreview({
       content: text,
@@ -185,14 +216,15 @@ class DmService {
     });
 
     await query(
-      `INSERT INTO dm_threads (user_a, user_b, last_message_at, last_message, unread_for_a, unread_for_b)
-       VALUES ($1, $2, NOW(), $3, $4, $5)
+      `INSERT INTO dm_threads (user_a, user_b, last_message_at, last_message, last_message_id, unread_for_a, unread_for_b)
+       VALUES ($1, $2, NOW(), $3, $7, $4, $5)
        ON CONFLICT (user_a, user_b) DO UPDATE SET
          last_message_at = NOW(),
          last_message = EXCLUDED.last_message,
+         last_message_id = EXCLUDED.last_message_id,
          unread_for_a = CASE WHEN dm_threads.user_a = $6 THEN 0 ELSE dm_threads.unread_for_a + 1 END,
          unread_for_b = CASE WHEN dm_threads.user_b = $6 THEN 0 ELSE dm_threads.unread_for_b + 1 END`,
-      [a, b, threadPreview, senderId === a ? 0 : 1, senderId === b ? 0 : 1, senderId]
+      [a, b, threadPreview, senderId === a ? 0 : 1, senderId === b ? 0 : 1, senderId, message.id]
     );
 
     (async () => {
@@ -549,8 +581,16 @@ class DmService {
    * Bridge a webapp DM to the recipient's Telegram account.
    * Sends via bot private message and stores the TG message ID in Redis
    * so the recipient can reply from Telegram.
+   *
+   * DISABLED 2026-07-09 per operator request — the bot was pushing every
+   * webapp DM into users' Telegram inbox, which was undesirable noise. Kept
+   * behind DM_TG_BRIDGE_ENABLED=true so it can be re-enabled without a code
+   * change if the product decision reverses. The inbound reply handler is
+   * left in place (harmless — nothing new to reply to once bridging stops,
+   * existing 48h reply mappings still resolve until they expire).
    */
   static async bridgeToTelegram(senderId, recipientId, message) {
+    if (process.env.DM_TG_BRIDGE_ENABLED !== 'true') return;
     try {
       const { getBotInstance } = require('../bot/core/bot');
       const bot = getBotInstance();

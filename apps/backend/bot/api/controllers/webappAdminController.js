@@ -72,6 +72,15 @@ const getStats = async (req, res) => {
         status: String(t.status || ''),
         method: String(t.payment_method || t.last_payment_method || ''),
       })),
+      // Conversion & unit economics
+      conversionRate: toNum(raw.conversion?.conversion_rate),
+      activeRate: toNum(raw.conversion?.active_rate),
+      // payers_90d = platform-wide unique users who made a completed payment in the last 90 days
+      // (distinct from raw.conversion.payers which is the 90d-signup cohort who ever paid)
+      totalPayers: toInt(raw.conversion?.payers_90d ?? raw.conversion?.payers),
+      avgLTV: raw.payments && toInt(raw.payments.unique_payers) > 0
+        ? toNum(raw.payments.total_revenue) / toInt(raw.payments.unique_payers)
+        : 0,
     };
 
     logger.info('Admin accessed dashboard stats', { adminId: user.id });
@@ -102,10 +111,12 @@ const listUsers = async (req, res) => {
     const offset = (page - 1) * limit;
 
     let countQuery = 'SELECT COUNT(*) as count FROM users WHERE is_active = true';
-    let dataQuery = `SELECT id, username, email, first_name, last_name, photo_file_id, role, tier,
-                            subscription_status, plan_id AS subscription_plan, plan_expiry, created_at,
-                            last_login_at, last_login_method, last_active, telegram
-                     FROM users WHERE is_active = true`;
+    let dataQuery = `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.photo_file_id, u.role, u.tier,
+                            u.subscription_status, u.plan_id AS subscription_plan,
+                            COALESCE(p.display_name, p.name) AS plan_name,
+                            u.plan_expiry, u.created_at,
+                            u.last_login_at, u.last_login_method, u.last_active, u.telegram
+                     FROM users u LEFT JOIN plans p ON u.plan_id = p.id WHERE u.is_active = true`;
     const params = [];
     const countParams = [];
 
@@ -113,8 +124,8 @@ const listUsers = async (req, res) => {
       const searchTerm = `%${escapeLike(search)}%`;
       const idx1 = params.length + 1;
       const idx2 = params.length + 2;
-      const searchClause = ` AND (username ILIKE $${idx1} ESCAPE '\\' OR email ILIKE $${idx1} ESCAPE '\\' OR first_name ILIKE $${idx1} ESCAPE '\\' OR last_name ILIKE $${idx1} ESCAPE '\\' OR id::text = $${idx2})`;
-      countQuery += searchClause;
+      const searchClause = ` AND (u.username ILIKE $${idx1} ESCAPE '\\' OR u.email ILIKE $${idx1} ESCAPE '\\' OR u.first_name ILIKE $${idx1} ESCAPE '\\' OR u.last_name ILIKE $${idx1} ESCAPE '\\' OR u.id::text = $${idx2})`;
+      countQuery += ` AND (username ILIKE $${idx1} ESCAPE '\\' OR email ILIKE $${idx1} ESCAPE '\\' OR first_name ILIKE $${idx1} ESCAPE '\\' OR last_name ILIKE $${idx1} ESCAPE '\\' OR id::text = $${idx2})`;
       dataQuery += searchClause;
       params.push(searchTerm, search);
       countParams.push(searchTerm, search);
@@ -122,65 +133,58 @@ const listUsers = async (req, res) => {
 
     if (tierFilter) {
       const idx = params.length + 1;
-      const clause = ` AND tier = $${idx}`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND tier = $${idx}`;
+      dataQuery += ` AND u.tier = $${idx}`;
       params.push(tierFilter);
       countParams.push(tierFilter);
     }
 
     if (statusFilter) {
       const idx = params.length + 1;
-      const clause = ` AND subscription_status = $${idx}`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND subscription_status = $${idx}`;
+      dataQuery += ` AND u.subscription_status = $${idx}`;
       params.push(statusFilter);
       countParams.push(statusFilter);
     }
 
     if (planFilter) {
       const idx = params.length + 1;
-      let clause;
       if (planFilter === '__none__') {
-        clause = ' AND (plan_id IS NULL OR plan_id = \'\')';
+        countQuery += ' AND (plan_id IS NULL OR plan_id = \'\')';
+        dataQuery += ' AND (u.plan_id IS NULL OR u.plan_id = \'\')';
       } else {
-        clause = ` AND plan_id = $${idx}`;
+        countQuery += ` AND plan_id = $${idx}`;
+        dataQuery += ` AND u.plan_id = $${idx}`;
         params.push(planFilter);
         countParams.push(planFilter);
       }
-      countQuery += clause;
-      dataQuery += clause;
     }
 
     if (roleFilter) {
       const idx = params.length + 1;
-      const clause = ` AND role = $${idx}`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND role = $${idx}`;
+      dataQuery += ` AND u.role = $${idx}`;
       params.push(roleFilter);
       countParams.push(roleFilter);
     }
 
     if (telegramFilter === 'linked') {
-      const clause = ` AND telegram IS NOT NULL AND telegram != ''`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND telegram IS NOT NULL AND telegram != ''`;
+      dataQuery += ` AND u.telegram IS NOT NULL AND u.telegram != ''`;
     } else if (telegramFilter === 'unlinked') {
-      const clause = ` AND (telegram IS NULL OR telegram = '')`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND (telegram IS NULL OR telegram = '')`;
+      dataQuery += ` AND (u.telegram IS NULL OR u.telegram = '')`;
     }
 
     if (emailFilter) {
       const idx = params.length + 1;
-      const clause = ` AND LOWER(email) = LOWER($${idx})`;
-      countQuery += clause;
-      dataQuery += clause;
+      countQuery += ` AND LOWER(email) = LOWER($${idx})`;
+      dataQuery += ` AND LOWER(u.email) = LOWER($${idx})`;
       params.push(emailFilter);
       countParams.push(emailFilter);
     }
 
-    dataQuery += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+    dataQuery += ' ORDER BY u.created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
     params.push(limit, offset);
 
     const [countResult, dataResult] = await Promise.all([
@@ -674,6 +678,8 @@ const bulkUpdateUsers = async (req, res) => {
     let failed = 0;
     const errors = [];
 
+    const redis = require('../../../config/redis').client;
+
     for (const userId of userIds) {
       try {
         if (action === 'upgrade') {
@@ -682,10 +688,15 @@ const bulkUpdateUsers = async (req, res) => {
             failed++;
             continue;
           }
-          const expiryValue = expiry ? new Date(expiry) : null;
           const planResult = await query('SELECT tier FROM plans WHERE id = $1', [planId]);
-          const targetTier = planResult.rows[0]?.tier || 'PRIME';
-          await query(
+          if (planResult.rows.length === 0) {
+            errors.push({ userId, error: `Plan '${planId}' not found` });
+            failed++;
+            continue;
+          }
+          const targetTier = planResult.rows[0].tier;
+          const expiryValue = expiry ? new Date(expiry) : null;
+          const r = await query(
             `UPDATE users
              SET tier = $4,
                  subscription_status = 'active',
@@ -695,29 +706,49 @@ const bulkUpdateUsers = async (req, res) => {
              WHERE id = $1`,
             [userId, planId, expiryValue, targetTier]
           );
+          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          await cache.del(`user:${userId}`);
         } else if (action === 'downgrade') {
-          await query(
+          const r = await query(
             `UPDATE users
              SET tier = 'free',
-                 subscription_status = 'free',
+                 subscription_status = 'churned',
                  plan_id = NULL,
                  plan_expiry = NULL,
                  updated_at = NOW()
              WHERE id = $1`,
             [userId]
           );
+          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          await cache.del(`user:${userId}`);
         } else if (action === 'ban') {
-          await query(
-            `UPDATE users SET tier = 'banned', updated_at = NOW() WHERE id = $1`,
+          // Mirror single banUser: full state revocation + session destruction
+          const r = await query(
+            `UPDATE users SET tier = 'banned', role = 'user', creator_status = 'none',
+             subscription_status = 'expired', updated_at = NOW() WHERE id = $1`,
             [userId]
           );
+          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          await cache.del(`user:${userId}`);
+          try {
+            const keys = await redis.keys('sess:*');
+            for (const key of keys) {
+              const val = await redis.get(key);
+              if (val && val.includes(userId.toString())) await redis.del(key);
+            }
+          } catch (sessErr) {
+            logger.warn('bulkUpdateUsers: session destruction failed', { userId, error: sessErr.message });
+          }
         } else if (action === 'unban') {
-          await query(
-            `UPDATE users SET tier = 'free', updated_at = NOW() WHERE id = $1`,
+          // Mirror single banUser: restore to free/churned
+          const r = await query(
+            `UPDATE users SET tier = 'free', subscription_status = 'churned', updated_at = NOW() WHERE id = $1`,
             [userId]
           );
+          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
+          await cache.del(`user:${userId}`);
         } else if (action === 'delete') {
-          await query(
+          const r = await query(
             `UPDATE users SET
                deleted_at = NOW(), is_deleted = true, is_active = false,
                tier = 'banned', subscription_status = 'expired',
@@ -727,7 +758,17 @@ const bulkUpdateUsers = async (req, res) => {
              WHERE id = $1`,
             [userId]
           );
+          if (r.rowCount === 0) { errors.push({ userId, error: 'User not found' }); failed++; continue; }
           await cache.del(`user:${userId}`);
+          try {
+            const keys = await redis.keys('sess:*');
+            for (const key of keys) {
+              const val = await redis.get(key);
+              if (val && val.includes(userId.toString())) await redis.del(key);
+            }
+          } catch (sessErr) {
+            logger.warn('bulkUpdateUsers: session destruction failed on delete', { userId, error: sessErr.message });
+          }
         }
         updated++;
       } catch (userError) {
@@ -1103,6 +1144,14 @@ const subscribePush = async (req, res) => {
 
     if (!endpoint || !keys || !keys.auth || !keys.p256dh) {
       return res.status(400).json({ error: 'endpoint and keys (auth, p256dh) are required' });
+    }
+
+    let parsedEndpoint;
+    try { parsedEndpoint = new URL(endpoint); } catch (_) {
+      return res.status(400).json({ error: 'Invalid push endpoint URL' });
+    }
+    if (parsedEndpoint.protocol !== 'https:') {
+      return res.status(400).json({ error: 'Push endpoint must be an HTTPS URL' });
     }
 
     await query(
@@ -1588,7 +1637,169 @@ const assignUserPlan = async (req, res) => {
       grantResult,
     });
   } catch (error) {
+    if (error.code === 'P0001' && error.message?.includes('lifetime entitlements')) {
+      return res.status(400).json({ success: false, error: 'This user holds lifetime entitlements. Use the superadmin bypass to override.' });
+    }
     logger.error('assignUserPlan error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * POST /api/webapp/admin/users/:userId/gift-plan
+ * Gift a plan to a user on behalf of an admin or another user.
+ * Grants entitlements immediately (free), records the gift, and
+ * sends a DM notification to the recipient.
+ *
+ * Body: { planId, note? }
+ */
+const giftUserPlan = async (req, res) => {
+  try {
+    const recipientId = String(req.params.userId);
+    const planId = String((req.body || {}).planId || '').trim();
+    const rawNote = String((req.body || {}).note || '').replace(/[\x00-\x1F\x7F]/g, '').trim().slice(0, 500);
+    const note = rawNote || null;
+    const gifterId = req.user?.id ? String(req.user.id) : null;
+    if (!gifterId) return res.status(401).json({ success: false, error: 'Cannot determine admin identity' });
+
+    if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+
+    const planRes = await query(
+      `SELECT id, display_name, tier, duration_days, is_lifetime, active FROM plans WHERE id = $1`,
+      [planId]
+    );
+    if (planRes.rows.length === 0) return res.status(404).json({ success: false, error: `Plan '${planId}' not found` });
+    const plan = planRes.rows[0];
+    if (plan.active === false) return res.status(400).json({ success: false, error: `Plan '${planId}' is inactive` });
+
+    const recipientRes = await query(`SELECT id, first_name, username FROM users WHERE id = $1`, [recipientId]);
+    if (recipientRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Recipient user not found' });
+
+    const gifterRes = await query(`SELECT id, first_name, username FROM users WHERE id = $1`, [gifterId]);
+    const gifterName = gifterRes.rows[0]?.first_name || gifterRes.rows[0]?.username || 'The team';
+
+    const durationDays = Number(plan.duration_days) > 0 ? Number(plan.duration_days) : 30;
+
+    // Grant entitlements via the canonical path
+    const PaymentService = require('../../../services/paymentService');
+    await PaymentService.grantEntitlementsForPlan(recipientId, planId, 'gift', { actorId: gifterId });
+    // Sync users.tier so admin UI shows the correct tier immediately after the gift
+    try {
+      const EAS = require('../../../services/entitlementAccessService');
+      await EAS.recomputeUserTier(recipientId);
+    } catch (tierErr) {
+      logger.warn('giftUserPlan: recomputeUserTier failed (non-fatal)', { recipientId, error: tierErr.message });
+    }
+
+    // Stamp gifted_by on the freshly inserted entitlements
+    await query(
+      `UPDATE user_entitlements SET gifted_by = $1
+         WHERE user_id = $2 AND source_plan_id = $3 AND gifted_by IS NULL
+           AND created_at > NOW() - INTERVAL '30 seconds'`,
+      [gifterId, recipientId, planId]
+    );
+
+    // Record the gift — idempotency_key prevents duplicate rows on concurrent admin calls
+    const idempotencyKey = `${gifterId}:${recipientId}:${planId}:${Math.floor(Date.now() / 60000)}`;
+    const giftRow = await query(
+      `INSERT INTO gifts (gifter_id, recipient_id, plan_id, duration_days, note, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = NOW()
+       RETURNING id`,
+      [gifterId, recipientId, planId, durationDays, note, idempotencyKey]
+    );
+
+    // Sync legacy plan columns
+    if (plan.is_lifetime) {
+      await query(`UPDATE users SET plan_id=$1, plan_expiry=NULL, updated_at=NOW() WHERE id=$2`, [planId, recipientId]);
+    } else {
+      await query(
+        `UPDATE users SET plan_id=$1, plan_expiry=NOW()+($2::int*INTERVAL'1 day'), updated_at=NOW() WHERE id=$3`,
+        [planId, durationDays, recipientId]
+      );
+    }
+
+    // DM notification to recipient (fire-and-forget)
+    setImmediate(async () => {
+      try {
+        const SYSTEM_ID = '8552451957';
+        const planLabel = plan.display_name || plan.id;
+        const daysLabel = plan.is_lifetime ? 'lifetime access' : `${durationDays}-day membership`;
+        const msg = note
+          ? `You've been gifted ${planLabel}! ${gifterName} sent you ${daysLabel} with a note: "${note}" Enjoy! 💜`
+          : `You've been gifted ${planLabel}! ${gifterName} sent you ${daysLabel}. Enjoy! 💜`;
+        const sendSystemDM = require('../../../services/sendSystemDM');
+        await sendSystemDM(SYSTEM_ID, recipientId, msg, query);
+      } catch (dmErr) {
+        logger.warn('giftUserPlan: DM notification failed', { recipientId, error: dmErr.message });
+      }
+    });
+
+    const updatedUser = await query(
+      `SELECT id, username, email, first_name, last_name, tier, subscription_status,
+              plan_id AS subscription_plan, plan_expiry
+         FROM users WHERE id = $1`,
+      [recipientId]
+    );
+
+    return res.json({
+      success: true,
+      giftId: giftRow.rows[0].id,
+      user: updatedUser.rows[0],
+      plan: { id: plan.id, displayName: plan.display_name, tier: plan.tier },
+    });
+  } catch (error) {
+    logger.error('giftUserPlan error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * GET /api/webapp/admin/gifts?page=1&limit=25&gifterId=&recipientId=
+ * List all gifts with optional filters. Joins gifter/recipient usernames and plan names.
+ */
+const getAdminGifts = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit) || 25);
+    const offset = (page - 1) * limit;
+    const gifterId = req.query.gifterId ? String(req.query.gifterId) : null;
+    const recipientId = req.query.recipientId ? String(req.query.recipientId) : null;
+
+    const conditions = [];
+    const params = [];
+    if (gifterId) { params.push(gifterId); conditions.push(`g.gifter_id = $${params.length}`); }
+    if (recipientId) { params.push(recipientId); conditions.push(`g.recipient_id = $${params.length}`); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countRes = await query(
+      `SELECT COUNT(*) FROM gifts g ${where}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count);
+
+    const rows = await query(
+      `SELECT g.id, g.gifter_id, g.recipient_id, g.plan_id, g.duration_days, g.note, g.created_at,
+              gifter.username AS gifter_username, gifter.first_name AS gifter_name,
+              recip.username AS recipient_username, recip.first_name AS recipient_name,
+              p.display_name AS plan_display_name, p.tier AS plan_tier
+         FROM gifts g
+         LEFT JOIN users gifter ON gifter.id = g.gifter_id
+         LEFT JOIN users recip  ON recip.id  = g.recipient_id
+         LEFT JOIN plans p      ON p.id      = g.plan_id
+         ${where}
+         ORDER BY g.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    return res.json({
+      success: true,
+      gifts: rows.rows,
+      pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    logger.error('getAdminGifts error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -1856,7 +2067,8 @@ const makeCreator = async (req, res) => {
     // Mirrors approveApplication so admin cherry-picks land the user in the
     // same fully-featured state as the regular flow.
     const setClauses = [
-      'role = $2',
+      // Promote to 'model' only if current role is below creator tier — never overwrite admin/superadmin
+      "role = CASE WHEN role NOT IN ('model', 'creator', 'admin', 'superadmin') THEN $2 ELSE role END",
       'creator_status = $3',
       'creator_role = $4',
       'creator_enabled_at = NOW()',
@@ -2379,6 +2591,614 @@ const setCreatorLock = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/webapp/admin/churn-trend
+ * Weekly signups vs plan expirations over the last N weeks
+ */
+const getChurnTrend = async (req, res) => {
+  try {
+    const weeks = Math.min(52, Math.max(4, parseInt(req.query.weeks || '12', 10)));
+    const toInt = (v) => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+    const data = await AdminDashboardService.getChurnTrend(weeks);
+    return res.json({
+      success: true,
+      signups: data.signups.map(r => ({ week: String(r.week_start), count: toInt(r.signup_count) })),
+      churn: data.churn.map(r => ({ week: String(r.week_start), count: toInt(r.churn_count) })),
+    });
+  } catch (error) {
+    logger.error('Error getting churn trend:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/webapp/admin/creator-leaderboard
+ * Top creators ranked by earnings, tips and stream hours
+ */
+const getCreatorLeaderboard = async (req, res) => {
+  try {
+    const limit = Math.min(25, Math.max(1, parseInt(req.query.limit || '10', 10)));
+    const since = /^\d{4}-\d{2}-\d{2}$/.test(req.query.since || '') ? req.query.since : '2026-07-10';
+    const rows = await AdminDashboardService.getCreatorLeaderboard(limit, since);
+    const toNum = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+    const toInt = (v) => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+    return res.json({
+      success: true,
+      creators: rows.map(r => ({
+        id: String(r.id),
+        name: r.first_name || r.username || String(r.id),
+        username: r.username || null,
+        photo: r.photo || null,
+        totalEarningsUsd: toNum(r.total_earnings_usd),
+        totalStreams: toInt(r.total_streams),
+        totalHoursLive: toNum(r.total_hours_live),
+        avgPeakViewers: toNum(r.avg_peak_viewers),
+        totalTipsUsd: toNum(r.total_tips_usd),
+        lastStreamedAt: r.last_streamed_at
+          ? (r.last_streamed_at instanceof Date ? r.last_streamed_at.toISOString() : String(r.last_streamed_at))
+          : null,
+      })),
+    });
+  } catch (error) {
+    logger.error('Error getting creator leaderboard:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const axios = require('axios');
+
+/**
+ * GET /api/webapp/admin/analytics/umami?days=30
+ * Proxy Umami analytics — pageviews, visitors, top pages & countries
+ */
+const getUmamiStats = async (req, res) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days || '30', 10)));
+  const cacheKey = `admin:umami:${days}`;
+  try {
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const UMAMI_URL = 'https://analytics.pnptv.app';
+    const SITE_ID = process.env.UMAMI_SITE_ID || '9f9e5ca7-f62e-450d-8c9d-79a472e9638a';
+    const { data: auth } = await axios.post(`${UMAMI_URL}/api/auth/login`, {
+      username: process.env.UMAMI_ADMIN_USER || 'admin',
+      password: process.env.UMAMI_ADMIN_PASS,
+    });
+    const token = auth.token;
+    const headers = { Authorization: `Bearer ${token}` };
+    const endAt = Date.now();
+    const startAt = endAt - (days * 86400000);
+    const base = `${UMAMI_URL}/api/websites/${SITE_ID}`;
+    const qs = `startAt=${startAt}&endAt=${endAt}`;
+    const [statsRes, pagesRes, countriesRes, devicesRes] = await Promise.all([
+      axios.get(`${base}/stats?${qs}`, { headers }),
+      axios.get(`${base}/metrics?type=url&${qs}&limit=10`, { headers }),
+      axios.get(`${base}/metrics?type=country&${qs}&limit=10`, { headers }),
+      axios.get(`${base}/metrics?type=device&${qs}&limit=5`, { headers }),
+    ]);
+    const result = {
+      stats: statsRes.data,
+      pages: pagesRes.data,
+      countries: countriesRes.data,
+      devices: devicesRes.data,
+    };
+    await cache.set(cacheKey, result, 300);
+    return res.json(result);
+  } catch (error) {
+    logger.error('Error fetching Umami stats:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch analytics data' });
+  }
+};
+
+/**
+ * GET /api/webapp/admin/analytics/metabase?card=1
+ * Proxy a Metabase question result (cols + rows)
+ */
+const getMetabaseCard = async (req, res) => {
+  const cardId = Math.min(100, Math.max(1, parseInt(req.query.card || '1', 10)));
+  const cacheKey = `admin:mb:card:${cardId}`;
+  try {
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const MB_URL = 'https://metabase.pnptv.app';
+    const { data: session } = await axios.post(`${MB_URL}/api/session`, {
+      username: process.env.METABASE_ADMIN_USER || 'support@pnptv.app',
+      password: process.env.METABASE_ADMIN_PASS,
+    });
+    const mbToken = session.id;
+    const { data: qd } = await axios.post(`${MB_URL}/api/card/${cardId}/query`, {}, {
+      headers: { 'X-Metabase-Session': mbToken },
+    });
+    const data = qd.data || {};
+    const result = {
+      cols: (data.cols || []).map(c => c.display_name || c.name),
+      rows: data.rows || [],
+    };
+    await cache.set(cacheKey, result, 300);
+    return res.json(result);
+  } catch (error) {
+    logger.error('Error fetching Metabase card:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch BI data' });
+  }
+};
+
+/**
+ * GET /api/webapp/admin/analytics/usage?days=30&role=creator
+ * Usage analytics: new members trend, DAU, popular features, session duration
+ */
+const getUsageAnalytics = async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const role = req.query.role || null;
+    if (![7, 30, 90].includes(days)) {
+      return res.status(400).json({ error: 'days must be 7, 30, or 90' });
+    }
+    const data = await AdminDashboardService.getUsageAnalytics(days, role);
+    res.json(data);
+  } catch (err) {
+    logger.error('Failed to get usage analytics', { err });
+    res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
+};
+
+const getTierFeatureSplit = async (req, res) => {
+  const days = Math.min(parseInt(req.query.days) || 30, 90);
+  try {
+    const data = await AdminDashboardService.getFeatureTierSplit(days);
+    return res.json({ success: true, ...data });
+  } catch (err) {
+    logger.error('getTierFeatureSplit error', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const MONITORING_SERVICES = [
+  { key: 'web',        label: 'Web App',           category: 'core',    url: 'https://pnptv.app' },
+  { key: 'bot',        label: 'API / Backend',      category: 'core',    url: 'https://pnptv.app/api/health' },
+  { key: 'cms',        label: 'CMS (Directus)',      category: 'core',    url: 'https://cms.pnptv.app' },
+  { key: 'restreamer', label: 'Restreamer (RTMP)',   category: 'stream',  url: 'https://live.pnptv.app' },
+  { key: 'livekit',    label: 'LiveKit',             category: 'stream',  url: 'https://livekit.pnptv.app' },
+  { key: 'btcpay',     label: 'BTCPay Server',       category: 'payment', url: 'https://btcpay.pnptv.app' },
+  { key: 'kuma',       label: 'Uptime Kuma',         category: 'infra',   url: 'https://status.pnptv.app' },
+  { key: 'calcom',     label: 'Bookings (Cal.com)',   category: 'infra',   url: 'https://booking.pnptv.app' },
+];
+
+async function pingService(url) {
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timer);
+    return { ok: r.status < 500, status: r.status, ms: Date.now() - start };
+  } catch {
+    return { ok: false, status: 0, ms: Date.now() - start };
+  }
+}
+
+const getMonitoringStatus = async (req, res) => {
+  const [serviceResults, cronJobs] = await Promise.all([
+    Promise.all(MONITORING_SERVICES.map(async (svc) => {
+      const ping = await pingService(svc.url);
+      return { key: svc.key, label: svc.label, category: svc.category, ...ping };
+    })),
+    (async () => {
+      const apiKey = process.env.HEALTHCHECKS_SECRET_KEY;
+      if (!apiKey) return [];
+      try {
+        const r = await fetch('https://healthchecks.pnptv.app/api/v1/checks/', {
+          headers: { 'X-Api-Key': apiKey },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!r.ok) return [];
+        const data = await r.json();
+        return (data.checks || []).map((c) => ({
+          slug: c.slug,
+          name: c.name,
+          timeout: c.timeout,
+          status: c.status,
+          last_ping: c.last_ping || null,
+        }));
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
+
+  return res.json({ checkedAt: new Date().toISOString(), services: serviceResults, cronJobs });
+};
+
+// ── Shared secret check for all /api/internal/efipay-reseller/* routes ────────
+function _checkResellerSecret(req, res) {
+  const crypto = require('crypto');
+  const secret = req.headers['x-reseller-secret'] ?? '';
+  const expected = process.env.EASYBOTS_RESELLER_SECRET ?? '';
+  if (!expected || secret.length !== expected.length ||
+      !crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(expected))) {
+    res.status(401).json({ error: 'unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GET /api/internal/efipay-reseller/product
+ * Returns price and billing SKU for a product before checkout is generated.
+ * product_type: call_package | creator_membership | channel_access
+ * resource_id:  call SKU | creator user_id | channel numeric id
+ */
+const efiPayResellerProduct = async (req, res) => {
+  if (!_checkResellerSecret(req, res)) return;
+
+  const { product_type, resource_id } = req.query;
+  if (!product_type || !resource_id) {
+    return res.status(400).json({ error: 'product_type and resource_id are required' });
+  }
+
+  if (product_type === 'call_package') {
+    const r = await query(
+      `SELECT id, sku, title, price_usd, duration_minutes, quantity
+       FROM call_packages WHERE sku = $1::text AND is_active = true LIMIT 1`,
+      [resource_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'call_package_not_found' });
+    const p = r.rows[0];
+    return res.json({
+      sku: `SVC-C-${p.id}`,
+      price_usd: parseFloat(p.price_usd),
+      label: p.title || `${p.duration_minutes}min Call`,
+      package_id: p.id,
+    });
+  }
+
+  if (product_type === 'creator_membership') {
+    const r = await query(
+      `SELECT id, first_name, creator_price_usd, creator_locked, creator_subscription_paused
+       FROM users WHERE id = $1::text AND creator_status = 'active' LIMIT 1`,
+      [resource_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'creator_not_found' });
+    const c = r.rows[0];
+    if (c.creator_locked) return res.status(403).json({ error: 'creator_locked' });
+    if (c.creator_subscription_paused) return res.status(403).json({ error: 'creator_paused' });
+    const price = parseFloat(c.creator_price_usd) || 15;
+    return res.json({
+      sku: `SVC-M-${String(resource_id).slice(0, 8)}`,
+      price_usd: price,
+      label: 'Creator Membership',
+      creator_id: c.id,
+    });
+  }
+
+  if (product_type === 'channel_access') {
+    const r = await query(
+      `SELECT id, name, price_usd, creator_id
+       FROM creator_channels WHERE id = $1 AND is_active = true LIMIT 1`,
+      [parseInt(resource_id, 10)]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'channel_not_found' });
+    const ch = r.rows[0];
+    if (!(parseFloat(ch.price_usd) > 0)) return res.status(400).json({ error: 'channel_is_free' });
+    return res.json({
+      sku: `SVC-CH-${ch.id}`,
+      price_usd: parseFloat(ch.price_usd),
+      label: 'Channel Access',
+      channel_id: ch.id,
+      creator_id: ch.creator_id,
+    });
+  }
+
+  if (product_type === 'token_package') {
+    const DashTokenService = require('../../../services/dashTokenService');
+    const pkg = DashTokenService.TOKEN_PACKAGES.find((p) => p.id === String(resource_id));
+    if (!pkg) return res.status(404).json({ error: 'token_package_not_found' });
+    return res.json({
+      sku: `SVC-T-${pkg.id}`,
+      price_usd: parseFloat(pkg.usd),
+      label: pkg.label || `${pkg.tokens} tokens`,
+      package_id: pkg.id,
+      tokens: pkg.tokens,
+    });
+  }
+
+  return res.status(400).json({
+    error: 'invalid_product_type',
+    valid: ['call_package', 'creator_membership', 'channel_access', 'token_package'],
+  });
+};
+
+/**
+ * POST /api/internal/efipay-reseller/grant
+ * Called by easybots.store after a confirmed EfiPay payment.
+ * Supports: call_package, creator_membership, channel_access.
+ */
+const efiPayResellerGrant = async (req, res) => {
+  if (!_checkResellerSecret(req, res)) return;
+
+  const {
+    email,
+    product_type,
+    resource_id,
+    amount_usd,
+    efipay_payment_id,
+    efipay_order_id,
+  } = req.body ?? {};
+
+  if (!email || !product_type || !resource_id || !efipay_payment_id) {
+    return res.status(400).json({ error: 'email, product_type, resource_id, and efipay_payment_id are required' });
+  }
+
+  // Reject test-mode transactions — order IDs containing "TEST" are sandbox payments
+  const orderId = String(efipay_order_id ?? '');
+  if (/test/i.test(orderId) || /test/i.test(String(efipay_payment_id))) {
+    logger.warn('[efipay-reseller] Rejected test transaction', { efipay_payment_id, efipay_order_id, email });
+    return res.status(400).json({ error: 'test_transaction_rejected', message: 'Test payments are not accepted on production' });
+  }
+
+  // M-02: validate resource_id is numeric for channel_access before any DB work
+  if (product_type === 'channel_access') {
+    const channelIdInt = parseInt(resource_id, 10);
+    if (!Number.isInteger(channelIdInt) || channelIdInt <= 0) {
+      return res.status(400).json({ error: 'resource_id must be a positive integer for channel_access' });
+    }
+  }
+
+  const safeEmail = String(email).trim().toLowerCase();
+
+  // Idempotency — only skip if a completed grant already exists
+  const existing = await query(
+    `SELECT id, status FROM payments WHERE payment_id = $1 AND provider = 'efipay' LIMIT 1`,
+    [String(efipay_payment_id)]
+  );
+  if (existing.rows.length && existing.rows[0].status === 'completed') {
+    return res.json({ success: true, already_granted: true });
+  }
+
+  // Look up user by email
+  const userResult = await query(
+    `SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+    [safeEmail]
+  );
+  if (!userResult.rows.length) {
+    return res.status(404).json({ error: 'user_not_found', email: safeEmail });
+  }
+  const userId = userResult.rows[0].id;
+
+  const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS_EFIPAY } = require('../../../config/monetizationConfig');
+
+  // ── Call package ────────────────────────────────────────────────────────────
+  if (product_type === 'call_package') {
+    const pkgResult = await query(
+      `SELECT id, sku, price_usd, creator_id, duration_minutes, quantity
+       FROM call_packages WHERE sku = $1::text AND is_active = true LIMIT 1`,
+      [resource_id]
+    );
+    if (!pkgResult.rows.length) return res.status(404).json({ error: 'call_package_not_found' });
+    const pkg = pkgResult.rows[0];
+    // C-02: use canonical DB price, store caller amount in metadata only for reference
+    const canonicalPrice = parseFloat(pkg.price_usd);
+
+    // Insert as pending; onCallPaymentSuccess handles its own atomicity and marks completed
+    const payResult = await query(
+      `INSERT INTO payments (user_id, amount, currency, provider, payment_method, payment_id, status, metadata)
+       VALUES ($1, $2, 'USD', 'efipay', 'efipay', $3, 'pending', $4)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [
+        userId, canonicalPrice, String(efipay_payment_id),
+        JSON.stringify({
+          type: 'call_package',
+          packageId: pkg.id,
+          packageSku: pkg.sku,
+          creatorId: pkg.creator_id,
+          efipay_payment_id,
+          efipay_order_id,
+          amount_usd_reported: amount_usd,
+          source: 'efipay_easybots',
+        }),
+      ]
+    );
+    if (!payResult.rows.length) return res.json({ success: true, already_granted: true }); // race-safe
+    const paymentDbId = payResult.rows[0].id;
+
+    const callCheckoutService = require('../../../services/callCheckoutService');
+    await callCheckoutService.onCallPaymentSuccess(paymentDbId);
+
+    logger.info(`[efipay-reseller] Call credits granted pkg ${pkg.sku} to ${safeEmail} via ${efipay_payment_id}`);
+    return res.json({ success: true, user_id: userId, product_type, package_id: pkg.id });
+  }
+
+  // ── Creator membership ──────────────────────────────────────────────────────
+  if (product_type === 'creator_membership') {
+    const creatorResult = await query(
+      `SELECT id, creator_price_usd, creator_locked, creator_subscription_paused
+       FROM users WHERE id = $1::text AND creator_status = 'active' LIMIT 1`,
+      [resource_id]
+    );
+    if (!creatorResult.rows.length) return res.status(404).json({ error: 'creator_not_found' });
+    const creator = creatorResult.rows[0];
+    // H-03: enforce creator gates even on the grant path
+    if (creator.creator_locked) return res.status(403).json({ error: 'creator_locked' });
+    if (creator.creator_subscription_paused) return res.status(403).json({ error: 'creator_paused' });
+    // C-02: canonical price from DB
+    const canonicalPrice = parseFloat(creator.creator_price_usd) || 15;
+
+    // C-01: insert as pending first so a grant failure leaves a retryable record
+    const payInsert = await query(
+      `INSERT INTO payments (user_id, plan_id, amount, currency, provider, payment_method, payment_id, status, metadata)
+       VALUES ($1, 'creator_monthly', $2, 'USD', 'efipay', 'efipay', $3, 'pending', $4)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [
+        userId, canonicalPrice, String(efipay_payment_id),
+        JSON.stringify({ creatorId: resource_id, efipay_payment_id, efipay_order_id, amount_usd_reported: amount_usd, source: 'efipay_easybots' }),
+      ]
+    );
+    if (!payInsert.rows.length) return res.json({ success: true, already_granted: true });
+    const paymentDbId = payInsert.rows[0].id;
+
+    const PaymentService = require('../../../services/paymentService');
+    // creator_monthly plan_add_ons includes pnp-member, so this grant covers base access too
+    const grantResult = await PaymentService.grantEntitlementsForPlan(
+      userId, 'creator_monthly', 'efipay_easybots',
+      { creatorId: resource_id, paymentId: String(efipay_payment_id) }
+    );
+
+    // C-03: record creator earnings (70/30 split, 72h hold) — mirrors channel_access path in grantEntitlementsForPlan
+    try {
+      const earningsExisting = await query(
+        `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
+        [String(efipay_payment_id), resource_id]
+      );
+      if (earningsExisting.rowCount === 0) {
+        const gross = canonicalPrice;
+        const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
+        const amountPlatform = Math.round(gross * PLATFORM_COMMISSION_RATE * 100) / 100;
+        await query(
+          `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+           VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+          [resource_id, gross, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS_EFIPAY), String(efipay_payment_id)]
+        );
+        logger.info('[efipay-reseller] Creator subscription earnings recorded', { creatorId: resource_id, gross, amountCreator });
+      }
+    } catch (earningsErr) {
+      logger.warn('[efipay-reseller] Failed to record creator earnings (non-critical)', { error: earningsErr.message });
+    }
+
+    // Mark payment completed now that grant and earnings are written
+    await query(
+      `UPDATE payments SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+      [paymentDbId]
+    );
+
+    logger.info(`[efipay-reseller] Creator membership granted creator ${resource_id} to ${safeEmail}`);
+    return res.json({ success: true, user_id: userId, product_type, creator_id: resource_id, grant: grantResult });
+  }
+
+  // ── Channel access ──────────────────────────────────────────────────────────
+  if (product_type === 'channel_access') {
+    const channelResult = await query(
+      `SELECT id, price_usd, creator_id FROM creator_channels WHERE id = $1 AND is_active = true LIMIT 1`,
+      [parseInt(resource_id, 10)]
+    );
+    if (!channelResult.rows.length) return res.status(404).json({ error: 'channel_not_found' });
+    const ch = channelResult.rows[0];
+    // C-02: canonical price from DB
+    const canonicalPrice = parseFloat(ch.price_usd);
+
+    // C-01: insert as pending first
+    const payInsert = await query(
+      `INSERT INTO payments (user_id, plan_id, amount, currency, provider, payment_method, payment_id, status, metadata)
+       VALUES ($1, 'channel_access', $2, 'USD', 'efipay', 'efipay', $3, 'pending', $4)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [
+        userId, canonicalPrice, String(efipay_payment_id),
+        JSON.stringify({ channelId: ch.id, creatorId: ch.creator_id, efipay_payment_id, efipay_order_id, amount_usd_reported: amount_usd, source: 'efipay_easybots' }),
+      ]
+    );
+    if (!payInsert.rows.length) return res.json({ success: true, already_granted: true });
+    const paymentDbId = payInsert.rows[0].id;
+
+    const PaymentService = require('../../../services/paymentService');
+    const grantResult = await PaymentService.grantEntitlementsForPlan(
+      userId, 'channel_access', 'efipay_easybots',
+      { channelId: String(ch.id), paymentId: String(efipay_payment_id) }
+    );
+
+    // Mark completed — earnings are recorded inside grantEntitlementsForPlan for channel_access
+    await query(
+      `UPDATE payments SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+      [paymentDbId]
+    );
+
+    logger.info(`[efipay-reseller] Channel access granted ch ${ch.id} to ${safeEmail}`);
+    return res.json({ success: true, user_id: userId, product_type, channel_id: ch.id, grant: grantResult });
+  }
+
+  // ── Token package ───────────────────────────────────────────────────────────
+  if (product_type === 'token_package') {
+    const DashTokenService = require('../../../services/dashTokenService');
+    const pkg = DashTokenService.TOKEN_PACKAGES.find((p) => p.id === String(resource_id));
+    if (!pkg) return res.status(404).json({ error: 'token_package_not_found' });
+
+    const canonicalPrice = parseFloat(pkg.usd);
+    const { getClient } = require('../../../config/postgres');
+    const { cache } = require('../../../config/redis');
+
+    // Idempotency check: efipay_payment_id has a unique partial index (mig 300).
+    const dupCheck = await query(
+      `SELECT id, status FROM token_purchases WHERE efipay_payment_id = $1 LIMIT 1`,
+      [String(efipay_payment_id)]
+    );
+    if (dupCheck.rows.length && dupCheck.rows[0].status === 'paid') {
+      return res.json({ success: true, already_granted: true });
+    }
+
+    // Fresh grant: insert paid row + credit wallet atomically. Unique index
+    // on efipay_payment_id catches any concurrent race.
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
+
+      const ins = await client.query(
+        `INSERT INTO token_purchases
+           (user_id, tokens_credited, usd_amount, status, payment_method,
+            efipay_payment_id, settled_at, checkout_data)
+         VALUES ($1, $2, $3, 'paid', 'efipay', $4, NOW(), $5::jsonb)
+         RETURNING id`,
+        [
+          userId,
+          pkg.tokens,
+          canonicalPrice,
+          String(efipay_payment_id),
+          JSON.stringify({
+            packageId: pkg.id,
+            efipay_order_id,
+            amount_usd_reported: amount_usd,
+            source: 'efipay_easybots',
+          }),
+        ]
+      );
+      const tokenPurchaseId = ins.rows[0].id;
+
+      const walletRes = await client.query(
+        `INSERT INTO user_token_wallets (user_id, balance_tokens)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE
+           SET balance_tokens = user_token_wallets.balance_tokens + EXCLUDED.balance_tokens,
+               updated_at = NOW()
+         RETURNING balance_tokens`,
+        [userId, pkg.tokens]
+      );
+      const newBalance = walletRes.rows[0]?.balance_tokens ?? pkg.tokens;
+
+      await client.query('COMMIT');
+      await cache.del(`wallet:${userId}`).catch(() => {});
+
+      logger.info(`[efipay-reseller] Token package ${pkg.id} (${pkg.tokens} tokens) credited to ${safeEmail}`, {
+        userId, tokenPurchaseId, newBalance, efipay_payment_id,
+      });
+      return res.json({
+        success: true, user_id: userId, product_type,
+        package_id: pkg.id, tokens: pkg.tokens, new_balance: newBalance,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (err.code === '23505') {
+        // Race: another call already inserted with same efipay_payment_id.
+        return res.json({ success: true, already_granted: true });
+      }
+      logger.error('[efipay-reseller] token_package grant failed', {
+        error: err.message, efipay_payment_id, userId,
+      });
+      return res.status(500).json({ error: 'grant_failed' });
+    } finally {
+      client.release();
+    }
+  }
+
+  return res.status(400).json({ error: 'invalid_product_type', valid: ['call_package', 'creator_membership', 'channel_access', 'token_package'] });
+};
+
 module.exports = {
   getStats,
   getDemographics,
@@ -2414,6 +3234,8 @@ module.exports = {
   getMyAccess,
   grantUserEntitlement,
   assignUserPlan,
+  giftUserPlan,
+  getAdminGifts,
   searchResources,
   revokeUserEntitlement,
   extendUserEntitlement,
@@ -2429,4 +3251,16 @@ module.exports = {
   listMeruLinks,
   addMeruLinks,
   deleteMeruLink,
+  // Analytics & BI
+  getChurnTrend,
+  getCreatorLeaderboard,
+  getUmamiStats,
+  getMetabaseCard,
+  getUsageAnalytics,
+  getTierFeatureSplit,
+  // Infrastructure monitoring
+  getMonitoringStatus,
+  // EfiPay reseller endpoints (easybots.store → pnptv.app)
+  efiPayResellerProduct,
+  efiPayResellerGrant,
 };

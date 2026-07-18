@@ -95,9 +95,21 @@ async function revalidateSession(socket) {
 }
 
 // SESSION_REVALIDATION_INTERVAL_MS — how often to re-check the session while
-// the socket is connected.  5 minutes is a reasonable balance between security
-// (catching revoked sessions promptly) and Redis load.
-const SESSION_REVALIDATION_INTERVAL_MS = 5 * 60 * 1000;
+// the socket is connected. Session cookies are 7-day rolling, so a frequent
+// re-check adds little security value but every miss kicks the user to /login;
+// 30 minutes balances revocation latency against user-visible churn.
+const SESSION_REVALIDATION_INTERVAL_MS = 30 * 60 * 1000;
+
+// ── External URL filter ───────────────────────────────────────────────────────
+// Returns true if the text contains an external link that is NOT pnptv.app.
+// Owners, moderators, and admins are exempted at call sites.
+function containsExternalUrl(text) {
+  // http / https URLs not pointing to pnptv.app (any subdomain allowed)
+  if (/https?:\/\/(?!(?:[\w.-]*\.)?pnptv\.app(?:[/?#]|$))/i.test(text)) return true;
+  // Telegram shortlinks and the most common URL shorteners (no http needed)
+  if (/\bt\.me\/|tinyurl\.com\/|bit\.ly\/|goo\.gl\/|ow\.ly\/|rb\.gy\//i.test(text)) return true;
+  return false;
+}
 
 // ── Message SELECT columns helper ─────────────────────────────────────────────
 
@@ -160,6 +172,41 @@ const hangoutMusicState = new Map();
 // ── Cristina-in-call state per hangout group ─────────────────────────────────
 // Map<groupId, { callId, tipTimer, videoTimer, latestTip, latestVideo, askCooldownByUser: Map<uid, lastTs> }>
 const hangoutCristinaState = new Map();
+
+// ── Typing rate-limit fallback (used when Redis is unavailable) ───────────────
+// `${gid}:${userId}` → last-sent timestamp (ms). Coarser 3s throttle.
+const _typingLocalRl = new Map();
+
+// ── Live message rate-limit fallback (used when Redis is unavailable) ─────────
+// `live:${chatId}:${userId}` → { count, resetAt } (60s rolling window, max 30).
+const _liveMessageLocalRl = new Map();
+
+// ── Global hangout invite rate-limit (per-sender, 1h window, max 20) ──────────
+const _inviteGlobalRl = new Map();
+
+// ── Cleanup intervals for in-memory rate-limit Maps ───────────────────────────
+// Run every 5 minutes; evict entries whose window has already closed.
+setInterval(() => {
+  const cutoff = Date.now() - 60000;
+  for (const [k, v] of _typingLocalRl) {
+    if (v < cutoff) _typingLocalRl.delete(k);
+  }
+}, 5 * 60 * 1000).unref();
+
+setInterval(() => {
+  const cutoff = Date.now();
+  for (const [k, v] of _liveMessageLocalRl) {
+    if (v.resetAt < cutoff) _liveMessageLocalRl.delete(k);
+  }
+}, 5 * 60 * 1000).unref();
+
+setInterval(() => {
+  const cutoff = Date.now();
+  for (const [k, v] of _inviteGlobalRl) {
+    if (v.resetAt < cutoff) _inviteGlobalRl.delete(k);
+  }
+}, 5 * 60 * 1000).unref();
+
 const CRISTINA_TIP_INTERVAL_MS = 10 * 60 * 1000; // 10 min
 const CRISTINA_VIDEO_INTERVAL_MS = 25 * 60 * 1000; // 25 min
 const CRISTINA_ASK_COOLDOWN_MS = 30 * 1000; // 30 s per user
@@ -436,8 +483,27 @@ function initSocketIO(io) {
     // Join personal room for DMs and targeted notifications
     socket.join(`user:${user.id}`);
 
-    // ── Main Stage — everyone auto-joins for state broadcasts ────────────────
-    socket.join('mainstage');
+    // ── Main Stage — auto-join for state broadcasts, but skip kicked users ───
+    // MS-CRIT-01: Prevent kicked users from rejoining the mainstage room on
+    // socket reconnect. Kicked users still receive a MAIN_STAGE_KICKED error
+    // so the client can display an appropriate message.
+    try {
+      const _kickedCheck = await getRedis().get(`mainstage:kicked:${String(user.id)}`);
+      if (_kickedCheck) {
+        // Do NOT join mainstage room — just notify the socket
+        socket.emit('mainstage:error', {
+          code: 'MAIN_STAGE_KICKED',
+          message: 'You have been removed from Main Stage.',
+        });
+      } else {
+        socket.join('mainstage');
+      }
+    } catch (_kickCheckErr) {
+      // Redis failure: fail open (join the room) to avoid locking out all users
+      // on Redis downtime. Kick enforcement at chat-send/reaction-send still applies.
+      logger.warn('mainstage: kicked-set check failed on connect (fail open)', { userId: user.id, error: _kickCheckErr.message });
+      socket.join('mainstage');
+    }
 
     // Send the current state to the joining socket and tell everyone the
     // viewer count moved. Debounced inside the service so a connection burst
@@ -512,10 +578,24 @@ function initSocketIO(io) {
     });
 
     // mainstage:chat-send — in-room text chat, 1 msg/s rate limit per user
-    socket.on('mainstage:chat-send', (payload = {}) => {
+    socket.on('mainstage:chat-send', async (payload = {}) => {
       if (!user) return;
-      const text = typeof payload.text === 'string' ? payload.text.trim() : '';
-      if (!text || text.length > 300) return;
+      // MS-CRIT-01: Kicked users must not be able to send chat messages.
+      try {
+        const _isKickedChat = await getRedis().get(`mainstage:kicked:${String(user.id)}`);
+        if (_isKickedChat) {
+          socket.emit('mainstage:error', { code: 'MAIN_STAGE_KICKED', message: 'You have been removed from Main Stage.' });
+          return;
+        }
+      } catch (_kickChatErr) {
+        // Redis failure: fail closed — do not allow message through
+        socket.emit('mainstage:error', { code: 'SERVER_ERROR', message: 'Access check unavailable. Please try again.' });
+        return;
+      }
+      // HG-HIGH-03: Strip HTML tags and limit length before broadcasting
+      const rawText = typeof payload.text === 'string' ? payload.text.trim() : '';
+      const text = rawText.replace(/<[^>]*>/g, '').slice(0, 300);
+      if (!text) return;
       const now = Date.now();
       const lastSent = mainStageChatLastSent.get(String(user.id)) || 0;
       if (now - lastSent < 1000) return; // rate limit: 1/s
@@ -533,8 +613,19 @@ function initSocketIO(io) {
 
     // mainstage:reaction-send — emoji reaction, 1/2s rate limit per user
     const ALLOWED_REACTIONS = ['❤️', '🔥', '🎉', '👏', '🤩', '😍', '💊'];
-    socket.on('mainstage:reaction-send', (payload = {}) => {
+    socket.on('mainstage:reaction-send', async (payload = {}) => {
       if (!user) return;
+      // MS-CRIT-01: Kicked users must not be able to send reactions.
+      try {
+        const _isKickedReaction = await getRedis().get(`mainstage:kicked:${String(user.id)}`);
+        if (_isKickedReaction) {
+          socket.emit('mainstage:error', { code: 'MAIN_STAGE_KICKED', message: 'You have been removed from Main Stage.' });
+          return;
+        }
+      } catch (_kickReactionErr) {
+        socket.emit('mainstage:error', { code: 'SERVER_ERROR', message: 'Access check unavailable. Please try again.' });
+        return;
+      }
       const emoji = typeof payload.emoji === 'string' ? payload.emoji : '';
       if (!ALLOWED_REACTIONS.includes(emoji)) return;
       const now = Date.now();
@@ -585,7 +676,8 @@ function initSocketIO(io) {
     // we add this socket to the existing set rather than overwriting, so that
     // disconnecting one tab does not remove the user from presence while other
     // connections are still alive.
-    if (onlineUsersMap.has(user.id)) {
+    const isFirstConnection = !onlineUsersMap.has(user.id);
+    if (!isFirstConnection) {
       onlineUsersMap.get(user.id).socketIds.add(socket.id);
     } else {
       onlineUsersMap.set(user.id, {
@@ -593,6 +685,36 @@ function initSocketIO(io) {
         photoUrl: user.photoUrl || user.photo_url || null,
         hangoutGroupIds: new Set(),
         socketIds: new Set([socket.id]),
+      });
+    }
+
+    // Push notification: alert all users when a performer first comes online.
+    // Debounced per performer per hour via Redis to suppress multi-tab noise.
+    if (isFirstConnection && (user.role === 'model' || user.role === 'creator')) {
+      setImmediate(async () => {
+        try {
+          const redis = getRedis();
+          const debounceKey = `push:performer_online:${user.id}`;
+          const wasSet = await redis.set(debounceKey, '1', 'NX', 'EX', 3600);
+          if (wasSet !== 'OK') return;
+
+          const PushNotificationService = require('../../services/pushNotificationService');
+          const displayName = user.firstName || user.first_name || user.username || 'A performer';
+          const profileUrl = `/profile/${user.id}`;
+          // WS-HIGH-06: Only push to followers, not all users.
+          const { rows: followerRows } = await query(
+            'SELECT follower_id FROM user_follows WHERE following_id = $1',
+            [String(user.id)]
+          );
+          if (followerRows.length === 0) return;
+          const followerIds = followerRows.map(r => r.follower_id);
+          await PushNotificationService.sendToUsers(followerIds, {
+            title: `${displayName} is online`,
+            body: 'Click to visit their profile',
+            url: profileUrl,
+            tag: `performer_online_${user.id}`,
+          });
+        } catch (_) {}
       });
     }
 
@@ -616,9 +738,14 @@ function initSocketIO(io) {
       } catch (_) {}
     });
 
-    // Heartbeat: client sends this every ~30s to keep the Redis TTL alive
+    // Heartbeat: client sends this every ~30s to keep the Redis TTL alive.
+    // WS-HIGH-07: Throttled to at most once per 25s per socket to prevent Redis write floods.
     socket.on('presence:heartbeat', async () => {
       if (!user || !user.id) return;
+      const now = Date.now();
+      const lastHb = socket._lastHeartbeat || 0;
+      if (now - lastHb < 25000) return;
+      socket._lastHeartbeat = now;
       try { await DmService.refreshOnline(user.id); } catch (_) {}
     });
 
@@ -654,6 +781,17 @@ function initSocketIO(io) {
       if (!Number.isFinite(gid)) return;
 
       try {
+        // HG-HIGH-04: Verify the hangout group still exists before joining.
+        // Groups are hard-deleted; a missing row means the hangout was removed.
+        const { rows: groupExistRows } = await query(
+          'SELECT id FROM hangout_groups WHERE id = $1',
+          [gid]
+        );
+        if (groupExistRows.length === 0) {
+          socket.emit('hangout:error', { message: 'This hangout no longer exists', code: 'HANGOUT_CLOSED' });
+          return;
+        }
+
         // Verify non-banned membership before joining the Socket.IO room
         const { rows } = await query(
           'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned = false OR is_banned IS NULL)',
@@ -744,6 +882,11 @@ function initSocketIO(io) {
 
     // Hangout text message via Socket.IO (alternative to REST POST)
     socket.on('hangout:message', async ({ groupId, content, replyToId } = {}) => {
+      // HG-HIGH-05: Reject unauthenticated / guest sockets immediately
+      if (!user || !user.id) {
+        socket.emit('hangout:error', { message: 'Authentication required', code: 'UNAUTHORIZED' });
+        return;
+      }
       if (!groupId || !content || !content.trim()) return;
       if (content.length > 2000) return;
       const parsedReplyToId = replyToId ? parseInt(replyToId, 10) : null;
@@ -754,6 +897,7 @@ function initSocketIO(io) {
       const userRole = (user.role || '').toLowerCase();
       const isAdminUser = userRole === 'admin' || userRole === 'superadmin';
       if (!isAdminUser) {
+        // Base tier check: must hold pnp-member entitlement
         try {
           const hasAccess = await getCachedEntitlement(socket, user.id, 'pnp-member');
           if (!hasAccess) {
@@ -763,6 +907,22 @@ function initSocketIO(io) {
         } catch (err) {
           logger.error('Hangout entitlement check failed', { userId: user.id, error: err.message });
           socket.emit('hangout:error', { message: 'Access check unavailable. Please try again.', code: 'ENTITLEMENT_CHECK_FAILED' });
+          return;
+        }
+
+        // HG-CRIT-01: Scoped resource access check for paid/subscription hangouts.
+        // hasResourceAccess handles: free community hangouts (grandfathered via member row),
+        // scoped hangout-access entitlements, and channel-linked access grants.
+        try {
+          const EntitlementAccessService = require('../../services/entitlementAccessService');
+          const accessDecision = await EntitlementAccessService.hasResourceAccess(user.id, 'hangout', String(gid));
+          if (!accessDecision.allowed) {
+            socket.emit('hangout:error', { message: 'Access denied to this hangout', code: 'ACCESS_DENIED' });
+            return;
+          }
+        } catch (accessErr) {
+          logger.error('Hangout resource access check failed', { userId: user.id, groupId: gid, error: accessErr.message });
+          socket.emit('hangout:error', { message: 'Access check unavailable. Please try again.', code: 'ACCESS_CHECK_FAILED' });
           return;
         }
       }
@@ -868,6 +1028,44 @@ function initSocketIO(io) {
 
         const room = `hangout:${gid}`;
         const text = content.trim().slice(0, 2000);
+
+        // ── External link enforcement: mute on 1st strike, kick on 2nd ──────────
+        const memberRole = memberInfo[0].role;
+        const isMod = memberRole === 'owner' || memberRole === 'moderator';
+        if (!isAdminUser && !isMod && containsExternalUrl(text)) {
+          const rlRedis = getRedis();
+          const strikeKey = `hangout:link-strike:${user.id}:${gid}`;
+          const strikes = await rlRedis.incr(strikeKey);
+          if (strikes === 1) await rlRedis.expire(strikeKey, 86400); // 24h window
+
+          if (strikes === 1) {
+            const muteUntil = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+            await query(
+              'UPDATE hangout_group_members SET is_muted=true, muted_until=$3 WHERE group_id=$1 AND user_id=$2',
+              [gid, user.id, muteUntil]
+            );
+            socket.emit('hangout:message:error', {
+              error: 'external_link',
+              message: 'External links are not allowed here. You have been muted for 1 hour.',
+            });
+            logger.info('hangout link-filter: muted (1st strike)', { userId: user.id, groupId: gid });
+          } else {
+            // 2nd+ offense: kick from the hangout
+            await query(
+              'UPDATE hangout_group_members SET is_banned=true WHERE group_id=$1 AND user_id=$2',
+              [gid, user.id]
+            );
+            socket.emit('hangout:message:error', {
+              error: 'external_link_kicked',
+              message: 'Repeated external links are not allowed. You have been removed from this hangout.',
+            });
+            socket.leave(`hangout:${gid}`);
+            io.to(`hangout:${gid}`).emit('hangout:member:removed', { userId: user.id, reason: 'link_spam' });
+            logger.info('hangout link-filter: kicked (repeat strike)', { userId: user.id, groupId: gid, strikes });
+          }
+          return;
+        }
+        // ─────────────────────────────────────────────────────────────────────────
         const { rows: insertedRows } = await query(
           `INSERT INTO chat_messages (room, user_id, username, first_name, photo_url, content, reply_to_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -1016,7 +1214,14 @@ function initSocketIO(io) {
           const rlTypingKey = `ratelimit:hangout:typing:${user.id}:${gid}`;
           const exists = await redisTyping.set(rlTypingKey, '1', 'PX', 2000, 'NX');
           if (!exists) return; // already typed recently — drop
-        } catch (_) { /* non-fatal */ }
+        } catch (_redisErr) {
+          // Redis down — use in-memory fallback (coarser 3s throttle)
+          const localKey = `${gid}:${user.id}`;
+          const last = _typingLocalRl.get(localKey) || 0;
+          if (Date.now() - last < 3000) return;
+          _typingLocalRl.set(localKey, Date.now());
+          // allow this typing event through
+        }
       }
 
       // Verify membership before broadcasting typing indicator
@@ -1043,14 +1248,42 @@ function initSocketIO(io) {
       if (!Number.isFinite(gid)) return;
       if (targetUserId === user.id) return;
 
+      // WS-HIGH-09: Global per-sender cap — max 20 invites per hour across all groups.
+      const inviteGlobalKey = String(user.id);
+      const nowGlobal = Date.now();
+      let globalEntry = _inviteGlobalRl.get(inviteGlobalKey);
+      if (!globalEntry || globalEntry.resetAt < nowGlobal) {
+        globalEntry = { count: 0, resetAt: nowGlobal + 3600000 };
+      }
+      globalEntry.count++;
+      _inviteGlobalRl.set(inviteGlobalKey, globalEntry);
+      if (globalEntry.count > 20) {
+        socket.emit('hangout:error', { message: 'You have sent too many invites. Please wait before sending more.' });
+        return;
+      }
 
       try {
+        // Rate limit: one invite per sender→target pair per 30s
+        const redis = getRedis();
+        if (redis) {
+          const inviteRlKey = `ratelimit:hangout:invite:${user.id}:${targetUserId}`;
+          const isLimited = await redis.set(inviteRlKey, '1', 'NX', 'EX', 30);
+          if (!isLimited) return; // silently drop
+        }
+
         // Verify sender is a member
         const { rows: senderRows } = await query(
           'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
           [gid, user.id]
         );
         if (senderRows.length === 0) return;
+
+        // Skip if target is already a member
+        const { rows: alreadyMember } = await query(
+          'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
+          [gid, targetUserId]
+        );
+        if (alreadyMember.length > 0) return; // already a member, skip silently
 
         // Block check — do not deliver invitations between users who have blocked
         // each other (in either direction).  Uses the same blocked_users schema
@@ -1115,13 +1348,21 @@ function initSocketIO(io) {
         const unreadKey = `hangout:unread:${gid}:${user.id}`;
         try { const r = getRedis(); if (r) await r.del(unreadKey); } catch { /* silent */ }
 
-        // Broadcast read receipt to other members
+        // Broadcast read receipt to other members — include lastReadMessageId so
+        // recipients can update their ✓✓ delivery indicators.
+        const { rows: lastMsgRows } = await query(
+          `SELECT id FROM chat_messages WHERE room = $1 AND is_deleted = false ORDER BY created_at DESC LIMIT 1`,
+          [`hangout:${gid}`],
+        );
+        const lastReadMessageId = lastMsgRows[0]?.id ?? null;
         const userName = user.firstName || user.first_name || user.username || 'User';
         socket.to(`hangout:${gid}`).emit('hangout:read', {
+          groupId: gid,
           userId: user.id,
           name: userName,
           photoUrl: user.photoUrl || user.photo_url || null,
           lastReadAt: new Date().toISOString(),
+          lastReadMessageId,
         });
       } catch (err) {
         logger.error('hangout:mark-read error', { userId: user.id, groupId: gid, error: err.message });
@@ -1145,10 +1386,36 @@ function initSocketIO(io) {
 
       try {
         const { rows: memberRows } = await query(
-          'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned=false OR is_banned IS NULL)',
+          'SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND (is_banned=false OR is_banned IS NULL)',
           [gid, user.id]
         );
         if (memberRows.length === 0) return;
+
+        // External link filter on edits (same rules as send)
+        const editMemberRole = memberRows[0].role;
+        const editIsMod = editMemberRole === 'owner' || editMemberRole === 'moderator';
+        const editIsAdmin = ['admin', 'superadmin'].includes((user.role || '').toLowerCase());
+        if (!editIsAdmin && !editIsMod && containsExternalUrl(text)) {
+          const rlRedis = getRedis();
+          const strikeKey = `hangout:link-strike:${user.id}:${gid}`;
+          const strikes = await rlRedis.incr(strikeKey);
+          if (strikes === 1) await rlRedis.expire(strikeKey, 86400);
+          if (strikes === 1) {
+            const muteUntil = new Date(Date.now() + 60 * 60 * 1000);
+            await query(
+              'UPDATE hangout_group_members SET is_muted=true, muted_until=$3 WHERE group_id=$1 AND user_id=$2',
+              [gid, user.id, muteUntil]
+            );
+            socket.emit('hangout:message:error', { error: 'external_link', message: 'External links are not allowed here. You have been muted for 1 hour.' });
+          } else {
+            await query('UPDATE hangout_group_members SET is_banned=true WHERE group_id=$1 AND user_id=$2', [gid, user.id]);
+            socket.emit('hangout:message:error', { error: 'external_link_kicked', message: 'Repeated external links are not allowed. You have been removed from this hangout.' });
+            socket.leave(`hangout:${gid}`);
+            io.to(`hangout:${gid}`).emit('hangout:member:removed', { userId: user.id, reason: 'link_spam' });
+          }
+          logger.info('hangout link-filter (edit)', { userId: user.id, groupId: gid, strikes });
+          return;
+        }
 
         const { rows: msgRows } = await query(
           `SELECT id, user_id, created_at, is_deleted FROM chat_messages WHERE id=$1 AND room='hangout:'||$2`,
@@ -1242,9 +1509,9 @@ function initSocketIO(io) {
 
         if (!isOwnMessage) {
           if (!deleteForAll) return; // Cannot soft-delete another user's message for self-only
-          // Moderator/owner check
+          // Moderator/owner check — banned mods may not delete messages
           const { rows: roleRows } = await query(
-            "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role IN ('owner','moderator')",
+            "SELECT role FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role IN ('owner','moderator') AND (is_banned = FALSE OR is_banned IS NULL)",
             [gid, user.id]
           );
           if (roleRows.length === 0) return;
@@ -1452,18 +1719,16 @@ function initSocketIO(io) {
 
     // ── Hangout Music Sync ───────────────────────────────────────────────────
 
+    // WS-HIGH-04: Only admins and hangout owners/moderators may control music.
+    // The previous call-creator path was removed — being the initiator of a video
+    // call does not grant music moderation privileges.
     async function isHangoutMod(userId, gid) {
       if (user.role === 'admin' || user.role === 'superadmin') return true;
       const { rows: ownerRows } = await query(
-        "SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role='owner'",
+        "SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2 AND role IN ('owner', 'moderator')",
         [gid, userId]
       );
-      if (ownerRows.length > 0) return true;
-      const { rows: callRows } = await query(
-        "SELECT 1 FROM hangout_video_calls WHERE group_id=$1 AND status='active' AND creator_id=$2",
-        [gid, userId]
-      );
-      return callRows.length > 0;
+      return ownerRows.length > 0;
     }
 
     socket.on('hangout:music:play', async ({ groupId, trackId, trackUrl, trackTitle, trackArtist, trackArt } = {}) => {
@@ -1485,7 +1750,10 @@ function initSocketIO(io) {
           trackUrl: urlStr.slice(0, 500),
           trackTitle: String(trackTitle || '').slice(0, 200),
           trackArtist: String(trackArtist || '').slice(0, 200),
-          trackArt: trackArt ? String(trackArt).slice(0, 500) : null,
+          // WS-MED-13: Strip trackArt if it is not a valid https:// URL or exceeds length.
+          trackArt: (trackArt && typeof trackArt === 'string' && trackArt.startsWith('https://') && trackArt.length <= 500)
+            ? trackArt
+            : null,
           isPlaying: true,
           position: 0,
           startedAt: Date.now(),
@@ -1626,12 +1894,18 @@ function initSocketIO(io) {
       if (!groupId || !video || typeof video.url !== 'string') return;
       const gid = parseInt(groupId, 10);
       if (!Number.isFinite(gid)) return;
+      // WS-CRIT-03: Reject non-https video URLs before any processing or broadcast.
+      const videoUrl = video.url;
+      if (!videoUrl || !videoUrl.startsWith('https://')) {
+        socket.emit('hangout:error', { message: 'Invalid video URL — must use https://' });
+        return;
+      }
       try {
         const isMod = await isHangoutMod(user.id, gid);
         if (!isMod) { socket.emit('hangout:error', { message: 'Not a moderator', code: 'NOT_MOD' }); return; }
         const state = {
           id: String(video.id || `ext-${Date.now()}`).slice(0, 64),
-          url: String(video.url).slice(0, 1000),
+          url: videoUrl.slice(0, 1000),
           title: String(video.title || 'Video').slice(0, 200),
           thumbUrl: video.thumbUrl ? String(video.thumbUrl).slice(0, 500) : null,
           startedAt: Date.now(),
@@ -1700,7 +1974,7 @@ function initSocketIO(io) {
           user.id,
           recipientId,
           { content: content.trim(), replyToId: replyToId ? Number(replyToId) : null },
-          { isAdmin }
+          { isAdmin, senderTier: user.tier || 'free' }
         );
 
         // Emit to recipient's personal room for real-time delivery
@@ -2055,12 +2329,11 @@ function initSocketIO(io) {
           if (channelRows.length > 0) streamVerified = true;
         }
 
-        // Check performers.directus_id → users.live_channel for numeric Directus IDs
+        // Check users.id → users.live_channel for numeric user IDs
         if (!streamVerified && isNumericId) {
           const { rows: performerRows } = await query(
-            `SELECT 1 FROM performers p
-             JOIN users u ON u.id = p.user_id
-             WHERE p.directus_id = $1 AND u.live_channel IS NOT NULL
+            `SELECT 1 FROM users u
+             WHERE u.id = $1 AND u.live_channel IS NOT NULL
              LIMIT 1`,
             [String(streamId)]
           );
@@ -2126,8 +2399,17 @@ function initSocketIO(io) {
           }
         }
 
-        socket.join(`live:${streamId}`);
+        // LIVE-C-04: Cap concurrent live rooms per connection at MAX_LIVE_ROOMS.
+        // Prevents a single socket from occupying resources across too many streams
+        // (e.g. automated scrapers joining every room simultaneously).
+        const MAX_LIVE_ROOMS = 3;
         socket.data.liveRooms = socket.data.liveRooms || new Set();
+        if (!socket.data.liveRooms.has(streamId) && socket.data.liveRooms.size >= MAX_LIVE_ROOMS) {
+          socket.emit('live:error', { message: 'You can only watch up to 3 streams at once.', code: 'TOO_MANY_ROOMS' });
+          return;
+        }
+
+        socket.join(`live:${streamId}`);
         socket.data.liveRooms.add(streamId);
 
         const redis = getRedis();
@@ -2148,16 +2430,31 @@ function initSocketIO(io) {
         }
         // Always refresh the viewer-count key TTL — keeps long streams alive.
         await redis.expire(`live:viewers:${streamId}`, 28800);
+
+        // Store viewer in creator dashboard roster (hash per stream, 8h TTL)
+        await redis.hset(
+          `live:roster:${streamId}`,
+          String(user.id),
+          JSON.stringify({ username: user.username || user.first_name || 'Viewer', joinedAt: Date.now() })
+        );
+        await redis.expire(`live:roster:${streamId}`, 28800);
+
         const countRaw = await redis.get(`live:viewers:${streamId}`);
         const count = parseInt(countRaw, 10) || 0;
 
         io.to(`live:${streamId}`).emit('live:viewer_count', { streamId, count });
 
-        // Try DB history first; fall back to Redis for Restreamer/Directus streams
+        // Slug streams (Restreamer channel refs, e.g. "pnptv-santino") have no row
+        // in live_streams — getComments() returns [] instead of throwing, so the
+        // original try/catch never triggered the Redis fallback. Detect slugs first.
+        const isChannelSlug = /^[a-z][a-z0-9_-]{2,}$/.test(String(streamId));
         let history = [];
-        try {
-          history = await LiveStreamModel.getComments(streamId, 50);
-        } catch {
+        if (!isChannelSlug) {
+          try {
+            history = await LiveStreamModel.getComments(streamId, 50);
+          } catch { /* fall through to Redis */ }
+        }
+        if (history.length === 0) {
           const raw = await redis.lrange(`live:chat:${streamId}`, 0, 49);
           history = raw.map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean).reverse();
         }
@@ -2181,14 +2478,13 @@ function initSocketIO(io) {
           }
 
           // Attempt 2: streamId is a numeric Directus performer ID — resolve through
-          // the performers → users → live_channel chain
+          // Resolve numeric user ID → live_channel → overlay
           if (overlayRows.length === 0 && /^\d+$/.test(String(streamId))) {
             const resolved = await query(
               `SELECT so.*
                FROM stream_overlays so
                JOIN users u ON u.live_channel = so.channel_ref
-               JOIN performers p ON p.user_id = u.id
-               WHERE p.directus_id = $1 AND so.is_active = true
+               WHERE u.id = $1 AND so.is_active = true
                LIMIT 1`,
               [String(streamId)]
             );
@@ -2228,6 +2524,7 @@ function initSocketIO(io) {
         const redis = getRedis();
         const count = await atomicViewerDecrement(redis, streamId);
         await redis.del(`live:joined:${streamId}:${user.id}`);
+        await redis.hdel(`live:roster:${streamId}`, String(user.id));
         io.to(`live:${streamId}`).emit('live:viewer_count', { streamId, count });
       } catch (err) {
         logger.error('live:leave error', { streamId, userId: user.id, error: err.message });
@@ -2263,15 +2560,22 @@ function initSocketIO(io) {
           return;
         }
       } catch (rateErr) {
-        // LOW-01: Deliberate fail-open on Redis outage.
-        // Tradeoff: during a Redis failure, rate-limiting is bypassed and spam
-        // is possible. The alternative — dropping all chat messages — is a worse
-        // user experience for the majority of legitimate users. Redis outages are
-        // rare and short-lived on this stack. Acceptable risk: prefer availability
-        // over throttling enforcement during infrastructure incidents.
-        logger.warn('live:message rate-limit check failed (Redis error)', { streamId, userId: user.id, error: rateErr.message });
-        // Increment metric so Redis downtime is detectable from monitoring
-        getRedis()?.incr('metrics:live:chat:rate_limit_bypass').catch(() => {});
+        // WS-HIGH-05: Redis failure — fall back to in-memory rate limiting instead of
+        // failing open. Window: 60s, cap: 30 messages (more lenient than Redis but still
+        // prevents flooding during an outage).
+        logger.warn('live:message rate-limit check failed — using in-memory fallback', { streamId, userId: user.id, error: rateErr.message });
+        const rlKey = `live:${streamId}:${user.id}`;
+        const nowRl = Date.now();
+        let rlEntry = _liveMessageLocalRl.get(rlKey);
+        if (!rlEntry || rlEntry.resetAt < nowRl) {
+          rlEntry = { count: 0, resetAt: nowRl + 60000 };
+        }
+        rlEntry.count++;
+        _liveMessageLocalRl.set(rlKey, rlEntry);
+        if (rlEntry.count > 30) {
+          socket.emit('rate_limit', { message: 'Too many messages' });
+          return;
+        }
       }
 
       if (!content || !String(content).trim()) {
@@ -2304,25 +2608,34 @@ function initSocketIO(io) {
           return;
         }
       } catch (banCheckErr) {
-        // Fail open on transient DB errors so a slow primary doesn't silence all
-        // legitimate chat — mirrors the rate-limit's documented fail-open posture.
-        // Persistent abuse is caught by rate limiting (or stays caught next time
-        // the ban table is reachable).
-        logger.warn('live:message ban check failed (fail-open)', { streamId, userId: user.id, error: banCheckErr.message });
+        // LIVE-M-05: Fail closed — if the ban check errors, deny the message.
+        // A transient DB error should not let a banned user bypass moderation.
+        // Chat rate-limiting still protects against abuse if the error is persistent.
+        logger.warn('live:message ban check failed (fail-closed)', { streamId, userId: user.id, error: banCheckErr.message });
+        socket.emit('live:error', { code: 'CHAT_CHECK_FAILED', message: 'Unable to verify chat permissions. Please try again.' });
+        return;
       }
 
       try {
         const username = user.username || user.firstName || user.first_name || 'Viewer';
         const trimmedContent = String(content).trim();
 
-        // Try DB-backed storage first; fall back to Redis for Restreamer/Directus streams
+        // Channel slug streams (e.g. 'pnptv-chasingthert') have no live_streams DB row —
+        // they are Restreamer-backed. Skip the DB call entirely and use Redis directly.
+        // UUID/numeric IDs go through the DB first, falling back to Redis on miss.
+        const isChannelSlug = /^[a-z][a-z0-9_-]{2,}$/.test(streamId);
         let commentId;
         let timestamp;
-        try {
-          const commentData = await LiveStreamModel.addComment(streamId, user.id, username, trimmedContent);
-          commentId = commentData.commentId;
-          timestamp = commentData.timestamp;
-        } catch {
+        let usedDb = false;
+        if (!isChannelSlug) {
+          try {
+            const commentData = await LiveStreamModel.addComment(streamId, user.id, username, trimmedContent);
+            commentId = commentData.commentId;
+            timestamp = commentData.timestamp;
+            usedDb = true;
+          } catch { /* fall through to Redis */ }
+        }
+        if (!usedDb) {
           commentId = `${Date.now()}-${user.id}`;
           timestamp = new Date();
           const redis = getRedis();
@@ -2437,13 +2750,19 @@ function initSocketIO(io) {
     });
 
     // ── Live Raid ────────────────────────────────────────────────────────────
-    // Creator emits live:raid:initiate to send all viewers in their stream room
-    // to another live stream. The server validates channel ownership, then
-    // broadcasts live:raid to the source room so all viewers see the overlay.
+    // ── Raid flow (approval-gated) ───────────────────────────────────────────
     //
-    // Payload: { streamId: string, targetChannelRef: string }
-    //   streamId         — creator's current channel ref (must match live_channel)
-    //   targetChannelRef — target channel ref to redirect viewers to
+    // 1. Raider emits live:raid:initiate
+    //    → validates ownership + cooldown
+    //    → stores pending raid in Redis (90s TTL)
+    //    → emits live:raid:request to the target streamer's personal socket room
+    //
+    // 2. Target streamer emits live:raid:respond { raidId, accept }
+    //    accept=true  → broadcast live:raid to source room + ack raider
+    //    accept=false → emit live:raid:declined to raider
+    //
+    // If target never responds within 90s Redis expires the key; raider receives
+    // live:raid:expired from a keyspace-notification listener registered below.
 
     socket.on('live:raid:initiate', async ({ streamId, targetChannelRef } = {}) => {
       if (!streamId || !STREAM_ID_RE.test(String(streamId))) {
@@ -2494,477 +2813,119 @@ function initSocketIO(io) {
           .replace(/-/g, ' ')
           .replace(/\b\w/g, (c) => c.toUpperCase());
 
-        io.to(`live:${streamId}`).emit('live:raid', {
+        // Look up the target streamer's user id so we can reach their socket room
+        const { rows: targetRows } = await query(
+          'SELECT id FROM users WHERE live_channel = $1 LIMIT 1',
+          [targetChannelRef]
+        );
+        const targetUserId = targetRows[0]?.id;
+
+        // Generate a unique raid request id
+        const raidId = require('crypto').randomBytes(8).toString('hex');
+
+        const pendingPayload = JSON.stringify({
+          raidId,
           sourceChannelRef: streamId,
           targetChannelRef,
+          sourceName: user.first_name || user.username || String(user.id),
           targetName,
           targetHlsUrl: `${publicUrl}/memfs/${targetChannelRef}.m3u8`,
           viewerCount,
-          raidedBy: user.id,
+          raiderId: user.id,
+          raiderSocketId: socket.id,
         });
 
-        logger.info(`Socket raid: ${streamId} → ${targetChannelRef} by user ${user.id}, viewers: ${viewerCount}`);
-        socket.emit('live:raid:ack', { success: true, targetChannelRef });
+        // Store pending raid — 90s window for target to respond
+        await redis.set(`pnp:raid:pending:${raidId}`, pendingPayload, 'EX', 90);
+
+        if (targetUserId) {
+          // Target streamer is on the platform — send approval request to their room
+          io.to(`user:${targetUserId}`).emit('live:raid:request', {
+            raidId,
+            sourceChannelRef: streamId,
+            sourceName: user.first_name || user.username || String(user.id),
+            viewerCount,
+            raidedBy: user.id,
+          });
+          socket.emit('live:raid:pending', { raidId, targetChannelRef, targetName });
+          logger.info(`Raid request sent: ${streamId} → ${targetChannelRef} (raidId: ${raidId}) by user ${user.id}`);
+        } else {
+          // Target channel has no registered user — execute immediately (unattended stream)
+          await redis.del(`pnp:raid:pending:${raidId}`);
+          io.to(`live:${streamId}`).emit('live:raid', {
+            sourceChannelRef: streamId,
+            targetChannelRef,
+            targetName,
+            targetHlsUrl: `${publicUrl}/memfs/${targetChannelRef}.m3u8`,
+            viewerCount,
+            raidedBy: user.id,
+          });
+          logger.info(`Raid auto-executed (no owner): ${streamId} → ${targetChannelRef} by user ${user.id}`);
+          socket.emit('live:raid:ack', { success: true, targetChannelRef });
+        }
       } catch (err) {
         logger.error('live:raid:initiate error', { userId: user.id, error: err.message });
         socket.emit('live:error', { message: 'Failed to initiate raid' });
       }
     });
 
-    // ── Browser → RTMP Stream Bridge ────────────────────────────────────────
-    //
-    // Allows creators to stream directly from their browser using MediaRecorder.
-    // The frontend captures camera/mic via getUserMedia, encodes as webm/opus,
-    // and sends binary chunks via Socket.IO. This handler pipes those chunks
-    // into an FFmpeg child process that re-encodes to H.264+AAC and pushes
-    // to Restreamer over RTMP.
-    //
-    // Only one active stream per socket (enforced by socket.data.ffmpegProcess).
-    // The user's assigned live_channel is verified against channelRef before
-    // spawning FFmpeg.
-
-    socket.on('stream:start', async ({ channelRef, videoBitrate, audioBitrate, fps, title, description, tags, thumbnailDataUrl, thumbnailUrl, mimeType } = {}) => {
-      // Reject if already streaming — one stream per connection
-      if (socket.data.ffmpegProcess) {
-        socket.emit('stream:error', { message: 'Already streaming. Stop the current stream first.' });
+    // Target streamer responds to an incoming raid request
+    socket.on('live:raid:respond', async ({ raidId, accept } = {}) => {
+      if (!raidId || typeof raidId !== 'string' || !/^[a-f0-9]{16}$/.test(raidId)) {
+        socket.emit('live:error', { message: 'Invalid raidId' });
         return;
       }
-
-      if (!channelRef || typeof channelRef !== 'string' || !/^[a-zA-Z0-9-]+$/.test(channelRef)) {
-        socket.emit('stream:error', { message: 'Invalid channelRef' });
-        return;
-      }
-
-      // Cross-socket exclusivity: prevent a second tab/connection from spawning
-      // a parallel FFmpeg pushing to the same RTMP target. The per-socket guard
-      // above only protects within one connection. TTL is refreshed on every
-      // stream:metrics tick (~5s) so it survives long streams, and released on
-      // stream:stop / disconnect / ffmpeg close.
-      const liveLockKey = `live:streaming:${user.id}`;
       try {
         const redis = getRedis();
-        if (redis) {
-          const acquired = await redis.set(liveLockKey, socket.id, 'NX', 'EX', 600);
-          if (!acquired) {
-            socket.emit('stream:error', {
-              code: 'already_live',
-              message: 'You are already streaming from another window. Stop that stream first.',
-            });
-            return;
-          }
-          socket.data.liveLockKey = liveLockKey;
+        const raw = await redis.get(`pnp:raid:pending:${raidId}`);
+        if (!raw) {
+          // TTL expired
+          socket.emit('live:raid:expired', { raidId });
+          return;
         }
-      } catch (lockErr) {
-        // If Redis is down we fail safe (reject) — channel hijack is more dangerous than a missed stream.
-        logger.error('stream:start: live lock check failed', { userId: user.id, error: lockErr.message });
-        socket.emit('stream:error', { message: 'Streaming temporarily unavailable. Try again in a moment.' });
-        return;
-      }
 
-      // Validate and clamp quality parameters
-      const safeVideoBitrate = (typeof videoBitrate === 'number' && isFinite(videoBitrate))
-        ? Math.min(Math.max(videoBitrate, 100_000), 6_000_000)
-        : 2_500_000;
-      const safeAudioBitrate = (typeof audioBitrate === 'number' && isFinite(audioBitrate))
-        ? Math.min(Math.max(audioBitrate, 32_000), 320_000)
-        : 128_000;
-      const safeFps = (typeof fps === 'number' && isFinite(fps))
-        ? Math.min(Math.max(Math.round(fps), 15), 60)
-        : 30;
+        const pending = JSON.parse(raw);
 
-      const videoBitrateK = Math.round(safeVideoBitrate / 1000);
-      const maxrateK      = Math.round(safeVideoBitrate * 1.2 / 1000);
-      const bufsizeK      = Math.round(safeVideoBitrate * 2 / 1000);
-      const audioBitrateK = Math.round(safeAudioBitrate / 1000);
-
-      try {
-        // Verify the user has a channel assigned and that it matches channelRef
-        // (admins may stream to any channel)
-        const { rows } = await query(
-          'SELECT live_channel FROM users WHERE id = $1',
-          [user.id]
+        // Only the target channel's owner may respond
+        const { rows: targetRows } = await query(
+          'SELECT id FROM users WHERE live_channel = $1 LIMIT 1',
+          [pending.targetChannelRef]
         );
-
-        const assignedChannel = rows[0]?.live_channel ?? null;
-        const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-
-        if (!isAdmin) {
-          const { rows: performerRows } = await query(
-            `SELECT 1 FROM performers WHERE user_id = $1 AND status = 'active' LIMIT 1`,
-            [user.id]
-          );
-          if (performerRows.length === 0) {
-            socket.emit('stream:error', { message: 'Creator account required to stream.' });
-            return;
-          }
-        }
-
-        // Reject if creator is in onboarding lock
-        if (!isAdmin) {
-          const { rows: lockRows } = await query(
-            'SELECT creator_locked FROM users WHERE id = $1',
-            [user.id]
-          );
-          if (lockRows[0]?.creator_locked) {
-            socket.emit('stream:error', {
-              code: 'creator_locked',
-              message: 'Complete your creator onboarding before going live.',
-            });
-            return;
-          }
-        }
-
-        if (!assignedChannel) {
-          socket.emit('stream:error', { message: 'No streaming channel assigned to your account.' });
+        if (!targetRows[0] || String(targetRows[0].id) !== String(user.id)) {
+          socket.emit('live:error', { message: 'Not authorized to respond to this raid' });
           return;
         }
 
-        if (!isAdmin && assignedChannel !== channelRef) {
-          socket.emit('stream:error', { message: 'channelRef does not match your assigned channel.' });
-          return;
-        }
+        // Consume the pending key so it can only be responded to once
+        await redis.del(`pnp:raid:pending:${raidId}`);
 
-        // 2257 compliance gate — mirrors getRtmpKey and provisionChannel HTTP endpoints
-        if (!isAdmin) {
-          const { rows: compRows } = await query(
-            'SELECT identity_verified, identity_verification_required_by FROM users WHERE id = $1',
-            [user.id]
-          );
-          if (!IdentityVerificationService.is2257Compliant(compRows[0] || {})) {
-            socket.emit('stream:error', {
-              code: 'identity_verification_required',
-              message: 'Complete identity verification (18 U.S.C. § 2257) before going live.',
-            });
-            return;
-          }
-        }
-
-        // Derive the RTMP stream key from the channel slug.
-        // 'pnptv-santino' → 'santino'. Non-prefixed slugs are used as-is.
-        const streamKey = channelRef.startsWith('pnptv-')
-          ? channelRef.slice('pnptv-'.length)
-          : channelRef;
-
-        // Self-heal: ensure the Restreamer ingest process exists for this
-        // channelRef. createProcess is idempotent — it returns the existing
-        // process if one is present. Without this, creators whose provisionChannel
-        // ran before reliable Restreamer process creation push RTMP into a void:
-        // FFmpeg connects, frames are accepted, but no HLS manifest is generated
-        // and viewers see nothing. Non-fatal: failure logs but stream proceeds.
-        try {
-          const performerTitle = (user.first_name || user.username || `Creator ${user.id}`).slice(0, 100);
-          await restreamerService.createProcess({ refId: channelRef, title: performerTitle });
-        } catch (provErr) {
-          logger.warn('stream:start: Restreamer createProcess failed (non-fatal)', { channelRef, error: provErr.message });
-        }
-
-        const rtmpToken = process.env.RESTREAMER_RTMP_TOKEN;
-        const rtmpTarget = rtmpToken
-          ? `rtmp://restreamer:1935/live/${streamKey}?token=${rtmpToken}`
-          : `rtmp://restreamer:1935/live/${streamKey}`;
-
-        // Spawn FFmpeg: read webm/opus or mp4/h264 from stdin, transcode to H.264+AAC, push to RTMP.
-        // -re is omitted so FFmpeg consumes input as fast as it arrives from the socket.
-        // -fflags nobuffer + -flags low_delay minimise latency through the pipeline.
-        // -f <container> is required so FFmpeg knows the format on stdin (probing on a
-        // pipe is unreliable and causes VP8 keyframe decode errors). The client tells
-        // us which container it's sending via the mimeType field — iOS Safari sends MP4,
-        // everyone else sends WebM. Default to webm for backwards compat with old clients.
-        const inputFormat = (typeof mimeType === 'string' && mimeType.startsWith('video/mp4'))
-          ? 'mp4'
-          : 'webm';
-        logger.info(`[stream:start] channel=${channelRef} input=${inputFormat} mimeType=${mimeType || '<legacy>'}`);
-        const ffmpeg = spawn('ffmpeg', [
-          '-loglevel', 'warning',
-          '-fflags', '+nobuffer+discardcorrupt',
-          '-flags', 'low_delay',
-          '-f', inputFormat,
-          '-analyzeduration', '500000',
-          '-probesize', '500000',
-          '-i', 'pipe:0',
-          '-c:v', 'libx264',
-          '-preset', 'veryfast',
-          '-tune', 'zerolatency',
-          '-pix_fmt', 'yuv420p',
-          '-b:v', `${videoBitrateK}k`,
-          '-maxrate', `${maxrateK}k`,
-          '-bufsize', `${bufsizeK}k`,
-          '-r', String(safeFps),
-          '-g', String(safeFps * 2),  // Keyframe every 2 seconds for HLS segment alignment
-          '-c:a', 'aac',
-          '-b:a', `${audioBitrateK}k`,
-          '-ar', '44100',
-          '-f', 'flv',
-          rtmpTarget,
-        ], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-
-        socket.data.ffmpegProcess = ffmpeg;
-        socket.data.streamChannelRef = channelRef;
-
-        // Defer stream:started until FFmpeg has either printed its first stderr
-        // line (proves the binary opened the input pipe) or 800 ms has passed.
-        // If FFmpeg's 'error' or 'exit' fires first, the existing handlers emit
-        // stream:error and emitStarted becomes a no-op. Without this, the client
-        // starts MediaRecorder against a pipe that may already be closed.
-        let streamStartedEmitted = false;
-        const emitStarted = () => {
-          if (streamStartedEmitted) return;
-          if (socket.data.ffmpegProcess !== ffmpeg) return; // FFmpeg already died
-          streamStartedEmitted = true;
-          socket.emit('stream:started', { channelRef });
-
-          // Auto-clear "accepting calls" flag — you can't take private calls
-          // while broadcasting. Fire-and-forget; failure is non-fatal.
-          const creatorUserId = String(user.id);
-          const acceptingCallsKey = `user:${creatorUserId}:accepting_calls`;
-          const redisForStream = getRedis();
-          if (redisForStream) {
-            redisForStream.del(acceptingCallsKey).then(() => {
-              io.emit('creator:accepting_calls_changed', { creatorId: creatorUserId, accepting: false });
-              logger.info('[stream:start] accepting_calls flag cleared on stream start', { creatorUserId, channelRef });
-            }).catch((err) => {
-              logger.warn('[stream:start] failed to clear accepting_calls flag (non-fatal)', { creatorUserId, error: err.message });
-            });
-          }
-        };
-        const startedWatchdog = setTimeout(emitStarted, 800);
-        ffmpeg.stderr.once('data', () => {
-          clearTimeout(startedWatchdog);
-          emitStarted();
-        });
-
-        let ffmpegStderrLines = 0;
-        ffmpeg.stderr.on('data', (chunk) => {
-          ffmpegStderrLines++;
-          // Log first 20 lines at warn level to capture startup errors/codec info,
-          // then switch to debug to avoid flooding production logs.
-          const line = chunk.toString().trim();
-          if (ffmpegStderrLines <= 20) {
-            logger.warn(`[ffmpeg:${channelRef}] ${line}`);
-          } else {
-            logger.debug(`[ffmpeg:${channelRef}] ${line}`);
-          }
-        });
-
-        ffmpeg.on('close', (code, signal) => {
-          logger.info(`FFmpeg process for channel '${channelRef}' exited (code=${code}, signal=${signal}), received ${socket.data.streamDataChunks || 0} chunks / ${socket.data.streamDataBytes || 0} bytes`);
-          // Only emit stopped if the process wasn't already cleaned up by stream:stop
-          if (socket.data.ffmpegProcess === ffmpeg) {
-            socket.data.ffmpegProcess = null;
-            socket.data.streamChannelRef = null;
-            // Release the cross-socket live lock so the user can immediately retry
-            if (socket.data.liveLockKey) {
-              const redis = getRedis();
-              if (redis) redis.del(socket.data.liveLockKey).catch(() => {});
-              socket.data.liveLockKey = null;
-            }
-            socket.emit('stream:stopped', { channelRef, reason: code !== 0 ? 'ffmpeg_error' : 'completed' });
-            io.to(`live:${channelRef}`).emit('live:ended', { channelRef });
-
-            // Analytics: close session on unexpected FFmpeg exit
-            if (socket.data.viewerSamplerInterval) {
-              clearInterval(socket.data.viewerSamplerInterval);
-              socket.data.viewerSamplerInterval = null;
-            }
-            const sid = socket.data.analyticsSessionId;
-            if (sid) {
-              socket.data.analyticsSessionId = null;
-              const redis = getRedis();
-              const endFn = async () => {
-                const countRaw = redis ? await redis.get(`live:viewers:${channelRef}`).catch(() => null) : null;
-                const peakViewers = parseInt(countRaw, 10) || 0;
-                await streamAnalyticsService.endSession(sid, { peakViewers });
-              };
-              endFn().catch(e => logger.warn('streamAnalytics: endSession(ffmpeg close) error', { sid, error: e.message }));
-            }
-          }
-        });
-
-        ffmpeg.on('error', (err) => {
-          logger.error(`FFmpeg spawn error for channel '${channelRef}'`, err);
-          socket.data.ffmpegProcess = null;
-          socket.data.streamChannelRef = null;
-          if (socket.data.liveLockKey) {
-            const redis = getRedis();
-            if (redis) redis.del(socket.data.liveLockKey).catch(() => {});
-            socket.data.liveLockKey = null;
-          }
-          socket.emit('stream:error', { message: 'Streaming process failed to start. Is FFmpeg installed?' });
-        });
-
-        socket.data.streamDataChunks = 0;
-        socket.data.streamDataBytes = 0;
-        socket.data.pipeBrokenNotified = false;
-        logger.info(`Browser stream started: user ${user.id} → channel '${channelRef}' → rtmp://restreamer:1935/live/${streamKey} [token redacted]`);
-
-        // Store stream metadata in Redis (TTL 12h — auto-expires if stream ends uncleanly)
-        try {
-          const { getRedis } = require('../../config/redis');
-          const redis = getRedis();
-          if (redis) {
-            const safeTitle = (typeof title === 'string' ? title : '').slice(0, 100).trim();
-            const safeDesc = (typeof description === 'string' ? description : '').slice(0, 500).trim();
-            const safeTags = Array.isArray(tags)
-              ? tags.filter(tg => typeof tg === 'string').slice(0, 7).map(tg => tg.slice(0, 32))
-              : [];
-            await redis.set(`stream:meta:${channelRef}`, JSON.stringify({ title: safeTitle, description: safeDesc, tags: safeTags }), 'EX', 43200);
-            // Prefer persistent thumbnailUrl (stored in DB via /api/webapp/live/thumbnail);
-            // fall back to one-time thumbnailDataUrl for backward compatibility.
-            const thumbToStore = (typeof thumbnailUrl === 'string' && thumbnailUrl.startsWith('/'))
-              ? thumbnailUrl
-              : (
-                typeof thumbnailDataUrl === 'string' &&
-                thumbnailDataUrl.startsWith('data:image/jpeg;base64,') &&
-                thumbnailDataUrl.length < 200 * 1024
-                  ? thumbnailDataUrl
-                  : null
-              );
-            if (thumbToStore) {
-              await redis.set(`stream:thumb:${channelRef}`, thumbToStore, 'EX', 43200);
-            }
-          }
-        } catch (metaErr) {
-          logger.warn('stream:start: failed to store metadata in Redis (non-fatal)', { channelRef, error: metaErr.message });
-        }
-
-        // SOCK-H4: Do not send rtmpTarget to the client — it exposes the internal
-        // RTMP server address and stream key which are server-side concerns only.
-        // stream:started is emitted from emitStarted() above once FFmpeg signals
-        // it has opened the input pipe (or after the 800 ms watchdog).
-
-        // Analytics: open a session row and start a 30-second viewer sampler.
-        setImmediate(async () => {
-          try {
-            const sessionId = await streamAnalyticsService.startSession(user.id, channelRef);
-            socket.data.analyticsSessionId = sessionId;
-
-            const redis = getRedis();
-            socket.data.viewerSamplerInterval = setInterval(async () => {
-              try {
-                const sid = socket.data.analyticsSessionId;
-                if (!sid) return;
-                const countRaw = redis ? await redis.get(`live:viewers:${channelRef}`) : null;
-                const count = parseInt(countRaw, 10) || 0;
-                await streamAnalyticsService.sampleViewers(sid, count);
-              } catch (sampleErr) {
-                logger.warn('streamAnalytics: sampleViewers error', { error: sampleErr.message });
-              }
-            }, 30_000);
-
-            // VOD recording: start capturing HLS to disk (non-blocking, non-fatal)
-            try {
-              const recordingId = await streamRecordingService.startRecording({
-                sessionId,
-                creatorId: user.id,
-                channelRef,
-              });
-              socket.data.recordingId = recordingId;
-              logger.info('streamRecording: attached to session', { recordingId, sessionId });
-            } catch (recErr) {
-              logger.warn('streamRecording: startRecording failed (non-fatal)', { userId: user.id, channelRef, error: recErr.message });
-            }
-          } catch (analyticsErr) {
-            logger.warn('streamAnalytics: startSession error (non-fatal)', { userId: user.id, channelRef, error: analyticsErr.message });
-          }
-        });
-
-        // Going-Live broadcast: fan-out Telegram DM + push to opted-in followers.
-        // Runs in background (setImmediate) so it never blocks the stream-start path.
-        setImmediate(() => {
-          const { getBotInstance } = require('../core/bot');
-          const { broadcastGoingLive } = require('../../services/goingLiveBroadcastService');
-          const bot = getBotInstance();
-          broadcastGoingLive(bot, user.id, channelRef).catch((err) => {
-            logger.error('goingLiveBroadcast: unhandled rejection', { userId: user.id, channelRef, error: err.message });
+        if (accept) {
+          // Broadcast raid to all viewers in the source room
+          io.to(`live:${pending.sourceChannelRef}`).emit('live:raid', {
+            sourceChannelRef: pending.sourceChannelRef,
+            targetChannelRef: pending.targetChannelRef,
+            targetName: pending.targetName,
+            targetHlsUrl: pending.targetHlsUrl,
+            viewerCount: pending.viewerCount,
+            raidedBy: pending.raiderId,
           });
-        });
-
-        // Cristina AI live stream announcement in social feed (non-blocking)
-        setImmediate(() => {
-          const CristinaFeedService = require('../../services/cristinaFeedService');
-          const safeTitle = (typeof title === 'string' ? title : '').slice(0, 100).trim();
-          CristinaFeedService.announceLiveStream(
-            user.id,
-            user.first_name || user.username,
-            safeTitle
-          ).catch(() => {});
-        });
-      } catch (err) {
-        logger.error('stream:start error', { userId: user.id, channelRef, err });
-        socket.emit('stream:error', { message: 'Failed to start stream. Please try again.' });
-      } finally {
-        // Release the cross-socket live lock if we exited without spawning FFmpeg
-        // (any validation early-return). Without this, a failed attempt locks the
-        // creator out for the full 600s TTL and they see "already streaming".
-        if (socket.data.liveLockKey && !socket.data.ffmpegProcess) {
-          const redis = getRedis();
-          if (redis) redis.del(socket.data.liveLockKey).catch(() => {});
-          socket.data.liveLockKey = null;
-        }
-      }
-    });
-
-    socket.on('stream:data', (data) => {
-      const MAX_CHUNK_BYTES = 512 * 1024;
-
-      const ffmpeg = socket.data.ffmpegProcess;
-      if (!ffmpeg || !ffmpeg.stdin || ffmpeg.stdin.destroyed) return;
-
-      // Handle backpressure: if the stdin write buffer is full, skip the chunk
-      // rather than buffering unboundedly. This keeps latency low at the cost
-      // of minor visual artefacts when the network or encoder is congested.
-      if (ffmpeg.stdin.writableNeedDrain) return;
-
-      try {
-        // data may arrive as Buffer, ArrayBuffer, Uint8Array, or other typed arrays
-        // from the browser's MediaRecorder Blob sent via Socket.IO binary frames.
-        let buf;
-        if (Buffer.isBuffer(data)) {
-          buf = data;
-        } else if (data instanceof ArrayBuffer) {
-          buf = Buffer.from(data);
-        } else if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
-          buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-        } else if (typeof data === 'object' && data !== null && data.type === 'Buffer' && Array.isArray(data.data)) {
-          // Socket.IO JSON-serialized Buffer fallback
-          buf = Buffer.from(data.data);
+          // Notify the raider
+          io.to(`user:${pending.raiderId}`).emit('live:raid:ack', { success: true, targetChannelRef: pending.targetChannelRef });
+          logger.info(`Raid accepted: ${pending.sourceChannelRef} → ${pending.targetChannelRef} (raidId: ${raidId})`);
         } else {
-          // Last resort: try direct conversion
-          buf = Buffer.from(data);
+          // Notify the raider of the decline
+          io.to(`user:${pending.raiderId}`).emit('live:raid:declined', {
+            raidId,
+            targetChannelRef: pending.targetChannelRef,
+            targetName: pending.targetName,
+          });
+          // Release the cooldown so the raider can try someone else immediately
+          await redis.del(`pnp:raid:cooldown:${pending.raiderId}`).catch(() => {});
+          logger.info(`Raid declined: ${pending.sourceChannelRef} → ${pending.targetChannelRef} (raidId: ${raidId})`);
         }
-
-        if (!buf || buf.length === 0) return;
-
-        if (buf.length > MAX_CHUNK_BYTES) {
-          logger.warn(`stream:data oversized chunk from user ${user.id}: ${buf.length} bytes`);
-          return;
-        }
-
-        socket.data.streamDataChunks = (socket.data.streamDataChunks || 0) + 1;
-        socket.data.streamDataBytes = (socket.data.streamDataBytes || 0) + buf.length;
-        if (socket.data.streamDataChunks <= 3 || socket.data.streamDataChunks % 100 === 0) {
-          logger.info(`[stream:data] chunk #${socket.data.streamDataChunks}, ${buf.length} bytes, total ${socket.data.streamDataBytes} bytes`);
-        }
-
-        ffmpeg.stdin.write(buf, (writeErr) => {
-          if (writeErr && !ffmpeg.stdin.destroyed) {
-            logger.warn(`stream:data write error for channel '${socket.data.streamChannelRef}'`, { error: writeErr.message });
-            // Tell the client so it stops sending chunks into a dead pipe and
-            // surfaces an error instead of holding a green "LIVE" UI forever.
-            // Guard with a flag so we only emit once per broken pipe.
-            if (!socket.data.pipeBrokenNotified) {
-              socket.data.pipeBrokenNotified = true;
-              socket.emit('stream:error', {
-                code: 'pipe_broken',
-                message: 'Stream pipeline broken. Please stop and restart.',
-              });
-            }
-          }
-        });
       } catch (err) {
-        logger.warn('stream:data processing error', { error: err.message });
+        logger.error('live:raid:respond error', { userId: user.id, error: err.message });
+        socket.emit('live:error', { message: 'Failed to process raid response' });
       }
     });
 
@@ -2993,9 +2954,8 @@ function initSocketIO(io) {
       const safeRtt     = Number.isFinite(Number(rtt))      ? Math.max(0, Math.round(Number(rtt)))     : null;
       let safeSession = typeof sessionId === 'string' ? sessionId.slice(0, 128) : String(socket.data.analyticsSessionId || '');
 
-      // The analytics session is created in a setImmediate inside stream:start,
-      // so the very first metrics tick may race ahead of it. Poll briefly
-      // (5 × 200ms) for the session id rather than silently dropping the row.
+      // The analytics session may not yet be set when the first metrics tick arrives.
+      // Poll briefly (5 × 200ms) for the session id rather than silently dropping the row.
       if (!safeSession) {
         for (let i = 0; i < 5; i++) {
           await new Promise(r => setTimeout(r, 200));
@@ -3067,6 +3027,12 @@ function initSocketIO(io) {
         // Notify all viewers immediately so they see "stream ended" without waiting for HLS timeout
         io.to(`live:${channelRef}`).emit('live:ended', { channelRef });
 
+        // Clear viewer roster so the creator dashboard doesn't show stale entries
+        if (channelRef) {
+          const redis = getRedis();
+          if (redis) redis.del(`live:roster:${channelRef}`).catch(() => {});
+        }
+
         // Analytics: close session
         if (socket.data.viewerSamplerInterval) {
           clearInterval(socket.data.viewerSamplerInterval);
@@ -3114,7 +3080,7 @@ function initSocketIO(io) {
         durationMs: Date.now() - connectedAt,
       });
 
-      // Clean up any running FFmpeg browser-stream process
+      // Clean up any running FFmpeg stream process
       if (socket.data.ffmpegProcess) {
         const ffmpeg = socket.data.ffmpegProcess;
         const channelRef = socket.data.streamChannelRef;
@@ -3203,6 +3169,7 @@ function initSocketIO(io) {
           try {
             const count = await atomicViewerDecrement(redis, streamId);
             await redis.del(`live:joined:${streamId}:${user.id}`);
+            await redis.hdel(`live:roster:${streamId}`, String(user.id));
             io.to(`live:${streamId}`).emit('live:viewer_count', { streamId, count });
           } catch (err) {
             logger.warn('live viewer count cleanup error on disconnect', { streamId, userId: user.id, error: err.message });

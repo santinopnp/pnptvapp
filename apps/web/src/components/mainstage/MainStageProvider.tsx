@@ -718,17 +718,22 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
         } catch (camErr) {
           // Camera permission denied or device unavailable — surface a clear message
           // instead of letting this propagate to the outer catch and showing a generic error.
-          const msg =
-            camErr instanceof Error && camErr.message
-              ? camErr.message
-              : "Camera access was denied. Please allow camera access and try again.";
+          const rawMsg = camErr instanceof Error ? camErr.message : "";
+          const isPermissionDenied =
+            (camErr as { name?: string })?.name === "NotAllowedError" ||
+            rawMsg.toLowerCase().includes("permission denied") ||
+            rawMsg.toLowerCase().includes("not allowed") ||
+            rawMsg.toLowerCase().includes("denied permission");
+          const msg = isPermissionDenied
+            ? "Tu cámara está bloqueada para pnptv.app. Ve a los ajustes de tu navegador → Permisos del sitio → Cámara → Permitir para pnptv.app, y luego recarga la página. / Camera blocked: open browser Site Settings → Camera → Allow for pnptv.app, then reload."
+            : rawMsg || "Camera access was denied. Please allow camera access and try again.";
           // Reset connection intent so subsequent join() calls don't short-circuit.
           intentConnectedRef.current = false;
           if (mountedRef.current) {
             setError(msg);
             setIsJoined(false);
           }
-          emitDiagnostic("camera-error", { reason: msg });
+          emitDiagnostic("camera-error", { reason: rawMsg });
           // Leave the room cleanly — we joined but can't publish.
           await sharedRoom.disconnect();
           return;
@@ -819,6 +824,8 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
   // Refs keep the nav handler stable (registered once, no stale closures).
   const hasMeaningfulContentRef = useRef(hasMeaningfulContent);
   useEffect(() => { hasMeaningfulContentRef.current = hasMeaningfulContent; }, [hasMeaningfulContent]);
+  const isJoinedRef = useRef(isJoined);
+  useEffect(() => { isJoinedRef.current = isJoined; }, [isJoined]);
 
   const prevPathnameRef = useRef(miniPathname);
 
@@ -830,7 +837,7 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
       const p = window.location.pathname;
       prevPathnameRef.current = p;
       setMiniPathname(p);
-      if (prevPath.startsWith("/main-stage") && !p.startsWith("/main-stage") && hasMeaningfulContentRef.current) {
+      if (prevPath.startsWith("/main-stage") && !p.startsWith("/main-stage") && hasMeaningfulContentRef.current && isJoinedRef.current) {
         setMiniDismissed(false);
       }
     };
@@ -842,18 +849,18 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
     };
   }, []); // empty — handler is stable via refs
 
-  // Surface the player when admin starts a new broadcast so users don't miss live content,
-  // but only if they are not on the main stage page itself.
+  // Surface the player when admin starts a new broadcast, but only for users who have
+  // actively joined the room and are not on the main stage page itself.
   const prevHasActiveMiniMediaRef = useRef(hasActiveMiniMedia);
   useEffect(() => {
-    if (hasActiveMiniMedia && !prevHasActiveMiniMediaRef.current && !isOnMainStage) {
+    if (isJoined && hasActiveMiniMedia && !prevHasActiveMiniMediaRef.current && !isOnMainStage) {
       setMiniDismissed(false);
     }
     prevHasActiveMiniMediaRef.current = hasActiveMiniMedia;
-  }, [hasActiveMiniMedia, isOnMainStage]);
+  }, [isJoined, hasActiveMiniMedia, isOnMainStage]);
 
   const isVerified = !!(user?.ageVerified && user?.termsAccepted);
-  const showMiniPlayer = isAuthenticated && isVerified && !isOnMainStage && !miniDismissed && hasMeaningfulContent;
+  const showMiniPlayer = isAuthenticated && isVerified && isJoined && !isOnMainStage && !miniDismissed && hasMeaningfulContent;
   const miniMediaTrack = miniTracks.find((t) => t.identity === MINI_MEDIA_IDENTITY);
   const miniLocalTrack = miniTracks.find((t) => t.isLocal);
   const miniOtherTracks = miniTracks.filter((t) => !t.isLocal && t.identity !== MINI_MEDIA_IDENTITY);

@@ -46,6 +46,7 @@ export default function Compliance2257() {
   const [reRejectNotes, setReRejectNotes] = useState<Record<string, string>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [graceCount, setGraceCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,6 +54,7 @@ export default function Compliance2257() {
     try {
       const res = await get2257Records(tab);
       setRecords(res.records);
+      if (typeof res.graceCount === "number") setGraceCount(res.graceCount);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load records");
     } finally {
@@ -176,6 +178,34 @@ export default function Compliance2257() {
         </button>
       </div>
 
+      {/* Compliance status notices */}
+      <div className="mt-4 space-y-2">
+        <div
+          className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-xs"
+          style={{ background: "rgba(255,180,84,0.1)", border: "1px solid rgba(255,180,84,0.25)", color: "#FFB454" }}
+        >
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>
+            <span className="font-semibold">CUSTODIAN_EMAIL env var not yet set.</span>{" "}
+            The compliance custodian contact address required by 2257 recordkeeping rules has not been configured on the server. Set <span className="font-mono">CUSTODIAN_EMAIL</span> in the backend environment before the platform goes fully public with adult content.
+          </span>
+        </div>
+        <div
+          className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-xs"
+          style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.2)", color: "#5ED1C4" }}
+        >
+          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>
+            <span className="font-semibold">Grace period:</span>{" "}
+            Creators assigned the creator role receive a 30-day grace period from their role assignment date to complete verification. After 30 days without an approved record, their content access is restricted.{graceCount !== null ? ` Currently ${graceCount} creator${graceCount !== 1 ? "s" : ""} on active grace.` : ""}
+          </span>
+        </div>
+      </div>
+
       {/* Tab bar */}
       <div className="flex gap-1 mb-5 mt-5 p-1 rounded-xl" style={{ background: "rgba(255,255,255,0.04)" }}>
         {tabs.map((t) => (
@@ -227,7 +257,7 @@ export default function Compliance2257() {
         <div className="space-y-3">
           {records.map((rec) => {
             const filename = extractFilename(rec.id_document_path);
-            const selfieFilename = extractFilename((rec as typeof rec & { id_selfie_path?: string }).id_selfie_path);
+            const selfieFilename = extractFilename(rec.id_selfie_path);
             const docUrl = filename ? `/api/admin/creator-2257/doc/${filename}` : null;
             const selfieUrl = selfieFilename ? `/api/admin/creator-2257/doc/${selfieFilename}` : null;
             const displayName = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || rec.username || rec.user_id;

@@ -399,7 +399,13 @@ async function handleBtcpayWebhook(req, res) {
   }
 
   // Idempotency: acquire a Redis lock to prevent duplicate delivery race conditions.
-  const settleLock = await cache.acquireLock(`btcpay:settled:${invoiceId}`, 120).catch(() => false);
+  let settleLock;
+  try {
+    settleLock = await cache.acquireLock(`btcpay:settled:${invoiceId}`, 120);
+  } catch (lockErr) {
+    logger.error('BTCPay: Redis unavailable for lock — returning 503 for retry', { invoiceId, error: lockErr.message });
+    return res.status(503).json({ success: false, error: 'service_unavailable' });
+  }
   if (!settleLock) {
     logger.info('BTCPay settlement duplicate delivery blocked', { invoiceId, eventType: event.type });
     return res.json({ success: true, duplicate: true });
@@ -434,10 +440,8 @@ async function handleBtcpayWebhook(req, res) {
           return res.status(422).json({ success: false, error: 'underpayment', invoiceId });
         }
       } catch (invoiceCheckErr) {
-        // Log but do NOT block — if BTCPay API is unreachable we still trust the webhook signature
-        logger.warn('BTCPay InvoiceSettled: could not fetch invoice for amount verification (proceeding)', {
-          invoiceId, error: invoiceCheckErr.message,
-        });
+        logger.error('BTCPay InvoiceSettled: could not verify amount — 500 for retry', { invoiceId, error: invoiceCheckErr.message });
+        return res.status(500).json({ success: false, error: 'amount_verification_unavailable', invoiceId });
       }
     }
 
@@ -592,20 +596,38 @@ async function handleBtcpayWebhook(req, res) {
         return res.status(500).json({ success: false, error: 'entitlement_grant_failed', invoiceId });
       }
 
-      // Sync users.tier for admin display (non-critical).
+      // Sync plan_id + plan_expiry for admin display (tier already synced by recomputeUserTier
+      // inside grantEntitlementsForPlan). Uses bypass so lifetime-fields trigger never blocks.
       try {
         const metaDurationDays = metaPlan.duration_days || 30;
-        const metaIsLifetime = metaDurationDays >= 36500;
+        const metaIsLifetime = metaDurationDays >= 36500 || metaPlan.is_lifetime === true;
         const metaExpiryDate = metaIsLifetime ? null : new Date(Date.now() + metaDurationDays * 86400000);
-        const metaNewTier = (metaPlan.tier === 'member' || metaPlanId.startsWith('member_')) ? 'member' : 'PRIME';
-        await dbQuery(
-          `UPDATE users
-           SET tier = $2, subscription_status = 'active', plan_id = $3, plan_expiry = $4, updated_at = NOW()
-           WHERE id = $1 OR telegram = $1`,
-          [metaUserId, metaNewTier, metaPlanId, metaExpiryDate]
-        );
+        const { getClient: _btcGetClient } = require('../../../config/postgres');
+        const _btcTx = await _btcGetClient();
+        try {
+          await _btcTx.query('BEGIN');
+          await _btcTx.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+          await _btcTx.query(
+            `UPDATE users SET plan_id = $2,
+               plan_expiry = CASE
+                 WHEN plan_expiry IS NULL THEN NULL
+                 WHEN $3::timestamptz IS NULL THEN NULL
+                 WHEN plan_expiry > $3::timestamptz THEN plan_expiry
+                 ELSE $3::timestamptz
+               END,
+               updated_at = NOW()
+             WHERE id = $1 OR telegram = $1`,
+            [metaUserId, metaPlanId, metaExpiryDate]
+          );
+          await _btcTx.query('COMMIT');
+        } catch (txErr) {
+          await _btcTx.query('ROLLBACK').catch(() => {});
+          throw txErr;
+        } finally {
+          _btcTx.release();
+        }
       } catch (metaTierErr) {
-        logger.warn('BTCPay metadata flow: tier sync failed (non-critical)', {
+        logger.warn('BTCPay metadata flow: plan_id/plan_expiry sync failed (non-critical)', {
           userId: metaUserId,
           planId: metaPlanId,
           error: metaTierErr.message,

@@ -121,7 +121,7 @@ async function insertPendingPurchase(client, {
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 class TokenCheckoutService {
-  /** The 5 canonical token packages (1 token = $1 USD). */
+  /** The canonical Tokens packages (100 Tokens = $1 USD). Defined in DashTokenService.TOKEN_PACKAGES. */
   static PACKAGES = DashTokenService.TOKEN_PACKAGES;
 
   // ── Dash / BTCPay checkout ────────────────────────────────────────────────
@@ -312,7 +312,7 @@ class TokenCheckoutService {
       success: true,
       purchaseId: purchaseUuid,
       invoiceId: invoice.invoiceId,
-      checkoutUrl: invoice.checkoutLink,
+      checkoutUrl: invoice.checkoutUrl || invoice.checkoutLink,
       tokens: pkg.tokens,
       usd: amountUsd,
     };
@@ -514,16 +514,17 @@ class TokenCheckoutService {
   // ── NowPayments checkout ─────────────────────────────────────────────────
 
   /**
-   * Create a NowPayments hosted invoice for a token package purchase (20% crypto discount).
-   * Uses the same dash_subscription_orders table as other NowPayments flows so the
-   * existing webhook handler routes payment confirmation automatically.
+   * Create a NowPayments hosted invoice for a token package purchase.
+   * When presaleDiscount=true, charges 90% of the normal USD price but credits
+   * the full token amount — users get more tokens per dollar during presale.
    *
    * @param {string} userId
    * @param {string} packageId
    * @param {string|null} [payCurrency]  Optional NowPayments pay_currency (e.g. 'btc', 'btcln')
+   * @param {boolean} [presaleDiscount]  Apply 10% presale discount to USD charge
    * @returns {Promise<{ invoiceId: string, checkoutUrl: string, tokens: number, usdAmount: number }>}
    */
-  static async createNowPaymentsCheckout(userId, packageId, payCurrency = null) {
+  static async createNowPaymentsCheckout(userId, packageId, payCurrency = null, presaleDiscount = false) {
     const pkg = resolvePackage(packageId);
     if (!pkg) {
       throw Object.assign(new Error(`Token package '${packageId}' not found`), { code: 'PACKAGE_NOT_FOUND', status: 404 });
@@ -533,7 +534,11 @@ class TokenCheckoutService {
       throw Object.assign(new Error('Crypto payments are not configured'), { code: 'NOWPAYMENTS_NOT_CONFIGURED', status: 503 });
     }
 
-    const usdAmount = pkg.usd;
+    // Presale: charge 90% of normal price; user still receives full token amount.
+    // Round to 2 decimal places to avoid floating-point invoice issues.
+    const usdAmount = presaleDiscount
+      ? Math.round(pkg.usd * 0.9 * 100) / 100
+      : pkg.usd;
     const orderId = `pnptv-tokens-nowp-${userId}-${Date.now()}`;
     const successUrl = `${WEB_APP_URL}/wallet?nowpayments=success&order=${encodeURIComponent(orderId)}`;
     const cancelUrl = `${WEB_APP_URL}/wallet`;
@@ -582,8 +587,10 @@ class TokenCheckoutService {
           flow: 'token_purchase',
           packageId: pkg.id,
           tokens: pkg.tokens,
+          bonusTokens: Math.max(0, pkg.tokens - pkg.usd * 100),
           invoiceUrl,
           ...(payCurrency ? { payCurrency } : {}),
+          ...(presaleDiscount ? { presale_discount: true, original_usd: pkg.usd } : {}),
         }),
       ]
     );

@@ -315,7 +315,27 @@ export default function CallRoom() {
               return r.json().then((body: unknown) => {
                 const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
                 if (r.status === 403 && typeof b.startAt === "string") {
-                  setNotYetTime({ startAt: b.startAt, creatorUsername: booking.creator_username });
+                  setNotYetTime({ startAt: b.startAt as string, creatorUsername: booking.creator_username });
+                  setLoading(false);
+                  return null;
+                }
+                // FIX CRIT-01: payment webhook may not have landed yet — auto-retry in 5s
+                // rather than showing an error screen immediately.
+                if (r.status === 403) {
+                  const msg = typeof b.error === "string" ? b.error : "";
+                  if (
+                    msg.toLowerCase().includes("not yet confirmed") ||
+                    msg.toLowerCase().includes("awaiting") ||
+                    b.code === "BOOKING_NOT_CONFIRMED"
+                  ) {
+                    setTimeout(() => {
+                      hasFetched.current = false;
+                      setRetryKey((k) => k + 1);
+                    }, 5000);
+                    setLoading(false);
+                    return null;
+                  }
+                  setError(msg || cs.couldNotJoin);
                   setLoading(false);
                   return null;
                 }
@@ -457,7 +477,7 @@ export default function CallRoom() {
 
       <iframe
         src={joinData.jaasUrl}
-        allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *; speaker *; clipboard-write *; hid *"
+        allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *; speaker-selection *; clipboard-write *; hid *"
         allowFullScreen
         style={{ width: "100%", height: "100dvh", border: "none" }}
         title="Private call"

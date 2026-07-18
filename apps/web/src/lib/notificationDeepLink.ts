@@ -50,11 +50,23 @@ export function getNotificationDeepLink(notif: {
     case "live_stream_started":
       return entityId ? `/live/${entityId}` : "/live";
 
+    case "availability_expiring":
+      return "/creators/availability";
+
     case "announcement":
     case "system": {
       const raw = metadata?.url as string | undefined;
       if (raw) {
-        try { const p = new URL(raw); return p.pathname + p.search + p.hash; } catch { return raw; }
+        // Only strip origin for URLs pointing at our own app. External URLs
+        // (e.g. sag.efipay.co checkouts, third-party landing pages) must be
+        // returned intact so the caller can open them in a new tab.
+        try {
+          const p = new URL(raw, "https://pnptv.app");
+          const isInternal = /(^|\.)pnptv\.app$/i.test(p.host);
+          return isInternal ? (p.pathname + p.search + p.hash) : raw;
+        } catch {
+          return raw;
+        }
       }
       return "/";
     }

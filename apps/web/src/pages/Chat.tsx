@@ -42,8 +42,9 @@ import {
   updateHangoutNotification,
   updateHangoutGroup,
   uploadGroupAvatar,
-  kickGroupMember,
   updateMemberRole,
+  transferHangoutOwnership,
+  notifyHangoutOnlineMembers,
   getHangoutFeed,
   startHangoutCall,
   joinHangoutCall,
@@ -59,9 +60,16 @@ import {
   getOwnChannels,
   purchaseChannelAccess,
   purchaseHangoutAccess,
-  getPaymentStatus,
+  getDashSubscriptionStatus,
+  getUsdcSubscriptionStatus,
+  fetchOgPreview,
+  createHangoutTopic,
+  updateHangoutTopic,
+  deleteHangoutTopic,
+  markHangoutFirstVisitDone,
   ApiError,
   type HangoutGroup,
+  type TopicLite,
   type GroupMessage,
   type GroupMember,
   type DiscoverGroup,
@@ -141,6 +149,88 @@ function formatTime(ts: number): string {
 }
 
 
+// ─── PnptvLinkPreview ────────────────────────────────────────────────────────
+// Detects the first pnptv.app URL in a chat message and fetches + renders
+// a rich preview card inline beneath the message text.
+
+const PNPTV_URL_RE = /https?:\/\/pnptv\.app(\/[^\s"'<>]*)/gi;
+
+function PnptvLinkPreview({ messageContent }: { messageContent: string }) {
+  const [preview, setPreview] = useState<{
+    title?: string;
+    description?: string;
+    image?: string;
+    url?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    PNPTV_URL_RE.lastIndex = 0;
+    const match = PNPTV_URL_RE.exec(messageContent);
+    if (!match) return;
+    const path = match[1] || "/";
+    // Skip root and very short paths that won't produce useful cards
+    if (path === "/" || path === "") return;
+
+    let cancelled = false;
+    fetchOgPreview(path)
+      .then((data) => {
+        if (!cancelled && data.success && data.title) setPreview(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [messageContent]);
+
+  if (!preview) return null;
+
+  return (
+    <a
+      href={preview.url || "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block mt-1.5 rounded-xl overflow-hidden no-underline"
+      style={{
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.04)",
+        maxWidth: 280,
+      }}
+    >
+      {preview.image && (
+        <div className="w-full bg-black/30" style={{ aspectRatio: "16/9" }}>
+          <img
+            src={preview.image}
+            alt={preview.title || ""}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        </div>
+      )}
+      <div className="px-2.5 py-2">
+        <p
+          className="text-[10px] font-bold uppercase tracking-wide"
+          style={{ color: "#D4007A" }}
+        >
+          pnptv.app
+        </p>
+        {preview.title && (
+          <p className="text-xs font-semibold text-white line-clamp-2 mt-0.5">
+            {preview.title}
+          </p>
+        )}
+        {preview.description && (
+          <p className="text-[10px] text-white/50 line-clamp-2 mt-0.5">
+            {preview.description}
+          </p>
+        )}
+      </div>
+    </a>
+  );
+}
+
 function HangoutChatPanel({
   activeGroup,
   isOwnerOrMod,
@@ -158,6 +248,7 @@ function HangoutChatPanel({
 }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const tPanel = useI18n();
   // Only use dbId (Telegram numeric ID) — user.id is the Authentik UUID and will
   // never match msg.user_id which is always a Telegram ID.
   const myId = user?.dbId ?? "";
@@ -169,8 +260,8 @@ function HangoutChatPanel({
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [mediaFile, setMediaFile] = useState<File | null>(null);
-  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  const [mediaPreviews, setMediaPreviews] = useState<string[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
 
@@ -250,6 +341,63 @@ function HangoutChatPanel({
     return map;
   }, [groupMembers]);
 
+  // Group consecutive same-sender pure-media messages sent within 30s into albums
+  const { mediaGroupMap, skipSet } = React.useMemo(() => {
+    type AlbumItem = { mediaUrl: string; mediaType: "image" | "video" | "audio"; thumbUrl?: string | null; width?: number | null; height?: number | null; duration?: number | null };
+    const mediaGroupMap = new Map<number, AlbumItem[]>();
+    const skipSet = new Set<number>();
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i];
+      if (
+        msg.media_url &&
+        msg.media_type &&
+        !msg.is_deleted &&
+        msg.message_type !== "post_card"
+      ) {
+        const group: AlbumItem[] = [{
+          mediaUrl: msg.media_url,
+          mediaType: msg.media_type as "image" | "video" | "audio",
+          thumbUrl: msg.media_thumb_url,
+          width: msg.media_width,
+          height: msg.media_height,
+          duration: msg.media_duration,
+        }];
+        let j = i + 1;
+        while (j < messages.length) {
+          const next = messages[j];
+          if (
+            String(next.user_id) === String(msg.user_id) &&
+            next.media_url &&
+            next.media_type &&
+            !next.content &&
+            !next.is_deleted &&
+            next.message_type !== "post_card" &&
+            new Date(next.created_at).getTime() - new Date(msg.created_at).getTime() < 30000
+          ) {
+            group.push({
+              mediaUrl: next.media_url,
+              mediaType: next.media_type as "image" | "video" | "audio",
+              thumbUrl: next.media_thumb_url,
+              width: next.media_width,
+              height: next.media_height,
+              duration: next.media_duration,
+            });
+            skipSet.add(next.id);
+            j++;
+          } else {
+            break;
+          }
+        }
+        if (group.length > 1) mediaGroupMap.set(msg.id, group);
+        i = j;
+      } else {
+        i++;
+      }
+    }
+    return { mediaGroupMap, skipSet };
+  }, [messages]);
+
   const openEmojiPicker = (msgId: number, x: number, y: number) => {
     setContextMenu(null);
     setEmojiPickerMsgId(msgId);
@@ -286,11 +434,11 @@ function HangoutChatPanel({
   const formatDateLabel = (dateStr: string): string => {
     const d = new Date(dateStr);
     const now = new Date();
-    if (d.toDateString() === now.toDateString()) return "Today";
+    if (d.toDateString() === now.toDateString()) return tPanel.chat.today;
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    if (d.toDateString() === yesterday.toDateString()) return tPanel.chat.yesterday;
+    return d.toLocaleDateString(tPanel.lang === "es" ? "es" : "en", { weekday: "short", month: "short", day: "numeric" });
   };
 
   // Message grouping — same user within 2 min
@@ -412,7 +560,7 @@ function HangoutChatPanel({
   };
 
   const handleSend = async () => {
-    if (!inputText.trim() && !mediaFile) return;
+    if (!inputText.trim() && mediaFiles.length === 0) return;
     if (sending) return;
     setSending(true);
     setChatError(null);
@@ -425,10 +573,14 @@ function HangoutChatPanel({
           );
         }
         setEditingMsg(null);
-      } else if (mediaFile) {
-        await sendGroupMediaMessage(groupId, mediaFile, inputText.trim() || undefined);
-        setMediaFile(null);
-        if (mediaPreview) { URL.revokeObjectURL(mediaPreview); setMediaPreview(null); }
+      } else if (mediaFiles.length > 0) {
+        for (let i = 0; i < mediaFiles.length; i++) {
+          await sendGroupMediaMessage(groupId, mediaFiles[i], i === 0 ? (inputText.trim() || undefined) : undefined);
+          if (i < mediaFiles.length - 1) await new Promise((r) => setTimeout(r, 50));
+        }
+        mediaPreviews.forEach((url) => URL.revokeObjectURL(url));
+        setMediaFiles([]);
+        setMediaPreviews([]);
       } else {
         const sendData = await sendGroupMessage(groupId, inputText.trim(), replyTo?.id ?? null);
         if (sendData?.message) {
@@ -447,9 +599,9 @@ function HangoutChatPanel({
     }
   };
 
-  const handleMediaFilePicked = (file: File, previewUrl: string) => {
-    setMediaFile(file);
-    setMediaPreview(file.type.startsWith("image/") ? previewUrl : null);
+  const handleMediaFilesPicked = (files: File[], previewUrls: string[]) => {
+    setMediaFiles((prev) => [...prev, ...files]);
+    setMediaPreviews((prev) => [...prev, ...previewUrls]);
   };
 
   const handleVoiceRecorded = async (blob: Blob, durationSeconds: number) => {
@@ -468,9 +620,16 @@ function HangoutChatPanel({
     }
   };
 
-  const cancelMedia = () => {
-    setMediaFile(null);
-    if (mediaPreview) { URL.revokeObjectURL(mediaPreview); setMediaPreview(null); }
+  const cancelMedia = (index?: number) => {
+    if (index === undefined) {
+      mediaPreviews.forEach((url) => URL.revokeObjectURL(url));
+      setMediaFiles([]);
+      setMediaPreviews([]);
+    } else {
+      URL.revokeObjectURL(mediaPreviews[index]);
+      setMediaFiles((prev) => prev.filter((_, i) => i !== index));
+      setMediaPreviews((prev) => prev.filter((_, i) => i !== index));
+    }
   };
 
   const loadMore = async () => {
@@ -692,10 +851,15 @@ function HangoutChatPanel({
             <div className="w-8 h-8 border-2 border-white/20 border-t-pnp-accent rounded-full animate-spin" />
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center px-6">
-              <p className="text-3xl mb-2">💬</p>
-              <p className="text-sm text-pnp-textSecondary">No messages yet. Start the conversation!</p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <div className="w-16 h-16 rounded-full bg-pnp-surface flex items-center justify-center">
+              <svg className="w-8 h-8 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-pnp-textPrimary">{tPanel.chat.noMessagesYet}</p>
+              <p className="text-xs text-pnp-textSecondary mt-1">{tPanel.chat.beFirstToSay}</p>
             </div>
           </div>
         ) : (
@@ -706,6 +870,7 @@ function HangoutChatPanel({
               </div>
             )}
             {messages.map((msg, idx) => {
+              if (skipSet.has(msg.id)) return null;
               const prev = idx > 0 ? messages[idx - 1] : undefined;
               const isMe = String(msg.user_id) === String(myId);
               const timeStr = formatTime(new Date(msg.created_at).getTime());
@@ -764,15 +929,15 @@ function HangoutChatPanel({
                           style={isMe ? { background: "linear-gradient(135deg, #D4007A, #E69138)", overflowWrap: "anywhere" as const } : { overflowWrap: "anywhere" as const }}
                         >
                           {msg.media_url && msg.media_type && (
-                            <div className="mb-1">
-                              <MediaMessage
-                                mediaUrl={msg.media_url}
-                                mediaType={msg.media_type}
-                                thumbUrl={msg.media_thumb_url}
-                                onExpandImage={(url) => setLightboxUrl(url)}
-                                isMe={isMe}
-                              />
-                            </div>
+                            <MediaMessage
+                              mediaUrl={msg.media_url}
+                              mediaType={msg.media_type}
+                              thumbUrl={msg.media_thumb_url}
+                              onExpandImage={(url) => setLightboxUrl(url)}
+                              isMe={isMe}
+                              mediaGroup={mediaGroupMap.get(msg.id)}
+                              hasCaption={!!msg.content}
+                            />
                           )}
                           {msg.reply_to && (
                             <div
@@ -876,7 +1041,12 @@ function HangoutChatPanel({
                             );
                           })() : msg.message_type === "post_card" && msg.meta?.postId ? (
                             <SharedPostCard postId={msg.meta.postId} snapshot={msg.meta.snapshot || {}} isMe={isMe} />
-                          ) : msg.content && <p><MentionText text={msg.content} /></p>}
+                          ) : msg.content ? (
+                            <>
+                              <p className={msg.media_url ? "mt-0.5" : ""}><MentionText text={msg.content} /></p>
+                              <PnptvLinkPreview messageContent={msg.content} />
+                            </>
+                          ) : null}
                           <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
                             <span className={`text-[10px] ${isMe ? "text-white/60" : "text-pnp-textSecondary"}`}>{timeStr}</span>
                             {msg.edited_at && (
@@ -1280,76 +1450,109 @@ function HangoutChatPanel({
         );
       })()}
 
-      {/* Media preview */}
-      {mediaFile && !editingMsg && (
-        <div className="px-3 py-2 border-t border-pnp-border flex items-center gap-3 flex-shrink-0">
-          {mediaPreview ? <img src={mediaPreview} alt="" className="w-12 h-12 rounded-lg object-cover" /> : (
-            <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center">
-              <svg className="w-5 h-5 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-              </svg>
-            </div>
-          )}
-          <span className="text-xs text-pnp-textSecondary flex-1 truncate">{mediaFile.name}</span>
-          <button onClick={cancelMedia} className="text-red-400 text-xs font-semibold">Remove</button>
+      {/* Media preview strip */}
+      {mediaFiles.length > 0 && !editingMsg && (
+        <div className="px-3 pt-2 pb-1 border-t border-pnp-border flex-shrink-0">
+          <div className="flex items-end gap-2 overflow-x-auto pb-1">
+            {mediaFiles.map((file, i) => {
+              const preview = mediaPreviews[i];
+              const isImg = file.type.startsWith("image/");
+              const isVid = file.type.startsWith("video/");
+              return (
+                <div key={i} className="relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-white/10 group/thumb">
+                  {isImg && preview ? (
+                    <img src={preview} alt="" className="w-full h-full object-cover" />
+                  ) : isVid && preview ? (
+                    <video src={preview} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => cancelMedia(i)}
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center"
+                    aria-label="Remove file"
+                  >
+                    <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-pnp-textSecondary mt-0.5">
+            {mediaFiles.length === 1
+              ? "Tap 📎 again to add more"
+              : `${mediaFiles.length} files — tap 📎 to add more`}
+          </p>
         </div>
       )}
 
       {/* Input bar */}
-      <div className="flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background">
-        {!editingMsg && (
-          <div className="flex items-end gap-1 mb-0.5">
-            <MediaUploadButton
-              onFileSelect={handleMediaFilePicked}
-              onError={(msg) => setChatError(msg)}
-              onVoiceRecord={handleVoiceRecorded}
-              disabled={sending}
-            />
-          </div>
-        )}
-        <textarea
-          ref={(el) => {
-            inputRef.current = el;
-            if (el) {
+      {activeGroup.isReadOnly ? (
+        <div className="p-4 text-center text-sm text-pnp-textSecondary border-t border-pnp-border">
+          🏆 Este tema es moderado por PNPtv! — el contenido lo gestiona la comunidad automáticamente.
+        </div>
+      ) : (
+        <div className="flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
+          {!editingMsg && (
+            <div className="flex items-end gap-1 mb-0.5">
+              <MediaUploadButton
+                onFilesSelect={handleMediaFilesPicked}
+                onError={(msg) => setChatError(msg)}
+                onVoiceRecord={handleVoiceRecorded}
+                disabled={sending}
+              />
+            </div>
+          )}
+          <textarea
+            ref={(el) => {
+              inputRef.current = el;
+              if (el) {
+                el.style.height = "auto";
+                el.style.height = Math.min(el.scrollHeight, 120) + "px";
+              }
+            }}
+            value={inputText}
+            onChange={(e) => {
+              setInputText(e.target.value);
+              if (!editingMsg) emitTyping();
+              const el = e.target;
               el.style.height = "auto";
               el.style.height = Math.min(el.scrollHeight, 120) + "px";
-            }
-          }}
-          value={inputText}
-          onChange={(e) => {
-            setInputText(e.target.value);
-            if (!editingMsg) emitTyping();
-            const el = e.target;
-            el.style.height = "auto";
-            el.style.height = Math.min(el.scrollHeight, 120) + "px";
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-            if (e.key === "Escape" && editingMsg) cancelEdit();
-            if (e.key === "Escape" && replyTo) setReplyTo(null);
-          }}
-          placeholder={editingMsg ? "Edit message..." : "Type a message..."}
-          className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary/50 rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/40 transition-shadow leading-snug"
-          rows={1}
-          style={{ fontSize: "16px", minHeight: "40px", maxHeight: "120px" }}
-        />
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={sending || (!inputText.trim() && !mediaFile)}
-          className="w-10 h-10 flex items-center justify-center rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30 mb-0.5"
-          style={{ background: editingMsg ? "#3B82F6" : "linear-gradient(135deg, #D4007A, #E69138)" }}
-          aria-label={editingMsg ? "Save edit" : "Send message"}
-        >
-          {sending ? (
-            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-          ) : editingMsg ? (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-          ) : (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
-          )}
-        </button>
-      </div>
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+              if (e.key === "Escape" && editingMsg) cancelEdit();
+              if (e.key === "Escape" && replyTo) setReplyTo(null);
+            }}
+            placeholder={editingMsg ? "Edit message..." : "Type a message..."}
+            className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary/50 rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/40 transition-shadow leading-snug"
+            rows={1}
+            style={{ fontSize: "16px", minHeight: "40px", maxHeight: "120px" }}
+          />
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || (!inputText.trim() && mediaFiles.length === 0)}
+            className="w-10 h-10 flex items-center justify-center rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30 mb-0.5"
+            style={{ background: editingMsg ? "#3B82F6" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label={editingMsg ? "Save edit" : "Send message"}
+          >
+            {sending ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+            ) : editingMsg ? (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Lightbox */}
       {lightboxUrl && (
@@ -1571,16 +1774,19 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     creatorId?: string;
     groupId: number;
     groupName?: string;
+    videoCount?: number;
   } | null>(null);
-  const [pgProvider] = useState<'dash'>('dash');
+  const [pgProvider, setPgProvider] = useState<'dash' | 'nowpayments'>('nowpayments');
   const [pgLoading, setPgLoading] = useState(false);
   const [pgPolling, setPgPolling] = useState(false);
+  const [pgError, setPgError] = useState<string | null>(null);
   const pgIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pgTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Join requests management (for creators)
   const [joinRequests, setJoinRequests] = useState<Record<number, JoinRequest[]>>({});
   const [showRequests, setShowRequests] = useState<number | null>(null);
+  const [showJoinRequestsPanel, setShowJoinRequestsPanel] = useState(false);
 
   // Chat view state
   const [view, setView] = useState<View>("list");
@@ -1640,10 +1846,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Member action loading
   const [memberActionLoading, setMemberActionLoading] = useState<string | null>(null);
   const [memberActionMenu, setMemberActionMenu] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [notifyPicker, setNotifyPicker] = useState(false);
+  const [notifyState, setNotifyState] = useState<{ sending: boolean; result: string | null }>({ sending: false, result: null });
 
-  // showGroupSettings was dead state — panel uses showSettings instead
-  const [settingsMembers, setSettingsMembers] = useState<GroupMember[]>([]);
-  const [settingsMembersLoading, setSettingsMembersLoading] = useState(false);
   const [settingsName, setSettingsName] = useState("");
   const [settingsDesc, setSettingsDesc] = useState("");
   const [settingsRules, setSettingsRules] = useState("");
@@ -1652,6 +1858,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
   const [settingsAvatarUploading, setSettingsAvatarUploading] = useState(false);
+  const [settingsMembers, setSettingsMembers] = useState<any[]>([]);
+  const [settingsMembersLoading, setSettingsMembersLoading] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const groupMenuBtnRef = useRef<HTMLButtonElement>(null);
   const [groupMenuPos, setGroupMenuPos] = useState<{ top: number; right: number }>({ top: 56, right: 8 });
@@ -1693,16 +1901,35 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const [detailEvent, setDetailEvent] = useState<EventItem | null>(null);
   const [eventKey, setEventKey] = useState(0);
 
+  // Topics — sub-channels within a hangout group
+  const [activeTopic, setActiveTopic] = useState<TopicLite | null>(null);
+  const [showCreateTopic, setShowCreateTopic] = useState(false);
+  const [newTopicName, setNewTopicName] = useState('');
+  const [creatingTopic, setCreatingTopic] = useState(false);
+  const [editingTopic, setEditingTopic] = useState<TopicLite | null>(null);
+  const [editTopicName, setEditTopicName] = useState('');
+  const [editTopicDesc, setEditTopicDesc] = useState('');
+  const [savingTopic, setSavingTopic] = useState(false);
+  const [topicMenuId, setTopicMenuId] = useState<number | null>(null);
+  const [topicMenuPos, setTopicMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const [confirmDeleteTopicId, setConfirmDeleteTopicId] = useState<number | null>(null);
+  // Ref map for scrolling the active topic pill into view
+  const topicPillRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const autoLandedForGroupRef = useRef<number | null>(null);
+
 
   // ─── Group list loading ─────────────────────────────────────────────
 
-  const loadGroups = useCallback(async () => {
+  const loadGroups = useCallback(async (): Promise<HangoutGroup[]> => {
     try {
       const data = await getHangoutGroups();
-      setGroups(data.groups || []);
+      const fetched = data.groups || [];
+      setGroups(fetched);
       setError(null);
+      return fetched;
     } catch {
       setError("Failed to load groups");
+      return [];
     }
   }, []);
 
@@ -1752,6 +1979,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           memberCount: data.group.memberCount ?? prev.memberCount,
           name: data.group.name ?? prev.name,
           avatarUrl: data.group.avatarUrl ?? prev.avatarUrl,
+          topics: (data.group.topics?.length ?? 0) > 0 ? data.group.topics : (prev.topics ?? []),
+          firstTopicVisitDone: data.group.firstTopicVisitDone ?? prev.firstTopicVisitDone,
         } : prev);
       }
     } catch { /* silent */ }
@@ -1771,7 +2000,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setCallError(null);
     setShowCallPreview(true);
 
-    const gid = activeGroup.id;
+    const gid = activeTopic?.id ?? activeGroup.id;
     const hasActive = activeGroup.hasActiveCall;
     // Reuse an in-flight prefetch for the same group; otherwise kick off a new one.
     if (prefetchedGroupIdRef.current !== gid || !prefetchedCallRef.current) {
@@ -1793,14 +2022,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       // confirm handler where it can be shown to the user in-context.
       prefetchedCallRef.current.catch(() => {});
     }
-  }, [activeGroup]);
+  }, [activeGroup, activeTopic]);
 
   const handleConfirmJoinCall = useCallback(async (choices: LocalUserChoices) => {
-    console.log("[Chat] PreJoin submit", { groupId: activeGroup?.id, hasActive: activeGroup?.hasActiveCall, choices });
     if (!activeGroup?.id) {
       console.warn("[Chat] No activeGroup.id — aborting join");
       return;
     }
+    const callGroupId = activeTopic?.id ?? activeGroup.id;
     setPreJoinChoices(choices);
     setShowCallPreview(false);
     try {
@@ -1808,7 +2037,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       let result: { token: string; livekitUrl: string; roomName: string };
       // Use the prefetch from handleStartCall; if it's missing or for a
       // different group (shouldn't happen, but guard), fall back to a fresh call.
-      if (prefetchedCallRef.current && prefetchedGroupIdRef.current === activeGroup.id) {
+      if (prefetchedCallRef.current && prefetchedGroupIdRef.current === callGroupId) {
         result = await prefetchedCallRef.current;
         prefetchedCallRef.current = null;
         prefetchedGroupIdRef.current = null;
@@ -1816,19 +2045,18 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         const hasActive = activeGroup.hasActiveCall;
         if (hasActive) {
           try {
-            result = await joinHangoutCall(activeGroup.id);
+            result = await joinHangoutCall(callGroupId);
           } catch (joinErr: unknown) {
             if (joinErr instanceof ApiError && joinErr.status === 404) {
-              result = await startHangoutCall(activeGroup.id);
+              result = await startHangoutCall(callGroupId);
             } else {
               throw joinErr;
             }
           }
         } else {
-          result = await startHangoutCall(activeGroup.id);
+          result = await startHangoutCall(callGroupId);
         }
       }
-      console.log("[Chat] Got LiveKit token", { roomName: result.roomName, livekitUrl: result.livekitUrl });
       setCallToken(result.token);
       setCallRoomName(result.roomName);
       setCallLivekitUrl(result.livekitUrl || "wss://livekit.pnptv.app");
@@ -1857,7 +2085,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         setCallError("Could not connect to the call. Please try again.");
       }
     }
-  }, [activeGroup, loadGroups]);
+  }, [activeGroup, activeTopic, loadGroups]);
 
   const handleCancelCallPreview = useCallback(() => {
     setShowCallPreview(false);
@@ -1967,11 +2195,56 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       }
     };
 
+    const onTopicCreated = ({ groupId, topic }: { groupId: number; topic: TopicLite }) => {
+      setGroups(prev => prev.map(g =>
+        g.id === groupId
+          ? { ...g, topics: [...(g.topics ?? []), topic].sort((a, b) => a.position - b.position || a.id - b.id) }
+          : g
+      ));
+      setActiveGroup(prev => prev?.id === groupId
+        ? { ...prev, topics: [...(prev.topics ?? []), topic].sort((a, b) => a.position - b.position || a.id - b.id) }
+        : prev
+      );
+    };
+
+    const onTopicUpdated = ({ groupId, topic }: { groupId: number; topic: TopicLite }) => {
+      setGroups(prev => prev.map(g =>
+        g.id === groupId
+          ? { ...g, topics: (g.topics ?? []).map(tp => tp.id === topic.id ? { ...tp, ...topic } : tp) }
+          : g
+      ));
+      setActiveGroup(prev => prev?.id === groupId
+        ? { ...prev, topics: (prev.topics ?? []).map(tp => tp.id === topic.id ? { ...tp, ...topic } : tp) }
+        : prev
+      );
+      setActiveTopic(prev => prev?.id === topic.id ? { ...prev, ...topic } : prev);
+    };
+
+    const onTopicDeleted = ({ groupId, topicId }: { groupId: number; topicId: number }) => {
+      setGroups(prev => prev.map(g =>
+        g.id === groupId
+          ? { ...g, topics: (g.topics ?? []).filter(tp => tp.id !== topicId) }
+          : g
+      ));
+      setActiveGroup(prev => prev?.id === groupId
+        ? { ...prev, topics: (prev.topics ?? []).filter(tp => tp.id !== topicId) }
+        : prev
+      );
+      // If current user is viewing the deleted topic, drop back to parent group
+      setActiveTopic(prev => prev?.id === topicId ? null : prev);
+    };
+
     socket.on("hangout:invite:received", onInviteReceived);
     socket.on("hangout:feed:new_post", onHangoutFeedPost);
+    socket.on("hangout:topic:created", onTopicCreated);
+    socket.on("hangout:topic:updated", onTopicUpdated);
+    socket.on("hangout:topic:deleted", onTopicDeleted);
     return () => {
       socket.off("hangout:invite:received", onInviteReceived);
       socket.off("hangout:feed:new_post", onHangoutFeedPost);
+      socket.off("hangout:topic:created", onTopicCreated);
+      socket.off("hangout:topic:updated", onTopicUpdated);
+      socket.off("hangout:topic:deleted", onTopicDeleted);
     };
   }, [activeGroup?.id, chatTab, loadGroups]);
 
@@ -2002,6 +2275,19 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     if (pgIntervalRef.current) clearInterval(pgIntervalRef.current);
     if (pgTimeoutRef.current) clearTimeout(pgTimeoutRef.current);
   }, []);
+
+  // Auto-dismiss error banners after 5s (Change 7)
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 5000);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
+    if (!chatError) return;
+    const t = setTimeout(() => setChatError(null), 5000);
+    return () => clearTimeout(t);
+  }, [chatError]);
 
   // Deep-link: auto-open group from /chat/:groupId
   const deepLinkHandled = useRef(false);
@@ -2072,8 +2358,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           } catch { /* non-blocking */ }
         }
       }
-      // Show success state
-      setCreateSuccess({ id: createdGroup?.id, name: newName.trim() });
+      // Show success state (guard against malformed API response)
+      if (createdGroup?.id) {
+        setCreateSuccess({ id: createdGroup.id, name: newName.trim() });
+      }
       setNewName("");
       setNewDesc("");
       setNewIsPublic(true);
@@ -2126,11 +2414,12 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         setPaymentGateInfo({
           accessType: accessType as any,
           priceUsd: Number(gAny.channelPriceUsd || group.priceUsd || 5),
-          channelId: gAny.channelId || undefined,
-          channelName: gAny.channelName || undefined,
+          channelId: gAny.channelId || group.channelId || undefined,
+          channelName: gAny.channelName || group.channelName || undefined,
           creatorId: gAny.creatorId || group.creatorId || undefined,
           groupId: group.id,
           groupName: group.name,
+          videoCount: group.channelVideoCount ?? gAny.channelVideoCount,
         });
         setShowPaymentGate(true);
       } else {
@@ -2143,24 +2432,30 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Unified purchase handler: picks channel-access or hangout-access based on
   // whether the gated resource is a channel-linked hangout (channelId present)
   // or a standalone paid hangout.
-  const handlePurchaseChannel = async () => {
+  const handlePurchaseChannel = async (provider: 'dash' | 'nowpayments' = pgProvider) => {
     if (!paymentGateInfo) return;
     const { channelId, groupId } = paymentGateInfo;
     if (!channelId && !groupId) return;
+    setPgProvider(provider);
     setPgLoading(true);
     try {
       const res = channelId
-        ? await purchaseChannelAccess(channelId, pgProvider)
-        : await purchaseHangoutAccess(groupId, pgProvider);
+        ? await purchaseChannelAccess(channelId, provider)
+        : await purchaseHangoutAccess(groupId!, provider);
       if (res.checkoutUrl) {
-        window.open(res.checkoutUrl, '_blank');
+        const w = window.screen.width, h = window.screen.height;
+        const pw = 560, ph = 780;
+        window.open(res.checkoutUrl, 'pnptv_payment', `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
       }
       setPgPolling(true);
-      const pollId = res.paymentId;
+      const invoiceId = res.invoiceId;
       pgIntervalRef.current = setInterval(async () => {
         try {
-          const status = await getPaymentStatus(pollId);
-          if (['completed', 'paid', 'success'].includes(status.status)) {
+          const poll = provider === 'nowpayments'
+            ? await getUsdcSubscriptionStatus(invoiceId)
+            : await getDashSubscriptionStatus(invoiceId);
+          const done = ('completed' in poll && (poll as { completed: boolean }).completed) || poll.status === 'completed' || poll.status === 'paid' || poll.status === 'success';
+          if (done) {
             if (pgIntervalRef.current) { clearInterval(pgIntervalRef.current); pgIntervalRef.current = null; }
             if (pgTimeoutRef.current) { clearTimeout(pgTimeoutRef.current); pgTimeoutRef.current = null; }
             setPgPolling(false);
@@ -2205,6 +2500,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     }
   };
 
+  // Auto-load join request counts for all creator-owned private groups (Change 2)
+  useEffect(() => {
+    if (!user?.dbId || groups.length === 0) return;
+    const ownedPrivate = groups.filter(
+      (g) => String(g.creatorId) === String(user.dbId) && !g.isPublic && !g.isMain && !g.isWallOfFame
+    );
+    ownedPrivate.forEach((g) => loadJoinRequests(g.id));
+  }, [groups, user?.dbId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Chat view open/close ──────────────────────────────────────────
 
@@ -2214,7 +2517,9 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       return;
     }
     if (showTutorial) dismissTutorial();
+    autoLandedForGroupRef.current = null;
     setActiveGroup(group);
+    setActiveTopic(null);
     setView("chat");
     navigate(`/chat/${group.id}`, { replace: true });
     setChatError(null);
@@ -2227,6 +2532,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setView("list");
     navigate("/chat", { replace: true });
     setActiveGroup(null);
+    setActiveTopic(null);
     setShowOnline(false);
     setShowSettings(false);
     loadGroups();
@@ -2296,7 +2602,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const handleKickMember = useCallback(async (userId: string) => {
     if (!activeGroup) return;
     try {
-      await kickGroupMember(activeGroup.id, userId);
+      await kickHangoutMember(activeGroup.id, userId);
       setSettingsMembers((prev) => prev.filter((m) => m.user_id !== userId));
       setActiveGroup((prev) => prev ? { ...prev, memberCount: Math.max(0, prev.memberCount - 1) } : prev);
     } catch (err) {
@@ -2398,15 +2704,121 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setHangoutFeedNextCursor(null);
   }, [activeGroup?.id]);
 
+  // ─── Auto-land on topic when switching groups ─────────────────────────
+  // First-time visitors land on the "New Members" topic (position 1) and the
+  // visit is marked done. Returning visitors land on "General" (position 0).
+  // The ref prevents re-landing if topics update after the user has navigated.
+  useEffect(() => {
+    if (!activeGroup || !activeGroup.topics || activeGroup.topics.length === 0) return;
+    if (autoLandedForGroupRef.current === activeGroup.id) return;
+    autoLandedForGroupRef.current = activeGroup.id;
+
+    const topics = activeGroup.topics;
+
+    if (activeGroup.firstTopicVisitDone === false) {
+      const newMembersTopic = topics.find(t => t.position === 1) ?? topics[1];
+      if (newMembersTopic) {
+        setActiveTopic(newMembersTopic);
+        markHangoutFirstVisitDone(activeGroup.id).catch(() => {});
+      }
+    } else {
+      const generalTopic = topics.find(t => t.position === 0) ?? topics[0];
+      if (generalTopic) {
+        setActiveTopic(generalTopic);
+      }
+    }
+  // Re-run when topics first populate (async from loadGroupDetail for discover groups)
+  }, [activeGroup?.id, activeGroup?.topics?.length]);
+
+  // ─── Topic creation ───────────────────────────────────────────────────
+
+  const handleCreateTopic = useCallback(async () => {
+    if (!activeGroup || !newTopicName.trim() || creatingTopic) return;
+    setCreatingTopic(true);
+    try {
+      const result = await createHangoutTopic(activeGroup.id, newTopicName.trim());
+      setShowCreateTopic(false);
+      setNewTopicName('');
+      // Refresh group list and update active group from the same fetch
+      const refreshed = await loadGroups();
+      const updated = refreshed.find((g) => g.id === activeGroup.id);
+      if (updated) setActiveGroup(updated);
+      // Navigate directly to the newly created topic
+      if (result?.topic) setActiveTopic(result.topic);
+    } catch (err) {
+      console.error('Failed to create topic', err);
+    } finally {
+      setCreatingTopic(false);
+    }
+  }, [activeGroup, newTopicName, creatingTopic, loadGroups]);
+
+  const handleUpdateTopic = useCallback(async () => {
+    if (!activeGroup || !editingTopic || !editTopicName.trim() || savingTopic) return;
+    setSavingTopic(true);
+    try {
+      await updateHangoutTopic(activeGroup.id, editingTopic.id, {
+        name: editTopicName.trim(),
+        description: editTopicDesc.trim(),
+      });
+      setEditingTopic(null);
+      if (activeTopic?.id === editingTopic.id) {
+        setActiveTopic(prev => prev ? { ...prev, name: editTopicName.trim(), description: editTopicDesc.trim() } : prev);
+      }
+      const refreshed = await loadGroups();
+      const updated = refreshed.find((g: HangoutGroup) => g.id === activeGroup.id);
+      if (updated) setActiveGroup(updated);
+    } catch (err) {
+      console.error('Failed to update topic', err);
+    } finally {
+      setSavingTopic(false);
+    }
+  }, [activeGroup, editingTopic, editTopicName, editTopicDesc, savingTopic, activeTopic, loadGroups]);
+
+  const handleDeleteTopic = useCallback(async (topicId: number) => {
+    if (!activeGroup) return;
+    try {
+      await deleteHangoutTopic(activeGroup.id, topicId);
+      if (activeTopic?.id === topicId) setActiveTopic(null);
+      const refreshed = await loadGroups();
+      const updated = refreshed.find((g: HangoutGroup) => g.id === activeGroup.id);
+      if (updated) setActiveGroup(updated);
+    } catch (err) {
+      console.error('Failed to delete topic', err);
+    }
+  }, [activeGroup, activeTopic, loadGroups]);
+
+  // Scroll active topic pill into view when activeTopic changes
+  useEffect(() => {
+    if (activeTopic) {
+      const el = topicPillRefs.current.get(activeTopic.id);
+      el?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+    }
+  }, [activeTopic]);
+
   // ─── Chat View ────────────────────────────────────────────────────────
 
   if (view === "chat" && activeGroup) {
     const myMember = groupMembers.find((m: any) => String(m.user_id) === String(user?.dbId));
     const isOwnerOrMod =
       String(activeGroup.creatorId) === String(user?.dbId) ||
-      myMember?.role === "moderator" ||
       myMember?.role === "owner" ||
+      myMember?.role === "admin" ||
+      myMember?.role === "moderator" ||
       isAdmin;
+
+    // Only owner/admin/platform-admin may create, edit, or delete topics
+    // (moderator role is excluded intentionally — backend enforces the same rule)
+    const canManageTopics =
+      myMember?.role === "owner" ||
+      myMember?.role === "admin" ||
+      isAdmin;
+
+    // When viewing a topic, use the topic's group_id for messages and calls
+    const effectiveGroupId = activeTopic?.id ?? activeGroup.id;
+    // Synthesized group object passed to HangoutChatPanel when a topic is active
+    const effectiveGroup: HangoutGroup = activeTopic
+      ? { ...activeGroup, id: activeTopic.id, name: activeTopic.name, description: activeTopic.description, isReadOnly: activeTopic.isReadOnly ?? activeGroup.isReadOnly }
+      : activeGroup;
 
     return (
       <>
@@ -2416,7 +2828,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           className="sticky top-0 z-30 flex items-center px-1.5 sm:px-3 border-b border-pnp-border flex-shrink-0 bg-pnp-surface shadow-sm"
           style={{
             minHeight: 56,
-            paddingTop: "max(0.75rem, env(safe-area-inset-top, 0px))",
+            paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))",
             paddingBottom: "0.75rem",
             boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           }}
@@ -2425,7 +2837,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
             <button
               onClick={closeChat}
-              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent flex-shrink-0 -ml-1"
+              className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent flex-shrink-0 -ml-1"
               aria-label={t.chat.backToGroupList}
             >
               <svg className="w-5 h-5 text-pnp-textPrimary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2440,10 +2852,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
               aria-label={t.chat.showOnlineMembers}
             >
               {activeGroup.avatarUrl && !activeGroup.isMain && !activeGroup.isWallOfFame ? (
-                <img src={activeGroup.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-1 ring-white/10" />
+                <img src={activeGroup.avatarUrl} alt="" className="w-11 h-11 rounded-full object-cover ring-1 ring-white/10" />
               ) : (
                 <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                  className="w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold"
                   style={{
                     background: activeGroup.isMain
                       ? "linear-gradient(135deg, #D4007A, #E69138)"
@@ -2469,7 +2881,12 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
             {/* Name + member count + setting badges */}
             <div className="flex-1 min-w-0">
-              <h2 className="text-sm font-bold text-pnp-textPrimary truncate leading-tight">{activeGroup.name}</h2>
+              <div className="flex items-center gap-1 min-w-0">
+                <h2 className="text-xs sm:text-sm font-bold text-pnp-textPrimary truncate leading-tight" title={activeGroup.name}>{activeGroup.name}</h2>
+                {activeTopic && (
+                  <span className="text-xs text-pnp-textSecondary max-w-[35%] sm:max-w-[45%] truncate" title={`#${activeTopic.name}`}>/ #{activeTopic.name}</span>
+                )}
+              </div>
               <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
                 <span className="text-xs text-pnp-textSecondary flex-shrink-0">
                   {activeGroup.memberCount} {activeGroup.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}
@@ -2497,6 +2914,13 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
           {/* Right: call + menu — 44px min touch targets */}
           <div className="flex items-center flex-shrink-0">
+            {/* Active-call pulse indicator */}
+            {(showTelegramDock || !!activeGroup?.hasActiveCall) && (
+              <span className="flex items-center gap-1 mr-1 px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#F87171" }}>
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                Live
+              </span>
+            )}
             {/* Create event button */}
             {isOwnerOrMod && (
               <button
@@ -2573,13 +2997,17 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   }
                   setShowGroupMenu(v => !v);
                 }}
-                className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
+                className="relative w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
                 aria-label="Group options"
                 aria-expanded={showGroupMenu}
               >
                 <svg className="w-5 h-5 text-pnp-textSecondary" fill="currentColor" viewBox="0 0 24 24">
                   <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
                 </svg>
+                {/* Notification dot — pending join requests (Change 1) */}
+                {!activeGroup.isPublic && String(activeGroup.creatorId) === String(user?.dbId) && (joinRequests[activeGroup.id] || []).length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-pnp-accent ring-2 ring-pnp-background" aria-hidden="true" />
+                )}
               </button>
               {showGroupMenu && (
                 <>
@@ -2592,6 +3020,19 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                       <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                       Members
                     </button>
+                    {/* Pending Requests — only for creator of private groups (Change 1) */}
+                    {!activeGroup.isPublic && String(activeGroup.creatorId) === String(user?.dbId) && (
+                      <button
+                        onClick={() => { setShowJoinRequestsPanel(true); loadJoinRequests(activeGroup.id); setShowGroupMenu(false); }}
+                        className="w-full px-4 py-3 text-sm text-left text-white hover:bg-white/10 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                        <span className="flex-1 text-left">Pending Requests</span>
+                        {(joinRequests[activeGroup.id] || []).length > 0 && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-pnp-accent text-white text-[10px] font-bold">{(joinRequests[activeGroup.id] || []).length}</span>
+                        )}
+                      </button>
+                    )}
                     {/* Open in Telegram — shown in menu on mobile */}
                     {activeGroup.telegramInviteLink && (
                       <a
@@ -2650,6 +3091,118 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
             </div>
           </div>
         </div>
+
+        {/* Accessibility: announce topic switches to screen readers */}
+        <span aria-live="polite" className="sr-only">
+          {activeTopic ? `Now viewing topic: ${activeTopic.name}` : ''}
+        </span>
+
+        {/* Topic bar — shown when there are topics OR the user can manage them */}
+        {((activeGroup.topics?.length ?? 0) > 0 || canManageTopics) && (
+          <div
+            className="shrink-0 border-b"
+            style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'var(--pnp-surface)' }}
+          >
+            {/* Header row: "Topics" label + "New Topic" button */}
+            <div className="flex items-center justify-between px-3 pt-2 pb-1">
+              <span className="text-[10px] font-semibold tracking-widest uppercase" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                {t.chat.topicsLabel}
+              </span>
+              {canManageTopics && (
+                <button
+                  onClick={() => setShowCreateTopic(true)}
+                  className="flex items-center gap-1 px-2 rounded-lg text-[11px] font-medium transition-all hover:bg-white/10 active:scale-95 min-h-[44px]"
+                  style={{ color: '#D4007A' }}
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span className="hidden sm:inline">{t.chat.newTopic}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Empty state for owners/admins — no topics yet */}
+            {(activeGroup.topics?.length ?? 0) === 0 && canManageTopics && (
+              <div className="px-3 pb-2.5 flex items-center gap-2">
+                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{t.chat.noTopicsYet} —</span>
+                <button
+                  onClick={() => setShowCreateTopic(true)}
+                  className="text-xs font-medium underline underline-offset-2 transition-opacity hover:opacity-80"
+                  style={{ color: '#D4007A' }}
+                >
+                  {t.chat.createFirstTopic}
+                </button>
+              </div>
+            )}
+
+            {/* Pill row — horizontally scrollable with fade hint at right edge */}
+            {(activeGroup.topics?.length ?? 0) > 0 && (
+              <div className="relative">
+                <div
+                  role="tablist"
+                  aria-label={t.chat.topicsLabel}
+                  className="flex items-center gap-1 px-3 pb-2 overflow-x-auto no-scrollbar"
+                >
+                  {(activeGroup.topics ?? []).map(topic => (
+                    <div
+                      key={topic.id}
+                      ref={el => {
+                        if (el) topicPillRefs.current.set(topic.id, el);
+                        else topicPillRefs.current.delete(topic.id);
+                      }}
+                      className="relative flex-shrink-0 flex items-center group/tp min-h-[44px]"
+                    >
+                      <button
+                        role="tab"
+                        aria-selected={activeTopic?.id === topic.id}
+                        onClick={() => { setActiveTopic(topic); setTopicMenuId(null); }}
+                        title={topic.description || `#${topic.name}`}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-1"
+                        style={
+                          activeTopic?.id === topic.id
+                            ? { background: 'linear-gradient(135deg,#D4007A,#7B61FF)', color: '#fff', boxShadow: '0 1px 8px rgba(212,0,122,0.35)' }
+                            : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }
+                        }
+                      >
+                        # {topic.name}
+                      </button>
+                      {canManageTopics && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (topicMenuId === topic.id) {
+                              setTopicMenuId(null);
+                              setTopicMenuPos(null);
+                            } else {
+                              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                              const vw = window.visualViewport?.width ?? window.innerWidth;
+                              const vh = window.visualViewport?.height ?? window.innerHeight;
+                              const right = Math.max(8, vw - rect.right);
+                              const top = Math.min(rect.bottom + 4, vh - 152);
+                              setTopicMenuPos({ top, right });
+                              setTopicMenuId(topic.id);
+                            }
+                          }}
+                          className="w-11 h-11 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 opacity-100 sm:opacity-0 sm:group-hover/tp:opacity-100 focus:opacity-100 transition-opacity -ml-0.5 flex-shrink-0"
+                          aria-label="Topic options"
+                        >
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {/* Terminal spacer — ensures last pill is never flush against the fade */}
+                  <div className="min-w-[12px] flex-shrink-0" aria-hidden="true" />
+                </div>
+                {/* Right-edge fade — scroll affordance */}
+                <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12" style={{ background: 'linear-gradient(to left, var(--pnp-surface), transparent)' }} />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Call-active banner — visible when a call is running and the user
             is not currently in the dock. One tap re-uses handleStartCall,
@@ -2821,7 +3374,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 </button>
               </div>
               {/* Member grid / list */}
-              <div className="overflow-y-auto flex-1 px-4 pb-6">
+              <div className="overflow-y-auto flex-1 px-4" style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}>
                 {onlineMembers.length === 0 ? (
                   <p className="text-center text-sm py-6" style={{ color: "var(--pnp-text-secondary)" }}>{t.chat.noOtherMembersOnline}</p>
                 ) : (
@@ -2993,7 +3546,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                     )}
 
                     {/* Owner/Mod settings */}
-                    {(String(activeGroup.creatorId) === String(user?.dbId) || isAdmin) && (
+                    {isOwnerOrMod && (
                       <>
                         <div className="border-t border-white/10 pt-4">
                           <p className="text-xs font-semibold text-pnp-textSecondary mb-3 uppercase tracking-wider">Admin Controls</p>
@@ -3281,32 +3834,95 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                             )}
                           </div>
 
-                          {/* Transfer Ownership */}
-                          {String(activeGroup.creatorId) === String(user?.dbId) && (
-                            <button
-                              onClick={() => {
-                                setConfirmAction({
-                                  title: "Transfer Ownership",
-                                  message: "Select a member to transfer ownership to from the Members panel.",
-                                  onConfirm: async () => { setShowSettings(false); setShowOnline(true); },
-                                });
-                              }}
-                              className="w-full px-3 py-2.5 rounded-lg bg-white/5 text-sm text-left text-yellow-400 hover:bg-white/10 transition-colors"
-                            >
-                              Transfer Ownership
-                            </button>
-                          )}
                         </div>
 
                         {/* Members Management */}
                         <div className="border-t border-white/10 pt-4">
-                          <p className="text-xs font-semibold text-pnp-textSecondary mb-2 uppercase tracking-wider">Members ({groupMembers.length})</p>
-                          <div className="space-y-1 max-h-48 overflow-y-auto">
-                            {groupMembers.map((m: any) => {
+                          <div className="flex items-center justify-between mb-2 gap-2">
+                            <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider shrink-0">
+                              Members ({memberSearch ? `${groupMembers.filter((m: any) => { const q = memberSearch.toLowerCase(); return (m.first_name || "").toLowerCase().includes(q) || (m.username || "").toLowerCase().includes(q); }).length}/` : ""}{groupMembers.length})
+                            </p>
+                            {isOwnerOrMod && (
+                              <div className="relative shrink-0">
+                                <button
+                                  onClick={() => { setNotifyPicker(v => !v); setNotifyState({ sending: false, result: null }); }}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-pnp-textSecondary hover:text-white hover:bg-white/10 transition-colors"
+                                  title="Notify online members"
+                                >
+                                  🔔 Notify online
+                                </button>
+                                {notifyPicker && (
+                                  <>
+                                    <div className="fixed inset-0 z-30" onClick={() => setNotifyPicker(false)} />
+                                    <div className="absolute right-0 top-7 z-40 rounded-xl shadow-xl min-w-[190px] py-1.5 px-1" style={{ background: "var(--pnp-surface-hover)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                                      {notifyState.result ? (
+                                        <p className="text-xs text-center text-pnp-textSecondary px-2 py-1">{notifyState.result}</p>
+                                      ) : notifyState.sending ? (
+                                        <p className="text-xs text-center text-pnp-textSecondary px-2 py-1">Sending…</p>
+                                      ) : (
+                                        <>
+                                          <p className="text-[10px] text-pnp-textSecondary px-2 pb-1">Push notification to online members:</p>
+                                          {([
+                                            { type: "call_started" as const, label: "📞 A call has started" },
+                                            { type: "mainstage" as const, label: "🎭 Someone joined the Main Stage" },
+                                          ]).map(opt => (
+                                            <button
+                                              key={opt.type}
+                                              onClick={async () => {
+                                                setNotifyState({ sending: true, result: null });
+                                                try {
+                                                  const r = await notifyHangoutOnlineMembers(activeGroup.id, opt.type);
+                                                  setNotifyState({ sending: false, result: r.sent > 0 ? `✓ Sent to ${r.sent} member${r.sent !== 1 ? "s" : ""}` : "No online members to notify" });
+                                                } catch (err: any) {
+                                                  setNotifyState({ sending: false, result: err?.message || "Failed to send" });
+                                                }
+                                                setTimeout(() => setNotifyPicker(false), 2000);
+                                              }}
+                                              className="w-full px-2 py-1.5 text-xs text-left text-white hover:bg-white/10 rounded-lg transition-colors"
+                                            >
+                                              {opt.label}
+                                            </button>
+                                          ))}
+                                        </>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {/* Member search */}
+                          <div className="relative mb-2">
+                            <input
+                              type="text"
+                              placeholder="Search members…"
+                              value={memberSearch}
+                              onChange={e => setMemberSearch(e.target.value)}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/25"
+                            />
+                            <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-white/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                          </div>
+                          <div className="space-y-1 max-h-[50dvh] overflow-y-auto">
+                            {groupMembers.filter((m: any) => {
+                              if (!memberSearch) return true;
+                              const q = memberSearch.toLowerCase();
+                              return (m.first_name || "").toLowerCase().includes(q) || (m.username || "").toLowerCase().includes(q);
+                            }).map((m: any) => {
                               const isMe = String(m.user_id) === String(user?.dbId);
                               const isOwner = m.role === "owner";
                               const isMod = m.role === "moderator";
-                              const canManage = !isMe && !isOwner && (String(activeGroup.creatorId) === String(user?.dbId) || isAdmin);
+                              // isGroupOwner: creator, platform admin, or has owner role in this group
+                              const isGroupOwner = String(activeGroup.creatorId) === String(user?.dbId) || isAdmin || myMember?.role === "owner";
+                              const myRole = myMember?.role;
+                              // Ownership hierarchy: owner > admin > moderator > member
+                              const canManage = !isMe && !isOwner && (
+                                myRole === 'owner' ||
+                                isAdmin ||
+                                (myRole === 'admin' && m.role !== 'owner' && m.role !== 'admin') ||
+                                (myRole === 'moderator' && m.role === 'member')
+                              );
                               return (
                                 <div key={m.user_id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5">
                                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 cursor-pointer"
@@ -3318,8 +3934,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                     <p className="text-xs font-medium text-white truncate">
                                       {m.first_name || m.username}{isMe ? " (You)" : ""}
                                     </p>
-                                    <p className="text-[10px] text-pnp-textSecondary">
-                                      {isOwner ? "Owner" : isMod ? "Mod" : "Member"}
+                                    <p className="text-[10px]" style={{
+                                      color: isOwner ? '#EAB308' : m.role === 'admin' ? '#A78BFA' : isMod ? '#60A5FA' : 'var(--pnp-text-secondary)',
+                                    }}>
+                                      {isOwner ? "Owner" : m.role === "admin" ? "Admin" : isMod ? "Mod" : "Member"}
                                       {m.is_muted ? " · Muted" : ""}
                                       {m.is_banned ? " · Banned" : ""}
                                     </p>
@@ -3338,13 +3956,24 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                       {memberActionMenu === m.user_id && (
                                         <>
                                           <div className="fixed inset-0 z-30" onClick={() => setMemberActionMenu(null)} />
-                                          <div className="absolute right-0 top-8 z-40 rounded-xl overflow-hidden shadow-xl min-w-[140px] py-1" style={{ background: "var(--pnp-surface-hover)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                                            {!isMod && !m.is_banned && (
-                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await promoteHangoutMember(activeGroup.id, m.user_id).catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-blue-400 hover:bg-white/10">Promote to Mod</button>
+                                          <div className="absolute right-0 top-8 z-40 rounded-xl overflow-hidden shadow-xl min-w-[160px] py-1" style={{ background: "var(--pnp-surface-hover)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                                            {/* Owner-only: promote member to Admin */}
+                                            {isGroupOwner && !m.is_banned && m.role === 'member' && (
+                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await promoteHangoutMember(activeGroup.id, m.user_id, 'admin').catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-purple-400 hover:bg-white/10">Promote to Admin</button>
                                             )}
-                                            {isMod && (
-                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await demoteHangoutMember(activeGroup.id, m.user_id).catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-yellow-400 hover:bg-white/10">Demote</button>
+                                            {/* Owner or admin: promote member to Mod */}
+                                            {(isGroupOwner || myMember?.role === 'admin') && !m.is_banned && m.role === 'member' && (
+                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await promoteHangoutMember(activeGroup.id, m.user_id, 'moderator').catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-blue-400 hover:bg-white/10">Promote to Mod</button>
                                             )}
+                                            {/* Owner-only: demote admin to mod */}
+                                            {isGroupOwner && m.role === 'admin' && (
+                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await demoteHangoutMember(activeGroup.id, m.user_id, 'moderator').catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-yellow-400 hover:bg-white/10">Demote to Mod</button>
+                                            )}
+                                            {/* Owner or admin: demote mod/admin to member */}
+                                            {(isGroupOwner || myMember?.role === 'admin') && (m.role === 'moderator' || (isGroupOwner && m.role === 'admin')) && (
+                                              <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await demoteHangoutMember(activeGroup.id, m.user_id, 'member').catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-yellow-400 hover:bg-white/10">Demote to Member</button>
+                                            )}
+                                            {/* Mute/Unmute — owners and mods */}
                                             {!m.is_muted && !m.is_banned && (
                                               <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await muteHangoutMember(activeGroup.id, m.user_id, 60).catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-orange-400 hover:bg-white/10">Mute (1h)</button>
                                             )}
@@ -3352,11 +3981,19 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                               <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await unmuteHangoutMember(activeGroup.id, m.user_id).catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-green-400 hover:bg-white/10">Unmute</button>
                                             )}
                                             <div className="border-t border-white/5 my-0.5" />
+                                            {/* Kick / Ban / Unban — owners and mods */}
                                             <button onClick={() => { setMemberActionMenu(null); setConfirmAction({ title: "Kick Member", message: `Remove ${m.first_name || m.username} from the group?`, isDanger: true, onConfirm: async () => { await kickHangoutMember(activeGroup.id, m.user_id); loadGroupDetail(activeGroup.id); loadGroups(); } }); }} className="w-full px-3 py-2 text-xs text-left text-red-400 hover:bg-white/10">Kick</button>
                                             {!m.is_banned ? (
                                               <button onClick={() => { setMemberActionMenu(null); setConfirmAction({ title: "Ban Member", message: `Ban ${m.first_name || m.username}? They won't be able to rejoin.`, isDanger: true, onConfirm: async () => { await banHangoutMember(activeGroup.id, m.user_id); loadGroupDetail(activeGroup.id); } }); }} className="w-full px-3 py-2 text-xs text-left text-red-500 hover:bg-white/10">Ban</button>
                                             ) : (
                                               <button onClick={async () => { setMemberActionMenu(null); setMemberActionLoading(m.user_id); await unbanHangoutMember(activeGroup.id, m.user_id).catch(() => {}); loadGroupDetail(activeGroup.id); setMemberActionLoading(null); }} className="w-full px-3 py-2 text-xs text-left text-green-400 hover:bg-white/10">Unban</button>
+                                            )}
+                                            {/* Transfer Ownership — creator only, to non-owner non-banned members */}
+                                            {String(activeGroup.creatorId) === String(user?.dbId) && !m.is_banned && (
+                                              <>
+                                                <div className="border-t border-white/5 my-0.5" />
+                                                <button onClick={() => { setMemberActionMenu(null); setConfirmAction({ title: "Transfer Ownership", message: `Transfer this group to ${m.first_name || m.username || "this member"}? You'll become a regular member. This cannot be undone.`, isDanger: true, onConfirm: async () => { await transferHangoutOwnership(activeGroup.id, m.user_id); loadGroupDetail(activeGroup.id); loadGroups(); } }); }} className="w-full px-3 py-2 text-xs text-left text-yellow-400 hover:bg-white/10">Transfer Ownership</button>
+                                              </>
                                             )}
                                           </div>
                                         </>
@@ -3374,6 +4011,28 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Channel banner — shown when this hangout is linked to a content channel */}
+        {activeGroup.channelId && activeGroup.channelName && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 border-b border-pnp-border flex-shrink-0"
+            style={{ background: "rgba(212, 0, 122, 0.08)" }}
+          >
+            <svg className="w-3.5 h-3.5 text-pnp-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span className="text-xs text-pnp-textSecondary truncate flex-1">
+              Canal: <span className="text-pnp-textPrimary font-medium">{activeGroup.channelName}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate(`/channels${activeGroup.channelSlug ? `?channel=${activeGroup.channelSlug}` : ''}`)}
+              className="flex-shrink-0 text-xs font-semibold text-pnp-accent hover:underline"
+            >
+              Ver canal →
+            </button>
           </div>
         )}
 
@@ -3461,8 +4120,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         ) : (
           /* Hangout chat panel (PostgreSQL + Socket.IO) */
           <HangoutChatPanel
-            key={activeGroup.id}
-            activeGroup={activeGroup}
+            key={effectiveGroupId}
+            activeGroup={effectiveGroup}
             isOwnerOrMod={isOwnerOrMod}
             groupMembers={groupMembers}
             readReceipts={readReceipts}
@@ -3472,6 +4131,178 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         )}
 
         {/* Video calls are now handled natively in Telegram */}
+
+        {/* Create Topic modal — bottom-sheet on mobile, centered on desktop */}
+        {showCreateTopic && (
+          <div
+            className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4"
+            style={{ background: 'rgba(0,0,0,0.7)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) { setShowCreateTopic(false); setNewTopicName(''); } }}
+          >
+            <div
+              className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 pb-6 flex flex-col gap-4"
+              style={{ background: 'var(--pnp-surface)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              {/* Drag handle (mobile only) */}
+              <div className="flex justify-center -mt-2 mb-1 sm:hidden">
+                <div className="w-10 h-1 rounded-full bg-white/20" />
+              </div>
+              <h3 className="text-base font-semibold text-white">{t.chat.newTopicTitle}</h3>
+              <input
+                autoFocus
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
+                placeholder={t.chat.topicNamePlaceholder}
+                maxLength={60}
+                value={newTopicName}
+                onChange={e => setNewTopicName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && newTopicName.trim()) handleCreateTopic(); }}
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowCreateTopic(false); setNewTopicName(''); }}
+                  className="px-4 py-2 rounded-xl text-sm text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-all"
+                >
+                  {t.chat.cancel}
+                </button>
+                <button
+                  onClick={handleCreateTopic}
+                  disabled={!newTopicName.trim() || creatingTopic}
+                  className="px-4 py-2 rounded-xl text-sm font-medium text-white transition-all disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg, #D4007A, #7B61FF)' }}
+                >
+                  {creatingTopic ? t.chat.topicCreating : t.chat.topicCreate}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Topic modal — bottom-sheet on mobile, centered on desktop */}
+        {editingTopic && (
+          <div
+            className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4"
+            style={{ background: 'rgba(0,0,0,0.7)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) { setEditingTopic(null); } }}
+          >
+            <div
+              className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 pb-6 flex flex-col gap-4"
+              style={{ background: 'var(--pnp-surface)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              {/* Drag handle (mobile only) */}
+              <div className="flex justify-center -mt-2 mb-1 sm:hidden">
+                <div className="w-10 h-1 rounded-full bg-white/20" />
+              </div>
+              <h3 className="text-base font-semibold text-white">{t.chat.editTopicTitle}</h3>
+              <input
+                autoFocus
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
+                placeholder={t.chat.topicNamePlaceholder}
+                maxLength={60}
+                value={editTopicName}
+                onChange={e => setEditTopicName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && editTopicName.trim()) handleUpdateTopic(); }}
+              />
+              <input
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
+                placeholder={t.chat.topicDescriptionPlaceholder}
+                maxLength={200}
+                value={editTopicDesc}
+                onChange={e => setEditTopicDesc(e.target.value)}
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setEditingTopic(null)}
+                  className="px-4 py-2 rounded-xl text-sm text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-all"
+                >
+                  {t.chat.cancel}
+                </button>
+                <button
+                  onClick={handleUpdateTopic}
+                  disabled={!editTopicName.trim() || savingTopic}
+                  className="px-4 py-2 rounded-xl text-sm font-medium text-white transition-all disabled:opacity-40"
+                  style={{ background: 'linear-gradient(135deg, #D4007A, #7B61FF)' }}
+                >
+                  {savingTopic ? t.chat.topicSaving : t.chat.topicSave}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Topic options dropdown — rendered as portal so it escapes overflow:auto containers */}
+        {topicMenuId !== null && topicMenuPos !== null && (() => {
+          const topic = (activeGroup?.topics ?? []).find(t => t.id === topicMenuId);
+          if (!topic) return null;
+          return createPortal(
+            <>
+              <div className="fixed inset-0 z-[299]" onClick={() => { setTopicMenuId(null); setTopicMenuPos(null); }} />
+              <div
+                className="fixed z-[300] rounded-xl overflow-hidden shadow-xl min-w-[140px]"
+                style={{ top: topicMenuPos.top, right: topicMenuPos.right, background: 'var(--pnp-surface-hover)', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
+                <button
+                  onClick={() => { setTopicMenuId(null); setTopicMenuPos(null); setEditingTopic(topic); setEditTopicName(topic.name); setEditTopicDesc(topic.description || ''); }}
+                  className="w-full px-3 py-2.5 text-xs text-left text-white hover:bg-white/10 flex items-center gap-2.5"
+                >
+                  <svg className="w-3.5 h-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  {t.chat.editTopic}
+                </button>
+                <button
+                  onClick={() => { setTopicMenuId(null); setTopicMenuPos(null); setConfirmDeleteTopicId(topic.id); }}
+                  className="w-full px-3 py-2.5 text-xs text-left text-red-400 hover:bg-red-500/10 flex items-center gap-2.5 border-t border-white/5"
+                >
+                  <svg className="w-3.5 h-3.5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  {t.chat.deleteTopic}
+                </button>
+              </div>
+            </>,
+            document.body
+          );
+        })()}
+
+        {/* Delete topic confirmation — bottom-sheet on mobile, centered on desktop */}
+        {confirmDeleteTopicId !== null && (
+          <div
+            className="fixed inset-0 z-[210] flex items-end sm:items-center justify-center p-0 sm:p-4"
+            style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) setConfirmDeleteTopicId(null); }}
+          >
+            <div
+              className="w-full sm:max-w-xs rounded-t-2xl sm:rounded-2xl p-5 pb-6 flex flex-col gap-4"
+              style={{ background: 'var(--pnp-surface)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              {/* Drag handle (mobile only) */}
+              <div className="flex justify-center -mt-2 mb-1 sm:hidden">
+                <div className="w-10 h-1 rounded-full bg-white/20" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-semibold text-white">{t.chat.deleteTopicTitle}</h3>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  {t.chat.deleteTopicConfirm}
+                </p>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setConfirmDeleteTopicId(null)}
+                  className="px-4 py-2 rounded-xl text-sm text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-all"
+                >
+                  {t.chat.cancel}
+                </button>
+                <button
+                  onClick={() => { const id = confirmDeleteTopicId; setConfirmDeleteTopicId(null); handleDeleteTopic(id); }}
+                  className="px-4 py-2 rounded-xl text-sm font-medium text-white transition-all"
+                  style={{ background: '#DC2626' }}
+                >
+                  {t.chat.deleteGroup}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* In-app confirmation modal */}
         {confirmAction && (
@@ -3525,6 +4356,80 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           }}
         />
       )}
+
+      {/* Join Requests slide-up panel (Change 1) */}
+      {showJoinRequestsPanel && activeGroup && (
+        <div
+          className="absolute inset-0 z-40 flex flex-col justify-end"
+          style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowJoinRequestsPanel(false); }}
+        >
+          <div
+            className="rounded-t-2xl w-full flex flex-col context-sheet-enter"
+            style={{ maxHeight: "70dvh", background: "var(--pnp-surface)", borderTop: "1px solid rgba(255,255,255,0.1)" }}
+          >
+            {/* Drag handle */}
+            <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+              <div className="w-10 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.2)" }} />
+            </div>
+            <div className="flex items-center justify-between px-5 pt-2 pb-3 flex-shrink-0">
+              <div>
+                <p className="text-sm font-semibold text-white">{t.chat.pendingRequests}</p>
+                <p className="text-xs text-pnp-textSecondary">{activeGroup.name}</p>
+              </div>
+              <button
+                onClick={() => setShowJoinRequestsPanel(false)}
+                className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors"
+                style={{ color: "var(--pnp-text-secondary)" }}
+                aria-label="Close"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 px-5 space-y-2" style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}>
+              {(joinRequests[activeGroup.id] || []).length === 0 ? (
+                <p className="text-sm text-pnp-textSecondary text-center py-6">{t.chat.noPendingRequests}</p>
+              ) : (
+                (joinRequests[activeGroup.id] || []).map((req) => (
+                  <div key={req.id} className="flex items-center gap-2 p-2 rounded-lg bg-white/5">
+                    <div
+                      className="w-8 h-8 rounded-full bg-pnp-surface flex items-center justify-center text-xs font-bold text-pnp-textPrimary flex-shrink-0 cursor-pointer"
+                      onClick={() => navigate(`/profile/${req.user_id}`)}
+                    >
+                      {req.photo_url ? (
+                        <img src={req.photo_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                      ) : (
+                        (req.first_name || req.username || "?")[0].toUpperCase()
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-pnp-textPrimary truncate">
+                        {req.first_name || req.username}
+                      </p>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => handleRequest(activeGroup.id, req.id, "accept")}
+                        className="px-2.5 py-2 min-h-[36px] rounded text-xs font-semibold text-white bg-green-600 hover:bg-green-500 active:scale-95 transition-all"
+                      >
+                        {t.chat.accept}
+                      </button>
+                      <button
+                        onClick={() => handleRequest(activeGroup.id, req.id, "reject")}
+                        className="px-2.5 py-2 min-h-[36px] rounded text-xs font-semibold text-pnp-textSecondary bg-white/10 hover:bg-white/20 active:scale-95 transition-all"
+                      >
+                        {t.chat.deny}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       </>
     );
   }
@@ -3542,14 +4447,86 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       {!embeddedMode && showTutorial && <TutorialOverlay section="hangouts" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-pnp-textPrimary">{t.chat.hangoutsTitle}</h1>
-          <p className="text-sm mt-1 text-pnp-textSecondary">
-            {t.chat.hangoutsSubtitle}
-          </p>
+      <div
+        className="rounded-2xl mb-4 px-4 pt-4 pb-3"
+        style={{
+          background: "linear-gradient(135deg, rgba(212,0,122,0.10) 0%, rgba(123,97,255,0.08) 100%)",
+          border: "1px solid rgba(255,255,255,0.07)",
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-pnp-textPrimary leading-tight">
+              <span
+                className="bg-clip-text text-transparent"
+                style={{ backgroundImage: "linear-gradient(90deg, #D4007A, #7B61FF)" }}
+              >
+                {t.chat.hangoutsTitle}
+              </span>
+            </h1>
+            <p className="text-xs mt-0.5 text-pnp-textSecondary">{t.chat.hangoutsSubtitle}</p>
+          </div>
+          {isPrime && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold text-white transition-all hover:brightness-110 active:scale-[0.96]"
+              style={{
+                background: "linear-gradient(135deg, #D4007A, #7B61FF)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                boxShadow: "0 2px 10px rgba(212,0,122,0.35)",
+              }}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New group
+            </button>
+          )}
         </div>
-        {/* Actions handled by SpotlightStrip + icon */}
+
+        {/* Quick-filter tabs: Joined | Discover */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setShowDiscover(false)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+            style={!showDiscover ? {
+              background: "rgba(212,0,122,0.20)",
+              border: "1px solid rgba(212,0,122,0.40)",
+              color: "#D4007A",
+            } : {
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              color: "rgba(255,255,255,0.55)",
+            }}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            Joined
+            {groups.length > 0 && (
+              <span className="tabular-nums">{groups.length}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setShowDiscover(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+            style={showDiscover ? {
+              background: "rgba(123,97,255,0.20)",
+              border: "1px solid rgba(123,97,255,0.40)",
+              color: "#A990FF",
+            } : {
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              color: "rgba(255,255,255,0.55)",
+            }}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803 7.5 7.5 0 0016.803 15.803z" />
+            </svg>
+            Discover
+          </button>
+        </div>
       </div>
 
       {/* SpotlightStrip — hangout events */}
@@ -3560,9 +4537,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         onItemClick={(item) => {
           if (item.kind === "event") setDetailEvent(item.data);
         }}
-        showAction={isPrime}
-        onAction={() => setShowCreate(true)}
-        actionLabel="New group"
+        showAction={false}
         emptyAction={isPrime ? () => setShowCreateEvent(true) : undefined}
       />
 
@@ -3629,6 +4604,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   feedVisibility: "public",
                   telegramChatId: null,
                   telegramInviteLink: null,
+                  topics: [],
                 };
                 setCreateSuccess(null);
                 setShowCreate(false);
@@ -3667,14 +4643,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   </svg>
                 </div>
                 Video Call
-              </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-pnp-textSecondary">
-                <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,0.15)" }}>
-                  <svg className="w-3.5 h-3.5" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-                  </svg>
-                </div>
-                Up to 25
               </div>
             </div>
           </div>
@@ -4290,6 +5258,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                     >
                       {group.memberCount} {group.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}
                     </span>
+                    {(group.topics?.length ?? 0) > 0 && (
+                      <span className="text-xs flex-shrink-0 flex items-center gap-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                        · {group.topics!.length} {group.topics!.length === 1 ? t.chat.topicsSingular : t.chat.topicsPlural}
+                      </span>
+                    )}
                     {group.lastMessage && (
                       <span
                         className={`text-xs truncate min-w-0 ${group.isMain ? "" : "text-pnp-textSecondary"}`}
@@ -4637,13 +5610,19 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       </div>
 
       {/* Join Request Management (for group creators) */}
-      {groups.filter((g) => !g.isPublic && !g.isMain && !g.isWallOfFame && String(g.creatorId) === String(user?.dbId)).length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-sm font-semibold text-pnp-textSecondary mb-3">{t.chat.pendingRequests}</h2>
-          <div className="space-y-2">
-            {groups
-              .filter((g) => !g.isPublic && !g.isMain && !g.isWallOfFame && String(g.creatorId) === String(user?.dbId))
-              .map((group) => (
+      {groups.filter((g) => !g.isPublic && !g.isMain && !g.isWallOfFame && String(g.creatorId) === String(user?.dbId)).length > 0 && (() => {
+        const ownedPrivate = groups.filter((g) => !g.isPublic && !g.isMain && !g.isWallOfFame && String(g.creatorId) === String(user?.dbId));
+        const totalPending = ownedPrivate.reduce((sum, g) => sum + (joinRequests[g.id] || []).length, 0);
+        return (
+          <div className="mt-6">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-sm font-semibold text-pnp-textSecondary">{t.chat.pendingRequests}</h2>
+              {totalPending > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-pnp-accent text-white text-xs font-bold">{totalPending}</span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {ownedPrivate.map((group) => (
                 <div key={`req-${group.id}`} className="glass-card-sm p-3">
                   <button
                     onClick={() => {
@@ -4651,9 +5630,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                       setShowRequests(next);
                       if (next) loadJoinRequests(group.id);
                     }}
-                    className="w-full flex items-center justify-between text-left"
+                    className="w-full flex items-center justify-between text-left gap-2"
                   >
-                    <span className="text-sm font-medium text-pnp-textPrimary truncate">{group.name}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-medium text-pnp-textPrimary truncate">{group.name}</span>
+                      {(joinRequests[group.id] || []).length > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-pnp-accent text-white text-[10px] font-bold flex-shrink-0">{(joinRequests[group.id] || []).length}</span>
+                      )}
+                    </div>
                     <svg
                       className={`w-3.5 h-3.5 text-pnp-textSecondary transition-transform flex-shrink-0 ${showRequests === group.id ? "rotate-180" : ""}`}
                       fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
@@ -4683,13 +5667,13 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                             <div className="flex gap-1 flex-shrink-0">
                               <button
                                 onClick={() => handleRequest(group.id, req.id, "accept")}
-                                className="px-2.5 py-1 rounded text-xs font-semibold text-white bg-green-600 hover:bg-green-500 active:scale-95 transition-all"
+                                className="px-2.5 py-2 min-h-[36px] rounded text-xs font-semibold text-white bg-green-600 hover:bg-green-500 active:scale-95 transition-all"
                               >
                                 {t.chat.accept}
                               </button>
                               <button
                                 onClick={() => handleRequest(group.id, req.id, "reject")}
-                                className="px-2.5 py-1 rounded text-xs font-semibold text-pnp-textSecondary bg-white/10 hover:bg-white/20 active:scale-95 transition-all"
+                                className="px-2.5 py-2 min-h-[36px] rounded text-xs font-semibold text-pnp-textSecondary bg-white/10 hover:bg-white/20 active:scale-95 transition-all"
                               >
                                 {t.chat.deny}
                               </button>
@@ -4701,9 +5685,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   )}
                 </div>
               ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* PRIME upsell */}
       {!isPrime && (
@@ -4845,7 +5830,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         <div
           className="fixed inset-0 z-[60] flex items-end justify-center"
           style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowPaymentGate(false); setPgPolling(false); } }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowPaymentGate(false); setPgPolling(false); setPgError(null); } }}
         >
           <div
             className="w-full max-w-md rounded-t-2xl p-5 pb-safe space-y-4"
@@ -4900,6 +5885,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                     ${paymentGateInfo.priceUsd?.toFixed(0)} USD
                   </p>
                   <p className="text-xs text-pnp-textSecondary mt-1">One-time access — includes video calls</p>
+                  {paymentGateInfo.videoCount !== undefined && (
+                    <p className="text-xs mt-2" style={{ color: "var(--pnp-accent, #a78bfa)" }}>
+                      🎬 {paymentGateInfo.videoCount} video{paymentGateInfo.videoCount !== 1 ? "s" : ""} available in this channel
+                    </p>
+                  )}
                 </div>
 
                 {pgPolling ? (
@@ -4911,20 +5901,29 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   <div className="space-y-2">
                     <p className="text-[10px] text-pnp-textSecondary text-center uppercase tracking-wider font-semibold">Choose payment method</p>
                     <button
-                      onClick={() => { handlePurchaseChannel(); }}
+                      onClick={() => handlePurchaseChannel('nowpayments')}
+                      disabled={pgLoading}
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                      style={{ background: "linear-gradient(135deg, #6366F1, #8B5CF6)" }}
+                    >
+                      💳 Pay with Crypto (BTC, ETH, USDT…)
+                    </button>
+                    <button
+                      onClick={() => handlePurchaseChannel('dash')}
                       disabled={pgLoading}
                       className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
                       style={{ background: "linear-gradient(135deg, #008DE4, #0066B2)" }}
                     >
-                      🥷 Pay with Dash (Crypto)
+                      🥷 Pay with Dash
                     </button>
+                    {pgError && <p className="text-xs text-red-400 text-center">{pgError}</p>}
                   </div>
                 )}
               </>
             )}
 
             <button
-              onClick={() => { setShowPaymentGate(false); setPgPolling(false); }}
+              onClick={() => { setShowPaymentGate(false); setPgPolling(false); setPgError(null); }}
               className="w-full py-2 text-sm text-pnp-textSecondary hover:text-white transition-colors"
             >
               Cancel

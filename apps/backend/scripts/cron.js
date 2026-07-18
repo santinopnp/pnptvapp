@@ -27,6 +27,7 @@ const StreamRecordingService = require(path.join(backendPath, 'services/streamRe
 const { failStuckVideoUploads } = require(path.join(backendPath, 'services/channelVideoService'));
 const { sendPendingNotifications, reconcileReminders } = require(path.join(backendPath, 'services/callNotificationService'));
 const PrivateCallBookingService = require(path.join(backendPath, 'services/privateCallBookingService'));
+const autoReplyService = require(path.join(backendPath, 'services/autoReplyService'));
 
 /**
  * Initialize and start cron jobs
@@ -75,11 +76,8 @@ const startCronJobs = async (bot = null) => {
       }
     })();
 
-    // Initialize services with bot if provided
-    if (bot) {
-      MembershipCleanupService.initialize(bot);
-      // TutorialReminderService — DISABLED (spam prevention per admin request)
-    }
+    // MembershipCleanupService is initialized in bot.js before startCronJobs is called.
+    // TutorialReminderService — DISABLED (spam prevention per admin request)
 
     // TelegramSubscriptionReminderService — DISABLED (spam prevention per admin request)
 
@@ -90,23 +88,11 @@ const startCronJobs = async (bot = null) => {
     // (verified via DB query). To re-enable temporarily during incident
     // response, uncomment and set DAIMO_RECOVERY_CRON in env.
 
-    // ePayco payment recovery - process stuck pending payments every 15 minutes
-    // Checks ePayco API for completed payments and replays webhooks if needed
-    cron.schedule(process.env.PAYMENT_RECOVERY_CRON || '*/15 * * * *', async () => {
-      try {
-        logger.info('Running payment recovery process...');
-        const results = await PaymentRecoveryService.processStuckPayments();
-        logger.info('Payment recovery completed', {
-          checked: results.checked,
-          recovered: results.recovered,
-          stillPending: results.stillPending,
-          failed: results.failed,
-          errors: results.errors,
-        });
-      } catch (error) {
-        logger.error('Error in payment recovery cron:', error);
-      }
-    });
+    // ePayco payment recovery cron REMOVED 2026-07-17. ePayco was retired
+    // 2026-06-27; processStuckPayments filters `WHERE provider = 'epayco'`
+    // and always returned `checked: 0`, burning a Redis lock every 15 min
+    // for zero work. Live NP/BTCPay recovery runs in reconcileNowPayments +
+    // reconcileBtcpayInvoices below.
 
     // Abandoned payment cleanup - every 2 hours
     // Step 0: expire no-card-entry ePayco rows at 2h mark (fast cleanup for bounced sessions)
@@ -414,16 +400,7 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // Subscription expiry check (legacy - keeping for backwards compatibility)
-    cron.schedule(process.env.SUBSCRIPTION_CHECK_CRON || '0 6 * * *', async () => {
-      try {
-        logger.info('Running subscription expiry check...');
-        const processed = await UserService.processExpiredSubscriptions();
-        logger.info(`Processed ${processed} expired subscriptions`);
-      } catch (error) {
-        logger.error('Error in subscription expiry cron:', error);
-      }
-    });
+    // Subscription expiry check removed — MembershipCleanupService handles this at 03:00 UTC.
 
     // Media cleanup - daily at 3 AM UTC
     // Deletes old avatars, orphaned post media, and stale DM media files.
@@ -540,6 +517,21 @@ const startCronJobs = async (bot = null) => {
         logger.info('Creator payout readiness reminders completed', results);
       } catch (error) {
         logger.error('Error in creator payout readiness reminder cron:', error);
+      }
+    });
+
+    // ── FIX 9: Reconcile stuck in_payout earnings — daily at 03:00 UTC ──────
+    // Finds creator_earnings stuck in 'in_payout' for 48h+ with no active payout
+    // record. Rolls them back to 'available' so creators can re-request payout.
+    cron.schedule('0 3 * * *', async () => {
+      try {
+        const NowPaymentsPayoutSvc = require(path.join(backendPath, 'services/nowpaymentsPayoutService'));
+        const count = await NowPaymentsPayoutSvc.reconcileStuckPayouts();
+        if (count > 0) {
+          logger.warn(`[cron] Reconciled ${count} creators with stuck in_payout earnings`);
+        }
+      } catch (err) {
+        logger.error('[cron] reconcileStuckPayouts failed', { error: err.message });
       }
     });
 
@@ -747,6 +739,35 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // CH-01: Reconcile creator_channels.post_count against actual social_posts rows.
+    // Runs nightly at 03:17 UTC. Fixes drift caused by any delete/move path that
+    // missed a counter update. Only touches rows where the count is wrong.
+    cron.schedule(process.env.CHANNEL_POST_COUNT_RECONCILE_CRON || '17 3 * * *', async () => {
+      try {
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+        const result = await pgQuery(`
+          UPDATE creator_channels cc
+             SET post_count = sub.actual
+            FROM (
+                   SELECT channel_id,
+                          COUNT(*)::int AS actual
+                     FROM social_posts
+                    WHERE is_deleted = false
+                      AND channel_id IS NOT NULL
+                 GROUP BY channel_id
+                 ) sub
+           WHERE cc.id = sub.channel_id
+             AND cc.post_count IS DISTINCT FROM sub.actual
+          RETURNING cc.id
+        `);
+        if (result.rowCount > 0) {
+          logger.info('[channels] post_count reconciled', { fixedChannels: result.rowCount });
+        }
+      } catch (error) {
+        logger.error('[channels] post_count reconciliation cron error', { error: error.message });
+      }
+    });
+
     // M-05: Auto-complete confirmed bookings that ended more than 30 minutes ago.
     // Transitions confirmed → completed and increments quantity_used on the credit
     // so surveys can be submitted and earnings can be tallied. Runs every 15 minutes.
@@ -951,6 +972,108 @@ const startCronJobs = async (bot = null) => {
         } catch (e) {
           logger.error(`[retention] purge failed: ${table}`, { error: e.message });
         }
+      }
+    });
+
+    // Every 5 min: poll hello/support/legal inboxes and send per-mailbox auto-replies
+    cron.schedule('*/5 * * * *', async () => {
+      try {
+        await autoReplyService.startAutoReplyPolling();
+      } catch (err) {
+        logger.error('[autoReply] cron error', { error: err.message });
+      }
+    });
+
+    // ── Creator availability expiry in-app notification — every 2 minutes ────
+    // When a creator's accepting-calls TTL drops into the 600–720s window
+    // (10–12 min remaining), insert an in-app notification prompting them to
+    // renew. Uses Redis SET NX (avail:webapp_pinged:<userId>) as dedup guard
+    // with 720s TTL so each availability window gets at most one notification.
+    // Replaces the Telegram DM that creatorAvailabilityPingScheduler sent.
+    cron.schedule('*/2 * * * *', async () => {
+      try {
+        const { getRedis } = require(path.join(backendPath, 'config/redis'));
+        const redis = getRedis();
+        if (!redis) return;
+
+        const PING_WINDOW_MIN = 600;
+        const PING_WINDOW_MAX = 720;
+        const DEDUP_TTL = 720;
+        const APP_URL = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
+
+        // SCAN for all accepting-calls keys
+        const keys = [];
+        let cursor = '0';
+        do {
+          const [nextCursor, batch] = await redis.scan(
+            cursor, 'MATCH', 'user:*:accepting_calls', 'COUNT', '200'
+          );
+          cursor = nextCursor;
+          keys.push(...batch);
+        } while (cursor !== '0');
+
+        if (keys.length === 0) return;
+
+        const toNotify = [];
+        for (const key of keys) {
+          const ttl = await redis.ttl(key);
+          if (ttl < PING_WINDOW_MIN || ttl > PING_WINDOW_MAX) continue;
+
+          const userId = key.slice('user:'.length, -':accepting_calls'.length);
+          const dedupKey = `avail:webapp_pinged:${userId}`;
+          const acquired = await redis.set(dedupKey, '1', 'EX', DEDUP_TTL, 'NX');
+          if (!acquired) continue;
+          toNotify.push(userId);
+        }
+
+        if (toNotify.length === 0) return;
+
+        // Verify they are still active creators before notifying
+        const { query: pgQ } = require(path.join(backendPath, 'config/postgres'));
+        const { rows: creators } = await pgQ(
+          `SELECT id FROM users
+           WHERE id = ANY($1::text[])
+             AND creator_status = 'active'`,
+          [toNotify]
+        );
+
+        if (creators.length === 0) return;
+
+        const MESSAGE = 'Your availability window expires in ~10 minutes. Tap to renew.';
+        const ENTITY_TYPE = 'creator_availability';
+
+        for (const creator of creators) {
+          const userId = String(creator.id);
+          // entity_id scoped to the current 12-min window (Unix minute, rounded to 12)
+          const windowId = String(Math.floor(Date.now() / (720 * 1000)));
+          try {
+            await pgQ(
+              `INSERT INTO notifications
+                 (type, category, priority, actor_id, target_user_id,
+                  entity_type, entity_id, message, metadata)
+               VALUES
+                 ($1, 'system', 'high', NULL, $2,
+                  $3, $4, $5, $6)
+               ON CONFLICT DO NOTHING`,
+              [
+                'availability_expiring',
+                userId,
+                ENTITY_TYPE,
+                windowId,
+                MESSAGE,
+                JSON.stringify({ url: `${APP_URL}/creators/availability` }),
+              ]
+            );
+          } catch (insertErr) {
+            logger.warn('[availWebappPing] notification insert failed', {
+              userId, error: insertErr.message,
+            });
+          }
+        }
+
+        logger.info(`[availWebappPing] Sent in-app expiry notification to ${creators.length} creator(s)`);
+      } catch (err) {
+        logger.error('[availWebappPing] cron error', { error: err.message });
       }
     });
 
