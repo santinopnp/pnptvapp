@@ -218,7 +218,8 @@ class UserService {
                 card_token_mask, card_franchise, auto_renew, subscription_type,
                 recurring_plan_id, next_billing_date, billing_failures, last_billing_attempt,
                 wof_photo_consent, content_disclaimer, content_disclaimer_accepted_at,
-                content_disclaimer_accepted_ip, colombia_badge, live_channel
+                content_disclaimer_accepted_ip, colombia_badge, live_channel,
+                creator_status
          FROM users WHERE live_channel = $1 LIMIT 1`,
         [String(channelRef)]
       );

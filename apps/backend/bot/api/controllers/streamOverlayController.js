@@ -4,8 +4,8 @@ const logger = require('../../../utils/logger');
 const { getPool } = require('../../../config/postgres');
 const socketSingleton = require('../../../services/socketSingleton');
 
-// Channel ref validation: alphanumeric + hyphens only (matches Restreamer slugs like 'pnptv-frank')
-const CHANNEL_REF_RE = /^[a-zA-Z0-9-]+$/;
+// Channel ref validation: alphanumeric + hyphens + underscores (matches Restreamer slugs like 'pnptv-gabo_bb')
+const CHANNEL_REF_RE = /^[a-zA-Z0-9_-]+$/;
 
 // CSS color validation — accepts hex (#RGB, #RRGGBB, #RRGGBBAA), rgb/rgba/hsl/hsla, and keywords
 const CSS_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$|^(rgb|hsl)a?\([^)]+\)$|^(transparent|inherit|currentColor)$/i;

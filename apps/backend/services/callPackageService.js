@@ -126,7 +126,7 @@ async function getMemberCredits(memberId, creatorId = null) {
 
   const result = await query(
     `SELECT cc.*, cp.duration_minutes, cp.title AS package_title,
-            u.username AS creator_username, u.photo_url AS creator_photo
+            u.username AS creator_username, u.photo_file_id AS creator_photo
      FROM call_credits cc
      JOIN call_packages cp ON cp.id = cc.package_id
      JOIN users u ON u.id = cc.creator_id

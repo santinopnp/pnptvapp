@@ -222,7 +222,7 @@ async function processStreamHeartbeat(viewerId, channelRef) {
   }
 
   // Ensure the streamer is an active creator before processing payment
-  if (streamer.creator_status !== 'active') {
+  if (streamer.creatorStatus !== 'active') {
     logger.warn('Heartbeat for non-active creator.', { viewerId, channelRef, streamerId: streamer.id });
     const balRow = await query(
       `SELECT COALESCE(balance_tokens,0) + COALESCE(gifted_balance,0) AS total FROM user_token_wallets WHERE user_id = $1`,

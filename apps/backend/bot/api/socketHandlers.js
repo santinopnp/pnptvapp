@@ -2310,7 +2310,7 @@ function initSocketIO(io) {
         // Reject anything that matches none of these to prevent resource exhaustion
         // from arbitrary room creation.
         const isNumericId = /^\d+$/.test(String(streamId));
-        const isSlug = /^[a-zA-Z][a-zA-Z0-9-]*$/.test(String(streamId));
+        const isSlug = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(String(streamId));
 
         let streamVerified = false;
 
@@ -2469,7 +2469,7 @@ function initSocketIO(io) {
         try {
           // Attempt 1: streamId is itself a channel_ref slug
           let overlayRows = [];
-          if (/^[a-zA-Z0-9-]+$/.test(String(streamId)) && !/^\d+$/.test(String(streamId))) {
+          if (/^[a-zA-Z0-9_-]+$/.test(String(streamId)) && !/^\d+$/.test(String(streamId))) {
             const direct = await query(
               'SELECT * FROM stream_overlays WHERE channel_ref = $1 AND is_active = true',
               [streamId]
@@ -2673,7 +2673,7 @@ function initSocketIO(io) {
         socket.emit('live:error', { code: 'MOD_INVALID', message: 'action must be ban, mute, or unban' });
         return;
       }
-      if (!/^[a-zA-Z0-9-]+$/.test(String(channelRef))) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(String(channelRef))) {
         socket.emit('live:error', { code: 'MOD_INVALID', message: 'Invalid channelRef' });
         return;
       }

@@ -10106,7 +10106,7 @@ app.delete('/api/webapp/live/goal', requireSessionAuth, roleGuard('model', 'crea
 // GET /api/proxy/live/goal/:channelRef — public, returns current goal state (30s cache)
 app.get('/api/proxy/live/goal/:channelRef', overlayPublicLimiter, asyncHandler(async (req, res) => {
   const channelRef = String(req.params.channelRef || '').trim();
-  if (!channelRef || !/^[a-zA-Z0-9-]+$/.test(channelRef)) {
+  if (!channelRef || !/^[a-zA-Z0-9_-]+$/.test(channelRef)) {
     return res.status(400).json({ success: false, error: 'Invalid channelRef' });
   }
 
@@ -10330,7 +10330,7 @@ app.get('/api/proxy/live/tips/leaderboard', asyncHandler(async (req, res) => {
   const channelRef = req.query.channelRef ? String(req.query.channelRef).trim() : null;
   const period = req.query.period === 'week' ? 'week' : 'today';
 
-  if (channelRef && !/^[a-zA-Z0-9-]+$/.test(channelRef)) {
+  if (channelRef && !/^[a-zA-Z0-9_-]+$/.test(channelRef)) {
     return res.status(400).json({ success: false, error: 'Invalid channelRef' });
   }
 
@@ -10406,7 +10406,7 @@ app.get('/api/webapp/live/chat-bans/:channelRef', requireSessionAuth, roleGuard(
   const userId = String(user.id);
   const channelRef = String(req.params.channelRef || '').trim();
 
-  if (!channelRef || !/^[a-zA-Z0-9-]+$/.test(channelRef)) {
+  if (!channelRef || !/^[a-zA-Z0-9_-]+$/.test(channelRef)) {
     return res.status(400).json({ success: false, error: 'Invalid channelRef' });
   }
 
@@ -10447,7 +10447,7 @@ app.delete('/api/webapp/live/chat-bans/:bannedUserId', requireSessionAuth, roleG
   const bannedUserId = String(req.params.bannedUserId || '').trim();
   const channelRef = String(req.query.channelRef || '').trim();
 
-  if (!bannedUserId || !channelRef || !/^[a-zA-Z0-9-]+$/.test(channelRef)) {
+  if (!bannedUserId || !channelRef || !/^[a-zA-Z0-9_-]+$/.test(channelRef)) {
     return res.status(400).json({ success: false, error: 'bannedUserId and channelRef required' });
   }
   if (!/^[0-9a-f-]{8,36}$|^\d{1,20}$/i.test(bannedUserId)) {

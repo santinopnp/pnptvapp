@@ -138,6 +138,8 @@ class UserModel {
       contentDisclaimerAcceptedAt: row.content_disclaimer_accepted_at || null,
       contentDisclaimerAcceptedIp: row.content_disclaimer_accepted_ip || null,
       colombiaBadge: row.colombia_badge || false,
+      creatorStatus: row.creator_status || null,
+      liveChannel: row.live_channel || null,
     };
   }
 
