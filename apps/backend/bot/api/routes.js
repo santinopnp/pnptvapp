@@ -1413,10 +1413,11 @@ const ageVerificationUpload = multer({
   }
 });
 
-// Avatar upload (profile picture) - 5MB max, images only
+// Avatar upload (profile picture) - 15MB max (iPhones shoot 6–15 MB HEIF/JPEG;
+// source is immediately resized to 256×256 so large files are safe).
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const isImage = /^image\/(jpeg|jpg|png|webp|gif)$/i.test(file.mimetype || '');
     if (isImage) return cb(null, true);
@@ -2653,10 +2654,10 @@ const telegramWidgetLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Rate limiter for /api/webapp/auth/telegram/check — prevents auth probing, 10 req/min per IP
+// Rate limiter for /api/webapp/auth/telegram/check — frontend polls every 3s (20/min); allow 30/min
 const telegramCheckLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 30,
   handler: (req, res) => res.status(429).json({ error: 'Too many auth check attempts. Try again in a minute.' }),
   standardHeaders: true,
   legacyHeaders: false,

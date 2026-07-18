@@ -47,6 +47,12 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
   const retryTimerRef = useRef<number | undefined>(undefined);
   const reloadTimerRef = useRef<number | undefined>(undefined);
   const mediaErrorCountRef = useRef(0);
+  // FE-H5: count consecutive fatal NETWORK_ERRORs (typically 404 on dead streams).
+  // After MAX_NETWORK_RETRIES the player stops polling and goes offline immediately
+  // instead of calling hls.startLoad() again — prevents the indefinite retry loop
+  // visible as repeated /hls/*.m3u8 404s in the access log.
+  const networkFatalCountRef = useRef(0);
+  const MAX_NETWORK_RETRIES = 3;
   const t = useI18n();
 
   const initHls = (video: HTMLVideoElement, source: string) => {
@@ -57,6 +63,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
     reloadTimerRef.current = undefined;
     setShowReload(false);
     mediaErrorCountRef.current = 0;
+    networkFatalCountRef.current = 0;
 
     hlsRef.current?.destroy();
     hlsRef.current = null;
@@ -129,9 +136,28 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
         console.warn("[LivePlayer] HLS error:", data.type, data.details, data.fatal ? "(FATAL)" : "");
         if (data.fatal) {
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            networkFatalCountRef.current += 1;
+
+            // FE-H5: after MAX_NETWORK_RETRIES consecutive fatal network errors
+            // (e.g. stream is genuinely offline — repeated 404s on the m3u8)
+            // stop polling immediately and show the offline UI. Without this cap
+            // hls.startLoad() re-arms the internal retry cycle, causing indefinite
+            // /hls/*.m3u8 404s every ~8 s in the access log.
+            if (networkFatalCountRef.current > MAX_NETWORK_RETRIES) {
+              console.warn(`[LivePlayer] Fatal network error #${networkFatalCountRef.current} — stream offline, stopping retries.`);
+              clearTimeout(retryTimerRef.current);
+              retryTimerRef.current = undefined;
+              clearTimeout(reloadTimerRef.current);
+              reloadTimerRef.current = undefined;
+              hls.destroy();
+              hlsRef.current = null;
+              setStatus("offline");
+              return;
+            }
+
             // Show retrying spinner immediately, then go offline after 10s if not recovered.
             // 10s aligns better with hls.js internal manifestLoadingMaxRetry=6 * 2s.
-            console.warn("[LivePlayer] Fatal network error, attempting recovery…");
+            console.warn(`[LivePlayer] Fatal network error #${networkFatalCountRef.current}/${MAX_NETWORK_RETRIES}, attempting recovery…`);
             setStatus("retrying");
             hls.startLoad();
 
@@ -139,7 +165,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
             reloadTimerRef.current = window.setTimeout(() => {
               setShowReload(true);
             }, 5000);
-            
+
             // FE-H3: track the timer so it can be cleared on unmount.
             // After retrying, always go offline — the readyState/networkState check
             // was unreliable when the stream had previously been playing (data cached).

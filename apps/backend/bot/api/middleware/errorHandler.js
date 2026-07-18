@@ -19,7 +19,13 @@ const sanitizeBody = (body) => {
  * Handles all errors thrown in routes and controllers
  */
 function errorHandler(err, req, res, _next) {
-  // Handle multer errors (file upload validation) as 400s
+  // Handle multer LIMIT_FILE_SIZE specifically — raw multer message is opaque
+  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+    logger.warn('Upload file size limit exceeded:', { url: req.url, ip: req.ip });
+    return res.status(400).json({ error: 'Image is too large. Maximum size is 15 MB.' });
+  }
+
+  // Handle other multer errors (wrong MIME type, too many files, etc.)
   if (err instanceof multer.MulterError || err.message?.includes('files are allowed')) {
     logger.warn('Upload validation error:', { error: err.message, url: req.url, ip: req.ip });
     return res.status(400).json({ error: err.message });

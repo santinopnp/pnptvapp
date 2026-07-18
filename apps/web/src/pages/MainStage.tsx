@@ -196,12 +196,22 @@ function MainStageInner({
   onPlayNext,
   playNextCooldown,
 }: MainStageInnerProps) {
+  const [modeTransitioning, setModeTransitioning] = useState(false);
+  const prevModeRef = useRef(mode);
+  useEffect(() => {
+    if (prevModeRef.current === mode) return;
+    prevModeRef.current = mode;
+    setModeTransitioning(true);
+    const t = setTimeout(() => setModeTransitioning(false), 220);
+    return () => clearTimeout(t);
+  }, [mode]);
+
   return (
     <>
       <ParticipantCollector onCammersChange={onCammersChange} />
       <RoomListener onConnectionStateChange={onConnectionStateChange} />
 
-      <div className="flex-1 min-h-0 relative overflow-hidden" style={{ transition: "background 0.3s" }}>
+      <div className="flex-1 min-h-0 relative overflow-hidden" style={{ transition: "background 0.3s, opacity 0.22s", opacity: modeTransitioning ? 0 : 1 }}>
         {mode === "spotlight" && (
           <SpotlightGrid
             focusIdentity={spotlightCammer}
@@ -290,10 +300,14 @@ export default function MainStage() {
   const { showTutorial, dismissTutorial, dismissForever, openTutorial } = useTutorial("mainstage");
 
   // Read guest credentials exactly once on mount (before useMainStage runs).
+  const wasGuestParam = searchParams.get("guest") === "1";
   const guestCredsRef = useRef<GuestCredentials | null>(
-    searchParams.get("guest") === "1" ? readAndClearGuestCredentials() : null
+    wasGuestParam ? readAndClearGuestCredentials() : null
   );
   const isGuestMode = guestCredsRef.current !== null;
+  // Guest param present but session storage was cleared (page reload or new tab) —
+  // sessionStorage is tab-scoped so this always happens after a reload.
+  const isGuestSessionExpired = wasGuestParam && !isGuestMode;
 
   const {
     state:       hookedState,
@@ -816,6 +830,40 @@ export default function MainStage() {
   const handleShuffle = useCallback(() => {
     shuffle();
   }, [shuffle]);
+
+  // ── Guest session expired (page reload cleared sessionStorage) ───────────────
+  if (isGuestSessionExpired) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center"
+          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}
+        >
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-bold text-xl mb-1">Guest session expired</p>
+          <p className="text-white/70 text-sm max-w-xs mx-auto">
+            Your guest session ended. Ask the host for a new invite link to rejoin.
+          </p>
+          <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
+            Tu sesión de invitado expiró. Pide al anfitrión un nuevo enlace para unirte.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="min-h-[44px] px-8 rounded-2xl text-sm font-semibold text-white/60 transition-all active:scale-[0.97]"
+          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+        >
+          Go back
+        </button>
+      </div>
+    );
+  }
 
   // ── Free-user cooldown screen ────────────────────────────────────────────────
   if (!isGuestMode && cooldownSeconds !== null) {

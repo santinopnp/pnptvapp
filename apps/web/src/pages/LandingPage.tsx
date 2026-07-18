@@ -699,6 +699,7 @@ export function LandingPage() {
           const check = await fetch(`${API_BASE}/api/webapp/auth/telegram/check?token=${data.token}`, { credentials: "include" });
           const result = await check.json();
           if (!check.ok) {
+            if (check.status === 429) return; // rate-limited — keep polling
             if (pollRef.current) clearInterval(pollRef.current);
             setTgState("error");
             setTgError(

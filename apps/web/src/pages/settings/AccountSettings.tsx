@@ -76,7 +76,7 @@ export default function AccountSettings() {
   const [passkeyAddError, setPasskeyAddError] = useState<string | null>(null);
   const [passkeyAddName, setPasskeyAddName] = useState("");
   const [passkeyAddSuccess, setPasskeyAddSuccess] = useState(false);
-  const [passkeyDeleting, setPasskeyDeleting] = useState<number | null>(null);
+  const [passkeyDeleting, setPasskeyDeleting] = useState<number | string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -262,7 +262,7 @@ export default function AccountSettings() {
     }
   }, [passkeyAddName]);
 
-  const handleDeletePasskey = useCallback(async (pk: number) => {
+  const handleDeletePasskey = useCallback(async (pk: number | string) => {
     setPasskeyDeleting(pk);
     try {
       await deletePasskey(pk);

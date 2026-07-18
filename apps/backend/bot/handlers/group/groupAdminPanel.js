@@ -732,6 +732,9 @@ async function _saveBroadcast(ctx, chatId, schedType) {
 
 async function handleAdminCallback(ctx) {
   await ctx.answerCbQuery().catch(() => {});
+  // Allow this handler to send messages to group chats — all sends are admin-verified below
+  ctx.state = ctx.state || {};
+  ctx.state.allowCrossChatSend = true;
   const data = ctx.callbackQuery?.data || '';
   const parts = data.split(':');
   const action = parts[1];
@@ -1203,6 +1206,13 @@ async function handlePendingAction(ctx, next) {
 
   const { action, chatId } = pending;
 
+  // Null-action placeholder: chatId stored for /removebanned, no message consumed
+  if (!action) return next();
+
+  // Allow sends to group chats — all inputs here come from admin-verified flows
+  ctx.state = ctx.state || {};
+  ctx.state.allowCrossChatSend = true;
+
   // ── Handle media messages for bcast_await_media ──────────────────────────
   if (action === 'bcast_await_media') {
     const msg = ctx.message;
@@ -1253,7 +1263,8 @@ async function handlePendingAction(ctx, next) {
 
   // ── banned word add ──────────────────────────────────────────────────────
   if (action === 'add_banned_word') {
-    pendingActions.delete(ctx.from.id);
+    // Keep a null-action placeholder so /removebanned can still find the chatId
+    pendingActions.set(ctx.from.id, { action: null, chatId, startedAt: Date.now() });
     const word = text.toLowerCase().slice(0, 50);
     const settings = await getGroupSettings(chatId);
     const words = settings.banned_words || [];

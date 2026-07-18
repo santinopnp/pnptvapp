@@ -78,8 +78,9 @@ function SpotlightStripTile({
       onClick={onTileClick ? () => onTileClick(trackRef.participant.identity) : undefined}
       className="flex-shrink-0 rounded-xl overflow-hidden relative transition-all hover:scale-[1.04] active:scale-[0.97]"
       style={{
-        width: "calc(16/9 * clamp(68px, 12vh, 120px))",
-        height: "clamp(68px, 12vh, 120px)",
+        width: "calc(16/9 * clamp(72px, 12vh, 120px))",
+        height: "clamp(72px, 12vh, 120px)",
+        minWidth: "calc(16/9 * 72px)",
         border: "1.5px solid rgba(255,255,255,0.12)",
         cursor: onTileClick ? "pointer" : "default",
       }}

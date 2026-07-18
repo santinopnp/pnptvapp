@@ -42,12 +42,22 @@ class BusinessNotificationService {
 
   static async send(message, kind = null) {
     if (!this.bot || !CHANNEL_ID) return;
+    const threadId = kind ? resolveTopic(kind) : TOPIC_FALLBACK;
     try {
       const opts = { parse_mode: 'HTML' };
-      const threadId = kind ? resolveTopic(kind) : TOPIC_FALLBACK;
       if (threadId) opts.message_thread_id = threadId;
       await this.bot.telegram.sendMessage(CHANNEL_ID, message, opts);
     } catch (error) {
+      // Forum topic was deleted — retry without thread ID so the message still lands
+      if (threadId && error.message && error.message.includes('message thread not found')) {
+        logger.warn('Business notification topic not found, retrying without thread', { kind, threadId });
+        try {
+          await this.bot.telegram.sendMessage(CHANNEL_ID, message, { parse_mode: 'HTML' });
+        } catch (retryErr) {
+          logger.error('Business notification send failed (retry):', { error: retryErr.message, channelId: CHANNEL_ID, kind });
+        }
+        return;
+      }
       logger.error('Business notification send failed:', {
         error: error.message,
         channelId: CHANNEL_ID,

@@ -394,6 +394,7 @@ function CinemaStripTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }
       style={{
         width: "calc(16/9 * clamp(120px, 17vh, 210px))",
         height: "clamp(120px, 17vh, 210px)",
+        minWidth: "calc(16/9 * 120px)",
         border: "2px solid rgba(212,0,122,0.28)",
         boxShadow: "0 6px 18px rgba(0,0,0,0.45), 0 0 20px rgba(212,0,122,0.15)",
       }}
