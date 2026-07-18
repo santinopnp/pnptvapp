@@ -2653,10 +2653,10 @@ const telegramWidgetLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Rate limiter for /api/webapp/auth/telegram/check — prevents auth probing, 10 req/min per IP
+// Rate limiter for /api/webapp/auth/telegram/check — frontend polls every 3s (20/min); allow 30/min
 const telegramCheckLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 30,
   handler: (req, res) => res.status(429).json({ error: 'Too many auth check attempts. Try again in a minute.' }),
   standardHeaders: true,
   legacyHeaders: false,
