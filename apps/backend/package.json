@@ -38,7 +38,7 @@
     "form-data": "^4.0.0",
     "geoip-lite": "^2.0.1",
     "geolib": "^3.3.4",
-    "helmet": "^7.1.0",
+    "helmet": "^8.3.0",
     "i18next": "^23.7.16",
     "imapflow": "^1.0.170",
     "ioredis": "^5.11.1",
