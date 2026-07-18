@@ -868,6 +868,85 @@ class EmailService {
       return { success: false, error: error.message };
     }
   }
+
+  /**
+   * Send token credit notification email.
+   * Fires every time tokens are added to a user's wallet (webhook or manual).
+   * @param {{ to: string, username: string, tokens: number, newBalance: number, invoiceId: string, provider?: string, usdAmount?: number }} opts
+   */
+  async sendTokenCreditEmail({ to, username, tokens, newBalance, invoiceId, provider = 'payment', usdAmount }) {
+    try {
+      if (!this.transporters.pnptv) {
+        logger.warn('[TokenCredit] pnptv transporter not configured, skipping');
+        return { success: false, error: 'Transporter not configured' };
+      }
+      if (!to) return { success: false, error: 'No recipient email' };
+
+      const usdLine = usdAmount ? `<p><strong>Monto pagado:</strong> $${parseFloat(usdAmount).toFixed(2)} USD</p>` : '';
+      const usdLineEn = usdAmount ? `<p><strong>Amount paid:</strong> $${parseFloat(usdAmount).toFixed(2)} USD</p>` : '';
+
+      const subject = `+${tokens} tokens acreditados en tu cuenta — PNPtv`;
+
+      const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:0}
+  .wrap{max-width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+  .hdr{background:#1C1C1E;padding:24px 30px;text-align:center}
+  .hdr h1{color:#fff;margin:0;font-size:26px}.hdr span{color:#D4007A}
+  .body{padding:30px}
+  .box{background:#f8f9fa;border-left:4px solid #008DE4;padding:16px 20px;border-radius:4px;margin:20px 0}
+  .box p{margin:6px 0}
+  .balance{font-size:28px;font-weight:bold;color:#008DE4;text-align:center;padding:10px 0}
+  .info{background:#eaf4fd;border-radius:6px;padding:14px 18px;margin:16px 0;font-size:13px;color:#444}
+  .btn{display:inline-block;margin:20px 0;padding:12px 28px;background:#D4007A;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold}
+  .ftr{text-align:center;padding:20px;color:#888;font-size:12px;border-top:1px solid #eee}
+</style></head><body>
+<div class="wrap">
+  <div class="hdr"><h1>PNPtv<span>!</span></h1></div>
+  <div class="body">
+    <p>Hola <strong>${username || 'amig@'}</strong>,</p>
+    <p>¡Tus tokens han sido acreditados!</p>
+    <div class="box">
+      <p><strong>Tokens recibidos:</strong> +${tokens} tokens</p>
+      ${usdLine}
+      <p><strong>Referencia:</strong> ${invoiceId}</p>
+      <p><strong>Proveedor:</strong> ${provider}</p>
+      <p><strong>Fecha:</strong> ${new Date().toLocaleDateString('es-ES')}</p>
+    </div>
+    <div class="balance">Saldo actual: ${newBalance} tokens</div>
+    <div class="info">
+      <strong>¿Cómo funciona el sistema de tokens?</strong><br><br>
+      • <strong>1 token ≈ $0.17 USD</strong> (6 tokens = $1 USD)<br>
+      • Necesitas mínimo <strong>60 tokens</strong> para ver un show en vivo<br>
+      • Los tokens se usan para ver shows y enviar propinas a tus modelos favoritos<br>
+      • El modelo recibe <strong>4 de cada 6 tokens</strong> que gastas<br><br>
+      Tu saldo siempre está visible en <strong>Ajustes → Pagos</strong>.
+    </div>
+    <p>Ve a <a href="https://pnptv.app/live">pnptv.app/live</a> para disfrutar de los shows.</p>
+    <a class="btn" href="https://pnptv.app/live">Ver shows en vivo →</a>
+    <p>¿Preguntas? Escríbenos a <a href="mailto:support@pnptv.app">support@pnptv.app</a>.</p>
+  </div>
+  <div class="ftr">
+    <p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p>
+    <p style="font-size:10px;color:#aaa">This email was sent because tokens were added to your PNPtv account.<br>
+    ${usdLineEn ? `${tokens} tokens credited for $${parseFloat(usdAmount).toFixed(2)} USD via ${provider}.` : `${tokens} tokens credited via ${provider}.`}</p>
+  </div>
+</div>
+</body></html>`;
+
+      const result = await this.transporters.pnptv.sendMail({
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv" <support@pnptv.app>',
+        to,
+        subject,
+        html,
+      });
+      logger.info('Token credit email sent', { to, tokens, newBalance, invoiceId, messageId: result.messageId });
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      logger.error('sendTokenCreditEmail error:', { error: error.message, to });
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 // Export singleton instance

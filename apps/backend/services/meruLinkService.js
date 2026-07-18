@@ -22,7 +22,7 @@ class MeruLinkService {
              used_by = $2,
              used_by_username = $3,
              used_at = NOW()
-         WHERE code = $1 AND status = 'active'
+         WHERE code = $1 AND status IN ('active', 'reserved')
          RETURNING id, code, meru_link`,
         [meruCode, userId, username]
       );

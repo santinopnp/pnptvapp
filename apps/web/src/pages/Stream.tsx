@@ -1360,10 +1360,7 @@ function StreamInner() {
     );
   }
 
-  // Token gate: non-owner viewers with confirmed zero balance can't watch
-  if (!isStreamOwner && tokenBalance !== null && tokenBalance <= 0) {
-    return <StreamNoTokensWall />;
-  }
+  // Token gate handled inline with blur overlay (see below)
 
   if (error || !stream) {
     return (
@@ -1716,14 +1713,47 @@ function StreamInner() {
             </div>
           </div>
         ) : (
-          <LivePlayer
-            src={stream.hlsUrl}
-            title={stream.name}
-            poster={stream.thumbnailUrl || undefined}
-            overlay={overlay}
-            onStats={isStreamOwner ? handlePlayerStats : undefined}
-            viewerUsername={user?.username ?? user?.firstName ?? undefined}
-          />
+          <div className="relative">
+            <LivePlayer
+              src={stream.hlsUrl}
+              title={stream.name}
+              poster={stream.thumbnailUrl || undefined}
+              overlay={overlay}
+              onStats={isStreamOwner ? handlePlayerStats : undefined}
+              viewerUsername={user?.username ?? user?.firstName ?? undefined}
+            />
+            {!isStreamOwner && tokenBalance !== null && tokenBalance < 60 && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center backdrop-blur-lg bg-black/60">
+                <div
+                  className="mx-4 rounded-2xl px-6 py-5 flex flex-col items-center gap-3 text-center max-w-xs"
+                  style={{ background: "rgba(20,20,25,0.95)", border: "1px solid rgba(212,0,122,0.35)" }}
+                >
+                  <div
+                    className="w-12 h-12 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.4)" }}
+                  >
+                    <svg className="w-6 h-6" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white mb-1">Necesitas tokens para ver</p>
+                    <p className="text-xs text-white/60">
+                      Mínimo <strong className="text-white/80">60 tokens</strong> para acceder al show.<br />
+                      Tienes {tokenBalance} token{tokenBalance !== 1 ? "s" : ""} ahora.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowTopUp(true)}
+                    className="w-full py-2.5 rounded-xl text-sm font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >
+                    Comprar tokens →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* ── Stream health HUD — creator-only, desktop, top-left of video ─── */}
@@ -2096,7 +2126,7 @@ function StreamInner() {
                         onClick={() => setShowTopUp(true)}
                         className="relative flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold text-white btn-gradient"
                       >
-                        {tokenBalance !== null && tokenBalance < 500 && (
+                        {tokenBalance !== null && tokenBalance < 60 && (
                           <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                         )}
                         <svg viewBox="0 0 24 24" className="w-3 h-3 fill-white flex-shrink-0">
@@ -2567,7 +2597,7 @@ function StreamInner() {
                       onClick={() => setShowTopUp(true)}
                       className="relative flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold text-white btn-gradient"
                     >
-                      {tokenBalance !== null && tokenBalance < 500 && (
+                      {tokenBalance !== null && tokenBalance < 60 && (
                         <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                       )}
                       + Top up
@@ -2674,7 +2704,7 @@ function StreamInner() {
                       onClick={() => setShowTopUp(true)}
                       className="relative flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold text-white btn-gradient"
                     >
-                      {tokenBalance !== null && tokenBalance < 500 && (
+                      {tokenBalance !== null && tokenBalance < 60 && (
                         <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                       )}
                       <svg viewBox="0 0 24 24" className="w-3 h-3 fill-white flex-shrink-0">

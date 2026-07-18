@@ -10,8 +10,8 @@ const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIF
 const { applyCreatorBonus } = require('./tokenService');
 
 class PNPLiveTipsService {
-  // Standard tip amounts in Tokens (100 Tokens = $1 USD)
-  static TIP_AMOUNTS = [500, 1000, 2000, 5000, 10000];
+  // Standard tip amounts in Tokens (6 Tokens = $1 USD)
+  static TIP_AMOUNTS = [30, 60, 120, 300, 600];
 
   /**
    * Create a new tip
@@ -78,6 +78,7 @@ class PNPLiveTipsService {
 
     // Gifted-token restriction gate — resolved inside the if(performerId) block below.
     let isGiftedAllowed = false;
+    let perfUserId;  // declared here so it's in scope for the debit logic below
 
     // Block tips while the performer is in the temporary onboarding-lock
     // state. Tokens must not be debited from the sender if the recipient
@@ -123,7 +124,7 @@ class PNPLiveTipsService {
       // Gifted-token restriction: tokens gifted before public launch can only be
       // spent on Santino / PNPLatinoBoy live shows. Capture performer user_id here
       // (already fetched by the self-tip check above) so we can choose the right pool.
-      const perfUserId = selfRows.length > 0
+      perfUserId = selfRows.length > 0
         ? String(selfRows[0].user_id)
         : String(performerId);
       isGiftedAllowed = GIFTED_ALLOWED_PERFORMER_USER_IDS.includes(perfUserId);
@@ -250,9 +251,9 @@ class PNPLiveTipsService {
       // Record earnings split — only for purchased tokens (real cash obligation).
       // Gifted / creator_gifts tokens credit the streamer's wallet for UX but do not
       // generate payout obligations.
-      // creator_earnings stores USD; tokens divide by 100.
+      // creator_earnings stores USD; tokens divide by 6.
       // creator_earnings.creator_id references users(id), not performers(id) — resolve user_id.
-      const TOKENS_PER_USD = 100;
+      const TOKENS_PER_USD = 6;
       const baseCreatorTokens = Math.round(amount * CREATOR_REVENUE_RATE * 1000) / 1000;
       const { creatorAmount: creatorTokens, platformAmount: platformTokens, bonusApplied } =
         await applyCreatorBonus(baseCreatorTokens, amount);
@@ -478,7 +479,7 @@ class PNPLiveTipsService {
       const performerId = tip.performer_id || (tip.model_id != null ? String(tip.model_id) : null);
       const tipAmount = parseFloat(tip.amount);
       if (performerId && Number.isFinite(tipAmount) && tipAmount > 0) {
-        const TOKENS_PER_USD = 100;
+        const TOKENS_PER_USD = 6;
         const tipAmountUsd = tipAmount / TOKENS_PER_USD;
         const amountCreator = Math.round(tipAmountUsd * CREATOR_REVENUE_RATE * 100) / 100;
         const amountPlatform = Math.round(tipAmountUsd * PLATFORM_COMMISSION_RATE * 100) / 100;

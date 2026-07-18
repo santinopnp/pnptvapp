@@ -799,7 +799,7 @@ export interface RecentTip {
   payment_status: string;
 }
 
-export const TIP_AMOUNTS = [100, 250, 500, 1000, 2500, 5000] as const;
+export const TIP_AMOUNTS = [30, 60, 120, 300, 600] as const;
 
 export function sendTip(
   performerId: string,
@@ -898,6 +898,21 @@ export function getPresaleStatus(): Promise<{
   creatorBonus: { active: boolean; startsAt: string; endsAt: string; bonusPct: number };
 }> {
   return request("/api/wallet/presale-status");
+}
+
+export function getMeruTokenLink(
+  product: "tokens_250" | "tokens_500",
+  email: string
+): Promise<{ success: boolean; meruUrl: string; code: string; product: string; tokens: number; error?: string }> {
+  return request("/api/wallet/meru-token-link", { method: "POST", body: { product, email } });
+}
+
+export function activateMeruTokens(
+  code: string,
+  email: string,
+  product: "tokens_250" | "tokens_500"
+): Promise<{ success: boolean; tokens: number; newBalance: number; error?: string }> {
+  return request("/api/wallet/activate-meru-tokens", { method: "POST", body: { code, email, product } });
 }
 
 export function getRecentTips(

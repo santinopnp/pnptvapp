@@ -480,39 +480,42 @@ export default function Live() {
       <button
         type="button"
         onClick={() => isAuthenticated ? setShowBuyModal(true) : login()}
-        aria-label="Buy tokens to tip creators"
-        className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
+        aria-label="Get tokens to join the action"
+        className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500"
         style={{
-          background: "linear-gradient(135deg, rgba(0,140,231,0.16) 0%, rgba(212,0,122,0.12) 100%)",
-          border: "1px solid rgba(0,140,231,0.28)",
+          background: "linear-gradient(135deg, rgba(212,0,122,0.18) 0%, rgba(230,145,56,0.10) 100%)",
+          border: "1px solid rgba(212,0,122,0.28)",
         }}
       >
         <div
           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm"
-          style={{ background: "linear-gradient(135deg, #008CE7, #0066BB)" }}
+          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
         >
-          <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white" aria-hidden>
-            <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16.5 13.5 16.5z"/>
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="white" strokeWidth={2} aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-pnp-textPrimary leading-tight">
-            {isAuthenticated && tokenBalance != null
-              ? `${tokenBalance} ${t.live.tokens}`
-              : "Tip your favorites"}
+            {isAuthenticated && tokenBalance != null && tokenBalance > 0
+              ? `${tokenBalance} tokens`
+              : isAuthenticated
+                ? "¡Entra a la acción!"
+                : "Únete a la fiesta"}
           </p>
           <p className="text-xs text-pnp-textSecondary mt-0.5 truncate">
             {isAuthenticated
-              ? tokenBalance != null && tokenBalance < 500
-                ? "Running low — top up to keep the energy going"
-                : "Send tips, unlock content, book private sessions"
-              : "Sign in to buy tokens and tip creators"}
+              ? tokenBalance != null && tokenBalance < 60
+                ? "Recarga y mantén la energía al máximo"
+                : "Tips, sesiones privadas y contenido exclusivo"
+              : "Regístrate para tipear, chatear y más"}
           </p>
         </div>
         <span
-          className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap btn-gradient shadow-sm"
+          className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap shadow-sm"
+          style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
         >
-          {isAuthenticated ? t.live.buyTokens || "Buy Tokens" : "Sign In"}
+          {isAuthenticated ? "Conseguir" : "Entrar"}
         </span>
       </button>
 
@@ -1233,7 +1236,7 @@ export default function Live() {
               {t.live.history}
             </button>
             <button onClick={() => setShowBuyModal(true)} className="relative flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold text-white btn-gradient">
-              {tokenBalance !== null && tokenBalance < 500 && (
+              {tokenBalance !== null && tokenBalance < 60 && (
                 <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               )}
               <svg viewBox="0 0 24 24" className="w-3 h-3 fill-white flex-shrink-0">

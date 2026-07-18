@@ -1383,6 +1383,8 @@ const limiter = rateLimit({
       '/api/auth-status',
       '/api/webapp/notifications/counts',
       '/api/webapp/dm/presence',
+      '/api/wallet/packages',      // read-only, fetched on every BuyTokensModal open
+      '/api/wallet/presale-status', // read-only, fetched on every BuyTokensModal open
     ];
     // Skip high-frequency streaming endpoints that poll every 2-5s while a
     // user watches a live stream — otherwise watchers exhaust their 600/15min
@@ -9867,8 +9869,8 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
       // metadata is threaded into BTCPay's record. The webhook handler reads
       // event.metadata.{type,tipId,userId,performerId} on InvoiceSettled.
       // planId='tip' is required by createInvoice but is informational only here.
-      // numAmount is in Tokens (100 Tokens = $1 USD); BTCPay expects USD.
-      const TOKENS_PER_USD = 100;
+      // numAmount is in Tokens (6 Tokens = $1 USD); BTCPay expects USD.
+      const TOKENS_PER_USD = 6;
       try {
         const inv = await createBtcpayInvoiceForTip({
           amount: numAmount / TOKENS_PER_USD,
@@ -10655,6 +10657,109 @@ app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(a
       return res.status(503).json({ success: false, error: 'Payment server is temporarily unavailable. Please try again later.', code: 'BTCPAY_UNREACHABLE' });
     }
     res.status(500).json({ success: false, error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
+  }
+}));
+
+// POST /api/wallet/meru-token-link — reserve a Meru payment link for a token package
+// Input: { product: 'tokens_250' | 'tokens_500', email: string }
+app.post('/api/wallet/meru-token-link', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  const { product, email } = req.body;
+  const VALID_PRODUCTS = { tokens_250: 250, tokens_500: 500 };
+  if (!product || !VALID_PRODUCTS[product]) {
+    return res.status(400).json({ success: false, error: 'product must be tokens_250 or tokens_500' });
+  }
+  if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required' });
+  }
+
+  const userId = String(user.telegramId || user.telegram_id || user.id);
+  const meruLinkService = require('../../services/meruLinkService');
+  const reserved = await meruLinkService.reserveRandomLink({ product, email: email.trim(), userId, minutes: 45 });
+
+  if (!reserved) {
+    return res.status(503).json({ success: false, error: 'No Meru links available for this package right now. Please try again later.' });
+  }
+
+  logger.info('[wallet/meru-token-link] Link reserved', { userId, product, code: reserved.code });
+  return res.json({ success: true, meruUrl: reserved.meru_link, code: reserved.code, product, tokens: VALID_PRODUCTS[product] });
+}));
+
+// POST /api/wallet/activate-meru-tokens — verify Meru payment and credit tokens
+// Input: { code: string, email: string, product: 'tokens_250' | 'tokens_500' }
+const meruTokenActivateLimiter = rateLimit({ windowMs: 60 * 1000, max: 6, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
+app.post('/api/wallet/activate-meru-tokens', requireSessionAuth, meruTokenActivateLimiter, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+  const { code, email, product } = req.body;
+  const VALID_PRODUCTS = { tokens_250: 250, tokens_500: 500 };
+
+  if (!code || typeof code !== 'string' || !/^[A-Za-z0-9_\-]+$/.test(code.trim()) || code.trim().length > 50) {
+    return res.status(400).json({ success: false, error: 'Invalid activation code' });
+  }
+  if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required' });
+  }
+  if (!product || !VALID_PRODUCTS[product]) {
+    return res.status(400).json({ success: false, error: 'Invalid product' });
+  }
+
+  const meruCode = code.trim();
+  const userId = String(user.telegramId || user.telegram_id || user.id);
+  const username = user.username || user.first_name || null;
+  const tokensToCredit = VALID_PRODUCTS[product];
+
+  const lockKey = `meru:token:activate:${meruCode}`;
+  const lockAcquired = await cache.acquireLock(lockKey, 60);
+  if (!lockAcquired) {
+    return res.status(423).json({ success: false, error: 'Activation already in progress. Wait a moment.' });
+  }
+
+  try {
+    const meruLinkService = require('../../services/meruLinkService');
+    const meruPaymentService = require('../../services/meruPaymentService');
+
+    // 1. Check code exists and matches the product
+    const linkResult = await query(
+      `SELECT id, code, meru_link, product, status FROM meru_payment_links WHERE code = $1 LIMIT 1`,
+      [meruCode]
+    );
+    const link = linkResult.rows[0];
+    if (!link) return res.status(404).json({ success: false, error: 'Code not found' });
+    if (link.product !== product) return res.status(400).json({ success: false, error: 'Code does not match the selected package' });
+    if (link.status === 'used' || link.status === 'invalid') return res.status(409).json({ success: false, error: 'This code has already been used' });
+
+    // 2. Puppeteer payment verification
+    const verification = await meruPaymentService.verifyPayment(meruCode, user.language || 'es');
+    if (!verification.isPaid) {
+      return res.status(402).json({ success: false, error: 'Payment not yet completed on Meru. Please complete payment first then try again.' });
+    }
+
+    // 3. Atomically claim the code
+    const claimResult = await meruLinkService.invalidateLinkAfterActivation(meruCode, userId, username);
+    if (!claimResult.success) {
+      return res.status(409).json({ success: false, error: 'Code not found or already used' });
+    }
+
+    // 4. Create a pending token_purchases row (required by creditTokens' idempotency guard)
+    //    then flip it to 'paid' and credit the wallet atomically.
+    const idempotencyKey = `meru:token:${meruCode}`;
+    const usdAmount = tokensToCredit / 6;
+    await DashTokenService.recordPurchase(userId, tokensToCredit, usdAmount, idempotencyKey);
+    const creditResult = await DashTokenService.creditTokens(userId, tokensToCredit, idempotencyKey, {
+      provider: 'meru', product, usdAmount,
+    });
+
+    logger.info('[wallet/activate-meru-tokens] Tokens credited', { userId, product, tokens: tokensToCredit, code: meruCode });
+    return res.json({ success: true, tokens: tokensToCredit, newBalance: creditResult.newBalance });
+  } catch (err) {
+    logger.error('[wallet/activate-meru-tokens] Error', { error: err.message, userId, code: meruCode });
+    return res.status(500).json({ success: false, error: 'Activation failed. Please contact support.' });
+  } finally {
+    await cache.releaseLock(lockKey).catch(() => {});
   }
 }));
 
@@ -13900,8 +14005,8 @@ const callBookingController = require('./controllers/callBookingController');
 
 // H-08: Rate limit checkout creation — 5 attempts per 60 seconds, keyed by user ID
 const checkoutLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 5,
+  windowMs: 2 * 60 * 1000,
+  max: 2,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: false,

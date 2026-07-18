@@ -959,18 +959,54 @@ class PaymentRecoveryService {
                 ? { Authorization: `Bearer ${results._jwtToken}`, 'x-api-key': apiKey }
                 : { 'x-api-key': apiKey };
 
-              const searchResp = await axios.get(`${npEnv}/payment/`, {
-                params: { order_id: row.order_id, limit: 1, orderBy: 'DESC' },
-                headers: searchHeaders,
-                timeout: 10000,
-              });
-              const data = searchResp.data?.data?.[0] || searchResp.data?.payments?.[0];
-              if (data?.payment_id) {
-                paymentId = String(data.payment_id);
-                await query(
-                  `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-                  [row.order_id, `nowpayments:${paymentId}:reconciler_lookup`]
-                ).catch(() => {});
+              // For invoice-based flows (call packages, subscriptions via /invoice),
+              // NowPayments indexes payments by invoice_id — not order_id. Try invoice_id
+              // lookup first using the value stored in DSO metadata.
+              const rowMetaRaw = row.metadata;
+              const rowMetaParsed = rowMetaRaw && typeof rowMetaRaw === 'object'
+                ? rowMetaRaw
+                : (typeof rowMetaRaw === 'string'
+                    ? (() => { try { return JSON.parse(rowMetaRaw); } catch { return null; } })()
+                    : null);
+              const nowpaymentsInvoiceId = rowMetaParsed?.nowpaymentsInvoiceId;
+
+              if (nowpaymentsInvoiceId) {
+                try {
+                  const invResp = await axios.get(`${npEnv}/payment/`, {
+                    params: { invoice_id: nowpaymentsInvoiceId, limit: 1, orderBy: 'DESC' },
+                    headers: searchHeaders,
+                    timeout: 10000,
+                  });
+                  const invData = invResp.data?.data?.[0] || invResp.data?.payments?.[0];
+                  if (invData?.payment_id) {
+                    paymentId = String(invData.payment_id);
+                    await query(
+                      `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
+                      [row.order_id, `nowpayments:${paymentId}:reconciler_invoice_lookup`]
+                    ).catch(() => {});
+                  }
+                } catch (invErr) {
+                  logger.debug('NOWPayments reconciler: invoice_id lookup failed, falling back to order_id', {
+                    orderId: row.order_id, invoiceId: nowpaymentsInvoiceId, status: invErr.response?.status,
+                  });
+                }
+              }
+
+              // Fallback: look up by order_id (works for direct-payment flows)
+              if (!paymentId) {
+                const searchResp = await axios.get(`${npEnv}/payment/`, {
+                  params: { order_id: row.order_id, limit: 1, orderBy: 'DESC' },
+                  headers: searchHeaders,
+                  timeout: 10000,
+                });
+                const data = searchResp.data?.data?.[0] || searchResp.data?.payments?.[0];
+                if (data?.payment_id) {
+                  paymentId = String(data.payment_id);
+                  await query(
+                    `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
+                    [row.order_id, `nowpayments:${paymentId}:reconciler_lookup`]
+                  ).catch(() => {});
+                }
               }
             } catch (lookupErr) {
               const httpStatus = lookupErr.response?.status;

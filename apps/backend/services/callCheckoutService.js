@@ -582,6 +582,32 @@ async function _getPerformerId(client, creatorUserId) {
 }
 
 // ---------------------------------------------------------------------------
+// _findReusableCallDso — dedup helper (prevents duplicate DSO accumulation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the most recent pending call-package DSO for this user+creator+package
+ * if it was created within the last 25 minutes (invoices haven't expired yet).
+ * Callers return the cached checkout URL instead of spawning a new payment.
+ */
+async function _findReusableCallDso(userId, creatorId, packageId) {
+  const result = await query(
+    `SELECT btcpay_invoice_id, metadata, usd_amount, created_at
+     FROM dash_subscription_orders
+     WHERE user_id = $1
+       AND plan_id = 'call_package'
+       AND creator_id = $2::text
+       AND status = 'pending'
+       AND (metadata->>'packageId')::int = $3
+       AND created_at > NOW() - INTERVAL '25 minutes'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, String(creatorId), packageId]
+  );
+  return result.rows[0] || null;
+}
+
+// ---------------------------------------------------------------------------
 // createCallCheckoutNowPayments — NowPayments (crypto) checkout for a call package
 // ---------------------------------------------------------------------------
 
@@ -617,6 +643,29 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // 1b. Dedup: if a pending checkout for the same user+creator+package exists and
+  //     the invoice hasn't expired yet, return it instead of creating a new one.
+  const reusableDso = await _findReusableCallDso(userId, pkg.creator_id, packageId);
+  if (reusableDso) {
+    const rMeta = typeof reusableDso.metadata === 'object' ? reusableDso.metadata : JSON.parse(reusableDso.metadata || '{}');
+    const existingInvoiceId = rMeta.nowpaymentsInvoiceId;
+    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? `https://nowpayments.io/payment?iid=${existingInvoiceId}` : null);
+    if (existingUrl) {
+      logger.info('[callCheckoutService] Reusing pending NowPayments call DSO', { userId, packageId, dsoOrderId: reusableDso.btcpay_invoice_id });
+      return {
+        invoiceUrl: existingUrl,
+        paymentId: rMeta.paymentId || null,
+        bookingId: rMeta.bookingId || null,
+        amountUsd: parseFloat(reusableDso.usd_amount),
+        expiresAt: new Date(new Date(reusableDso.created_at).getTime() + 30 * 60 * 1000).toISOString(),
+        orderId: reusableDso.btcpay_invoice_id,
+        nowpaymentsInvoiceId: existingInvoiceId || null,
+        payCurrency: rMeta.payCurrency || null,
+        reused: true,
+      };
+    }
   }
 
   // 2. Use full package price
@@ -737,6 +786,8 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
         startTimeUtc: startTimeUtc || null,
         endTimeUtc: endTimeUtc || null,
         nowpaymentsInvoiceId: String(npPayInfo.nowpaymentsInvoiceId || ''),
+        payCurrency: npPayInfo.payCurrency || null,
+        checkoutUrl: invoiceUrl,
       }),
     ]
   );
@@ -796,6 +847,24 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // 1b. Dedup: return existing pending checkout when still valid.
+  const reusableDsoBtc = await _findReusableCallDso(userId, pkg.creator_id, packageId);
+  if (reusableDsoBtc) {
+    const rMeta = typeof reusableDsoBtc.metadata === 'object' ? reusableDsoBtc.metadata : JSON.parse(reusableDsoBtc.metadata || '{}');
+    if (rMeta.checkoutUrl) {
+      logger.info('[callCheckoutService] Reusing pending BTC call DSO', { userId, packageId, invoiceId: reusableDsoBtc.btcpay_invoice_id });
+      return {
+        invoiceId: reusableDsoBtc.btcpay_invoice_id,
+        checkoutUrl: rMeta.checkoutUrl,
+        paymentId: rMeta.paymentId || null,
+        bookingId: rMeta.bookingId || null,
+        usdAmount: parseFloat(reusableDsoBtc.usd_amount),
+        orderId: rMeta.orderId || reusableDsoBtc.btcpay_invoice_id,
+        reused: true,
+      };
+    }
   }
 
   // 2. Use full package price
@@ -909,6 +978,8 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
         bookingId: booking?.id ?? null,
         startTimeUtc: startTimeUtc || null,
         endTimeUtc: endTimeUtc || null,
+        orderId,
+        checkoutUrl: invoice.checkoutLink,
       }),
     ]
   );
@@ -959,6 +1030,24 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // 1b. Dedup: return existing pending checkout when still valid.
+  const reusableDsoDash = await _findReusableCallDso(userId, pkg.creator_id, packageId);
+  if (reusableDsoDash) {
+    const rMeta = typeof reusableDsoDash.metadata === 'object' ? reusableDsoDash.metadata : JSON.parse(reusableDsoDash.metadata || '{}');
+    if (rMeta.checkoutUrl) {
+      logger.info('[callCheckoutService] Reusing pending Dash call DSO', { userId, packageId, invoiceId: reusableDsoDash.btcpay_invoice_id });
+      return {
+        invoiceId: reusableDsoDash.btcpay_invoice_id,
+        checkoutUrl: rMeta.checkoutUrl,
+        paymentId: rMeta.paymentId || null,
+        bookingId: rMeta.bookingId || null,
+        usdAmount: parseFloat(reusableDsoDash.usd_amount),
+        orderId: rMeta.orderId || reusableDsoDash.btcpay_invoice_id,
+        reused: true,
+      };
+    }
   }
 
   // 2. Use full package price
@@ -1064,6 +1153,8 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
         bookingId: booking?.id ?? null,
         startTimeUtc: startTimeUtc || null,
         endTimeUtc: endTimeUtc || null,
+        orderId,
+        checkoutUrl: invoice.checkoutLink || invoice.checkoutUrl,
       }),
     ]
   );
@@ -1104,7 +1195,7 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
 
 /**
  * Book a call package immediately by debiting Tokens from the member's wallet.
- * 100 Tokens = $1 USD. Grants call_credits + creates a confirmed booking in one transaction.
+ * 6 Tokens = $1 USD. Grants call_credits + creates a confirmed booking in one transaction.
  *
  * @param {object} opts
  * @param {string} opts.memberId    - users.id of the buyer
@@ -1132,7 +1223,7 @@ async function createCallCheckoutTokens({ memberId, packageId, clientNotes = nul
     throw Object.assign(new Error('You cannot book your own call package'), { code: 'SELF_BOOKING', status: 400 });
   }
 
-  const TOKENS_PER_USD = 100;
+  const TOKENS_PER_USD = 6;
   const tokenCost = Math.round(parseFloat(pkg.price_usd) * TOKENS_PER_USD);
 
   const pool = getPool();

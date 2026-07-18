@@ -1,22 +1,21 @@
 /**
  * Dash Token Service
  * Manages Tokens wallets — funded via BTCPay Server / NowPayments
- * 100 Tokens = $1 USD
+ * 6 Tokens = $1 USD
  */
 
 const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 
-// Token packages — bonus capped at 20% max: guarantees ≥16% platform margin
-// even if 100% of tokens are tipped (70% creator payout × 1.20 bonus = 84% max outflow)
+// Token packages — 6 tokens = $1 USD base rate
+// Bonus tokens rewarded on larger packs to incentivize bulk purchases.
 const TOKEN_PACKAGES = [
-  { id: 'pkg_20',   tokens: 2000,   usd: 20,   bonus: 0,  label: '2,000 tokens' },
-  { id: 'pkg_50',   tokens: 5250,   usd: 50,   bonus: 5,  label: '5,250 tokens (+250 extra)' },
-  { id: 'pkg_100',  tokens: 11000,  usd: 100,  bonus: 10, label: '11,000 tokens (+1,000 extra)' },
-  { id: 'pkg_500',  tokens: 57500,  usd: 500,  bonus: 15, label: '57,500 tokens (+7,500 extra)' },
-  { id: 'pkg_1000', tokens: 120000, usd: 1000, bonus: 20, label: '120,000 tokens (+20,000 extra)' },
-  { id: 'pkg_5000', tokens: 600000, usd: 5000, bonus: 20, label: '600,000 tokens (+100,000 extra)' },
+  { id: 'pkg_10',   tokens: 60,   usd: 10,  bonus: 0,   label: '60 tokens' },
+  { id: 'pkg_25',   tokens: 156,  usd: 25,  bonus: 6,   label: '156 tokens (+6 extra)' },
+  { id: 'pkg_50',   tokens: 315,  usd: 50,  bonus: 15,  label: '315 tokens (+15 extra)' },
+  { id: 'pkg_100',  tokens: 660,  usd: 100, bonus: 60,  label: '660 tokens (+60 extra)' },
+  { id: 'pkg_500',  tokens: 3450, usd: 500, bonus: 450, label: '3,450 tokens (+450 extra)' },
 ];
 
 class DashTokenService {
@@ -116,6 +115,32 @@ class DashTokenService {
         cache.del(`wallet:obj:${userId}`).catch(() => {}),
       ]);
       logger.info('Tokens credited', { userId, tokens, invoiceId, newBalance });
+
+      // Best-effort: send token credit email (non-fatal if it fails or user has no email)
+      setImmediate(async () => {
+        try {
+          const { query: dbQuery } = require('../config/postgres');
+          const userRow = await dbQuery(
+            'SELECT email, username FROM users WHERE id = $1 LIMIT 1',
+            [userId]
+          );
+          if (userRow.rows.length > 0 && userRow.rows[0].email && !userRow.rows[0].email.endsWith('@telegram.pnptv.app')) {
+            const emailService = require('./emailservice');
+            await emailService.sendTokenCreditEmail({
+              to: userRow.rows[0].email,
+              username: userRow.rows[0].username || 'amig@',
+              tokens,
+              newBalance,
+              invoiceId,
+              provider: meta.provider || 'payment',
+              usdAmount: meta.usdAmount,
+            });
+          }
+        } catch (emailErr) {
+          logger.warn('creditTokens: failed to send token credit email (non-fatal)', { userId, invoiceId, err: emailErr.message });
+        }
+      });
+
       return { newBalance, alreadyProcessed: false };
     } catch (error) {
       await client.query('ROLLBACK');
