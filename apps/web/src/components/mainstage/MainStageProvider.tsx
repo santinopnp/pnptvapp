@@ -662,7 +662,7 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
         emitDiagnostic("join-start");
         setLoading(true);
         setError(null);
-        if (intentConnectedRef.current && sharedRoom.state !== "disconnected") {
+        if (intentConnectedRef.current && sharedRoom.state === "connected") {
           const stateRes = await getMainStageState();
           if (mountedRef.current) setState(stateRes);
           setIsJoined(true);

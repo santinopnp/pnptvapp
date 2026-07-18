@@ -35,6 +35,7 @@ export function ForceCamMicEnforcer({ active }: ForceCamMicEnforcerProps) {
         }
         if (!isCameraEnabled) {
           await localParticipant.setCameraEnabled(true);
+          if (disposed) return;
         }
       } catch {
         // Permission denied / no device — onMediaDeviceFailure surfaces it.
