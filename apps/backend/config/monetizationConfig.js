@@ -4,10 +4,11 @@
  */
 
 // ── Revenue-split constants ──────────────────────────────────────────────────
-// Token economy: 6 tokens = $1 USD. Per tip: 4 tokens to creator, 2 to platform.
+// 70% to creator, 30% to platform — applies to all non-membership revenue
+// (call packages, tips, token heartbeats, creator subscriptions, admin payouts).
 // CREATOR_REVENUE_RATE + PLATFORM_COMMISSION_RATE MUST equal exactly 1.
-const PLATFORM_COMMISSION_RATE = 2 / 6;  // ≈ 0.3333
-const CREATOR_REVENUE_RATE = 4 / 6;      // ≈ 0.6667 — must equal 1 - PLATFORM_COMMISSION_RATE
+const PLATFORM_COMMISSION_RATE = 0.30;
+const CREATOR_REVENUE_RATE     = 0.70;
 
 // ── Gifted-token policy ──────────────────────────────────────────────────────
 // Tokens gifted before PNP Live's public launch are restricted to these
