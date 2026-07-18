@@ -369,7 +369,7 @@ const b64url = (buf) =>
 // ── Telegram Deep Link Login ─────────────────────────────────────────────────
 
 const TELEGRAM_LOGIN_PREFIX = 'tg_login:';
-const TELEGRAM_LOGIN_TTL = 300; // 5 minutes
+const TELEGRAM_LOGIN_TTL = 600; // 10 minutes — gives mobile users time to app-switch to Telegram and back
 
 /**
  * POST /api/webapp/auth/telegram/token

@@ -14004,14 +14004,16 @@ app.delete('/api/webapp/creator/call-packages/:packageId',
 // ── Book a Call: Checkout, Booking Management & Creator Availability ─────────
 const callBookingController = require('./controllers/callBookingController');
 
-// H-08: Rate limit checkout creation — 5 attempts per 60 seconds, keyed by user ID
+// H-08: Rate limit checkout creation — 5 attempts per 15 min, keyed by user ID.
+// Previous: 2 per 2 min — too tight; users changing crypto or retrying after a
+// popup close were immediately blocked and couldn't create a new invoice.
 const checkoutLimiter = rateLimit({
-  windowMs: 2 * 60 * 1000,
-  max: 2,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: 'Too many checkout attempts. Please wait before trying again.' },
+  message: { success: false, error: 'Too many invoice attempts. Please wait a few minutes before trying again.' },
 });
 
 
