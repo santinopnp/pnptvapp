@@ -29,7 +29,8 @@ const groupManagerService = require('../../../services/groupManagerService');
 const EntitlementModel = require('../../../models/entitlementModel');
 const BusinessNotificationService = require('../../../services/businessNotificationService');
 
-const CRON_EXPR = '0 8 * * 1'; // Monday 08:00 UTC = 03:00 COT
+const CRON_EXPR       = '0 8 * * 1';     // Monday 08:00 UTC = 03:00 COT — weekly award run
+const DAILY_CRON_EXPR = '0 18 * * 1-6';  // Mon–Sat 18:00 UTC = 13:00 COT — daily standings nudge
 const CRON_TZ = 'UTC';
 
 const REWARD_COUNT = 3;              // top 3 get PRIME
@@ -52,6 +53,19 @@ function getPriorWeekWindow(now = new Date()) {
     start: priorMonday,
     end: priorSundayEnd,
     weekStartStr: priorMonday.toISOString().slice(0, 10),
+  };
+}
+
+// Returns window from the most-recent Monday 00:00 UTC to right now.
+function getCurrentWeekWindow(now = new Date()) {
+  const d = new Date(now.getTime());
+  const daysSinceMonday = (d.getUTCDay() + 6) % 7;
+  const thisMonday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  thisMonday.setUTCDate(thisMonday.getUTCDate() - daysSinceMonday);
+  return {
+    start: thisMonday,
+    end: now,
+    weekStartStr: thisMonday.toISOString().slice(0, 10),
   };
 }
 
@@ -743,6 +757,86 @@ async function runWeeklyRank(telegram) {
   logger.info('[WeeklyRank] run complete');
 }
 
+async function runDailyStandings(telegram) {
+  const weekWindow = getCurrentWeekWindow();
+  const { weekStartStr } = weekWindow;
+  logger.info('[DailyStandings] starting run', { weekStart: weekStartStr });
+
+  // ── Telegram linked groups ─────────────────────────────────────────────
+  let groups = [];
+  try { groups = await groupManagerService.getLinkedGroups(); } catch (_) {}
+
+  for (const g of groups) {
+    try {
+      const weeklyPoints = await getWeeklyPoints(String(g.telegram_chat_id), weekWindow.start, weekWindow.end);
+      if (!weeklyPoints.length) continue;
+
+      const top = weeklyPoints.slice(0, 3);
+      const lines = [
+        `🔥 *Ranking semanal — ${g.name}*`,
+        `_Semana del ${weekStartStr} · Actualización de hoy_`,
+        '',
+      ];
+      top.forEach((row, i) => {
+        const medal = ['🥇', '🥈', '🥉'][i];
+        const who = row.username ? `@${row.username}` : 'Miembro';
+        lines.push(`${medal} ${who} — *${row.points} mensajes*`);
+      });
+      if (weeklyPoints.length > 3) {
+        lines.push(`_…y ${weeklyPoints.length - 3} miembros más activos esta semana._`);
+      }
+      lines.push('');
+      lines.push('⏰ El lunes a las 3am (hora Bogotá) se define quién gana *7 días de PRIME* 💜');
+      lines.push('¡Cada mensaje cuenta — todavía estás a tiempo de subir al top!');
+
+      if (telegram) {
+        await telegram.sendMessage(Number(g.telegram_chat_id), lines.join('\n'), {
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+        });
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    } catch (err) {
+      logger.warn('[DailyStandings] group send failed', { chatId: g.telegram_chat_id, error: err.message });
+    }
+  }
+
+  // ── Webapp hangout groups ──────────────────────────────────────────────
+  let hangoutGroups = [];
+  try { hangoutGroups = await getHangoutGroups(); } catch (_) {}
+
+  for (const hg of hangoutGroups) {
+    try {
+      const weeklyActivity = await getHangoutWeeklyMessages(hg.id, weekWindow.start, weekWindow.end);
+      if (!weeklyActivity.length) continue;
+
+      const top = weeklyActivity.slice(0, 3);
+      const lines = [
+        `🔥 Ranking semanal — ${hg.name}`,
+        `Semana del ${weekStartStr} · Actualización de hoy`,
+        '',
+      ];
+      top.forEach((row, i) => {
+        const medal = ['🥇', '🥈', '🥉'][i];
+        const who = row.username || row.first_name || 'Miembro';
+        lines.push(`${medal} ${who} — ${row.points} mensajes`);
+      });
+      if (weeklyActivity.length > 3) {
+        lines.push(`…y ${weeklyActivity.length - 3} miembros más activos esta semana.`);
+      }
+      lines.push('');
+      lines.push('⏰ El lunes a las 3am (hora Bogotá) se define quién gana 7 días de PRIME 💜');
+      lines.push('¡Cada mensaje cuenta — todavía estás a tiempo de subir al top!');
+
+      await postHangoutSystemMessage(hg.id, lines.join('\n'));
+    } catch (err) {
+      logger.warn('[DailyStandings] hangout send failed', { groupId: hg.id, error: err.message });
+    }
+  }
+
+  logger.info('[DailyStandings] run complete', { weekStart: weekStartStr });
+}
+
 function startWeeklyRankScheduler(botInstance) {
   if (!cron.validate(CRON_EXPR)) {
     logger.error('[WeeklyRank] invalid cron expression', { cron: CRON_EXPR });
@@ -754,15 +848,23 @@ function startWeeklyRankScheduler(botInstance) {
     );
   }, { timezone: CRON_TZ });
 
+  cron.schedule(DAILY_CRON_EXPR, () => {
+    runDailyStandings(botInstance?.telegram).catch((err) =>
+      logger.error('[DailyStandings] scheduled run failed', { error: err.message })
+    );
+  }, { timezone: CRON_TZ });
+
   logger.info('[WeeklyRank] scheduler started', {
-    cron: CRON_EXPR, timezone: CRON_TZ,
+    cron: CRON_EXPR, dailyCron: DAILY_CRON_EXPR, timezone: CRON_TZ,
   });
 }
 
 module.exports = {
   startWeeklyRankScheduler,
   runWeeklyRank,
+  runDailyStandings,
   getPriorWeekWindow,
+  getCurrentWeekWindow,
   processGroup,
   processHangoutGroup,
 };

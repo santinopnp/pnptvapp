@@ -272,6 +272,43 @@ class BusinessNotificationService {
     }
   }
   /**
+   * Fired after Wall of Fame daily processing. Posts top-3 WoF performers to the gamification topic.
+   * winners: { legendUser, legendStats, activeUser, activeStats, newMemberUser }
+   */
+  static async notifyWofDailyTop3({ dateKey, winners }) {
+    try {
+      const medals = ['🥇', '🥈', '🥉'];
+      const entries = [
+        { user: winners.legendUser,    label: 'High Legend of the Cult', stats: `${winners.legendStats?.reactions_received || 0} reacciones` },
+        { user: winners.activeUser,    label: 'The Loyal Disciple',       stats: `${winners.activeStats?.photos_shared || 0} fotos compartidas` },
+        { user: winners.newMemberUser, label: 'Tribute of the Cult',      stats: 'Nuevo miembro destacado del día' },
+      ].filter((e) => e.user);
+
+      if (!entries.length) return;
+
+      const lines = [
+        '📸 <b>TOP WALL OF FAME DEL DÍA</b>',
+        '',
+        `📅 ${dateKey}`,
+        '',
+        'Los más aclamados del día en el Wall of Fame:',
+        '',
+      ];
+      entries.forEach(({ user, label, stats }, i) => {
+        const who = user.username ? `@${user.username}` : (user.firstName || user.first_name || 'Miembro');
+        lines.push(`${medals[i]} <b>${who}</b> · ${label}`);
+        lines.push(`   ${stats}`);
+      });
+      lines.push('');
+      lines.push('Sus fotos ya están destacadas en el feed de <a href="https://pnptv.app">PNPtv.app</a> 💜');
+
+      await this.send(lines.join('\n'), 'gamification');
+    } catch (err) {
+      logger.error('notifyWofDailyTop3 failed', { dateKey, error: err.message });
+    }
+  }
+
+  /**
    * Fired after the weekly rank completes. winners: [{username, first_name, points, groupName}]
    */
   static async notifyWeeklyWinners({ weekStart, winners = [] }) {

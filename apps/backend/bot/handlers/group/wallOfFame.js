@@ -233,6 +233,93 @@ async function postWinnersToHangoutWoF(winners, dateKey) {
   }
 }
 
+// Posts the daily top-3 WoF winners to the gamification notification topic.
+async function postWofTop3ToGamification(winners, dateKey) {
+  try {
+    const BusinessNotificationService = require('../../../services/businessNotificationService');
+    const userIds = [winners.legendUserId, winners.activeUserId, winners.newMemberUserId].filter(Boolean);
+    if (!userIds.length) return;
+
+    const [legendUser, activeUser, newMemberUser] = await Promise.all([
+      winners.legendUserId ? UserModel.getById(winners.legendUserId) : null,
+      winners.activeUserId ? UserModel.getById(winners.activeUserId) : null,
+      winners.newMemberUserId ? UserModel.getById(winners.newMemberUserId) : null,
+    ]);
+
+    const { rows: statsRows } = await query(
+      `SELECT user_id, reactions_received, photos_shared
+         FROM wall_of_fame_daily_stats
+        WHERE date_key = $1 AND user_id = ANY($2::text[])`,
+      [dateKey, userIds.map(String)]
+    );
+    const statsMap = Object.fromEntries(statsRows.map((r) => [String(r.user_id), r]));
+
+    await BusinessNotificationService.notifyWofDailyTop3({
+      dateKey,
+      winners: {
+        legendUser,    legendStats:    statsMap[String(winners.legendUserId)],
+        activeUser,    activeStats:    statsMap[String(winners.activeUserId)],
+        newMemberUser,
+      },
+    });
+  } catch (err) {
+    logger.warn('[WoF] gamification top3 notification failed', { error: err.message });
+  }
+}
+
+// Promotes the top-3 WoF posts in the social feed:
+//   1. Sets is_promoted=true on each winner's WoF social post from that day.
+//   2. Creates one system announcement post mentioning all 3.
+async function postWofTop3ToSocialFeed(winners, dateKey) {
+  try {
+    const userIds = [winners.legendUserId, winners.activeUserId, winners.newMemberUserId].filter(Boolean);
+    if (!userIds.length) return;
+
+    // Promote their WoF social posts from that day so the feed ranks them higher
+    await query(
+      `UPDATE social_posts SET is_promoted = true, updated_at = NOW()
+        WHERE is_wof = true
+          AND user_id = ANY($1::text[])
+          AND created_at::date = $2::date`,
+      [userIds.map(String), dateKey]
+    );
+
+    // Fetch user display names for the announcement post
+    const users = (await Promise.all(userIds.map((id) => UserModel.getById(id)))).filter(Boolean);
+    const medals = ['🥇', '🥈', '🥉'];
+    const nameParts = users.map((u, i) => {
+      const who = u.username ? `@${u.username}` : (u.firstName || u.first_name || 'Miembro');
+      return `${medals[i]} ${who}`;
+    });
+
+    const content = [
+      `📸 TOP WALL OF FAME — ${dateKey}`,
+      '',
+      '¡Los más activos del día en el Wall of Fame! 🔥',
+      '',
+      nameParts.join('\n'),
+      '',
+      'Sus fotos están destacadas en el feed. ¡Gracias por animar la comunidad! 💜',
+    ].join('\n');
+
+    const post = await SocialPostService.createPost('8552451957', content, null, null, null, null, false);
+
+    const { get: getIo } = require('../../../services/socketSingleton');
+    const io = getIo();
+    if (io && post) {
+      io.emit('feed:new_post', {
+        ...post,
+        author_id: '8552451957',
+        author_username: 'pnptv',
+        author_first_name: 'PNPtv! News',
+        liked_by_me: false,
+      });
+    }
+  } catch (err) {
+    logger.warn('[WoF] top3 social feed post failed', { error: err.message });
+  }
+}
+
 async function processDailyWinners(dateKey, telegram) {
   // FIX 18: Redis idempotency guard — prevent double-awards on crash-restart cycles
   const redis = getRedis();
@@ -263,6 +350,8 @@ async function processDailyWinners(dateKey, telegram) {
     notifyActiveWinner(telegram, winners.activeUserId, dateKey),
   ]);
   postWinnersToHangoutWoF(winners, dateKey).catch(() => {});
+  postWofTop3ToGamification(winners, dateKey).catch(() => {});
+  postWofTop3ToSocialFeed(winners, dateKey).catch(() => {});
 }
 
 async function ensureDailyProcessing(currentDate, telegram) {
