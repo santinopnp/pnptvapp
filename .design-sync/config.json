@@ -1,0 +1,14 @@
+{
+  "projectId": "ae751cc3-b8b6-4c2e-9ef1-d0e34081b554",
+  "shape": "package",
+  "pkg": "@pnptv/ui-kit",
+  "globalName": "PnptvUiKit",
+  "cssEntry": "./.ds-cache/entry.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "Modal": {
+      "cardMode": "single",
+      "viewport": "480x640"
+    }
+  }
+}
