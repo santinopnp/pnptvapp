@@ -876,7 +876,7 @@ class AuthentikService {
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_RE.test(authentikSub)) {
-      logger.warn('[Authentik] isUserInAdminsGroup: sub is not a valid UUID, skipping', { authentikSub });
+      logger.debug('[Authentik] isUserInAdminsGroup: sub is not a valid UUID (passkey/webauthn), skipping', { authentikSub });
       return false;
     }
 
