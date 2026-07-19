@@ -1008,6 +1008,9 @@ export interface UserProfile {
   wellnessDaysAccumulated?: number;
   // Colombia Socio badge
   colombiaBadge?: boolean;
+  // Hex color from the invite link this user joined through, if any — used
+  // as a profile page background accent.
+  profileColor?: string | null;
   // Gamification badges earned by this user
   gamificationBadges?: UserBadgeEntry[];
   // Consent state
@@ -7603,6 +7606,7 @@ export interface InviteLink {
   expires_at: string | null;
   created_at: string;
   co_only?: boolean;
+  color?: string | null;
 }
 
 export interface InviteLinkStats {
@@ -7649,6 +7653,7 @@ export function createAdminInviteLink(data: {
   isLifetime?: boolean;
   primeHours?: number;
   coOnly?: boolean;
+  color?: string | null;
 }): Promise<{ success: boolean; code: string; url: string; link: InviteLink }> {
   return request("/api/admin/invite-links", { method: "POST", body: data });
 }

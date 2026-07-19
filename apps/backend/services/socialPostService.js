@@ -923,7 +923,9 @@ class SocialPostService {
         `SELECT id, username, first_name, last_name, bio, photo_file_id, pnptv_id,
                 created_at, privacy, date_of_birth, city, country,
                 creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_subscriber_count,
-                wellness_days_accumulated
+                wellness_days_accumulated,
+                (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
+                  WHERE ilu.user_id = users.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
          FROM users WHERE id = $1`,
         [userId]
       ),

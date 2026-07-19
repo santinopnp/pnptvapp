@@ -139,10 +139,10 @@ router.get('/admin/invite-links', adminGuard, asyncHandler(async (_req, res) => 
 
 /**
  * POST /api/admin/invite-links
- * Body: { note?, maxUses?, expiresAt?, isLifetime?, primeHours?, coOnly? }
+ * Body: { note?, maxUses?, expiresAt?, isLifetime?, primeHours?, coOnly?, color? }
  */
 router.post('/admin/invite-links', adminGuard, asyncHandler(async (req, res) => {
-  const { note, maxUses, expiresAt, isLifetime, primeHours, coOnly } = req.body;
+  const { note, maxUses, expiresAt, isLifetime, primeHours, coOnly, color } = req.body;
   const createdBy = req.user?.id || req.session?.user?.id;
 
   const link = await inviteLinkService.createLink({
@@ -153,6 +153,7 @@ router.post('/admin/invite-links', adminGuard, asyncHandler(async (req, res) => 
     isLifetime: isLifetime !== false,
     primeHours: primeHours ? parseInt(primeHours, 10) : 0,
     coOnly:     !!coOnly,
+    color:      color || null,
   });
 
   return res.status(201).json({

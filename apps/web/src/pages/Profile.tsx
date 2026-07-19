@@ -84,6 +84,25 @@ function resolvePhotoUrl(url: string | null | undefined): string | null {
   return null;
 }
 
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function hexToRgba(hex: string, alpha: number): string {
+  const num = parseInt(hex.slice(1), 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function hexShade(hex: string, percent: number): string {
+  const num = parseInt(hex.slice(1), 16);
+  const clamp = (v: number) => Math.max(0, Math.min(255, v));
+  const r = clamp((num >> 16) + Math.round(2.55 * percent));
+  const g = clamp(((num >> 8) & 255) + Math.round(2.55 * percent));
+  const b = clamp((num & 255) + Math.round(2.55 * percent));
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-US", {
     month: "long",
@@ -1058,7 +1077,18 @@ export default function Profile() {
     },
   };
 
-  const customTheme = profileThemes[profile.id];
+  // Dynamic theme derived from the invite link a user joined through (if it
+  // has a color set). Hardcoded profileThemes entries above always win.
+  const linkColor = profile.profileColor && HEX_COLOR_RE.test(profile.profileColor) ? profile.profileColor : null;
+  const dynamicTheme = linkColor
+    ? {
+        gradient: `linear-gradient(135deg, ${linkColor}, ${hexShade(linkColor, 25)})`,
+        color: linkColor,
+        border: hexToRgba(linkColor, 0.4),
+        borderColor: hexToRgba(linkColor, 0.25),
+      }
+    : undefined;
+  const customTheme = profileThemes[profile.id] ?? dynamicTheme;
   const isFounder = !customTheme && (profile.gamificationBadges?.some(b => b.slug === 'founder') ?? false);
   const groupBadge = profile.gamificationBadges?.find(b => b.category_slug === 'group-membership') ?? null;
   const accentGradient = customTheme?.gradient ?? (isFounder

@@ -2164,10 +2164,13 @@ const getProfile = async (req, res) => {
               u.date_of_birth, u.city, u.country, u.privacy,
               u.creator_status, u.creator_type, u.creator_price_usd,
               u.creator_verified, u.creator_featured, u.creator_subscriber_count,
+              u.colombia_badge,
               perf.id as perf_id, perf.is_available as perf_is_available,
               perf.base_price as perf_base_price, perf.total_calls as perf_total_calls,
               perf.total_rating as perf_total_rating, perf.rating_count as perf_rating_count,
-              perf.availability_message as perf_availability_message
+              perf.availability_message as perf_availability_message,
+              (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
+                WHERE ilu.user_id = u.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
        FROM users u
        LEFT JOIN performers perf ON perf.user_id = u.id AND perf.status = 'active'
        WHERE u.id = $1`,
@@ -2235,6 +2238,7 @@ const getProfile = async (req, res) => {
         creatorSubscriberCount: p.creator_subscriber_count || 0,
         hasTelegram: !!p.telegram,
         colombiaBadge: p.colombia_badge || false,
+        profileColor: p.profile_color || null,
         gamificationBadges,
         performerData,
       },

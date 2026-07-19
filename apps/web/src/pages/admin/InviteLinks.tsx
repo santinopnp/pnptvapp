@@ -41,6 +41,8 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
   const [isLifetime, setIsLifetime] = useState(true);
   const [primeHours, setPrimeHours] = useState<string>("72");
   const [coOnly, setCoOnly]     = useState(false);
+  const [colorEnabled, setColorEnabled] = useState(false);
+  const [color, setColor]       = useState("#D4007A");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
@@ -56,6 +58,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
         isLifetime: coOnly ? true : isLifetime,
         primeHours: coOnly ? 0 : parseInt(primeHours || "0", 10),
         coOnly,
+        color: colorEnabled ? color : null,
       });
       if (result.success) {
         onCreated(result.link, result.url);
@@ -186,6 +189,39 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
               <p className="text-xs text-white/30">Típico: 24 para anuncios. Los usuarios que ya tengan PRIME extenderán su tiempo.</p>
             </div>
           )}
+
+          {/* Profile color */}
+          <div
+            className="flex items-center gap-3"
+            style={{ padding: "10px 14px", borderRadius: 12, background: colorEnabled ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${colorEnabled ? color : "rgba(255,255,255,0.08)"}40`, transition: "all 0.15s" }}
+          >
+            <button
+              type="button"
+              onClick={() => setColorEnabled((v) => !v)}
+              className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer select-none"
+            >
+              <span
+                className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
+                style={{ background: colorEnabled ? color : "rgba(255,255,255,0.08)", border: `1.5px solid ${colorEnabled ? color : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
+              >
+                {colorEnabled && <span className="text-white text-xs font-bold">✓</span>}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold" style={{ color: colorEnabled ? color : "rgba(255,255,255,0.6)" }}>🎨 Color de perfil al canjear</p>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>Aplica este color de fondo al perfil del usuario que use el enlace</p>
+              </div>
+            </button>
+            {colorEnabled && (
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0"
+                style={{ border: "1px solid rgba(255,255,255,0.18)", background: "transparent" }}
+                aria-label="Elegir color"
+              />
+            )}
+          </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
@@ -400,7 +436,13 @@ export default function InviteLinks() {
                               ⚡ {link.prime_hours}h PRIME
                             </span>
                           )}
-                          {!link.co_only && !link.is_lifetime && !link.prime_hours && (
+                          {link.color && (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${link.color}20`, color: link.color, border: `1px solid ${link.color}50` }}>
+                              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: link.color }} aria-hidden="true" />
+                              Color
+                            </span>
+                          )}
+                          {!link.co_only && !link.is_lifetime && !link.prime_hours && !link.color && (
                             <span className="text-xs text-white/30">Regular</span>
                           )}
                         </div>

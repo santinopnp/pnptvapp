@@ -27,17 +27,21 @@ function generateCode() {
  * @param {string}  [opts.resourceId]
  * @param {number}  [opts.durationHours=72]
  * @param {boolean} [opts.coOnly=false]  — Colombia-only: restrict to CO IPs, defer PRIME
+ * @param {string}  [opts.color]  — hex color (e.g. "#D4007A") applied to a redeemer's own profile background
  * @returns {Promise<object>}
  */
-async function createLink({ createdBy, note = null, maxUses = null, expiresAt = null, isLifetime = true, primeHours = 0, resourceType = null, resourceId = null, durationHours = 72, badgeSlug = null, coOnly = false } = {}) {
+async function createLink({ createdBy, note = null, maxUses = null, expiresAt = null, isLifetime = true, primeHours = 0, resourceType = null, resourceId = null, durationHours = 72, badgeSlug = null, coOnly = false, color = null } = {}) {
   if (!createdBy) throw new Error('createdBy is required');
+  if (color !== null && !/^#[0-9a-fA-F]{6}$/.test(color)) {
+    throw new Error('color must be a 6-digit hex string (e.g. #D4007A)');
+  }
 
   const code = generateCode();
   const { rows } = await query(
-    `INSERT INTO invite_links (code, created_by, note, max_uses, expires_at, is_lifetime, prime_hours, resource_type, resource_id, duration_hours, badge_slug, co_only)
-     VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12)
+    `INSERT INTO invite_links (code, created_by, note, max_uses, expires_at, is_lifetime, prime_hours, resource_type, resource_id, duration_hours, badge_slug, co_only, color)
+     VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING *`,
-    [code, String(createdBy), note, maxUses ?? null, expiresAt ?? null, isLifetime, Math.max(0, Math.floor(Number(primeHours) || 0)), resourceType ?? null, resourceId ? String(resourceId) : null, Math.max(1, Math.floor(Number(durationHours) || 72)), badgeSlug ?? null, !!coOnly],
+    [code, String(createdBy), note, maxUses ?? null, expiresAt ?? null, isLifetime, Math.max(0, Math.floor(Number(primeHours) || 0)), resourceType ?? null, resourceId ? String(resourceId) : null, Math.max(1, Math.floor(Number(durationHours) || 72)), badgeSlug ?? null, !!coOnly, color],
   );
   return rows[0];
 }
