@@ -470,28 +470,32 @@ async function processHangoutGroup(group, weekWindow) {
   }
 
   // Announcement in hangout chat
+  const podiumLabels = ['🥇', '🥈', '🥉'];
   const lines = [];
-  lines.push(`👑 LA PERRERA WEEKLY THRONE — WEEKLY WINNERS 🐷🔥`);
+  lines.push('🐷🔥 LA PERRERA WEEKLY THRONE 🔥🐷');
+  lines.push('Friday 6PM · Weekly Results');
   lines.push('');
-  lines.push('Friday 6PM results are in!');
+  lines.push('👑 THIS WEEK\'S WINNERS 👑');
   lines.push('');
   if (grantedWinners.length > 0) {
-    const labels = ['🏆 1st Place', '🏆 2nd Place', '🏆 3rd Place'];
     grantedWinners.slice(0, REWARD_COUNT).forEach((w, i) => {
-      const who = w.username || w.first_name || 'Member';
-      lines.push(`${labels[i] || `🏆 ${i + 1}th Place`} — ${who} → 72 hours FREE PRIME`);
+      const who = w.username ? `@${w.username}` : (w.first_name || 'Member');
+      lines.push(`${podiumLabels[i] || '🏆'} ${who} · 72 hrs FREE PRIME 🎉`);
     });
   } else {
-    lines.push('No active members this week — the room was quiet.');
+    lines.push('The room was quiet this week — no winners. 🦗');
   }
   lines.push('');
-  lines.push('Full Top 10:');
+  lines.push('──── Full Top 10 ────');
   weeklyActivity.slice(0, 10).forEach((w, i) => {
-    const who = w.username || w.first_name || 'Member';
-    lines.push(`${i + 1}. ${who} — ${w.points} messages`);
+    const who = w.username ? `@${w.username}` : (w.first_name || 'Member');
+    lines.push(`${i + 1}. ${who} · ${w.points} msgs`);
   });
   lines.push('');
-  lines.push('Massive respect to everyone posting and feeding the cult. See you next week sluts 😈💦');
+  lines.push('Mad respect to every perra who posted 🫡');
+  lines.push('See you next Friday 6PM 😈💦');
+  lines.push('');
+  lines.push('#LaPerrera #WeeklyThrone #PNPtv');
 
   await postHangoutSystemMessage(group.id, lines.join('\n'));
 
@@ -642,27 +646,31 @@ async function processGroup(telegram, group, weekWindow) {
   // ── Announcement ──────────────────────────────────────────────────────────
   try {
     const lines = [];
-    lines.push('👑 <b>LA PERRERA WEEKLY THRONE — WEEKLY WINNERS</b> 🐷🔥');
+    lines.push('🐷🔥 <b>LA PERRERA WEEKLY THRONE</b> 🔥🐷');
+    lines.push('<i>Friday 6PM Colombia · Weekly Results</i>');
     lines.push('');
-    lines.push('Friday 6PM results are in!');
+    lines.push('👑 <b>THIS WEEK\'S WINNERS</b> 👑');
     lines.push('');
     if (grantedWinners.length > 0) {
-      const labels = ['🏆 1st Place', '🏆 2nd Place', '🏆 3rd Place'];
+      const podiumTg = ['🥇', '🥈', '🥉'];
       grantedWinners.slice(0, REWARD_COUNT).forEach((w, i) => {
-        const who = w.username ? `@${w.username}` : 'Member';
-        lines.push(`${labels[i] || `🏆 ${i + 1}th Place`} — ${who} → <b>72 hours FREE PRIME</b>`);
+        const who = w.username ? `@${w.username}` : (w.first_name || 'Member');
+        lines.push(`${podiumTg[i] || '🏆'} ${who} · <b>72 hrs FREE PRIME</b> 🎉`);
       });
     } else {
-      lines.push('No active members this week — the room was quiet.');
+      lines.push('The room was quiet this week — no winners. 🦗');
     }
     lines.push('');
-    lines.push('<b>Full Top 10:</b>');
+    lines.push('📊 <b>Full Top 10</b>');
     weeklyPoints.slice(0, 10).forEach((w, i) => {
-      const who = w.username ? `@${w.username}` : 'Member';
-      lines.push(`${i + 1}. ${who} — ${w.points} messages`);
+      const who = w.username ? `@${w.username}` : (w.first_name || 'Member');
+      lines.push(`${i + 1}. ${who} · ${w.points} msgs`);
     });
     lines.push('');
-    lines.push('Massive respect to everyone posting and feeding the cult. See you next week sluts 😈💦');
+    lines.push('Mad respect to every perra who posted 🫡');
+    lines.push('See you next Friday 6PM 😈💦');
+    lines.push('');
+    lines.push('#LaPerrera #WeeklyThrone #PNPtv');
 
     await telegram.sendMessage(Number(chatId), lines.join('\n'), {
       parse_mode: 'HTML',
@@ -775,18 +783,20 @@ async function runDailyStandings(telegram) {
       const weeklyPoints = await getWeeklyPoints(String(g.telegram_chat_id), weekWindow.start, weekWindow.end);
       if (!weeklyPoints.length) continue;
 
-      const lines = ['📊 <b>LA PERRERA WEEKLY THRONE — CURRENT STANDINGS</b> 🔥', ''];
-      lines.push('Top 10 pigs right now (updated today):');
+      const lines = ['📊 <b>LA PERRERA — LIVE STANDINGS</b> 🔥', ''];
+      lines.push(`<i>Week of ${weekStartStr} · Updated today</i>`);
+      lines.push('');
+      lines.push('🐷 <b>Top right now</b>');
       lines.push('');
       weeklyPoints.slice(0, 10).forEach((row, i) => {
-        const who = row.username ? `@${row.username}` : 'Member';
-        lines.push(`${i + 1}. ${who} — ${row.points} messages`);
+        const who = row.username ? `@${row.username}` : (row.first_name || 'Member');
+        lines.push(`${i + 1}. ${who} · ${row.points} msgs`);
       });
       lines.push('');
-      lines.push('Still time to climb before Friday 6PM Colombia!');
-      lines.push('Top 3 takes home <b>72 hours FREE PRIME</b> each 😈');
+      lines.push('⏰ <b>Friday 6PM Colombia</b> · Top 3 wins <b>72 hrs FREE PRIME</b> 😈');
+      lines.push('Still time to climb — keep posting! 💨🐷');
       lines.push('');
-      lines.push('Keep posting. Keep getting spun. Climb the throne perras 💨🐷');
+      lines.push('#LaPerrera #PNPtv');
 
       if (telegram) {
         await telegram.sendMessage(Number(g.telegram_chat_id), lines.join('\n'), {
@@ -809,18 +819,20 @@ async function runDailyStandings(telegram) {
       const weeklyActivity = await getHangoutWeeklyMessages(hg.id, weekWindow.start, weekWindow.end);
       if (!weeklyActivity.length) continue;
 
-      const lines = ['📊 LA PERRERA WEEKLY THRONE — CURRENT STANDINGS 🔥', ''];
-      lines.push('Top 10 pigs right now (updated today):');
+      const lines = ['📊 LA PERRERA — LIVE STANDINGS 🔥', ''];
+      lines.push(`Week of ${weekStartStr} · Updated today`);
+      lines.push('');
+      lines.push('🐷 Top right now');
       lines.push('');
       weeklyActivity.slice(0, 10).forEach((row, i) => {
-        const who = row.username || row.first_name || 'Member';
-        lines.push(`${i + 1}. ${who} — ${row.points} messages`);
+        const who = row.username ? `@${row.username}` : (row.first_name || 'Member');
+        lines.push(`${i + 1}. ${who} · ${row.points} msgs`);
       });
       lines.push('');
-      lines.push('Still time to climb before Friday 6PM Colombia!');
-      lines.push('Top 3 takes home 72 hours FREE PRIME each 😈');
+      lines.push('⏰ Friday 6PM Colombia · Top 3 wins 72 hrs FREE PRIME 😈');
+      lines.push('Still time to climb — keep posting! 💨🐷');
       lines.push('');
-      lines.push('Keep posting. Keep getting spun. Climb the throne perras 💨🐷');
+      lines.push('#LaPerrera #PNPtv');
 
       await postHangoutSystemMessage(hg.id, lines.join('\n'));
     } catch (err) {
