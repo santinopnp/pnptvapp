@@ -158,37 +158,43 @@ function StreamNoTokensWall() {
   );
 }
 
-function InsufficientTokensWall({ current }: { current?: number }) {
+function InsufficientTokensWall({ current, streamName }: { current?: number; streamName?: string }) {
   const navigate = useNavigate();
   return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-5 px-6 text-center">
+    <div
+      className="relative z-10 mx-4 rounded-2xl px-6 py-7 flex flex-col items-center gap-4 text-center w-full max-w-xs"
+      style={{ background: "rgba(12,12,18,0.94)", border: "1px solid rgba(212,0,122,0.4)", boxShadow: "0 30px 80px rgba(0,0,0,0.7)" }}
+    >
+      {streamName && (
+        <p className="text-[10px] font-semibold text-white/40 uppercase tracking-widest">{streamName}</p>
+      )}
       <div
-        className="w-16 h-16 rounded-full flex items-center justify-center"
-        style={{ background: "rgba(212,0,122,0.12)", border: "1px solid rgba(212,0,122,0.3)" }}
+        className="w-14 h-14 rounded-full flex items-center justify-center"
+        style={{ background: "rgba(212,0,122,0.15)", border: "1.5px solid rgba(212,0,122,0.45)" }}
       >
-        <svg className="w-8 h-8" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+        <svg className="w-7 h-7" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
         </svg>
       </div>
       <div>
-        <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Tokens insuficientes</h2>
-        <p className="text-sm text-pnp-textSecondary max-w-xs">
-          Necesitas al menos 60 tokens para ver este stream.
+        <h2 className="text-base font-bold text-white mb-1.5">Tokens insuficientes</h2>
+        <p className="text-xs text-white/60 leading-relaxed">
+          Necesitas al menos <strong className="text-white/90">60 tokens</strong> para ver este show.
           {current !== undefined && (
-            <span className="block mt-1">
-              Tienes <strong className="text-pnp-textPrimary">{current}</strong> token{current !== 1 ? "s" : ""} ahora.
+            <span className="block mt-1.5">
+              Tienes <strong className="text-pnp-accent">{current}</strong> token{current !== 1 ? "s" : ""}.
             </span>
           )}
         </p>
       </div>
       <button
         onClick={() => navigate("/tokens")}
-        className="px-6 py-3 rounded-xl text-sm font-bold text-white"
+        className="w-full py-3 rounded-xl text-sm font-bold text-white active:scale-95 transition-transform"
         style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
       >
         Comprar tokens →
       </button>
-      <button onClick={() => navigate(-1)} className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary">
+      <button onClick={() => navigate(-1)} className="text-xs text-white/40 hover:text-white/70 transition-colors">
         ← Volver
       </button>
     </div>
@@ -1475,8 +1481,23 @@ function StreamInner() {
         </div>
       )}
       {rulesAcknowledged && !isStreamOwner && entryChecked && !entryAllowed && (
-        <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-pnp-background">
-          <InsufficientTokensWall current={entryError === "INSUFFICIENT_TOKENS" ? (tokenBalance ?? undefined) : undefined} />
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center overflow-hidden">
+          {stream?.thumbnailUrl ? (
+            <img
+              src={stream.thumbnailUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover scale-110"
+              style={{ filter: "blur(28px)" }}
+              aria-hidden="true"
+            />
+          ) : (
+            <div className="absolute inset-0 bg-pnp-background" />
+          )}
+          <div className="absolute inset-0 bg-black/65" />
+          <InsufficientTokensWall
+            current={entryError === "INSUFFICIENT_TOKENS" ? (tokenBalance ?? undefined) : undefined}
+            streamName={stream?.name}
+          />
         </div>
       )}
 
@@ -1799,37 +1820,6 @@ function StreamInner() {
               onStats={isStreamOwner ? handlePlayerStats : undefined}
               viewerUsername={user?.username ?? user?.firstName ?? undefined}
             />
-            {!isStreamOwner && tokenBalance !== null && tokenBalance < 60 && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center backdrop-blur-lg bg-black/60">
-                <div
-                  className="mx-4 rounded-2xl px-6 py-5 flex flex-col items-center gap-3 text-center max-w-xs"
-                  style={{ background: "rgba(20,20,25,0.95)", border: "1px solid rgba(212,0,122,0.35)" }}
-                >
-                  <div
-                    className="w-12 h-12 rounded-full flex items-center justify-center"
-                    style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.4)" }}
-                  >
-                    <svg className="w-6 h-6" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-white mb-1">Necesitas tokens para ver</p>
-                    <p className="text-xs text-white/60">
-                      Mínimo <strong className="text-white/80">60 tokens</strong> para acceder al show.<br />
-                      Tienes {tokenBalance} token{tokenBalance !== 1 ? "s" : ""} ahora.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowTopUp(true)}
-                    className="w-full py-2.5 rounded-xl text-sm font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                  >
-                    Comprar tokens →
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
