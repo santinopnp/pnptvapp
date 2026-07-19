@@ -17,6 +17,7 @@ const fs = require('fs').promises;
 // getBotInstance is lazy-required inside getVideoChatStatus to avoid circular dependency
 const { invalidateLinkedCache } = require('../../core/middleware/groupSecurityEnforcement');
 const wellnessModeService = require('../../../services/wellnessModeService');
+const mentionService = require('../../../services/mentionService');
 
 // In-memory cache for Telegram video chat status (30s TTL)
 const _videoChatCache = new Map();
@@ -1392,6 +1393,11 @@ const sendMessage = async (req, res) => {
 
     // Touch activity timestamp
     await query('UPDATE hangout_groups SET last_activity_at = NOW() WHERE id = $1', [groupId]);
+
+    // Parse @mentions and notify tagged users (non-blocking, same pattern as chatController.js)
+    setImmediate(() => {
+      mentionService.createChatMentions(msg.id, user.id, text, room).catch(() => {});
+    });
 
     // Broadcast via Socket.IO
     const io = req.app.get('io');

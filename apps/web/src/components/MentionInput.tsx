@@ -19,6 +19,17 @@ interface MentionInputProps {
   rows?: number;
   autoFocus?: boolean;
   disabled?: boolean;
+  /**
+   * Extra keydown handler, invoked only when the mention dropdown is closed
+   * (i.e. after this component's own Escape/Arrow/Enter dropdown handling
+   * has had first refusal). Use for caller-specific shortcuts — e.g. Escape
+   * to cancel an edit-in-progress — without fighting the dropdown's own key
+   * handling.
+   */
+  onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** Exposes the underlying textarea DOM node, e.g. for auto-grow sizing. */
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
+  style?: React.CSSProperties;
 }
 
 interface ActiveMention {
@@ -57,6 +68,9 @@ export function MentionInput({
   rows = 2,
   autoFocus = false,
   disabled = false,
+  onKeyDown: onKeyDownProp,
+  textareaRef: externalTextareaRef,
+  style,
 }: MentionInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -190,8 +204,12 @@ export function MentionInput({
         e.preventDefault();
         onSubmit();
       }
+
+      // Dropdown didn't intercept this key — let the caller's own handler
+      // (e.g. Escape-to-cancel-edit) see it.
+      onKeyDownProp?.(e);
     },
-    [dropdown, selectedIndex, insertMention, onSubmit]
+    [dropdown, selectedIndex, insertMention, onSubmit, onKeyDownProp]
   );
 
   const handleSelect = useCallback(() => {
@@ -267,7 +285,12 @@ export function MentionInput({
       )}
 
       <textarea
-        ref={textareaRef}
+        ref={(el) => {
+          (textareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el;
+          if (externalTextareaRef) {
+            (externalTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el;
+          }
+        }}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -278,6 +301,7 @@ export function MentionInput({
         // eslint-disable-next-line jsx-a11y/no-autofocus
         autoFocus={autoFocus}
         maxLength={maxLength}
+        style={style}
         className={
           className ??
           "w-full bg-white/5 text-white text-xs rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/30 resize-none"

@@ -90,6 +90,7 @@ import { CreateEventModal } from "@/components/events/CreateEventModal";
 import { EventDetailModal } from "@/components/events";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
+import { MentionInput } from "@/components/MentionInput";
 import { MediaUploadButton } from "@/components/hangouts/MediaUploadButton";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoCallButton } from "@/components/hangouts/VideoCallButton";
@@ -324,6 +325,16 @@ function HangoutChatPanel({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastTypingEmit = useRef(0);
+
+  // Auto-grow the composer as text is typed/restored (including on the
+  // initial mount, e.g. an edit's content or a restored draft).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  }, [inputText]);
+
   const hasFetched = useRef<number | null>(null);
   const isNearBottom = useRef(true);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1555,24 +1566,15 @@ function HangoutChatPanel({
               />
             </div>
           )}
-          <textarea
-            ref={(el) => {
-              inputRef.current = el;
-              if (el) {
-                el.style.height = "auto";
-                el.style.height = Math.min(el.scrollHeight, 120) + "px";
-              }
-            }}
+          <MentionInput
+            textareaRef={inputRef}
             value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
+            onChange={(v) => {
+              setInputText(v);
               if (!editingMsg) emitTyping();
-              const el = e.target;
-              el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 120) + "px";
             }}
+            onSubmit={handleSend}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
               if (e.key === "Escape" && editingMsg) cancelEdit();
               if (e.key === "Escape" && replyTo) setReplyTo(null);
             }}
