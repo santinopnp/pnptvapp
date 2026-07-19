@@ -2121,6 +2121,21 @@ const startBot = async () => {
       logger.warn(`Weekly group rank scheduler initialization failed: ${error.message}`);
     }
 
+    // Daily community Wall of Fame feature — 01:00 UTC (20:00 COT previous day)
+    // Picks the most active hangout media poster, features them everywhere, awards +50 ranking points.
+    try {
+      const cron = require('node-cron');
+      const { runDailyWofFeature } = require('../handlers/group/wallOfFame');
+      cron.schedule('0 1 * * *', () => {
+        runDailyWofFeature(bot.telegram).catch((err) =>
+          logger.error('[WoF] Daily community feature cron failed', { error: err.message })
+        );
+      }, { timezone: 'UTC' });
+      logger.info('✓ Daily WoF community feature scheduler started (01:00 UTC)');
+    } catch (error) {
+      logger.warn(`Daily WoF community feature scheduler failed to start: ${error.message}`);
+    }
+
     // Initialize X post analytics ingestion scheduler (every 6h)
     try {
       const XAnalyticsIngestionScheduler = require('./schedulers/xAnalyticsIngestionScheduler');

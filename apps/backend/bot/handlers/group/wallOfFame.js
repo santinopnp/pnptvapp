@@ -178,6 +178,190 @@ async function maybeResetMonthlyBadges(currentDate) {
   }
 }
 
+// ── Daily community WoF feature (hangout-popularity-driven) ─────────────────
+// Picks the most active media poster from linked community hangouts,
+// features their best media in the Telegram group + social feed + hangout chat,
+// and awards +50 ranking points. Runs once per day via cron.
+
+async function runDailyWofFeature(telegram) {
+  const redis = getRedis();
+  const dateKey = getDateKey();
+  const lockKey = `wof:community:lock:${dateKey}`;
+
+  if (redis) {
+    const acquired = await redis.set(lockKey, '1', 'EX', 86400, 'NX');
+    if (!acquired) {
+      logger.info('[WoF] Daily community feature already ran today', { dateKey });
+      return;
+    }
+  }
+
+  // Find most active media poster from community hangouts (last 24h, exclude system accounts)
+  const COMMUNITY_ROOMS = ['hangout:88', 'hangout:87', 'hangout:123'];
+  const SYSTEM_IDS = ['8552451957', '15b6d61e-e6cf-46d5-9152-628fa0b30e89'];
+
+  const { rows: candidates } = await query(
+    `SELECT cm.user_id, u.username, u.first_name, u.last_name,
+            COUNT(*) AS media_count,
+            MAX(cm.id) AS best_msg_id,
+            MAX(cm.media_url) AS best_media_url,
+            MAX(cm.media_type) AS media_type
+       FROM chat_messages cm
+       LEFT JOIN users u ON u.id::text = cm.user_id
+      WHERE cm.room = ANY($1::text[])
+        AND cm.media_url IS NOT NULL
+        AND cm.media_type IN ('image','video')
+        AND cm.media_url NOT LIKE '%telegram.org%'
+        AND cm.is_deleted = false
+        AND cm.user_id IS NOT NULL
+        AND cm.user_id != ALL($2::text[])
+        AND cm.created_at > NOW() - INTERVAL '24 hours'
+      GROUP BY cm.user_id, u.username, u.first_name, u.last_name
+      ORDER BY media_count DESC, MAX(cm.created_at) DESC
+      LIMIT 1`,
+    [COMMUNITY_ROOMS, SYSTEM_IDS]
+  );
+
+  if (!candidates.length) {
+    logger.info('[WoF] No community media posts in last 24h — skipping feature');
+    return;
+  }
+
+  const winner = candidates[0];
+  const displayName = winner.username ? `@${winner.username}` : (winner.first_name || 'Miembro');
+  const APP_BASE_URL = 'https://pnptv.app';
+  const mediaCount = parseInt(winner.media_count);
+
+  const promoHTML =
+    `🔥 <b>WALL OF FAME</b> 🐷💨\n\n` +
+    `${displayName} just posted ${mediaCount > 1 ? `${mediaCount} times` : 'fire content'} in the hangout and we <b>had to</b> feature this — too hot not to 🌡️\n\n` +
+    `This is the energy we live for here.\n\n` +
+    `─────────────\n` +
+    `🎥 <b>Want YOUR content on the Wall of Fame?</b>\n` +
+    `Post in the hangout. The hottest content gets featured every day.\n\n` +
+    `Ready to actually <b>earn</b> from your content?\n` +
+    `👉 <a href="${APP_BASE_URL}/creators">Apply as a Creator / Performer</a>\n` +
+    `Build your room. Keep <b>70%</b> of everything.\n` +
+    `─────────────\n\n` +
+    `The cult rewards those who show up. 💜\n\n` +
+    `<a href="${APP_BASE_URL}/social">🏆 Wall of Fame in the app</a>\n\n` +
+    `#WallOfFame #CloudyDays #PNPtv #LaPerrera`;
+
+  const promoPlain =
+    `🔥 WALL OF FAME 🐷💨\n\n` +
+    `${displayName} just posted ${mediaCount > 1 ? `${mediaCount} times` : 'fire content'} in the hangout and we HAD to feature this — too hot not to 🌡️\n\n` +
+    `This is the energy we live for here.\n\n` +
+    `──────────────\n` +
+    `🎥 Want YOUR content on the Wall of Fame?\n` +
+    `Post in the hangout. The hottest content gets featured every day.\n\n` +
+    `Ready to actually earn from your content?\n` +
+    `👉 Apply as a Creator / Performer at ${APP_BASE_URL}/creators\n` +
+    `Build your room. Keep 70% of everything.\n` +
+    `──────────────\n\n` +
+    `The cult rewards those who show up. 💜\n\n` +
+    `#WallOfFame #CloudyDays #PNPtv #LaPerrera`;
+
+  // 1. Award +50 ranking points in Cloudy Days group
+  const CLOUDY_CHAT_ID = '-1003785445607';
+  try {
+    await query(
+      `INSERT INTO group_points (telegram_chat_id, pnptv_user_id, telegram_user_id, username, points, reason)
+       VALUES ($1, $2, $2, $3, 50, 'Wall of Fame daily feature')`,
+      [CLOUDY_CHAT_ID, winner.user_id, winner.username || null]
+    );
+    logger.info('[WoF] +50 ranking points awarded', { userId: winner.user_id });
+  } catch (err) {
+    logger.warn('[WoF] Points award failed', { error: err.message });
+  }
+
+  // 2. Update wall_of_fame_daily_stats
+  try {
+    await query(
+      `INSERT INTO wall_of_fame_daily_stats (date_key, user_id, photos_shared)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (date_key, user_id) DO UPDATE
+         SET photos_shared = wall_of_fame_daily_stats.photos_shared + EXCLUDED.photos_shared`,
+      [dateKey, winner.user_id, mediaCount]
+    );
+  } catch (err) {
+    logger.warn('[WoF] Stats update failed', { error: err.message });
+  }
+
+  // 3. Create promoted social post
+  try {
+    const SocialPostService = require('../../services/socialPostService');
+    await SocialPostService.createPost(
+      winner.user_id,
+      `🔥 Featured on Wall of Fame — Community Hangout`,
+      winner.best_media_url,
+      winner.media_type || 'image',
+      null, null, true  // isWof = true
+    );
+    // Promote it
+    await query(
+      `UPDATE social_posts SET is_promoted = true, updated_at = NOW()
+        WHERE is_wof = true AND user_id = $1 AND created_at::date = $2::date`,
+      [winner.user_id, dateKey]
+    );
+    logger.info('[WoF] Social post created and promoted', { userId: winner.user_id });
+  } catch (err) {
+    logger.warn('[WoF] Social post failed', { error: err.message });
+  }
+
+  // 4. Post to Telegram Cloudy Days group (with topic fallback)
+  if (telegram) {
+    try {
+      const fullMediaUrl = `${APP_BASE_URL}${winner.best_media_url}`;
+      const sendFn = winner.media_type === 'video'
+        ? (opts) => telegram.sendVideo(Number(CLOUDY_CHAT_ID), { url: fullMediaUrl }, opts)
+        : (opts) => telegram.sendPhoto(Number(CLOUDY_CHAT_ID), { url: fullMediaUrl }, opts);
+      try {
+        await sendFn({ caption: promoHTML, parse_mode: 'HTML', message_thread_id: WALL_OF_FAME_TOPIC_ID });
+        logger.info('[WoF] Posted to Telegram WoF topic', { topicId: WALL_OF_FAME_TOPIC_ID });
+      } catch (topicErr) {
+        if (isTopicMissingError(topicErr)) {
+          await telegram.sendMessage(Number(CLOUDY_CHAT_ID), promoHTML, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: false,
+          });
+          logger.info('[WoF] Topic missing — posted to Cloudy Days general');
+        }
+      }
+    } catch (err) {
+      logger.warn('[WoF] Telegram post failed', { error: err.message });
+    }
+  }
+
+  // 5. Post to community hangout chats
+  const wofGroupId = await getWofGroupId();
+  const hangoutRooms = [88, ...(wofGroupId ? [wofGroupId] : [])];
+  for (const roomId of hangoutRooms) {
+    try {
+      const { rows: [msg] } = await query(
+        `INSERT INTO chat_messages (room, user_id, username, first_name, content, media_url, media_type, message_type)
+         VALUES ($1, '8552451957', 'pnptv', 'PNPtv! News', $2, $3, $4, 'system')
+         RETURNING id`,
+        [`hangout:${roomId}`, promoPlain, winner.best_media_url, winner.media_type || 'image']
+      );
+      // Emit via Socket.IO
+      try {
+        const { get: getIo } = require('../../services/socketSingleton');
+        const io = getIo();
+        if (io && msg) io.to(`hangout:${roomId}`).emit('chat:message', msg);
+      } catch (_) {}
+      logger.info('[WoF] Hangout announcement posted', { roomId, msgId: msg.id });
+    } catch (err) {
+      logger.warn('[WoF] Hangout post failed', { roomId, error: err.message });
+    }
+  }
+
+  logger.info('[WoF] Daily community feature complete', {
+    dateKey,
+    winner: winner.username || winner.user_id,
+    mediaCount,
+  });
+}
+
 async function postWinnersToHangoutWoF(winners, dateKey) {
   try {
     const { rows: topics } = await query(
@@ -1026,4 +1210,5 @@ module.exports = {
   trackWallOfFameMessage,
   isWallOfFameMessage,
   getWallOfFameMessages,
+  runDailyWofFeature,
 };
