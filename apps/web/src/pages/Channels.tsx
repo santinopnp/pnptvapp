@@ -2488,3 +2488,394 @@ function ChannelsInner() {
     </>
   );
 }
+
+// ── Videorama VOD Browser ────────────────────────────────────────────────────
+
+function VideoramaInner() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
+  const [channels, setChannels] = useState<CreatorChannel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const TAGS = [
+    { tag: "raw", e: "🔥" }, { tag: "leather", e: "🥋" }, { tag: "bear", e: "🐻" },
+    { tag: "solo", e: "1️⃣" }, { tag: "bdsm", e: "⛓️" }, { tag: "muscle", e: "🏋️" },
+    { tag: "latino", e: "🌶️" }, { tag: "twink", e: "🌸" }, { tag: "daddy", e: "👨" },
+    { tag: "group", e: "👥" }, { tag: "outdoor", e: "🌲" }, { tag: "jock", e: "💪" },
+    { tag: "bondage", e: "🪢" }, { tag: "fisting", e: "✊" }, { tag: "breeding", e: "💦" },
+  ];
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const fetchChannels = useCallback(async (p: number, append: boolean) => {
+    if (p === 0) setLoading(true); else setLoadingMore(true);
+    try {
+      const res = await browseCreatorChannels({ search: debouncedSearch || undefined, page: p, limit: 24 });
+      if (res.success) {
+        const videoChannels = (res.channels ?? []).filter((ch) => (ch.videoCount ?? 0) > 0);
+        if (append) {
+          setChannels((prev) => {
+            const ids = new Set(prev.map((c) => c.id));
+            return [...prev, ...videoChannels.filter((c) => !ids.has(c.id))];
+          });
+        } else {
+          setChannels(videoChannels);
+        }
+        setTotal(res.total);
+        setHasMore(res.nextPage !== null);
+        setPage(p);
+      }
+    } catch {
+      setError("Failed to load content");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    setChannels([]);
+    setPage(0);
+    setError(null);
+    fetchChannels(0, false);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMore || loadingMore) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting && hasMore && !loadingMore) fetchChannels(page + 1, true); },
+      { rootMargin: "200px" }
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, page, fetchChannels]);
+
+  const visibleChannels = activeTag
+    ? channels.filter((ch) => ch.tags?.includes(activeTag))
+    : channels;
+
+  if (selectedChannelId !== null) {
+    return (
+      <>
+        <Helmet>
+          <title>Videorama — PNPtv!</title>
+        </Helmet>
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <ChannelDetailView
+            channelId={selectedChannelId}
+            onBack={() => setSelectedChannelId(null)}
+            onUpdated={(updated) =>
+              setChannels((prev) => prev.map((ch) => (ch.id === updated.id ? { ...ch, ...updated } : ch)))
+            }
+            onDeleted={(id) => setChannels((prev) => prev.filter((ch) => ch.id !== id))}
+          />
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Helmet>
+        <title>Videorama — PNPtv!</title>
+        <meta name="description" content="Browse exclusive PNPtv video channels" />
+      </Helmet>
+      <div className="max-w-6xl xl:max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+        <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 mb-1">
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: "linear-gradient(135deg, #D4007A22, #7B61FF22)", border: "1px solid rgba(212,0,122,0.3)" }}
+              >
+                <svg className="w-4 h-4" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Videorama</h1>
+            </div>
+            <p className="text-sm text-pnp-textSecondary">
+              {loading ? "Loading..." : `${total} channel${total !== 1 ? "s" : ""} · exclusive videos from your creators`}
+            </p>
+          </div>
+          <div className="relative w-full sm:w-64">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-pnp-textSecondary pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search channels…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60 transition-colors"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+          <button
+            onClick={() => setActiveTag(null)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+              activeTag === null ? "bg-pnp-accent text-white" : "bg-pnp-surface border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary"
+            }`}
+          >
+            All
+          </button>
+          {TAGS.map(({ tag, e }) => (
+            <button
+              key={tag}
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+                activeTag === tag ? "bg-pnp-accent text-white" : "bg-pnp-surface border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary"
+              }`}
+            >
+              <span>{e}</span>
+              <span>{tag}</span>
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="rounded-xl border border-pnp-border bg-pnp-surface overflow-hidden">
+                <div className="w-full aspect-video bg-pnp-surfaceHover animate-pulse" />
+                <div className="p-3 space-y-2">
+                  <div className="h-3 w-3/4 bg-pnp-surfaceHover animate-pulse rounded" />
+                  <div className="h-2.5 w-1/2 bg-pnp-surfaceHover animate-pulse rounded" />
+                  <div className="h-2 w-full bg-pnp-surfaceHover animate-pulse rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : visibleChannels.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center mb-4"
+              style={{ background: "rgba(212,0,122,0.1)" }}
+            >
+              <svg className="w-9 h-9 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <p className="text-pnp-textPrimary font-semibold mb-1">No videos found</p>
+            <p className="text-sm text-pnp-textSecondary mb-4 max-w-xs">
+              {activeTag ? `No channels tagged "${activeTag}" have videos yet` : debouncedSearch ? "Try a different search term" : "Creators haven't published videos yet"}
+            </p>
+            {(activeTag || debouncedSearch) && (
+              <Button variant="secondary" size="sm" onClick={() => { setActiveTag(null); setSearch(""); }}>
+                Clear filters
+              </Button>
+            )}
+          </div>
+        ) : (
+          <>
+            {(() => {
+              const featured = visibleChannels.find((c) => c.featured);
+              const rest = visibleChannels.filter((c) => !c.featured);
+              return (
+                <>
+                  {featured && (
+                    <button
+                      onClick={() => setSelectedChannelId(featured.id)}
+                      className="w-full group relative rounded-2xl overflow-hidden border border-pnp-accent/40 text-left transition-transform hover:-translate-y-0.5"
+                      style={{
+                        background: featured.coverImageUrl
+                          ? `linear-gradient(135deg, rgba(123,97,255,0.85) 0%, rgba(212,0,122,0.7) 50%, rgba(0,0,0,0.6) 100%), url(${featured.coverImageUrl}) center/cover`
+                          : "linear-gradient(135deg, rgba(123,97,255,0.9) 0%, rgba(212,0,122,0.85) 100%)",
+                      }}
+                    >
+                      <div className="px-5 py-6 sm:px-7 sm:py-8 flex flex-col sm:flex-row sm:items-center gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/20 text-white backdrop-blur">
+                              Featured
+                            </span>
+                            {featured.videoCount != null && featured.videoCount > 0 && (
+                              <span className="text-[10px] font-semibold text-white/85">
+                                {featured.videoCount} video{featured.videoCount !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                          </div>
+                          <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-sm">{featured.name}</h2>
+                          {featured.description && (
+                            <p className="mt-1.5 text-sm text-white/90 line-clamp-2 max-w-2xl">{featured.description}</p>
+                          )}
+                          {featured.tags && featured.tags.length > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                              {featured.tags.slice(0, 5).map((t) => (
+                                <span key={t} className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/15 text-white/90 backdrop-blur">
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-shrink-0">
+                          <span className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white text-pnp-accent font-semibold text-sm shadow-lg group-hover:scale-105 transition-transform">
+                            Watch now
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                            </svg>
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  )}
+                  {rest.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                      {rest.map((ch) => (
+                        <VideoChannelCard key={ch.id} channel={ch} onClick={() => setSelectedChannelId(ch.id)} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            {loadingMore && (
+              <div className="flex justify-center py-4">
+                <div className="w-6 h-6 border-2 border-pnp-accent border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            <div ref={sentinelRef} className="h-1" />
+          </>
+        )}
+
+        <div className="flex items-center justify-center pt-4">
+          <button
+            onClick={() => navigate("/channels")}
+            className="flex items-center gap-1.5 text-xs text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
+            </svg>
+            All Channels
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VideoChannelCard({ channel, onClick }: { channel: CreatorChannel; onClick: () => void }) {
+  const [coverLoaded, setCoverLoaded] = useState(false);
+  const hasCover = isValidPhotoUrl(channel.coverImageUrl);
+
+  return (
+    <button
+      onClick={onClick}
+      className="rounded-xl border border-pnp-border bg-pnp-surface overflow-hidden flex flex-col text-left transition-all hover:scale-[1.02] hover:border-pnp-accent/40 cursor-pointer w-full group"
+    >
+      <div className="relative w-full aspect-video overflow-hidden">
+        {hasCover ? (
+          <>
+            {!coverLoaded && (
+              <div className="absolute inset-0 bg-pnp-surfaceHover animate-pulse" />
+            )}
+            <img
+              src={channel.coverImageUrl!}
+              alt=""
+              className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${coverLoaded ? "block" : "hidden"}`}
+              onLoad={() => setCoverLoaded(true)}
+              onError={() => setCoverLoaded(true)}
+            />
+          </>
+        ) : (
+          <div
+            className="w-full h-full group-hover:scale-105 transition-transform duration-300"
+            style={{
+              background: `linear-gradient(135deg, hsl(${(channel.id * 47) % 360}, 60%, 20%), hsl(${(channel.id * 47 + 120) % 360}, 60%, 15%))`,
+            }}
+          />
+        )}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,0.85)", backdropFilter: "blur(4px)" }}>
+            <svg className="w-4 h-4 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+            </svg>
+          </div>
+        </div>
+        {channel.videoCount != null && channel.videoCount > 0 && (
+          <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+            style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+            {channel.videoCount} {channel.videoCount === 1 ? "video" : "videos"}
+          </span>
+        )}
+        {(() => {
+          const at = channel.accessType ?? (channel.isPremium ? "subscription" : "free");
+          if (at === "free") return null;
+          let bg = "rgba(212,0,122,0.85)";
+          let label = "Premium";
+          if (at === "prime") { bg = "rgba(167,139,250,0.85)"; label = "Prime"; }
+          else if (at === "paid") { bg = "rgba(230,145,56,0.85)"; label = `$${channel.priceUsd ?? 0}`; }
+          return (
+            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase text-white"
+              style={{ background: bg }}>
+              {label}
+            </span>
+          );
+        })()}
+      </div>
+      <div className="p-3 flex-1 flex flex-col gap-1.5">
+        <p className="text-sm font-semibold text-pnp-textPrimary leading-tight line-clamp-1">{channel.name}</p>
+        {channel.description && (
+          <p className="text-xs text-pnp-textSecondary line-clamp-2 leading-relaxed">{channel.description}</p>
+        )}
+        {channel.tags && channel.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {channel.tags.slice(0, 3).map((tag) => (
+              <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] text-pnp-textSecondary"
+                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 mt-auto pt-1.5 border-t border-pnp-border/50">
+          {isValidPhotoUrl(channel.creatorPhotoUrl) ? (
+            <img src={channel.creatorPhotoUrl!} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+          ) : (
+            <div className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center text-[7px] font-bold text-white"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+              {(channel.creatorName || "?").charAt(0).toUpperCase()}
+            </div>
+          )}
+          <span className="text-[11px] text-pnp-textSecondary truncate">
+            {channel.creatorName || channel.creatorUsername || "Creator"}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export function Videorama() {
+  const { user } = useAuth();
+
+  if (!user || user.tier === "free") {
+    return <MembersOnlyWall message="Videorama exclusive videos require a PNPtv! membership." />;
+  }
+
+  return <VideoramaInner />;
+}

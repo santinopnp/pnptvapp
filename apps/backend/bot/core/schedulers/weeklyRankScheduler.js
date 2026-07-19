@@ -694,44 +694,41 @@ async function processGroup(telegram, group, weekWindow) {
 }
 
 async function runWeeklyRank(telegram) {
-  if (!telegram) {
-    logger.warn('[WeeklyRank] no telegram instance available — skipping');
-    return;
-  }
-
-  let groups;
-  try {
-    groups = await groupManagerService.getLinkedGroups();
-  } catch (err) {
-    logger.error('[WeeklyRank] failed to load linked groups', { error: err.message });
-    return;
-  }
-  if (!groups.length) {
-    logger.info('[WeeklyRank] no linked groups, skipping');
-    return;
-  }
-
   const weekWindow = getPriorWeekWindow();
-  logger.info('[WeeklyRank] starting run', {
-    groups: groups.length,
-    weekStart: weekWindow.weekStartStr,
-  });
+  logger.info('[WeeklyRank] starting run', { weekStart: weekWindow.weekStartStr, hasTelegram: !!telegram });
 
   const allWinners = [];
 
-  for (const g of groups) {
+  // ── Telegram-linked groups (requires bot instance) ────────────────────────
+  if (!telegram) {
+    logger.info('[WeeklyRank] no telegram instance — skipping Telegram-linked groups');
+  } else {
+    let groups;
     try {
-      const w = await processGroup(telegram, g, weekWindow);
-      if (w) allWinners.push(...w);
-      await new Promise((r) => setTimeout(r, 1500)); // gentle Telegram pacing
+      groups = await groupManagerService.getLinkedGroups();
     } catch (err) {
-      logger.error('[WeeklyRank] group failed', {
-        chatId: g.telegram_chat_id, error: err.message,
-      });
+      logger.error('[WeeklyRank] failed to load linked groups', { error: err.message });
+      groups = [];
+    }
+
+    if (!groups.length) {
+      logger.info('[WeeklyRank] no linked groups found');
+    } else {
+      for (const g of groups) {
+        try {
+          const w = await processGroup(telegram, g, weekWindow);
+          if (w) allWinners.push(...w);
+          await new Promise((r) => setTimeout(r, 1500)); // gentle Telegram pacing
+        } catch (err) {
+          logger.error('[WeeklyRank] group failed', {
+            chatId: g.telegram_chat_id, error: err.message,
+          });
+        }
+      }
     }
   }
 
-  // Process webapp-native hangout groups
+  // ── Webapp-native hangout groups (no Telegram dependency) ─────────────────
   let hangoutGroups = [];
   try {
     hangoutGroups = await getHangoutGroups();

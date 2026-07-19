@@ -1077,6 +1077,23 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // ── Weekly group activity rank + PRIME grants (bot-independent) ──────────
+    // Runs Friday 23:00 UTC + Wed/Thu 18:00 UTC standings nudge.
+    // Only registered here when there is NO bot instance — when the bot IS alive,
+    // bot.js calls startWeeklyRankScheduler(bot) directly (with full Telegram access)
+    // and this block is skipped to prevent double-scheduling the same cron expression.
+    // After bot deprecation (Aug 2026), this path runs the hangout-native rewards
+    // without any Telegram dependency.
+    if (!bot) {
+      try {
+        const { startWeeklyRankScheduler } = require(path.join(basePath, '../bot/core/schedulers/weeklyRankScheduler'));
+        startWeeklyRankScheduler(null);
+        logger.info('✓ Weekly group rank scheduler started (hangout-native path, no bot)');
+      } catch (err) {
+        logger.warn('Weekly group rank scheduler failed to start', { error: err.message });
+      }
+    }
+
     logger.info('✓ Cron jobs started successfully');
     return true;
   } catch (error) {
