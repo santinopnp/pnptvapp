@@ -422,6 +422,391 @@ export default function CreatorLive() {
     }
   };
 
+  const [wizardDone, setWizardDone] = useState(() => {
+    try { return localStorage.getItem("pnptv_live_wizard_v1") === "done"; } catch { return false; }
+  });
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+  const [wizardNextSaving, setWizardNextSaving] = useState(false);
+
+  const finishWizard = useCallback(() => {
+    try { localStorage.setItem("pnptv_live_wizard_v1", "done"); } catch {}
+    setWizardDone(true);
+  }, []);
+
+  const wizardNextStep1 = useCallback(async () => {
+    if (!streamMeta.title.trim()) return;
+    setWizardNextSaving(true);
+    try {
+      await saveStreamMeta({ title: streamMeta.title.trim(), description: streamMeta.description.trim(), tags: streamMeta.tags });
+    } catch { /* non-blocking */ } finally {
+      setWizardNextSaving(false);
+    }
+    setWizardStep(2);
+  }, [streamMeta]);
+
+  if (!wizardDone) {
+    return (
+      <div className="min-h-screen" style={{ background: "var(--pnp-bg)" }}>
+        <Helmet><title>Start Webcamming — Setup — PNPtv!</title></Helmet>
+        <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
+
+          {/* Progress bar */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-pnp-textSecondary font-medium">Step {wizardStep} of 4</p>
+              <button onClick={finishWizard} className="text-[10px] text-pnp-textSecondary hover:text-white transition-colors">Skip setup →</button>
+            </div>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(wizardStep / 4) * 100}%`, background: "linear-gradient(90deg, #D4007A, #7B61FF)" }} />
+            </div>
+          </div>
+
+          {/* Step 1: Name Your Show */}
+          {wizardStep === 1 && (
+            <div className="space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-white">Name your show</h1>
+                <p className="text-sm text-pnp-textSecondary mt-1">This is what viewers see on the live discovery page.</p>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">Stream title *</label>
+                  <input
+                    type="text"
+                    placeholder="Hot Sunday Show 🔥"
+                    maxLength={80}
+                    value={streamMeta.title}
+                    onChange={(e) => setStreamMeta((m) => ({ ...m, title: e.target.value }))}
+                    className="w-full rounded-xl px-3 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">Short description (optional)</label>
+                  <textarea
+                    rows={2}
+                    placeholder="What's happening tonight…"
+                    maxLength={200}
+                    value={streamMeta.description}
+                    onChange={(e) => setStreamMeta((m) => ({ ...m, description: e.target.value }))}
+                    className="w-full rounded-xl px-3 py-3 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">Tags (up to 5)</label>
+                  {streamMeta.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {streamMeta.tags.map((tag) => (
+                        <span key={tag} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-pnp-accent/15 text-pnp-accent border border-pnp-accent/25">
+                          #{tag}
+                          <button onClick={() => setStreamMeta((m) => ({ ...m, tags: m.tags.filter((t) => t !== tag) }))} className="text-pnp-accent/60 hover:text-pnp-accent">×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {streamMeta.tags.length < 5 && (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Add tag (e.g. latex, party, solo)"
+                        maxLength={30}
+                        value={metaTagInput}
+                        onChange={(e) => setMetaTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            const tag = metaTagInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                            if (tag && !streamMeta.tags.includes(tag)) setStreamMeta((m) => ({ ...m, tags: [...m.tags, tag] }));
+                            setMetaTagInput("");
+                          }
+                        }}
+                        className="flex-1 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      />
+                      <button
+                        onClick={() => {
+                          const tag = metaTagInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                          if (tag && !streamMeta.tags.includes(tag)) setStreamMeta((m) => ({ ...m, tags: [...m.tags, tag] }));
+                          setMetaTagInput("");
+                        }}
+                        disabled={!metaTagInput.trim()}
+                        className="px-3 py-2 rounded-xl bg-pnp-accent/20 border border-pnp-accent/40 text-pnp-accent text-xs font-semibold disabled:opacity-40"
+                      >Add</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={wizardNextStep1}
+                disabled={wizardNextSaving || !streamMeta.title.trim()}
+                className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all active:scale-95 disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+              >
+                {wizardNextSaving ? "Saving…" : "Next →"}
+              </button>
+            </div>
+          )}
+
+          {/* Step 2: Earning Tools */}
+          {wizardStep === 2 && (
+            <div className="space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-white">Set your earning tools</h1>
+                <p className="text-sm text-pnp-textSecondary mt-1">Give viewers ways to support you with tokens.</p>
+              </div>
+
+              <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <svg className="w-4 h-4 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                  Tip Goal (optional)
+                </h3>
+                {currentGoal ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-pnp-textPrimary">{currentGoal.goalLabel || "Goal"}</span>
+                      <span className="text-xs text-pnp-textSecondary">{Math.round(currentGoal.progress)}/{Math.round(currentGoal.goalAmount ?? 0)} tokens</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-pnp-border overflow-hidden">
+                      <div className="h-full rounded-full bg-pnp-accent transition-all duration-500" style={{ width: `${currentGoal.goalAmount && currentGoal.goalAmount > 0 ? Math.min(100, Math.round(((currentGoal.progress ?? 0) / currentGoal.goalAmount) * 100)) : 0}%` }} />
+                    </div>
+                    <button onClick={handleClearGoal} className="text-[10px] text-red-400/70 hover:text-red-400">Clear goal</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input type="number" min="1" placeholder="Tokens (e.g. 500)" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)}
+                        className="w-32 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                      <input type="text" placeholder="Label (e.g. Full show)" maxLength={60} value={goalLabel} onChange={(e) => setGoalLabel(e.target.value)}
+                        className="flex-1 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                    </div>
+                    <button onClick={handleSetGoal} disabled={goalSaving || !goalAmount}
+                      className="px-4 py-2 rounded-xl bg-pnp-accent/20 border border-pnp-accent/40 text-pnp-accent text-xs font-semibold disabled:opacity-50 transition-colors active:scale-95">
+                      {goalSaving ? "Saving..." : "Set goal"}
+                    </button>
+                    {goalError && <p className="text-[10px] text-red-400">{goalError}</p>}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <svg className="w-4 h-4 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" /></svg>
+                  Tip Menu (optional)
+                </h3>
+                {tipMenuItems.length > 0 && (
+                  <ul className="space-y-1.5">
+                    {tipMenuItems.map((item) => (
+                      <li key={item.id} className="flex items-center justify-between gap-2 py-1 border-b border-pnp-border/50 last:border-0">
+                        <span className="text-xs text-pnp-textPrimary"><span className="text-pnp-accent font-bold">{item.tokensAmount}F</span><span className="text-pnp-textSecondary mx-1.5">·</span>{item.label}</span>
+                        <button onClick={() => handleRemoveMenuItem(item.id)} className="text-[10px] text-red-400/60 hover:text-red-400">Remove</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input type="number" min="1" placeholder="Tokens" value={newItemAmount} onChange={(e) => setNewItemAmount(e.target.value)}
+                      className="w-24 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                    <input type="text" placeholder="What you'll do (e.g. Take off shirt)" maxLength={80} value={newItemLabel} onChange={(e) => setNewItemLabel(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddMenuItem(); } }}
+                      className="flex-1 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                  </div>
+                  <button onClick={handleAddMenuItem} disabled={!newItemAmount || !newItemLabel.trim()}
+                    className="px-3 py-2 rounded-xl bg-pnp-accent/20 border border-pnp-accent/40 text-pnp-accent text-xs font-semibold disabled:opacity-40 transition-colors active:scale-95">
+                    Add item
+                  </button>
+                  {menuError && <p className="text-[10px] text-red-400">{menuError}</p>}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={() => setWizardStep(1)} className="flex-1 py-3 rounded-xl text-white/60 font-semibold text-sm border border-white/10 hover:border-white/20 transition-all">← Back</button>
+                <button onClick={() => setWizardStep(3)} className="flex-[2] py-3 rounded-xl text-white font-semibold text-sm transition-all active:scale-95" style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}>Next →</button>
+              </div>
+              <button onClick={() => setWizardStep(3)} className="w-full text-xs text-pnp-textSecondary hover:text-white/60 transition-colors text-center">Skip this step</button>
+            </div>
+          )}
+
+          {/* Step 3: AI Auto-Messages */}
+          {wizardStep === 3 && (
+            <div className="space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-white">AI auto-messages</h1>
+                <p className="text-sm text-pnp-textSecondary mt-1">PNPtv! posts engaging chat messages during your stream every 3–5 minutes. Fill in your profile so the AI personalizes them.</p>
+              </div>
+              <div className="space-y-3">
+                {([
+                  { key: "boundaries", label: "What you won't do", placeholder: "e.g. No face reveal, no explicit requests…" },
+                  { key: "turnOns", label: "What you enjoy showing", placeholder: "e.g. dancing, teasing, connecting with fans…" },
+                  { key: "streamGoal", label: "Tonight's stream goal", placeholder: "e.g. Reach 500 tokens for a full show…" },
+                ] as const).map(({ key, label, placeholder }) => (
+                  <div key={key}>
+                    <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">{label}</label>
+                    <textarea rows={2} maxLength={500} placeholder={placeholder} value={autoProfile[key]}
+                      onChange={(e) => setAutoProfile((p) => ({ ...p, [key]: e.target.value }))}
+                      className="w-full rounded-xl px-3 py-3 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
+                  </div>
+                ))}
+                <button
+                  onClick={handleGenerateMessages}
+                  disabled={autoPhase === "generating" || !autoProfile.boundaries.trim() || !autoProfile.turnOns.trim() || !autoProfile.streamGoal.trim()}
+                  className="w-full py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  style={{ background: "rgba(123,97,255,0.3)", border: "1px solid rgba(123,97,255,0.4)" }}
+                >
+                  {autoPhase === "generating" ? (
+                    <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Generating…</>
+                  ) : autoMessages.length > 0 ? "Regenerate messages" : "✨ Generate 12 messages"}
+                </button>
+                {autoMessages.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold">Preview — {autoMessages.length} messages</p>
+                    <ul className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                      {autoMessages.slice(0, 4).map((msg, i) => (
+                        <li key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                          <span className="text-[10px] font-bold text-pnp-textSecondary w-4 flex-shrink-0 mt-0.5">{i + 1}</span>
+                          <span className="text-xs text-pnp-textPrimary leading-snug">{msg}</span>
+                        </li>
+                      ))}
+                      {autoMessages.length > 4 && <li className="text-[10px] text-pnp-textSecondary px-2.5 py-1">+{autoMessages.length - 4} more…</li>}
+                    </ul>
+                  </div>
+                )}
+                {autoError && <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300">{autoError}</div>}
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setWizardStep(2)} className="flex-1 py-3 rounded-xl text-white/60 font-semibold text-sm border border-white/10 hover:border-white/20 transition-all">← Back</button>
+                <button onClick={() => setWizardStep(4)} className="flex-[2] py-3 rounded-xl text-white font-semibold text-sm transition-all active:scale-95" style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}>Next →</button>
+              </div>
+              <button onClick={() => setWizardStep(4)} className="w-full text-xs text-pnp-textSecondary hover:text-white/60 transition-colors text-center">Skip this step</button>
+            </div>
+          )}
+
+          {/* Step 4: Stream Credentials */}
+          {wizardStep === 4 && (
+            <div className="space-y-5">
+              <div>
+                <h1 className="text-xl font-bold text-white">Your stream credentials</h1>
+                <p className="text-sm text-pnp-textSecondary mt-1">Copy these into OBS — then you're ready to go live.</p>
+              </div>
+
+              <div className="rounded-2xl p-5 space-y-4" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                {loading && (
+                  <div className="flex items-center justify-center gap-3 py-6">
+                    <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    <span className="text-sm text-pnp-textSecondary">{phase === "provisioning" ? "Setting up your channel…" : "Loading credentials…"}</span>
+                  </div>
+                )}
+                {phase === "error" && (
+                  <div className="space-y-3">
+                    <div className="px-4 py-3 rounded-xl text-xs bg-red-500/10 border border-red-500/20 text-red-300">{error}</div>
+                    <button onClick={loadCredentials} className="px-4 py-2 rounded-xl text-white text-xs font-semibold" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)" }}>Retry</button>
+                  </div>
+                )}
+                {phase === "ready" && rtmpInfo && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1">RTMP Server URL</label>
+                      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <code className="text-sm text-white flex-1 break-all font-mono">{rtmpInfo.rtmpUrl}</code>
+                        <button onClick={() => copy(rtmpInfo.rtmpUrl, "url")} className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 transition-colors">
+                          {copied === "url" ? (
+                            <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                          ) : (
+                            <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1">Stream Key</label>
+                      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <code className="text-sm text-white flex-1 font-mono">{showKey ? rtmpInfo.streamKey : "•".repeat(Math.min(rtmpInfo.streamKey.length, 24))}</code>
+                        <button onClick={() => setShowKey(!showKey)} className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 transition-colors">
+                          <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            {showKey ? <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18" /> : <><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></>}
+                          </svg>
+                        </button>
+                        <button onClick={() => copy(rtmpInfo.streamKey, "key")} className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 transition-colors">
+                          {copied === "key" ? (
+                            <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                          ) : (
+                            <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-red-400/80 mt-1.5 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                        Never share your stream key
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-xs font-semibold text-white/80">Quick OBS setup</p>
+                <ol className="space-y-2">
+                  {[
+                    "Download OBS Studio from obsproject.com (free)",
+                    "Open Settings → Stream → Service: Custom…",
+                    "Paste your RTMP URL in Server and your key in Stream Key",
+                    "Output → Encoding: 4500 kbps, keyframe 2s, AAC 128 kbps",
+                    "Click Start Streaming — you're live!",
+                  ].map((step, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-xs text-pnp-textSecondary">
+                      <span className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-white mt-0.5" style={{ background: "rgba(212,0,122,0.4)" }}>{i + 1}</span>
+                      {step}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="rounded-2xl p-4 space-y-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <p className="text-xs font-semibold text-white/80">Notify followers? (optional)</p>
+                <textarea
+                  className="w-full rounded-xl px-3 py-2 text-xs text-white resize-none focus:outline-none focus:ring-1 focus:ring-pnp-accent"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", minHeight: "60px" }}
+                  placeholder={`Optional message — default: "🔴 You are going live!"`}
+                  maxLength={240}
+                  value={broadcastMsg}
+                  onChange={(e) => setBroadcastMsg(e.target.value)}
+                  disabled={broadcastDisabled}
+                />
+                <button
+                  onClick={handleBroadcast}
+                  disabled={broadcastDisabled}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-all"
+                  style={{ background: broadcastDisabled ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #D4007A, #7B61FF)", opacity: broadcastDisabled ? 0.6 : 1 }}
+                >
+                  {broadcastStatus === "sending" ? "Sending…" : broadcastStatus === "done" ? "Sent ✓" : "Alert followers"}
+                </button>
+                {broadcastToast && <p className="text-[10px] text-pnp-textSecondary">{broadcastToast}</p>}
+              </div>
+
+              <button
+                onClick={finishWizard}
+                className="w-full py-4 rounded-2xl text-white font-bold text-base transition-all active:scale-95"
+                style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)", boxShadow: "0 4px 20px rgba(212,0,122,0.3)" }}
+              >
+                I'm ready — Let's go! 🎬
+              </button>
+
+              <button onClick={() => setWizardStep(3)} className="w-full text-xs text-pnp-textSecondary hover:text-white/60 transition-colors text-center">← Back</button>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen" style={{ background: "var(--pnp-bg)" }}>
       <Helmet>
@@ -935,6 +1320,15 @@ export default function CreatorLive() {
                 </li>
               </ul>
             </Card>
+
+            <div className="text-center pt-1">
+              <button
+                onClick={() => { setWizardDone(false); setWizardStep(1); }}
+                className="text-xs text-pnp-textSecondary hover:text-white/60 transition-colors"
+              >
+                Re-run first-time setup wizard
+              </button>
+            </div>
 
           </div>
         )}
