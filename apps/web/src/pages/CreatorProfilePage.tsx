@@ -890,8 +890,8 @@ function SubscribePanel({ creatorId, priceUsd, videoCount, photoCount, onSuccess
           ) : (
             <>
               <span>🎫</span>
-              <span>Pagar con Tokens · {(Math.round(priceUsd * 100)).toLocaleString()} F</span>
-              <span className="text-[10px] opacity-70 ml-1">({tokenBalance.toLocaleString()} F disponibles)</span>
+              <span>Pagar con Tokens · {(Math.round(priceUsd * 100)).toLocaleString()} T</span>
+              <span className="text-[10px] opacity-70 ml-1">({tokenBalance.toLocaleString()} T disponibles)</span>
             </>
           )}
         </button>
@@ -1091,7 +1091,7 @@ export default function CreatorProfilePage() {
 
   const handleSendTip = async () => {
     if (tipAmount < 1 || tipAmount > 500) {
-      setTipError("Amount must be between $1 and $500.");
+      setTipError("El monto debe estar entre $1 y $500.");
       return;
     }
     setTipPending(true);
@@ -1128,7 +1128,7 @@ export default function CreatorProfilePage() {
             setShowTipPanel(false);
           } else if (status.status === "failed" || status.status === "expired") {
             clearInterval(tipPollRef.current!);
-            setTipError("Payment failed or expired. Please try again.");
+            setTipError("El pago falló o venció. Por favor intenta de nuevo.");
             setTipPending(false);
           }
         } catch {
@@ -1136,7 +1136,7 @@ export default function CreatorProfilePage() {
         }
       }, 5000);
     } catch (err) {
-      setTipError(err instanceof Error ? err.message : "Failed to create payment. Please try again.");
+      setTipError(err instanceof Error ? err.message : "No se pudo crear el pago. Por favor intenta de nuevo.");
       setTipPending(false);
     }
   };
@@ -1532,7 +1532,7 @@ export default function CreatorProfilePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               <span className="text-sm font-semibold" style={{ color: "#34C759" }}>
-                Tip sent! Thank you for supporting {creator.first_name || creator.username}.
+                ¡Regalo enviado! Gracias por apoyar a {creator.first_name || creator.username}.
               </span>
             </div>
           )}
@@ -1548,7 +1548,7 @@ export default function CreatorProfilePage() {
                   <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Send a Tip
+                  Enviar Regalo
                 </button>
               ) : (
                 <div
@@ -1556,7 +1556,7 @@ export default function CreatorProfilePage() {
                   style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)" }}
                 >
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-pnp-textPrimary">Send a Tip</p>
+                    <p className="text-sm font-semibold text-pnp-textPrimary">Enviar Regalo</p>
                     <button
                       onClick={() => { setShowTipPanel(false); setTipError(null); }}
                       className="text-pnp-textSecondary hover:text-white transition-colors"
@@ -1574,12 +1574,12 @@ export default function CreatorProfilePage() {
                     className="rounded-xl px-3 py-2 text-xs leading-relaxed"
                     style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.2)", color: "#34C759" }}
                   >
-                    💚 <strong>100% of your tip goes directly to {creator.first_name || creator.username}</strong> — no platform fee whatsoever. Tips are fully exempt from any commission.
+                    💚 <strong>El 100% de tu regalo va directamente a {creator.first_name || creator.username}</strong> — sin comisión de plataforma. Los regalos están completamente exentos de comisión.
                   </div>
 
                   {/* Quick amount buttons */}
                   <div>
-                    <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Choose amount (USD):</p>
+                    <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Elige el monto (USD):</p>
                     <div className="flex gap-2 flex-wrap">
                       {[5, 10, 20, 50, 100].map((amt) => (
                         <button
@@ -1620,7 +1620,7 @@ export default function CreatorProfilePage() {
                   <textarea
                     value={tipMessage}
                     onChange={(e) => setTipMessage(e.target.value.slice(0, 500))}
-                    placeholder={`Leave a message for ${creator.first_name || creator.username} (optional)`}
+                    placeholder={`Deja un mensaje para ${creator.first_name || creator.username} (opcional)`}
                     rows={2}
                     className="w-full rounded-xl px-3 py-2 text-sm resize-none"
                     style={{
@@ -1640,11 +1640,11 @@ export default function CreatorProfilePage() {
                     disabled={tipPending || tipAmount < 1}
                     className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40 btn-gradient"
                   >
-                    {tipPending ? "Opening payment..." : `Send $${tipAmount} Tip via Crypto`}
+                    {tipPending ? "Abriendo pago…" : `Enviar $${tipAmount} de Regalo en Crypto`}
                   </button>
 
                   <p className="text-xs text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    Powered by NowPayments. Pay with Bitcoin, Dash, USDT, and more.
+                    Procesado por NowPayments. Paga con Bitcoin, Dash, USDT y más.
                   </p>
                 </div>
               )}
@@ -2060,9 +2060,14 @@ interface RecentPostCardProps {
 }
 
 function RecentPostCard({ post, creator }: RecentPostCardProps) {
+  const navigate = useNavigate();
   return (
     <article
-      className="rounded-2xl p-4 space-y-3"
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate(`/social/post/${post.id}`)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate(`/social/post/${post.id}`); }}
+      className="rounded-2xl p-4 space-y-3 cursor-pointer transition-opacity hover:opacity-90 active:scale-[0.99]"
       style={{ background: "var(--pnp-surface)" }}
     >
       {/* Author row */}
