@@ -20,6 +20,28 @@ const SYSTEM_DM_SENDER_ID = process.env.SYSTEM_DM_SENDER_ID || '8552451957';
 
 const APP_URL = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
 
+// Admin group + Video Calls topic
+const SUPPORT_GROUP_ID = process.env.SUPPORT_GROUP_ID || null;
+const VIDEO_CALLS_TOPIC_ID = process.env.VIDEO_CALLS_TOPIC_ID ? Number(process.env.VIDEO_CALLS_TOPIC_ID) : null;
+
+/**
+ * Post a message to the Video Calls topic in the admin/support group.
+ * Fire-and-forget — never throws.
+ */
+async function notifyAdminVideoCall(text) {
+  if (!SUPPORT_GROUP_ID) return;
+  try {
+    const { getBotInstance } = require('../bot/core/bot');
+    const bot = getBotInstance();
+    if (!bot) return;
+    const opts = { parse_mode: 'HTML' };
+    if (VIDEO_CALLS_TOPIC_ID) opts.message_thread_id = VIDEO_CALLS_TOPIC_ID;
+    await bot.telegram.sendMessage(SUPPORT_GROUP_ID, text, opts);
+  } catch (err) {
+    logger.warn('[callNotificationService] admin group notify failed', { error: err.message });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Security helpers
 // ---------------------------------------------------------------------------
@@ -294,6 +316,19 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
   } catch (dmErr) {
     logger.warn('[callNotificationService] system DM (member confirm) failed', { error: dmErr.message });
   }
+
+  // Admin group — Video Calls topic
+  const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+  const timeLabel = booking.start_at ? formatDateTime(booking.start_at) : 'TBD';
+  const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
+  notifyAdminVideoCall(
+    `📞 <b>NEW BOOKING</b>\n\n` +
+    `👤 Member: <code>${escHtml(String(memberId))}</code>\n` +
+    `🎭 Creator: <b>${escHtml(creatorName)}</b>\n` +
+    `⏰ Time: ${timeLabel}\n` +
+    `⏱ Duration: ${booking.duration_minutes} min\n` +
+    `🔗 <a href="${callUrl}">Open Call Room</a>`
+  ).catch(() => {});
 }
 
 /**
@@ -832,6 +867,17 @@ async function sendCancellationNotifications({ memberId, creatorId, creditId, bo
   // --- System DM ---
   sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `❌ ${memberBody}`, query).catch(() => {});
   sendSystemDM(SYSTEM_DM_SENDER_ID, String(creatorId), `❌ ${creatorBody}`, query).catch(() => {});
+
+  // --- Admin group: Video Calls topic ---
+  const cancelTimeLabel = startAt ? formatDateTime(startAt) : 'TBD';
+  const cancelledBy = cancelledByRole === 'member' ? `👤 ${escHtml(memberDisplayName)}` : cancelledByRole === 'creator' ? `🎭 ${escHtml(creatorDisplayName)}` : '⚙️ System';
+  notifyAdminVideoCall(
+    `❌ <b>BOOKING CANCELLED</b>\n\n` +
+    `👤 Member: <b>${escHtml(memberDisplayName)}</b> (<code>${escHtml(String(memberId))}</code>)\n` +
+    `🎭 Creator: <b>${escHtml(creatorDisplayName)}</b>\n` +
+    `⏰ Was scheduled: ${cancelTimeLabel}\n` +
+    `🚫 Cancelled by: ${cancelledBy}`
+  ).catch(() => {});
 }
 
 module.exports = {

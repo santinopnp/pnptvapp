@@ -275,11 +275,14 @@ class PaymentNotificationService {
 
       // Route to the right Telegram Forum topic by payment type.
       // Env vars (all optional, fall back to NOTIFICATIONS_TOPIC_ID → no topic):
-      //   PAYMENTS_TOKENS_TOPIC_ID  — token purchases
-      //   PAYMENTS_CALLS_TOPIC_ID   — private call packages
-      //   PAYMENTS_SUBS_TOPIC_ID    — subscriptions / plans
-      const notifTopicId = process.env.NOTIFICATIONS_TOPIC_ID
-        ? Number(process.env.NOTIFICATIONS_TOPIC_ID) : null;
+      //   PAYMENTS_TOPIC_ID         — unified payments topic (all types)
+      //   PAYMENTS_TOKENS_TOPIC_ID  — token purchases (overrides unified)
+      //   PAYMENTS_CALLS_TOPIC_ID   — private call packages (overrides unified)
+      //   PAYMENTS_SUBS_TOPIC_ID    — subscriptions / plans (overrides unified)
+      const paymentsTopicId = process.env.PAYMENTS_TOPIC_ID
+        ? Number(process.env.PAYMENTS_TOPIC_ID) : null;
+      const notifTopicId = paymentsTopicId
+        || (process.env.NOTIFICATIONS_TOPIC_ID ? Number(process.env.NOTIFICATIONS_TOPIC_ID) : null);
       let messageThreadId = null;
       if (planType === 'token_purchase') {
         messageThreadId = process.env.PAYMENTS_TOKENS_TOPIC_ID
