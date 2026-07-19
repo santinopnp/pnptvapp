@@ -1,5 +1,49 @@
 import React, { lazy, useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
+
+// ── Pre-live consent gate — shown every time a creator navigates to /creators/live ──
+function PreLiveConsentGate({ children }: { children: React.ReactNode }) {
+  const [accepted, setAccepted] = useState(false);
+  if (accepted) return <>{children}</>;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)" }}>
+      <div className="w-full max-w-md rounded-2xl p-6 space-y-5" style={{ background: "var(--pnp-surface, #1C1C1E)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.6)" }}>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#D4007A22,#7B61FF22)", border: "1px solid rgba(212,0,122,0.3)" }}>
+            <svg className="w-5 h-5" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M8.464 15.536a5 5 0 010-7.072m7.072 0a5 5 0 010 7.072M12 12h.01" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-white">Before You Go Live</h2>
+            <p className="text-xs" style={{ color: "var(--pnp-text-secondary,#8E8E93)" }}>Please read and confirm before starting your show</p>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <svg className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: "#5ED1C4" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <p className="text-sm text-white leading-relaxed">I confirm that my show follows <strong>scripted prompts and agreed content only</strong> — no unsolicited personal requests or real-time solicitation.</p>
+          </div>
+          <div className="flex items-start gap-3 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <svg className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: "#5ED1C4" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <p className="text-sm text-white leading-relaxed">I have read and agree to the{" "}<a href="/creators/guidelines" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: "#7B61FF" }}>PNPtv! Community Guidelines</a>{" "}and will uphold them during my stream.</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 p-4 rounded-xl" style={{ background: "linear-gradient(135deg,rgba(123,97,255,0.1),rgba(212,0,122,0.06))", border: "1px solid rgba(123,97,255,0.25)" }}>
+          <svg className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: "#7B61FF" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold" style={{ color: "#A78BFA" }}>You are not alone 💜</p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary,#8E8E93)" }}>Our <strong className="text-white">Wellness Center</strong> has resources and community support available right now.{" "}<span style={{ color: "#D4007A" }}>Coming soon:</span> on-demand mental health sessions with licensed professionals — whenever you need them.</p>
+          </div>
+        </div>
+        <div className="flex gap-3 pt-1">
+          <button onClick={() => window.history.back()} className="flex-1 py-3 rounded-xl text-sm font-medium transition-all" style={{ background: "rgba(255,255,255,0.06)", color: "var(--pnp-text-secondary,#8E8E93)", border: "1px solid rgba(255,255,255,0.08)" }}>Go Back</button>
+          <button onClick={() => setAccepted(true)} className="flex-1 py-3 rounded-xl text-sm font-bold text-white transition-all" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", boxShadow: "0 4px 20px rgba(212,0,122,0.35)" }}>I Confirm — Go Live</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 import { joinHangoutByInvite, ApiError } from "@/lib/api";
 
 function HangoutToChatRedirect() {
@@ -895,7 +939,7 @@ export const router = createBrowserRouter([
       { path: "content", element: <ModuleLoader><CreatorContent /></ModuleLoader> },
       { path: "earnings", element: <ModuleLoader><CreatorEarnings /></ModuleLoader> },
       { path: "payouts", element: <ModuleLoader><CreatorPayouts /></ModuleLoader> },
-      { path: "live", element: <ModuleLoader><CreatorLive /></ModuleLoader> },
+      { path: "live", element: <PreLiveConsentGate><ModuleLoader><CreatorLive /></ModuleLoader></PreLiveConsentGate> },
       { path: "availability", element: <ModuleLoader><CreatorAvailability /></ModuleLoader> },
       { path: "analytics", element: <ModuleLoader><CreatorAnalytics /></ModuleLoader> },
       { path: "settings", element: <ModuleLoader><CreatorSettings /></ModuleLoader> },
