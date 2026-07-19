@@ -30,7 +30,7 @@ const EntitlementModel = require('../../../models/entitlementModel');
 const BusinessNotificationService = require('../../../services/businessNotificationService');
 
 const CRON_EXPR       = '0 23 * * 5';    // Friday 23:00 UTC = 18:00 COT — weekly winner run
-const DAILY_CRON_EXPR = '0 18 * * 1-5';  // Mon–Fri 18:00 UTC = 13:00 COT — daily standings nudge
+const DAILY_CRON_EXPR = '0 18 * * 3,4';  // Wed+Thu 18:00 UTC = 13:00 COT — mid-week + last-chance nudge
 const CRON_TZ = 'UTC';
 
 const REWARD_COUNT = 3;              // top 3 get PRIME
@@ -772,6 +772,10 @@ async function runWeeklyRank(telegram) {
 async function runDailyStandings(telegram) {
   const weekWindow = getCurrentWeekWindow();
   const { weekStartStr } = weekWindow;
+  const isThursday = new Date().getUTCDay() === 4;
+  const closingLine = isThursday
+    ? '🚨 Last chance — results drop TOMORROW at 6PM Colombia! 💦'
+    : 'Still time to climb — keep posting! 💨🐷';
   logger.info('[DailyStandings] starting run', { weekStart: weekStartStr });
 
   // ── Telegram linked groups ─────────────────────────────────────────────
@@ -794,7 +798,7 @@ async function runDailyStandings(telegram) {
       });
       lines.push('');
       lines.push('⏰ <b>Friday 6PM Colombia</b> · Top 3 wins <b>72 hrs FREE PRIME</b> 😈');
-      lines.push('Still time to climb — keep posting! 💨🐷');
+      lines.push(closingLine);
       lines.push('');
       lines.push('#LaPerrera #PNPtv');
 
@@ -830,7 +834,7 @@ async function runDailyStandings(telegram) {
       });
       lines.push('');
       lines.push('⏰ Friday 6PM Colombia · Top 3 wins 72 hrs FREE PRIME 😈');
-      lines.push('Still time to climb — keep posting! 💨🐷');
+      lines.push(closingLine);
       lines.push('');
       lines.push('#LaPerrera #PNPtv');
 
