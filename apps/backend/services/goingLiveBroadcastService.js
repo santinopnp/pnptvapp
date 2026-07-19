@@ -270,6 +270,67 @@ async function notifyLinkedGroups(bot, creatorId, channelRef, creatorName, custo
 }
 
 /**
+ * Email blast to every app member with a real email address.
+ * Silently no-ops if emailService is unavailable.
+ * Dedup is inherited from the parent broadcastGoingLive 6h Redis key.
+ *
+ * @param {string|number} creatorId
+ * @param {string} creatorName
+ * @param {string} channelRef
+ * @param {string|null} customMessage
+ */
+async function sendMemberEmailBlast(creatorId, creatorName, channelRef, customMessage) {
+  let emailService;
+  try {
+    emailService = require('./emailservice');
+  } catch {
+    return 0;
+  }
+
+  const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const watchUrl = channelRef
+    ? `${appUrl}/live/${encodeURIComponent(channelRef)}`
+    : `${appUrl}/live`;
+
+  const { rows: members } = await query(
+    `SELECT email, first_name, username, language
+     FROM users
+     WHERE email IS NOT NULL
+       AND email NOT LIKE '%telegram.pnptv.app'
+       AND email != ''
+       AND is_deleted IS NOT TRUE
+       AND COALESCE(tier, 'free') != 'banned'
+     ORDER BY id`
+  );
+  if (members.length === 0) return 0;
+
+  const bodyEn = customMessage
+    ? `${customMessage}\n\n👉 ${watchUrl}`
+    : `${creatorName} is streaming LIVE right now on PNPtv! Don't miss it.\n\n👉 ${watchUrl}`;
+  const bodyEs = customMessage
+    ? `${customMessage}\n\n👉 ${watchUrl}`
+    : `¡${creatorName} está EN VIVO ahora mismo en PNPtv! No te lo pierdas.\n\n👉 ${watchUrl}`;
+
+  const result = await emailService.sendBroadcastEmails(members, {
+    subjectEn:   `🔴 ${creatorName} is LIVE on PNPtv! Watch now`,
+    subjectEs:   `🔴 ${creatorName} está EN VIVO en PNPtv! Míralo ahora`,
+    preheaderEn: 'Stream is live — join before the room fills up.',
+    preheaderEs: 'La transmisión está en vivo — únete antes de que se llene.',
+    messageEn:   bodyEn,
+    messageEs:   bodyEs,
+    buttons: [{ text: 'Watch Now', textEs: 'Ver Ahora', url: watchUrl, primary: true }],
+  }).catch((err) => {
+    logger.warn('goingLiveBroadcast: email blast error', { creatorId, error: err.message });
+    return { sent: 0, failed: 0 };
+  });
+
+  logger.info('goingLiveBroadcast: email blast complete', {
+    creatorId, channelRef, sent: result.sent, failed: result.failed,
+  });
+  return result.sent;
+}
+
+/**
  * Fan-out web-push notifications to opted-in followers.
  * Silently no-ops if PushNotificationService is unavailable.
  *
@@ -329,26 +390,41 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
 
     const customMessage = opts?.message || null;
 
+    // ── Fire-and-forget channels (always fire, regardless of follower count) ──
+
+    // 1. Feed post from @pnptv + X cross-post with branded snapshot card
+    setImmediate(() => {
+      const cristinaFeedService = require('./cristinaFeedService');
+      cristinaFeedService.announceLiveStream(creatorId, creatorName, channelRef).catch((err) => {
+        logger.warn('goingLiveBroadcast: announceLiveStream error', { creatorId, error: err.message });
+      });
+    });
+
+    // 2. Linked Telegram groups — photo + caption + Watch Now button
+    setImmediate(() => {
+      notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage).catch((err) => {
+        logger.warn('goingLiveBroadcast: notifyLinkedGroups error', { creatorId, error: err.message });
+      });
+    });
+
+    // 3. Email blast — all app members with real emails
+    setImmediate(() => {
+      sendMemberEmailBlast(creatorId, creatorName, channelRef, customMessage).catch((err) => {
+        logger.warn('goingLiveBroadcast: emailBlast error', { creatorId, error: err.message });
+      });
+    });
+
+    // ── Follower-targeted channels ────────────────────────────────────────────
+
     if (dmFollowers.length === 0 && pushFollowers.length === 0) {
-      logger.info('goingLiveBroadcast: no opted-in followers — feed+X+groups announce only', { creatorId });
-      setImmediate(() => {
-        const cristinaFeedService = require('./cristinaFeedService');
-        cristinaFeedService.announceLiveStream(creatorId, creatorName, channelRef).catch((err) => {
-          logger.warn('goingLiveBroadcast: announceLiveStream error', { creatorId, error: err.message });
-        });
-      });
-      setImmediate(() => {
-        notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage).catch((err) => {
-          logger.warn('goingLiveBroadcast: notifyLinkedGroups error', { creatorId, error: err.message });
-        });
-      });
+      logger.info('goingLiveBroadcast: no opted-in followers — feed+X+groups+email dispatched', { creatorId });
       return { dispatched: 0, skippedDedup: false };
     }
 
+    // 4. Telegram DM to opted-in followers
+    // 5. Web-push to opted-in followers (deep link → /live/{channelRef})
     const [dmSent, pushSent] = await Promise.all([
-      // Telegram notification mirroring disabled — notifications are in-app and push only
-      // bot ? sendTelegramDMs(bot, dmFollowers, creatorName, channelRef, customMessage) : Promise.resolve(0),
-      Promise.resolve(0),
+      bot ? sendTelegramDMs(bot, dmFollowers, creatorName, channelRef, customMessage) : Promise.resolve(0),
       sendPushNotifications(pushFollowers, creatorName, channelRef),
     ]);
 
@@ -359,22 +435,6 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
       pushFollowers: pushFollowers.length,
       dmSent,
       pushSent,
-    });
-
-    // Fire-and-forget: feed post + X announcement (branded snapshot card)
-    setImmediate(() => {
-      const cristinaFeedService = require('./cristinaFeedService');
-      cristinaFeedService.announceLiveStream(creatorId, creatorName, channelRef).catch((err) => {
-        logger.warn('goingLiveBroadcast: announceLiveStream error', { creatorId, error: err.message });
-      });
-    });
-
-    // Fire-and-forget: Telegram group notifications with the same branded
-    // snapshot + tagline + Watch Now button as the feed post and DM.
-    setImmediate(() => {
-      notifyLinkedGroups(bot, creatorId, channelRef, creatorName, customMessage).catch((err) => {
-        logger.warn('goingLiveBroadcast: notifyLinkedGroups error', { creatorId, error: err.message });
-      });
     });
 
     return { dispatched: dmSent + pushSent, skippedDedup: false };

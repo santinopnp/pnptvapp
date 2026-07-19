@@ -9965,6 +9965,56 @@ app.post('/api/webapp/live/heartbeat', requireSessionAuth, rateLimit({ windowMs:
   res.json({ success: true, newBalance: result.newBalance });
 }));
 
+// POST /api/webapp/live/enter — entry gate: viewer must hold ≥60 tokens to enter a live stream.
+// Sets a 15-minute free-period Redis key so the first 15 heartbeats are unbilled.
+// Skipped for stream owners and admins/superadmins.
+app.post('/api/webapp/live/enter', requireSessionAuth, asyncHandler(async (req, res) => {
+  const { channelRef } = req.body;
+  if (!channelRef || typeof channelRef !== 'string') {
+    return res.status(400).json({ success: false, error: 'channelRef is required' });
+  }
+  const sessionUser = req.session.user;
+  const userId = String(sessionUser.telegram_id || sessionUser.id);
+  const role = sessionUser.role;
+
+  if (role === 'admin' || role === 'superadmin') {
+    const redis = getRedis();
+    const freeUntil = Date.now() + 15 * 60 * 1000;
+    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+    return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
+  }
+
+  // Check if viewer is the channel owner
+  const pool = getPool();
+  const ownerRow = await pool.query(
+    `SELECT id FROM users WHERE live_channel = $1 AND (telegram = $2 OR id::text = $2) LIMIT 1`,
+    [channelRef, userId]
+  );
+  if (ownerRow.rows.length > 0) {
+    const redis = getRedis();
+    const freeUntil = Date.now() + 15 * 60 * 1000;
+    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+    return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
+  }
+
+  // Token balance check (balance_tokens only — gifted tokens count for heartbeats but
+  // the entry requirement uses purchased tokens to prevent farming via gifts)
+  const balRow = await pool.query(
+    `SELECT COALESCE(balance_tokens, 0) AS balance_tokens FROM user_token_wallets WHERE user_id = $1`,
+    [userId]
+  );
+  const balanceTokens = Number(balRow.rows[0]?.balance_tokens) || 0;
+  const ENTRY_MINIMUM = 60;
+  if (balanceTokens < ENTRY_MINIMUM) {
+    return res.status(402).json({ success: false, error: 'INSUFFICIENT_TOKENS', required: ENTRY_MINIMUM, current: balanceTokens });
+  }
+
+  const redis = getRedis();
+  const freeUntil = Date.now() + 15 * 60 * 1000;
+  await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+  return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
+}));
+
 // ==========================================
 // TIP GOALS
 // ==========================================

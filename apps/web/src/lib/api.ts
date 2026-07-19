@@ -884,8 +884,18 @@ export function getPaymentHistory(): Promise<{ success: boolean; payments: Payme
   return request("/api/webapp/payments/history");
 }
 
-export function sendLiveHeartbeat(channelRef: string): Promise<{ success: boolean; newBalance: number }> {
+export function sendLiveHeartbeat(channelRef: string): Promise<{ success: boolean; newBalance?: number; freeMinutesLeft?: number }> {
   return request("/api/webapp/live/heartbeat", { method: "POST", body: { channelRef } });
+}
+
+export async function enterLiveStream(channelRef: string): Promise<{ success: boolean; freeUntil?: string; freeMinutes?: number; error?: string; required?: number; current?: number }> {
+  const res = await fetch("/api/webapp/live/enter", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channelRef }),
+  });
+  return res.json();
 }
 
 export function buyTokensWithNowPayments(packageId: string, payCurrency?: string): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; tokens: number; usdAmount: number; nowpaymentsInvoiceId?: string | null; payCurrency?: string | null; payAddress?: string | null; payAmount?: number | null; network?: string | null; validUntil?: string | null; presaleDiscount?: boolean; error?: string }> {

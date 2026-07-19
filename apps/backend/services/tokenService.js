@@ -15,11 +15,11 @@ const { cache } = require('../config/redis');
 
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS, SANTINO_USER_ID } = require('../config/monetizationConfig');
 
-const STREAM_HEARTBEAT_COST = 100; // 100 Tokens = $1 USD; 1 Token per ~36 seconds
-// STREAM_HEARTBEAT_REVENUE and STREAM_HEARTBEAT_PLATFORM derive from the canonical
-// revenue-split constants. Their sum MUST equal STREAM_HEARTBEAT_COST at 70/30.
-const STREAM_HEARTBEAT_REVENUE = Math.round(STREAM_HEARTBEAT_COST * CREATOR_REVENUE_RATE * 1000) / 1000;   // 70
-const STREAM_HEARTBEAT_PLATFORM = Math.round(STREAM_HEARTBEAT_COST * PLATFORM_COMMISSION_RATE * 1000) / 1000; // 30
+const STREAM_HEARTBEAT_COST = 1; // 1 token/min billed to viewer
+// Stream heartbeat uses a 4/6 creator / 2/6 platform split (not the default 70/30).
+// Integer wallet credit is always 1 token to creator; USD accounting uses fractional amounts.
+const STREAM_HEARTBEAT_REVENUE = 1; // full token credited to creator wallet
+const STREAM_HEARTBEAT_PLATFORM = 0; // platform share tracked only in creator_earnings USD rows
 
 // ── Creator Weekend Bonus ─────────────────────────────────────────────────────
 // July 18 2026 05:00 UTC → July 21 2026 11:00 UTC
@@ -240,6 +240,27 @@ async function processStreamHeartbeat(viewerId, channelRef) {
     return { success: true, newBalance: Number(balRow.rows[0]?.total) || 0 };
   }
 
+  // Free-period check — first 15 minutes after entering are unbilled
+  try {
+    const { getRedis } = require('../config/redis');
+    const redisClient = getRedis();
+    const freeUntilStr = await redisClient.get(`live:viewer:freeuntil:${viewerId}:${channelRef}`);
+    if (freeUntilStr) {
+      const freeUntil = parseInt(freeUntilStr, 10);
+      if (Number.isFinite(freeUntil) && Date.now() < freeUntil) {
+        const balRow = await query(
+          `SELECT COALESCE(balance_tokens,0) + COALESCE(gifted_balance,0) AS total FROM user_token_wallets WHERE user_id = $1`,
+          [String(viewerId)]
+        );
+        const currentBalance = Number(balRow.rows[0]?.total) || 0;
+        const freeMinutesLeft = Math.max(0, Math.ceil((freeUntil - Date.now()) / 60000));
+        return { success: true, newBalance: currentBalance, freeMinutesLeft };
+      }
+    }
+  } catch (freeCheckErr) {
+    logger.warn('processStreamHeartbeat: free-period check failed, proceeding to bill', { viewerId, channelRef, error: freeCheckErr.message });
+  }
+
   // Gifted tokens are accepted for Santino/PNPLatinoBoy streams; regular-only elsewhere.
   const isGiftedAllowed = GIFTED_ALLOWED_PERFORMER_USER_IDS.includes(String(streamer.id));
 
@@ -339,16 +360,24 @@ async function processStreamHeartbeat(viewerId, channelRef) {
     // 4. Log the earning record — only for purchased tokens (real cash obligation).
     // Gifted / creator_gifts tokens credit the streamer's wallet for UX but do not
     // generate payout obligations.
+    // Stream heartbeat split: 4/6 creator, 2/6 platform (different from tip 70/30).
     const TOKENS_PER_USD = 100;
+    const HEARTBEAT_CREATOR_RATE = 4 / 6;
+    const HEARTBEAT_PLATFORM_RATE = 2 / 6;
     if (balanceTokensSpent > 0) {
+      const baseEarnCreator = Math.round(balanceTokensSpent * HEARTBEAT_CREATOR_RATE * 1000) / 1000;
       const { creatorAmount: earnCreator, platformAmount: earnPlatform } = await applyCreatorBonus(
-        Math.round(balanceTokensSpent * CREATOR_REVENUE_RATE * 1000) / 1000,
+        baseEarnCreator,
         balanceTokensSpent
       );
+      // If bonus did not push earnCreator above base, use the heartbeat platform rate for the earnings row
+      const finalEarnPlatform = bonusApplied
+        ? earnPlatform
+        : Math.round(balanceTokensSpent * HEARTBEAT_PLATFORM_RATE * 1000) / 1000;
       await client.query(
         `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, period_month)
          VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, date_trunc('month', CURRENT_DATE))`,
-        [String(streamer.id), balanceTokensSpent / TOKENS_PER_USD, earnCreator / TOKENS_PER_USD, earnPlatform / TOKENS_PER_USD, String(EARNINGS_HOLD_HOURS)]
+        [String(streamer.id), balanceTokensSpent / TOKENS_PER_USD, earnCreator / TOKENS_PER_USD, finalEarnPlatform / TOKENS_PER_USD, String(EARNINGS_HOLD_HOURS)]
       );
     }
     if (bonusApplied) {
@@ -403,7 +432,7 @@ async function processStreamHeartbeat(viewerId, channelRef) {
       logger.warn('Failed to emit socket updates after heartbeat', { error: socketErr.message });
     }
 
-    return { success: true, newBalance };
+    return { success: true, newBalance, freeMinutesLeft: 0 };
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('processStreamHeartbeat error', { viewerId, channelRef, error: error.message });

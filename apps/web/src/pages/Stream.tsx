@@ -51,6 +51,7 @@ import {
   bookCallWithTokens,
   getStreamReplay,
   sendLiveHeartbeat,
+  enterLiveStream,
   type LiveCallPackage,
   type StreamViewer,
 } from "@/lib/api";
@@ -152,6 +153,43 @@ function StreamNoTokensWall() {
       </button>
       <button onClick={() => navigate(-1)} className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary">
         ← Go back
+      </button>
+    </div>
+  );
+}
+
+function InsufficientTokensWall({ current }: { current?: number }) {
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-5 px-6 text-center">
+      <div
+        className="w-16 h-16 rounded-full flex items-center justify-center"
+        style={{ background: "rgba(212,0,122,0.12)", border: "1px solid rgba(212,0,122,0.3)" }}
+      >
+        <svg className="w-8 h-8" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+        </svg>
+      </div>
+      <div>
+        <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Tokens insuficientes</h2>
+        <p className="text-sm text-pnp-textSecondary max-w-xs">
+          Necesitas al menos 60 tokens para ver este stream.
+          {current !== undefined && (
+            <span className="block mt-1">
+              Tienes <strong className="text-pnp-textPrimary">{current}</strong> token{current !== 1 ? "s" : ""} ahora.
+            </span>
+          )}
+        </p>
+      </div>
+      <button
+        onClick={() => navigate("/tokens")}
+        className="px-6 py-3 rounded-xl text-sm font-bold text-white"
+        style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+      >
+        Comprar tokens →
+      </button>
+      <button onClick={() => navigate(-1)} className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary">
+        ← Volver
       </button>
     </div>
   );
@@ -417,6 +455,12 @@ function StreamInner() {
   // ── Heartbeat state (effect below, after isStreamOwner/channelRef declarations) ──
   const [outOfTokens, setOutOfTokens] = useState(false);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Entry gate state ──────────────────────────────────────────────────────
+  const [entryChecked, setEntryChecked] = useState(false);
+  const [entryAllowed, setEntryAllowed] = useState(false);
+  const [entryError, setEntryError] = useState<string | null>(null);
+  const [freeMinutesLeft, setFreeMinutesLeft] = useState<number | null>(null);
 
   // Viewer count: prefer the real-time socket value; fall back to a polled
   // value from the streams API when the socket is not connected.
@@ -709,6 +753,24 @@ function StreamInner() {
   // Broad stream owner: includes admins — used for moderation powers (ban, HUD, health, raid)
   const isStreamOwner = isChannelOwner || !!(user && (user.role === 'admin' || user.role === 'superadmin'));
 
+  // ── Entry gate: call /live/enter after rules ack, sets free-period key in Redis ──
+  useEffect(() => {
+    if (!isAuthenticated || !channelRef || !rulesAcknowledged) return;
+    if (isStreamOwner) { setEntryChecked(true); setEntryAllowed(true); return; }
+    enterLiveStream(channelRef)
+      .then((data) => {
+        if (data.success) {
+          setEntryAllowed(true);
+          setFreeMinutesLeft(15);
+        } else {
+          setEntryAllowed(false);
+          setEntryError(data.error || "INSUFFICIENT_TOKENS");
+        }
+      })
+      .catch(() => setEntryError("NETWORK_ERROR"))
+      .finally(() => setEntryChecked(true));
+  }, [isAuthenticated, channelRef, rulesAcknowledged, isStreamOwner]);
+
   // ── Heartbeat: deduct 1 token/min while watching as a non-owner viewer ────
   useEffect(() => {
     if (!isAuthenticated || isChannelOwner || !channelRef || !stream?.isLive) {
@@ -717,7 +779,10 @@ function StreamInner() {
     }
     const tick = () => {
       sendLiveHeartbeat(channelRef)
-        .then((data) => { if (data.newBalance !== undefined) setTokenBalance(data.newBalance); })
+        .then((data) => {
+          if (data.newBalance !== undefined) setTokenBalance(data.newBalance);
+          if (data.freeMinutesLeft !== undefined) setFreeMinutesLeft(data.freeMinutesLeft);
+        })
         .catch((err) => {
           if (err?.status === 402) {
             setOutOfTokens(true);
@@ -1403,6 +1468,18 @@ function StreamInner() {
         />
       )}
 
+      {/* Entry gate — runs after rules ack; spinner while checking, wall if denied */}
+      {rulesAcknowledged && !isStreamOwner && !entryChecked && (
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-pnp-background/90 backdrop-blur-sm">
+          <span className="w-8 h-8 border-2 border-pnp-accent border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+      {rulesAcknowledged && !isStreamOwner && entryChecked && !entryAllowed && (
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-pnp-background">
+          <InsufficientTokensWall current={entryError === "INSUFFICIENT_TOKENS" ? (tokenBalance ?? undefined) : undefined} />
+        </div>
+      )}
+
       {/* ── Raid notification overlay ─────────────────────────────────────────
            Shown to all viewers when the streamer initiates a raid.
            Counts down 5s then auto-redirects; viewer can dismiss to stay. */}
@@ -1955,6 +2032,25 @@ function StreamInner() {
           </div>
         )}
       </div>
+
+          {/* ── Billing status banner — non-owner viewers only ─────────────── */}
+          {!isStreamOwner && entryAllowed && stream?.isLive && (
+            <div className="flex-shrink-0 px-4 py-1.5 flex items-center justify-center">
+              {freeMinutesLeft !== null && freeMinutesLeft > 0 ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-green-500/15 border border-green-500/30 text-green-400">
+                  Gratis: {freeMinutesLeft} min restantes
+                </span>
+              ) : tokenBalance !== null && tokenBalance < 10 ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-red-500/15 border border-red-500/30 text-red-400 animate-pulse">
+                  Pocos tokens — recarga pronto
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 border border-amber-500/25 text-amber-400">
+                  1 token/min{tokenBalance !== null ? ` · ${tokenBalance} tokens` : ""}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* ── Tip goal progress bar — flex-shrink-0 so video+bar are always visible ── */}
           {tipGoal && tipGoal.goalAmount && (

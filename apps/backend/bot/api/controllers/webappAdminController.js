@@ -2909,6 +2909,70 @@ const efiPayResellerProduct = async (req, res) => {
 };
 
 /**
+ * Fire-and-forget: invoice from hello@easybots.store + purchase confirmation
+ * with PDF from hello@pnptv.app. Both emails are non-blocking.
+ */
+async function _sendEfipayEmails(emailService, { email, firstName, productLabel, amount, paymentId, lang }) {
+  const isEs = (lang || 'en') === 'es';
+  const dateStr = new Date().toLocaleDateString(isEs ? 'es-ES' : 'en-US');
+
+  // 1. Invoice receipt from easybots.store
+  try {
+    const eb = emailService.transporters?.easybots;
+    if (eb) {
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+        body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:0}
+        .w{max-width:600px;margin:20px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+        .h{background:#1a1a2e;padding:20px 30px;text-align:center}
+        .h h1{color:#fff;margin:0;font-size:22px}
+        .b{padding:30px}
+        .box{background:#f8f9fa;border-left:4px solid #6c63ff;padding:16px 20px;border-radius:4px;margin:20px 0}
+        .box p{margin:6px 0;font-size:14px}
+        .f{text-align:center;padding:16px;color:#888;font-size:12px;border-top:1px solid #eee}
+      </style></head><body><div class="w">
+        <div class="h"><h1>EasyBots Store</h1></div>
+        <div class="b">
+          <p>Hi ${firstName || 'there'},</p>
+          <p>${isEs ? 'Tu pago fue confirmado.' : 'Your payment has been confirmed.'}</p>
+          <div class="box">
+            <p><strong>${isEs ? 'Producto' : 'Product'}:</strong> ${productLabel}</p>
+            <p><strong>${isEs ? 'Monto' : 'Amount'}:</strong> $${parseFloat(amount || 0).toFixed(2)} USD</p>
+            <p><strong>${isEs ? 'Referencia' : 'Order ID'}:</strong> ${paymentId}</p>
+            <p><strong>${isEs ? 'Fecha' : 'Date'}:</strong> ${dateStr}</p>
+          </div>
+          <p style="color:#666;font-size:13px">${isEs ? 'Guarda este email como comprobante de pago.' : 'Keep this email as your payment receipt.'}</p>
+        </div>
+        <div class="f">EasyBots Store &middot; <a href="mailto:hello@easybots.store">hello@easybots.store</a></div>
+      </div></body></html>`;
+      await eb.sendMail({
+        from: '"EasyBots Store" <hello@easybots.store>',
+        to: email,
+        subject: isEs ? `Pago confirmado — EasyBots #${paymentId}` : `Order confirmed — EasyBots #${paymentId}`,
+        html,
+      });
+    }
+  } catch (e) {
+    logger.warn('[efipay-reseller] easybots invoice email failed', { email, error: e.message });
+  }
+
+  // 2. Purchase confirmation + PDF invoice + instructions from pnptv.app
+  try {
+    await emailService.sendPurchaseConfirmationEmail({
+      to: email,
+      customerName: firstName || 'member',
+      planName: productLabel,
+      amount,
+      currency: 'USD',
+      transactionId: paymentId,
+      provider: 'efipay',
+      language: isEs ? 'es' : 'en',
+    });
+  } catch (e) {
+    logger.warn('[efipay-reseller] pnptv confirmation email failed', { email, error: e.message });
+  }
+}
+
+/**
  * POST /api/internal/efipay-reseller/grant
  * Called by easybots.store after a confirmed EfiPay payment.
  * Supports: call_package, creator_membership, channel_access.
@@ -2957,13 +3021,16 @@ const efiPayResellerGrant = async (req, res) => {
 
   // Look up user by email
   const userResult = await query(
-    `SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+    `SELECT id, first_name, language FROM users WHERE LOWER(email) = $1 LIMIT 1`,
     [safeEmail]
   );
   if (!userResult.rows.length) {
     return res.status(404).json({ error: 'user_not_found', email: safeEmail });
   }
   const userId = userResult.rows[0].id;
+  const userFirstName = userResult.rows[0].first_name || null;
+  const userLang = userResult.rows[0].language || 'en';
+  const emailService = require('../../../services/emailservice');
 
   const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS_EFIPAY } = require('../../../config/monetizationConfig');
 
@@ -3005,13 +3072,18 @@ const efiPayResellerGrant = async (req, res) => {
     await callCheckoutService.onCallPaymentSuccess(paymentDbId);
 
     logger.info(`[efipay-reseller] Call credits granted pkg ${pkg.sku} to ${safeEmail} via ${efipay_payment_id}`);
+    setImmediate(() => _sendEfipayEmails(emailService, {
+      email: safeEmail, firstName: userFirstName,
+      productLabel: pkg.title || `${pkg.duration_minutes}min Call`,
+      amount: canonicalPrice, paymentId: String(efipay_payment_id), lang: userLang,
+    }));
     return res.json({ success: true, user_id: userId, product_type, package_id: pkg.id });
   }
 
   // ── Creator membership ──────────────────────────────────────────────────────
   if (product_type === 'creator_membership') {
     const creatorResult = await query(
-      `SELECT id, creator_price_usd, creator_locked, creator_subscription_paused
+      `SELECT id, first_name, creator_price_usd, creator_locked, creator_subscription_paused
        FROM users WHERE id = $1::text AND creator_status = 'active' LIMIT 1`,
       [resource_id]
     );
@@ -3071,6 +3143,11 @@ const efiPayResellerGrant = async (req, res) => {
     );
 
     logger.info(`[efipay-reseller] Creator membership granted creator ${resource_id} to ${safeEmail}`);
+    setImmediate(() => _sendEfipayEmails(emailService, {
+      email: safeEmail, firstName: userFirstName,
+      productLabel: `Creator Membership — ${creator.first_name || resource_id}`,
+      amount: canonicalPrice, paymentId: String(efipay_payment_id), lang: userLang,
+    }));
     return res.json({ success: true, user_id: userId, product_type, creator_id: resource_id, grant: grantResult });
   }
 
@@ -3111,6 +3188,11 @@ const efiPayResellerGrant = async (req, res) => {
     );
 
     logger.info(`[efipay-reseller] Channel access granted ch ${ch.id} to ${safeEmail}`);
+    setImmediate(() => _sendEfipayEmails(emailService, {
+      email: safeEmail, firstName: userFirstName,
+      productLabel: `Channel Access — ${ch.name || ch.id}`,
+      amount: canonicalPrice, paymentId: String(efipay_payment_id), lang: userLang,
+    }));
     return res.json({ success: true, user_id: userId, product_type, channel_id: ch.id, grant: grantResult });
   }
 
@@ -3177,6 +3259,11 @@ const efiPayResellerGrant = async (req, res) => {
       logger.info(`[efipay-reseller] Token package ${pkg.id} (${pkg.tokens} tokens) credited to ${safeEmail}`, {
         userId, tokenPurchaseId, newBalance, efipay_payment_id,
       });
+      setImmediate(() => _sendEfipayEmails(emailService, {
+        email: safeEmail, firstName: userFirstName,
+        productLabel: pkg.label || `${pkg.tokens} Tokens`,
+        amount: canonicalPrice, paymentId: String(efipay_payment_id), lang: userLang,
+      }));
       return res.json({
         success: true, user_id: userId, product_type,
         package_id: pkg.id, tokens: pkg.tokens, new_balance: newBalance,
