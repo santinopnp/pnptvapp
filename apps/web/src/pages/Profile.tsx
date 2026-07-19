@@ -1060,6 +1060,7 @@ export default function Profile() {
 
   const customTheme = profileThemes[profile.id];
   const isFounder = !customTheme && (profile.gamificationBadges?.some(b => b.slug === 'founder') ?? false);
+  const groupBadge = profile.gamificationBadges?.find(b => b.category_slug === 'group-membership') ?? null;
   const accentGradient = customTheme?.gradient ?? (isFounder
     ? "linear-gradient(135deg, #FFB454, #FF9933)"
     : isPerformer
@@ -1143,6 +1144,15 @@ export default function Profile() {
                 aria-hidden="true"
                 className="absolute -inset-0.5 rounded-full pointer-events-none"
                 style={{ boxShadow: "0 0 0 2px #FFB454, 0 0 16px rgba(255,180,84,0.45)" }}
+              />
+            )}
+            {!isPrime && groupBadge?.badge_color && (
+              <span
+                aria-hidden="true"
+                className="absolute -inset-0.5 rounded-full pointer-events-none"
+                style={{
+                  boxShadow: `0 0 0 2px ${groupBadge.badge_color}, 0 0 14px ${groupBadge.badge_color}55`,
+                }}
               />
             )}
             {/* Camera overlay — own profile only */}
@@ -1277,6 +1287,20 @@ export default function Profile() {
                 >
                   <span aria-hidden="true">🏅</span>
                   Miembro Fundador
+                </span>
+              )}
+              {groupBadge && groupBadge.badge_color && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full"
+                  style={{
+                    background: `linear-gradient(135deg, ${groupBadge.badge_color}33 0%, ${groupBadge.badge_color_2 ?? groupBadge.badge_color}22 100%)`,
+                    color: groupBadge.badge_color,
+                    border: `1px solid ${groupBadge.badge_color}55`,
+                    boxShadow: `0 0 8px ${groupBadge.badge_color}22`,
+                  }}
+                >
+                  <span aria-hidden="true">{groupBadge.icon}</span>
+                  {groupBadge.name_en}
                 </span>
               )}
             </div>

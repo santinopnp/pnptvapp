@@ -425,7 +425,7 @@ export default function CreatorLive() {
   return (
     <div className="min-h-screen" style={{ background: "var(--pnp-bg)" }}>
       <Helmet>
-        <title>Go Live — PNPtv!</title>
+        <title>Start Webcamming — PNPtv!</title>
       </Helmet>
 
       {/* Tip alert toast */}
@@ -449,6 +449,33 @@ export default function CreatorLive() {
               <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 fill-white"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16 13.5 16.5z"/></svg>
             </div>
             <span className="text-xs font-semibold tabular-nums" style={{ color: "#5BB8F5" }}>{tokenBalance} tokens</span>
+          </div>
+        )}
+
+        {/* Start Webcamming — 3-step quick-start guide (collapsed once live) */}
+        {!isLive && (
+          <div className="rounded-2xl overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.1), rgba(123,97,255,0.08))", border: "1px solid rgba(212,0,122,0.2)" }}>
+            <div className="px-5 pt-4 pb-2">
+              <p className="text-xs font-bold text-white/60 uppercase tracking-widest">Start Webcamming</p>
+              <p className="text-sm font-semibold text-white mt-0.5">3 steps to go live on PNPtv!</p>
+            </div>
+            <div className="flex gap-0 divide-x divide-white/8 px-2 pb-4">
+              {([
+                { n: "1", label: "Copy your RTMP URL & stream key below", icon: "M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" },
+                { n: "2", label: "Paste them into OBS or your streaming app", icon: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" },
+                { n: "3", label: "Hit \"Start Streaming\" in your app — you're live!", icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+              ] as const).map(step => (
+                <div key={step.n} className="flex-1 flex flex-col items-center gap-2 px-3 pt-2">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}>
+                    {step.n}
+                  </div>
+                  <svg className="w-5 h-5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={step.icon} />
+                  </svg>
+                  <p className="text-[11px] text-pnp-textSecondary text-center leading-relaxed">{step.label}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

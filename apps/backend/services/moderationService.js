@@ -18,8 +18,8 @@ class ModerationService {
     /(?:^|\s)([a-zA-Z0-9-]+\.(?:com|net|org|io|co|tv|me|gg|xyz|app|dev|tech)(?:\/[^\s]*)?)/gi,
     // Short URLs
     /(?:bit\.ly|t\.me|tinyurl\.com|goo\.gl|ow\.ly|buff\.ly)\/[^\s]+/gi,
-    // Telegram links
-    /(?:@[a-zA-Z0-9_]{5,}|t\.me\/[a-zA-Z0-9_]+)/gi,
+    // Telegram invite links (t.me/ paths only — NOT @mentions, which are normal user references)
+    /t\.me\/[a-zA-Z0-9_]+/gi,
   ];
 
   /**

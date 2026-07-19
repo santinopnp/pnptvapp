@@ -506,13 +506,28 @@ async function announceWinner(telegram, userId, badge, reward) {
   try {
     const user = await UserModel.getById(userId);
     const username = user?.username ? `@${user.username}` : (user?.firstName || 'Miembro');
-    const message = `🏆 Usuario destacado: ${username}\nDesde ahora será conocido como **${badge}**.\n\n🏆 Featured member: ${username}\nFrom now on he shall be known as **${badge}**.\n\n${reward.es}\n${reward.en}\n\n⏳ Ostentará el título hasta el último día del mes.\n📩 Revisa el bot: se envió un mensaje con detalles para reclamar el premio.\n📌 Anuncio publicado en el Wall of Fame.`;
+    const message =
+      `🔥 <b>WALL OF FAME</b> 🐷💨\n\n` +
+      `🏆 ${username} — <b>${badge}</b>\n\n` +
+      `${reward.es}\n${reward.en}\n\n` +
+      `⏳ Title lasts until end of the month.\n` +
+      `📌 <a href="${WOF_APP_URL}">Wall of Fame in the app</a>`;
 
-    await telegram.sendMessage(GROUP_ID, message, { parse_mode: 'Markdown' });
-    await telegram.sendMessage(GROUP_ID, message, {
-      parse_mode: 'Markdown',
-      message_thread_id: WALL_OF_FAME_TOPIC_ID,
-    });
+    await telegram.sendMessage(GROUP_ID, message, { parse_mode: 'HTML' });
+    try {
+      await telegram.sendMessage(GROUP_ID, message, {
+        parse_mode: 'HTML',
+        message_thread_id: WALL_OF_FAME_TOPIC_ID,
+      });
+    } catch (topicErr) {
+      if (isTopicMissingError(topicErr)) {
+        await telegram.sendMessage(
+          GROUP_ID,
+          `📌 <a href="${WOF_APP_URL}">Ver Wall of Fame en la app / View Wall of Fame in the app</a>`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
+    }
   } catch (error) {
     logger.error('Error announcing cult winner:', error);
   }

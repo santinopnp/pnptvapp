@@ -6027,6 +6027,8 @@ export interface UserBadgeEntry {
   category_name_en: string;
   category_name_es: string;
   category_icon: string;
+  badge_color?: string | null;
+  badge_color_2?: string | null;
 }
 
 export function getGamificationCategories(): Promise<{ success: boolean; categories: GamificationCategory[] }> {

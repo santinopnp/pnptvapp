@@ -29,7 +29,8 @@ class GamificationService {
   // Get badges for a specific user
   async getUserBadges(userId) {
     const result = await poolQuery(
-      `SELECT ub.*, b.slug, b.name_en, b.name_es, b.description_en, b.description_es, b.icon, b.level,
+      `SELECT ub.*, b.slug, b.name_en, b.name_es, b.description_en, b.description_es,
+              b.icon, b.level, b.badge_color, b.badge_color_2,
               c.slug as category_slug, c.name_en as category_name_en, c.name_es as category_name_es, c.icon as category_icon
        FROM user_badges ub
        JOIN gamification_badges b ON ub.badge_id = b.id

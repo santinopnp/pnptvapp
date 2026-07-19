@@ -29,43 +29,44 @@ const groupManagerService = require('../../../services/groupManagerService');
 const EntitlementModel = require('../../../models/entitlementModel');
 const BusinessNotificationService = require('../../../services/businessNotificationService');
 
-const CRON_EXPR       = '0 8 * * 1';     // Monday 08:00 UTC = 03:00 COT — weekly award run
-const DAILY_CRON_EXPR = '0 18 * * 1-6';  // Mon–Sat 18:00 UTC = 13:00 COT — daily standings nudge
+const CRON_EXPR       = '0 23 * * 5';    // Friday 23:00 UTC = 18:00 COT — weekly winner run
+const DAILY_CRON_EXPR = '0 18 * * 1-5';  // Mon–Fri 18:00 UTC = 13:00 COT — daily standings nudge
 const CRON_TZ = 'UTC';
 
 const REWARD_COUNT = 3;              // top 3 get PRIME
-const REWARD_DAYS = 7;               // duration of the PRIME grant
+const REWARD_DAYS = 3;               // 72 hours FREE PRIME (La Perrera Weekly Throne prize)
 const STRIKES_TO_KICK = 2;           // 2 consecutive zero-activity weeks → kicked
 
-// Returns { start: Date, end: Date, weekStartStr: 'YYYY-MM-DD' } for the ISO week
-// that ENDED most recently (i.e. last Monday 00:00 UTC through last Sunday 23:59:59 UTC).
+// La Perrera week runs Saturday 00:00 UTC → Friday 23:59:59 UTC.
+// Returns the last COMPLETE Sat-Fri period (i.e. last Saturday through last Friday).
 function getPriorWeekWindow(now = new Date()) {
   const d = new Date(now.getTime());
-  // Move to UTC Monday of THIS week
-  const day = d.getUTCDay(); // 0=Sun, 1=Mon
-  const daysSinceMonday = (day + 6) % 7; // Mon=0, Sun=6
-  const thisMonday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  thisMonday.setUTCDate(thisMonday.getUTCDate() - daysSinceMonday);
-  const priorMonday = new Date(thisMonday);
-  priorMonday.setUTCDate(priorMonday.getUTCDate() - 7);
-  const priorSundayEnd = new Date(thisMonday.getTime() - 1);
+  const day = d.getUTCDay(); // 0=Sun, 1=Mon, 6=Sat
+  // Days since most-recent Saturday: Sat=0, Sun=1, Mon=2, …, Fri=6
+  const daysSinceSat = (day + 1) % 7;
+  const thisSat = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  thisSat.setUTCDate(thisSat.getUTCDate() - daysSinceSat);
+  const priorSat = new Date(thisSat);
+  priorSat.setUTCDate(priorSat.getUTCDate() - 7);
+  const priorFriEnd = new Date(thisSat.getTime() - 1); // one ms before this Saturday = Friday 23:59:59.999
   return {
-    start: priorMonday,
-    end: priorSundayEnd,
-    weekStartStr: priorMonday.toISOString().slice(0, 10),
+    start: priorSat,
+    end: priorFriEnd,
+    weekStartStr: priorSat.toISOString().slice(0, 10),
   };
 }
 
-// Returns window from the most-recent Monday 00:00 UTC to right now.
+// Returns window from the most-recent Saturday 00:00 UTC to right now.
 function getCurrentWeekWindow(now = new Date()) {
   const d = new Date(now.getTime());
-  const daysSinceMonday = (d.getUTCDay() + 6) % 7;
-  const thisMonday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  thisMonday.setUTCDate(thisMonday.getUTCDate() - daysSinceMonday);
+  const day = d.getUTCDay();
+  const daysSinceSat = (day + 1) % 7;
+  const thisSat = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  thisSat.setUTCDate(thisSat.getUTCDate() - daysSinceSat);
   return {
-    start: thisMonday,
+    start: thisSat,
     end: now,
-    weekStartStr: thisMonday.toISOString().slice(0, 10),
+    weekStartStr: thisSat.toISOString().slice(0, 10),
   };
 }
 
@@ -467,25 +468,27 @@ async function processHangoutGroup(group, weekWindow) {
 
   // Announcement in hangout chat
   const lines = [];
-  lines.push(`🏆 Weekly Community Rank — ${group.name}`);
-  lines.push(`Week of ${weekStartStr}`);
+  lines.push(`👑 LA PERRERA WEEKLY THRONE — WEEKLY WINNERS 🐷🔥`);
+  lines.push('');
+  lines.push('Friday 6PM results are in!');
   lines.push('');
   if (grantedWinners.length > 0) {
-    lines.push(`Top ${winnerCount} active members each earn 7 days of PRIME 💜`);
-    lines.push('');
-    grantedWinners.slice(0, 10).forEach((w, i) => {
-      const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
+    const labels = ['🏆 1st Place', '🏆 2nd Place', '🏆 3rd Place'];
+    grantedWinners.slice(0, REWARD_COUNT).forEach((w, i) => {
       const who = w.username || w.first_name || 'Member';
-      lines.push(`${medal} ${who} — ${w.points} messages`);
+      lines.push(`${labels[i] || `🏆 ${i + 1}th Place`} — ${who} → 72 hours FREE PRIME`);
     });
-    if (grantedWinners.length > 10) lines.push(`…and ${grantedWinners.length - 10} more.`);
-    lines.push('');
   } else {
     lines.push('No active members this week — the room was quiet.');
-    lines.push('');
   }
-  lines.push('Post and chat — every message counts toward next week\'s ranking.');
-  lines.push('Two weeks with zero activity = auto-removed from the hangout.');
+  lines.push('');
+  lines.push('Full Top 10:');
+  weeklyActivity.slice(0, 10).forEach((w, i) => {
+    const who = w.username || w.first_name || 'Member';
+    lines.push(`${i + 1}. ${who} — ${w.points} messages`);
+  });
+  lines.push('');
+  lines.push('Massive respect to everyone posting and feeding the cult. See you next week sluts 😈💦');
 
   await postHangoutSystemMessage(group.id, lines.join('\n'));
 
@@ -636,32 +639,30 @@ async function processGroup(telegram, group, weekWindow) {
   // ── Announcement ──────────────────────────────────────────────────────────
   try {
     const lines = [];
-    lines.push(`🏆 *Weekly Community Rank — ${group.name}*`);
-    lines.push(`_Week of ${weekStartStr}_`);
+    lines.push('👑 <b>LA PERRERA WEEKLY THRONE — WEEKLY WINNERS</b> 🐷🔥');
+    lines.push('');
+    lines.push('Friday 6PM results are in!');
     lines.push('');
     if (grantedWinners.length > 0) {
-      lines.push(`Top ${winnerCount} active members — each earns *7 days of PRIME* 💜`);
-      lines.push('');
-      grantedWinners.slice(0, 10).forEach((w, i) => {
-        const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
-        const who = w.username ? `@${w.username}` : `Member`;
-        lines.push(`${medal} ${who} — *${w.points} pts*`);
+      const labels = ['🏆 1st Place', '🏆 2nd Place', '🏆 3rd Place'];
+      grantedWinners.slice(0, REWARD_COUNT).forEach((w, i) => {
+        const who = w.username ? `@${w.username}` : 'Member';
+        lines.push(`${labels[i] || `🏆 ${i + 1}th Place`} — ${who} → <b>72 hours FREE PRIME</b>`);
       });
-      if (grantedWinners.length > 10) {
-        lines.push(`…and ${grantedWinners.length - 10} more.`);
-      }
-      lines.push('');
     } else {
       lines.push('No active members this week — the room was quiet.');
-      lines.push('');
     }
-    lines.push('Post, share, react — every message counts toward next week\'s ranking.');
-    lines.push('Two weeks with zero activity = auto-removed from the group and the hangout.');
     lines.push('');
-    lines.push('_Ranking powered by [PNPtv!](https://pnptv.app)_');
+    lines.push('<b>Full Top 10:</b>');
+    weeklyPoints.slice(0, 10).forEach((w, i) => {
+      const who = w.username ? `@${w.username}` : 'Member';
+      lines.push(`${i + 1}. ${who} — ${w.points} messages`);
+    });
+    lines.push('');
+    lines.push('Massive respect to everyone posting and feeding the cult. See you next week sluts 😈💦');
 
     await telegram.sendMessage(Number(chatId), lines.join('\n'), {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       disable_web_page_preview: true,
     });
   } catch (err) {
@@ -771,27 +772,22 @@ async function runDailyStandings(telegram) {
       const weeklyPoints = await getWeeklyPoints(String(g.telegram_chat_id), weekWindow.start, weekWindow.end);
       if (!weeklyPoints.length) continue;
 
-      const top = weeklyPoints.slice(0, 3);
-      const lines = [
-        `🔥 *Ranking semanal — ${g.name}*`,
-        `_Semana del ${weekStartStr} · Actualización de hoy_`,
-        '',
-      ];
-      top.forEach((row, i) => {
-        const medal = ['🥇', '🥈', '🥉'][i];
-        const who = row.username ? `@${row.username}` : 'Miembro';
-        lines.push(`${medal} ${who} — *${row.points} mensajes*`);
-      });
-      if (weeklyPoints.length > 3) {
-        lines.push(`_…y ${weeklyPoints.length - 3} miembros más activos esta semana._`);
-      }
+      const lines = ['📊 <b>LA PERRERA WEEKLY THRONE — CURRENT STANDINGS</b> 🔥', ''];
+      lines.push('Top 10 pigs right now (updated today):');
       lines.push('');
-      lines.push('⏰ El lunes a las 3am (hora Bogotá) se define quién gana *7 días de PRIME* 💜');
-      lines.push('¡Cada mensaje cuenta — todavía estás a tiempo de subir al top!');
+      weeklyPoints.slice(0, 10).forEach((row, i) => {
+        const who = row.username ? `@${row.username}` : 'Member';
+        lines.push(`${i + 1}. ${who} — ${row.points} messages`);
+      });
+      lines.push('');
+      lines.push('Still time to climb before Friday 6PM Colombia!');
+      lines.push('Top 3 takes home <b>72 hours FREE PRIME</b> each 😈');
+      lines.push('');
+      lines.push('Keep posting. Keep getting spun. Climb the throne perras 💨🐷');
 
       if (telegram) {
         await telegram.sendMessage(Number(g.telegram_chat_id), lines.join('\n'), {
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           disable_web_page_preview: true,
         });
       }
@@ -810,23 +806,18 @@ async function runDailyStandings(telegram) {
       const weeklyActivity = await getHangoutWeeklyMessages(hg.id, weekWindow.start, weekWindow.end);
       if (!weeklyActivity.length) continue;
 
-      const top = weeklyActivity.slice(0, 3);
-      const lines = [
-        `🔥 Ranking semanal — ${hg.name}`,
-        `Semana del ${weekStartStr} · Actualización de hoy`,
-        '',
-      ];
-      top.forEach((row, i) => {
-        const medal = ['🥇', '🥈', '🥉'][i];
-        const who = row.username || row.first_name || 'Miembro';
-        lines.push(`${medal} ${who} — ${row.points} mensajes`);
-      });
-      if (weeklyActivity.length > 3) {
-        lines.push(`…y ${weeklyActivity.length - 3} miembros más activos esta semana.`);
-      }
+      const lines = ['📊 LA PERRERA WEEKLY THRONE — CURRENT STANDINGS 🔥', ''];
+      lines.push('Top 10 pigs right now (updated today):');
       lines.push('');
-      lines.push('⏰ El lunes a las 3am (hora Bogotá) se define quién gana 7 días de PRIME 💜');
-      lines.push('¡Cada mensaje cuenta — todavía estás a tiempo de subir al top!');
+      weeklyActivity.slice(0, 10).forEach((row, i) => {
+        const who = row.username || row.first_name || 'Member';
+        lines.push(`${i + 1}. ${who} — ${row.points} messages`);
+      });
+      lines.push('');
+      lines.push('Still time to climb before Friday 6PM Colombia!');
+      lines.push('Top 3 takes home 72 hours FREE PRIME each 😈');
+      lines.push('');
+      lines.push('Keep posting. Keep getting spun. Climb the throne perras 💨🐷');
 
       await postHangoutSystemMessage(hg.id, lines.join('\n'));
     } catch (err) {

@@ -188,6 +188,9 @@ const Appeal = lazy(() => import("@/pages/Appeal"));
 const CreatorSubscribers = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorSubscribers })));
 const CreatorConsents = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorConsents })));
 const CreatorXCampaignsPage = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorXCampaigns })));
+const CreatorMyDocuments = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorMyDocuments })));
+const CreatorBenefits = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorBenefits })));
+const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorContent").then(m => ({ default: m.CreatorChannelsHub })));
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
@@ -900,6 +903,9 @@ export const router = createBrowserRouter([
       { path: "subscribers", element: <ModuleLoader><CreatorSubscribers /></ModuleLoader> },
       { path: "consents", element: <ModuleLoader><CreatorConsents /></ModuleLoader> },
       { path: "x-campaigns", element: <ModuleLoader><CreatorXCampaignsPage /></ModuleLoader> },
+      { path: "documents", element: <ModuleLoader><CreatorMyDocuments /></ModuleLoader> },
+      { path: "channels-hub", element: <ModuleLoader><CreatorChannelsHub /></ModuleLoader> },
+      { path: "benefits", element: <ModuleLoader><CreatorBenefits /></ModuleLoader> },
       { path: "guidelines", element: <ModuleLoader><CreatorGuidelines /></ModuleLoader> },
     ],
   },

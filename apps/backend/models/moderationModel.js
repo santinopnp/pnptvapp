@@ -41,10 +41,10 @@ class ModerationModel {
       // Return default settings if no custom settings exist
       return {
         groupId: groupId.toString(),
-        antiLinksEnabled: true,
-        antiSpamEnabled: true,
-        antiFloodEnabled: true,
-        profanityFilterEnabled: true,
+        antiLinksEnabled: false,
+        antiSpamEnabled: false,
+        antiFloodEnabled: false,
+        profanityFilterEnabled: false,
         maxWarnings: 3,
         floodLimit: 5,
         floodWindow: 10,
@@ -59,10 +59,10 @@ class ModerationModel {
       // Return default settings on error instead of null
       return {
         groupId: groupId.toString(),
-        antiLinksEnabled: true,
-        antiSpamEnabled: true,
-        antiFloodEnabled: true,
-        profanityFilterEnabled: true,
+        antiLinksEnabled: false,
+        antiSpamEnabled: false,
+        antiFloodEnabled: false,
+        profanityFilterEnabled: false,
         maxWarnings: 3,
         floodLimit: 5,
         floodWindow: 10,

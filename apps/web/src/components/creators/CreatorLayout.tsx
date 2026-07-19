@@ -55,11 +55,6 @@ const navItems: Array<{
   roles?: CreatorRoleClient[];
 }> = [
   {
-    to: "/creators/guidelines",
-    label: "Guidelines",
-    icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
-  },
-  {
     to: "/creators",
     label: "Dashboard",
     end: true,
@@ -71,10 +66,35 @@ const navItems: Array<{
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
   {
+    to: "/creators/documents",
+    label: "My Documents",
+    icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+  },
+  {
+    // PNP Live streaming — only roles that include Performer can broadcast.
+    to: "/creators/live",
+    label: "Start Webcamming",
+    icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
+    roles: ["performer", "both"],
+  },
+  {
+    // Availability = streamer's broadcast schedule. Performer-only feature.
+    to: "/creators/availability",
+    label: "Availability",
+    icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
+    roles: ["performer", "both"],
+  },
+  {
     // Exclusive paid content posts — only roles that include Creator can publish.
     to: "/creators/content",
     label: "Content",
-    icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+    icon: "M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z",
+    roles: ["creator", "both"],
+  },
+  {
+    to: "/creators/channels-hub",
+    label: "PNP Channels",
+    icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
     roles: ["creator", "both"],
   },
   {
@@ -86,20 +106,6 @@ const navItems: Array<{
     to: "/creators/payouts",
     label: "Payouts",
     icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
-  },
-  {
-    // PNP Live streaming — only roles that include Performer can broadcast.
-    to: "/creators/live",
-    label: "Go Live",
-    icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
-    roles: ["performer", "both"],
-  },
-  {
-    // Availability = streamer's broadcast schedule. Performer-only feature.
-    to: "/creators/availability",
-    label: "Availability",
-    icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
-    roles: ["performer", "both"],
   },
   {
     to: "/creators/analytics",
@@ -123,8 +129,13 @@ const navItems: Array<{
   },
   {
     to: "/creators/x-campaigns",
-    label: "X Campaigns",
-    icon: "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z",
+    label: "My AI Tools",
+    icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z",
+  },
+  {
+    to: "/creators/benefits",
+    label: "My Benefits",
+    icon: "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z",
   },
 ];
 
@@ -1479,390 +1490,322 @@ export function CreatorConsents() {
   );
 }
 
-// ── Creator X Campaigns Page ──────────────────────────────────────────────────
+// ── My AI Tools Page (X Campaigns agent — coming soon) ───────────────────────
 
-export function CreatorXCampaigns() {
-  const [account, setAccount] = React.useState<{ account_id: string; handle: string; display_name: string } | null>(null);
-  const [campaigns, setCampaigns] = React.useState<XAutoCampaign[]>([]);
-  const [campaignLimit, setCampaignLimit] = React.useState(2);
-  const [loading, setLoading] = React.useState(true);
-  const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [actionError, setActionError] = React.useState<string | null>(null);
-  const [showCreate, setShowCreate] = React.useState(false);
-  const [editingCampaignId, setEditingCampaignId] = React.useState<string | null>(null);
-  const [confirmDeleteCampaignId, setConfirmDeleteCampaignId] = React.useState<string | null>(null);
-  const [expandedHistory, setExpandedHistory] = React.useState<string | null>(null);
-  const [historyData, setHistoryData] = React.useState<Record<string, { posts: XAutoCampaignPost[]; page: number; totalPages: number; error?: boolean }>>({});
+export function CreatorMyAITools() {
+  return (
+    <>
+      <Helmet><title>My AI Tools — Creator Studio — PNPtv!</title></Helmet>
+      <div className="p-4 lg:p-6 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-white">My AI Tools</h1>
+          <p className="text-sm text-pnp-textSecondary mt-1">Automate your content strategy with AI-powered tools.</p>
+        </div>
 
-  // Create form state
-  const [formName, setFormName] = React.useState("");
-  const [formTopic, setFormTopic] = React.useState("");
-  const [formMode, setFormMode] = React.useState("xPost");
-  const [formLang, setFormLang] = React.useState("en");
-  const [formInterval, setFormInterval] = React.useState(60);
-  const [formStart, setFormStart] = React.useState(9);
-  const [formEnd, setFormEnd] = React.useState(22);
-  const [creating, setCreating] = React.useState(false);
+        {/* X Campaigns Agent — Coming Soon */}
+        <div className="rounded-2xl p-6 relative overflow-hidden" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(135deg, rgba(29,161,242,0.06) 0%, rgba(212,0,122,0.04) 100%)" }} />
+          <div className="absolute top-4 right-4">
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold" style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B" }}>Coming Soon</span>
+          </div>
+          <div className="relative flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 text-2xl" style={{ background: "rgba(29,161,242,0.12)", border: "1px solid rgba(29,161,242,0.2)" }}>
+              𝕏
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-bold text-white">X Campaigns Agent</h3>
+              <p className="text-sm text-pnp-textSecondary mt-1.5 leading-relaxed">
+                An AI agent that runs your X (Twitter) presence on autopilot — writing posts, scheduling them, and driving traffic to your PNPtv content.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {[
+                  "Scheduled posts written in EN, ES, or bilingual",
+                  "Sales posts that link directly to your channels",
+                  "Broadcast announcements when you go live",
+                  "Post history and performance analytics",
+                ].map(feat => (
+                  <li key={feat} className="flex items-center gap-2 text-xs text-pnp-textSecondary">
+                    <span className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold" style={{ background: "rgba(29,161,242,0.15)", color: "#1DA1F2" }}>✓</span>
+                    {feat}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
 
-  const loadAll = React.useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const [acctRes, campRes] = await Promise.all([getCreatorXAccount(), getCreatorXCampaigns()]);
-      if (acctRes.success) setAccount(acctRes.account);
-      else setLoadError("Failed to load X account.");
-      if (campRes.success) {
-        setCampaigns(campRes.campaigns);
-        setCampaignLimit(campRes.campaignLimit);
-      } else if (!acctRes.success) {
-        setLoadError("Failed to load campaign data.");
-      }
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load X campaigns.");
-    }
-    setLoading(false);
+        {/* More tools preview grid */}
+        <div>
+          <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider mb-3">More tools on the way</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              { icon: "🤖", title: "Content Idea Generator", desc: "AI suggests post ideas based on your niche and what's trending in the community." },
+              { icon: "📊", title: "Audience Insights Agent", desc: "Weekly digest of which content performs best and when your audience is most active." },
+              { icon: "✍️", title: "Caption Rewriter", desc: "Turn a rough description into polished bilingual captions in one click." },
+              { icon: "📅", title: "Auto-Scheduler", desc: "Queue posts across platforms and let the agent pick the optimal publish times." },
+            ].map(tool => (
+              <div key={tool.title} className="rounded-xl p-4 relative" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <span className="absolute top-3 right-3 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.3)" }}>Soon</span>
+                <div className="text-xl mb-2">{tool.icon}</div>
+                <p className="text-xs font-bold text-white">{tool.title}</p>
+                <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed pr-12">{tool.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Creator X Campaigns — legacy alias so router doesn't need updating ────────
+export { CreatorMyAITools as CreatorXCampaigns };
+
+// ── Creator My Documents Page ─────────────────────────────────────────────────
+
+export function CreatorMyDocuments() {
+  const navigate = useNavigate();
+  const [setupItems, setSetupItems] = React.useState<Array<{ key: string; done: boolean }>>([]);
+  const [consents, setConsents] = React.useState<{
+    terms_accepted?: boolean;
+    privacy_accepted?: boolean;
+    creator_terms_agreed?: boolean;
+    content_disclaimer?: boolean;
+  } | null>(null);
+
+  React.useEffect(() => {
+    getCreatorSetupStatus()
+      .then(res => { if (res?.items) setSetupItems(res.items); })
+      .catch(() => {});
+    getCreatorConsents()
+      .then(res => { if (res?.success) setConsents(res.consents ?? res); })
+      .catch(() => {});
   }, []);
 
-  React.useEffect(() => { loadAll(); }, [loadAll]);
+  const isDone = (key: string) => setupItems.find(i => i.key === key)?.done ?? null;
 
-  const handleConnectX = async () => {
-    setActionError(null);
-    try {
-      const res = await startCreatorXOAuth();
-      if (res.success && res.url) {
-        window.location.href = res.url;
-      } else {
-        setActionError("Could not start X authorization. Please try again.");
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to connect X account.");
-    }
-  };
+  const sections: Array<{
+    title: string;
+    items: Array<{
+      title: string;
+      description: string;
+      status: "accepted" | "verified" | "pending" | null;
+      actionLabel: string;
+      onAction: () => void;
+    }>;
+  }> = [
+    {
+      title: "Platform Agreements",
+      items: [
+        {
+          title: "PNPtv! Terms of Service",
+          description: "Usage rules, community standards, and how disputes are handled.",
+          status: consents?.terms_accepted ? "accepted" : null,
+          actionLabel: "Read",
+          onAction: () => window.open("/terms", "_blank"),
+        },
+        {
+          title: "Privacy Policy",
+          description: "How PNPtv! collects, uses, and protects your data.",
+          status: consents?.privacy_accepted ? "accepted" : null,
+          actionLabel: "Read",
+          onAction: () => window.open("/privacy", "_blank"),
+        },
+        {
+          title: "Creator Program Terms",
+          description: "Revenue split (70/30), payout schedule, content ownership, deactivation policy.",
+          status: consents?.creator_terms_agreed || isDone("creator_terms") ? "accepted" : "pending",
+          actionLabel: "View & Accept",
+          onAction: () => navigate("/creators/consents"),
+        },
+      ],
+    },
+    {
+      title: "Content Compliance",
+      items: [
+        {
+          title: "Community Guidelines",
+          description: "Content rules, channel types, the strike system, and community standards.",
+          status: null,
+          actionLabel: "Read",
+          onAction: () => navigate("/creators/guidelines"),
+        },
+        {
+          title: "Content Disclaimer",
+          description: "Confirms all props and substances shown are simulated, for entertainment purposes only.",
+          status: consents?.content_disclaimer ? "accepted" : "pending",
+          actionLabel: "View & Accept",
+          onAction: () => navigate("/creators/consents"),
+        },
+        {
+          title: "2257 Identity Verification",
+          description: "Age verification and record-keeping compliance (18 U.S.C. § 2257).",
+          status: isDone("identity") ? "verified" : "pending",
+          actionLabel: isDone("identity") ? "View" : "Complete",
+          onAction: () => navigate("/creators/apply"),
+        },
+      ],
+    },
+  ];
 
-  const handleEditCampaign = (campaign: XAutoCampaign) => {
-    setFormName(campaign.name);
-    setFormTopic(campaign.topic);
-    setFormMode(campaign.grok_mode || "xPost");
-    setFormLang(campaign.language || "en");
-    setFormInterval(campaign.interval_minutes || 60);
-    setFormStart(campaign.active_hours_start ?? 9);
-    setFormEnd(campaign.active_hours_end ?? 22);
-    setEditingCampaignId(campaign.campaign_id);
-    setShowCreate(true);
-  };
-
-  const handleCreate = async () => {
-    if (!formName.trim() || !formTopic.trim() || !account) return;
-    setCreating(true);
-    setActionError(null);
-    try {
-      if (editingCampaignId) {
-        const res = await updateCreatorXCampaign(editingCampaignId, {
-          name: formName.trim(),
-          topic: formTopic.trim(),
-          grokMode: formMode,
-          language: formLang,
-          intervalMinutes: formInterval,
-          activeHoursStart: formStart,
-          activeHoursEnd: formEnd,
-        });
-        if (res.success) {
-          setShowCreate(false);
-          setEditingCampaignId(null);
-          setFormName(""); setFormTopic("");
-          await loadAll();
-        } else {
-          setActionError("Failed to update campaign. Please try again.");
-        }
-      } else {
-        const res = await createCreatorXCampaign({
-          name: formName.trim(),
-          accountId: account.account_id,
-          topic: formTopic.trim(),
-          grokMode: formMode,
-          language: formLang,
-          intervalMinutes: formInterval,
-          activeHoursStart: formStart,
-          activeHoursEnd: formEnd,
-        });
-        if (res.success) {
-          setShowCreate(false);
-          setFormName(""); setFormTopic("");
-          await loadAll();
-        } else {
-          setActionError("Failed to create campaign. Please try again.");
-        }
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : editingCampaignId ? "Failed to update campaign." : "Failed to create campaign.");
-    }
-    setCreating(false);
-  };
-
-  const handlePause = async (id: string) => {
-    setActionError(null);
-    try {
-      await pauseCreatorXCampaign(id);
-      await loadAll();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to pause campaign.");
-    }
-  };
-  const handleResume = async (id: string) => {
-    setActionError(null);
-    try {
-      await resumeCreatorXCampaign(id);
-      await loadAll();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to resume campaign.");
-    }
-  };
-  const handleDelete = async (id: string) => {
-    setActionError(null);
-    try {
-      await deleteCreatorXCampaign(id);
-      await loadAll();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to delete campaign.");
-    }
-  };
-
-  const toggleHistory = async (campaignId: string) => {
-    if (expandedHistory === campaignId) {
-      setExpandedHistory(null);
-      return;
-    }
-    setExpandedHistory(campaignId);
-    if (!historyData[campaignId]) {
-      try {
-        const res = await getCreatorXCampaignHistory(campaignId, 1);
-        if (res.success) {
-          setHistoryData(prev => ({ ...prev, [campaignId]: { posts: res.posts, page: 1, totalPages: res.pagination.totalPages } }));
-        }
-      } catch {
-        setHistoryData(prev => ({ ...prev, [campaignId]: { posts: [], page: 1, totalPages: 0, error: true } }));
-      }
-    }
-  };
-
-  const statusColor = (status: string) => {
-    if (status === "active") return "bg-green-500/20 text-green-400";
-    if (status === "paused") return "bg-amber-500/20 text-amber-400";
-    return "bg-white/10 text-pnp-textSecondary";
+  const statusBadge = (status: "accepted" | "verified" | "pending" | null) => {
+    if (!status) return null;
+    const colors = {
+      accepted: { bg: "rgba(52,199,89,0.15)", color: "#34C759", label: "Accepted" },
+      verified: { bg: "rgba(94,209,196,0.15)", color: "#5ED1C4", label: "Verified" },
+      pending: { bg: "rgba(245,158,11,0.15)", color: "#F59E0B", label: "Pending" },
+    };
+    const c = colors[status];
+    return (
+      <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.color }}>
+        {c.label}
+      </span>
+    );
   };
 
   return (
     <>
-      <Helmet><title>X Campaigns — Creator Studio — PNPtv!</title></Helmet>
-      <div className="p-4 lg:p-6">
-        <h1 className="text-xl font-bold text-pnp-textPrimary mb-4">X Campaigns</h1>
+      <Helmet><title>My Documents — Creator Studio — PNPtv!</title></Helmet>
+      <div className="p-4 lg:p-6 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-white">My Documents</h1>
+          <p className="text-sm text-pnp-textSecondary mt-1">Your agreements, compliance records, and creator resources.</p>
+        </div>
 
-        {actionError && (
-          <div className="mb-4 px-4 py-3 rounded-xl text-sm text-red-400" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-            {actionError}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="animate-pulse space-y-3">
-            <div className="h-20 bg-white/5 rounded-xl" />
-            <div className="h-40 bg-white/5 rounded-xl" />
-          </div>
-        ) : loadError ? (
-          <div className="text-center py-8 rounded-xl" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
-            <p className="text-sm text-red-400">{loadError}</p>
-            <button onClick={loadAll} className="mt-3 text-xs text-pnp-textSecondary underline">Retry</button>
-          </div>
-        ) : !account ? (
-          /* No X account connected */
-          <div className="text-center py-12 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-            <svg className="w-12 h-12 mx-auto mb-3 text-pnp-textSecondary/40" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-            </svg>
-            <h3 className="text-base font-semibold text-white mb-2">Connect your X account</h3>
-            <p className="text-sm text-pnp-textSecondary mb-4 max-w-xs mx-auto">
-              Link your X (Twitter) account to create automated campaigns that promote your content.
-            </p>
-            <button
-              onClick={handleConnectX}
-              className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] btn-gradient"
-            >
-              Connect X Account
-            </button>
-          </div>
-        ) : (
-          <>
-            {/* Connected account + campaign limit */}
-            <div className="flex items-center justify-between mb-4 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <div className="flex items-center gap-3">
-                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                </svg>
-                <div>
-                  <p className="text-sm font-medium text-white">@{account.handle}</p>
-                  <p className="text-xs text-pnp-textSecondary">{account.display_name}</p>
-                </div>
-              </div>
-              <span className="text-xs text-pnp-textSecondary">
-                {campaigns.length} / {campaignLimit} campaigns
-              </span>
-            </div>
-
-            {/* Create button */}
-            {campaigns.length < campaignLimit && (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="w-full mb-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] btn-gradient"
+        {sections.map(section => (
+          <div key={section.title} className="space-y-2">
+            <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider px-1">{section.title}</p>
+            {section.items.map(item => (
+              <div
+                key={item.title}
+                className="flex items-center gap-4 p-4 rounded-xl"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
               >
-                + Create Campaign
-              </button>
-            )}
-
-            {/* Campaign cards */}
-            {campaigns.length === 0 ? (
-              <div className="text-center py-8 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-                <p className="text-sm text-pnp-textSecondary">No campaigns yet. Create one to start promoting your content on X!</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {campaigns.map(c => (
-                  <div key={c.campaign_id} className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.04)" }}>
-                    <div className="px-4 py-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-semibold text-white truncate">{c.name}</h3>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusColor(c.status)}`}>{c.status}</span>
-                      </div>
-                      <p className="text-xs text-pnp-textSecondary mb-2 line-clamp-2">{c.topic}</p>
-                      <div className="flex items-center gap-4 text-xs text-pnp-textSecondary">
-                        <span>Posted: {c.total_posted}</span>
-                        <span>Failed: {c.total_failed}</span>
-                        <span>Every {c.interval_minutes}min</span>
-                        <span>{c.active_hours_start}:00–{c.active_hours_end}:00</span>
-                      </div>
-                      {/* Actions */}
-                      <div className="flex items-center gap-2 mt-3 flex-wrap">
-                        {c.status === "active" ? (
-                          <button onClick={() => handlePause(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors">Pause</button>
-                        ) : c.status === "paused" ? (
-                          <button onClick={() => handleResume(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors">Resume</button>
-                        ) : null}
-                        <button
-                          onClick={() => handleEditCampaign(c)}
-                          className="text-xs px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-pnp-textSecondary transition-colors"
-                        >
-                          Edit
-                        </button>
-                        <button onClick={() => setConfirmDeleteCampaignId(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">Delete</button>
-                        <button onClick={() => toggleHistory(c.campaign_id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-white/10 text-pnp-textSecondary hover:bg-white/15 transition-colors">
-                          {expandedHistory === c.campaign_id ? "Hide History" : "View History"}
-                        </button>
-                      </div>
-                    </div>
-                    {/* Expanded history */}
-                    {expandedHistory === c.campaign_id && historyData[c.campaign_id] && (
-                      <div className="border-t border-white/5 px-4 py-3">
-                        {historyData[c.campaign_id]?.error && (
-                          <p className="text-red-400 text-xs px-3 py-2">Failed to load history. Please try again.</p>
-                        )}
-                        {historyData[c.campaign_id].posts.length === 0 && !historyData[c.campaign_id]?.error ? (
-                          <p className="text-xs text-pnp-textSecondary">No posts yet</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {historyData[c.campaign_id].posts.map((p: any) => (
-                              <div key={p.post_id} className="text-xs">
-                                <p className="text-pnp-textPrimary">{(p.text || "").substring(0, 120)}{(p.text || "").length > 120 ? "..." : ""}</p>
-                                <p className="text-pnp-textSecondary/60 mt-0.5">
-                                  {p.status} · {new Date(p.created_at).toLocaleString()}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Delete confirmation dialog */}
-            <ConfirmDialog
-              open={confirmDeleteCampaignId !== null}
-              title="Delete campaign"
-              message="Delete this campaign? This cannot be undone."
-              confirmLabel="Delete"
-              cancelLabel="Cancel"
-              variant="danger"
-              onConfirm={async () => {
-                const id = confirmDeleteCampaignId;
-                setConfirmDeleteCampaignId(null);
-                if (id) await handleDelete(id);
-              }}
-              onCancel={() => setConfirmDeleteCampaignId(null)}
-            />
-
-            {/* Create / Edit Campaign Modal */}
-            {showCreate && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setShowCreate(false); setEditingCampaignId(null); }}>
-                <div className="bg-pnp-background border border-pnp-border rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
-                  <h2 className="text-base font-bold text-white mb-4">{editingCampaignId ? "Edit Campaign" : "Create Campaign"}</h2>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-pnp-textSecondary mb-1 block">Campaign Name</label>
-                      <input value={formName} onChange={e => setFormName(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white" placeholder="e.g. My Content Promo" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-pnp-textSecondary mb-1 block">Topic / Prompt</label>
-                      <textarea value={formTopic} onChange={e => setFormTopic(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white h-20 resize-none" placeholder="What should the AI post about?" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs text-pnp-textSecondary mb-1 block">Mode</label>
-                        <select value={formMode} onChange={e => setFormMode(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white">
-                          <option value="xPost">X Post</option>
-                          <option value="broadcast">Broadcast</option>
-                          <option value="salesPost">Sales Post</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs text-pnp-textSecondary mb-1 block">Language</label>
-                        <select value={formLang} onChange={e => setFormLang(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white">
-                          <option value="en">English</option>
-                          <option value="es">Spanish</option>
-                          <option value="bilingual">Bilingual</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-xs text-pnp-textSecondary mb-1 block">Interval (min)</label>
-                        <input type="number" min={30} value={formInterval} onChange={e => setFormInterval(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-pnp-textSecondary mb-1 block">Start Hour</label>
-                        <input type="number" min={0} max={23} value={formStart} onChange={e => setFormStart(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white" />
-                      </div>
-                      <div>
-                        <label className="text-xs text-pnp-textSecondary mb-1 block">End Hour</label>
-                        <input type="number" min={0} max={23} value={formEnd} onChange={e => setFormEnd(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg bg-pnp-surface border border-pnp-border text-sm text-white" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-5">
-                    <button onClick={() => { setShowCreate(false); setEditingCampaignId(null); }} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-pnp-textSecondary bg-white/10 hover:bg-white/15 transition-colors">Cancel</button>
-                    <button
-                      onClick={handleCreate}
-                      disabled={creating || !formName.trim() || !formTopic.trim()}
-                      className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-all hover:opacity-90 btn-gradient"
-                    >
-                      {creating ? (editingCampaignId ? "Saving..." : "Creating...") : (editingCampaignId ? "Save Changes" : "Create")}
-                    </button>
-                  </div>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(212,0,122,0.1)" }}>
+                  <svg className="w-4 h-4" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white">{item.title}</p>
+                  <p className="text-xs text-pnp-textSecondary mt-0.5 leading-relaxed">{item.description}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {statusBadge(item.status)}
+                  <button
+                    onClick={item.onAction}
+                    className="text-xs font-semibold transition-colors hover:opacity-80"
+                    style={{ color: "#D4007A" }}
+                  >
+                    {item.actionLabel} →
+                  </button>
                 </div>
               </div>
-            )}
-          </>
-        )}
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ── My Benefits Page ──────────────────────────────────────────────────────────
+
+export function CreatorBenefits() {
+  const comingSoon = [
+    {
+      icon: "📚",
+      title: "English Language Classes",
+      description: "Group and 1-on-1 sessions with certified instructors, tailored for the PNP community.",
+      accent: "#5ED1C4",
+    },
+    {
+      icon: "🧠",
+      title: "Mental Health & Wellness",
+      description: "Confidential access to licensed therapists and wellness professionals.",
+      accent: "#9B59B6",
+    },
+    {
+      icon: "💰",
+      title: "Financial Education",
+      description: "Workshops on savings, investing, and managing your creator income responsibly.",
+      accent: "#E69138",
+    },
+    {
+      icon: "🏋️",
+      title: "Gym Membership Discounts",
+      description: "Exclusive discounts at partner gyms and fitness centers.",
+      accent: "#3498DB",
+    },
+  ];
+
+  return (
+    <>
+      <Helmet><title>My Benefits — Creator Studio — PNPtv!</title></Helmet>
+      <div className="p-4 lg:p-6 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-white">My Benefits</h1>
+          <p className="text-sm text-pnp-textSecondary mt-1">Exclusive benefits designed to support your success as a PNPtv! creator.</p>
+        </div>
+
+        {/* Active benefit */}
+        <div>
+          <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider mb-3">Active</p>
+          <div
+            className="rounded-2xl p-5 relative overflow-hidden"
+            style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.1), rgba(94,209,196,0.06))", border: "1px solid rgba(212,0,122,0.25)" }}
+          >
+            <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(circle at top right, rgba(212,0,122,0.08) 0%, transparent 70%)" }} />
+            <div className="relative flex items-start gap-4">
+              <div
+                className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 text-2xl"
+                style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.25)" }}
+              >
+                🛡️
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-white">Customer Support Handling</h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(52,199,89,0.15)", color: "#34C759" }}>Active</span>
+                </div>
+                <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
+                  PNPtv! will be responsible for handling any refunds or feedback about your work.
+                  We will work together with you to create a{" "}
+                  <span className="text-white/80 font-medium">performance improvement plan</span>{" "}
+                  designed to boost your success chances. Terms and conditions apply.
+                </p>
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(94,209,196,0.9)" }}>
+                  PNPtv! will cover the fee for any refunds requested by members in cases where they are
+                  approved per local legislation or our terms and conditions.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Coming soon benefits */}
+        <div>
+          <p className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider mb-3">Coming Soon</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {comingSoon.map(benefit => (
+              <div
+                key={benefit.title}
+                className="rounded-xl p-5 relative"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <span
+                  className="absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full"
+                  style={{ background: "rgba(245,158,11,0.12)", color: "#F59E0B", border: "1px solid rgba(245,158,11,0.2)" }}
+                >
+                  Coming Soon
+                </span>
+                <div className="text-2xl mb-3">{benefit.icon}</div>
+                <h3 className="text-sm font-bold text-white">{benefit.title}</h3>
+                <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed pr-20">{benefit.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </>
   );
