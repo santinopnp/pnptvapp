@@ -376,8 +376,24 @@ async function updateVideo({ videoId, userId, isAdmin, fields }) {
     }
     // Any other status value from a non-admin is silently ignored.
   }
-  // is_featured is a platform curation flag — only admins may set it.
-  if (typeof fields.is_featured === 'boolean' && isAdmin) {
+  // is_featured — creators curate their own "Featured Videos" row on their
+  // public profile (capped at 5); admins remain uncapped for platform curation.
+  if (typeof fields.is_featured === 'boolean') {
+    if (fields.is_featured && !isAdmin) {
+      const { rows: featCountRows } = await query(
+        `SELECT count(*)::int AS n
+           FROM channel_videos cv
+           JOIN creator_channels cc ON cc.id = cv.channel_id
+          WHERE cc.creator_id = $1 AND cv.is_featured = true AND cv.id != $2`,
+        [v.channel_creator_id, videoId]
+      );
+      if ((featCountRows[0]?.n ?? 0) >= 5) {
+        const e = new Error('You can only feature up to 5 videos');
+        e.code = 'FEATURED_LIMIT_REACHED';
+        e.status = 422;
+        throw e;
+      }
+    }
     params.push(fields.is_featured);
     sets.push(`is_featured = $${params.length}`);
   }

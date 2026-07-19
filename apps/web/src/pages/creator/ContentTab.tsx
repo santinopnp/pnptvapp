@@ -24,11 +24,14 @@ import {
   removeChannelCollaborator,
   listChannelVideos,
   deleteChannelVideo,
+  updateChannelVideo,
   listOwnCreatorMedia,
   updateOwnCreatorMedia,
   deleteOwnCreatorMedia,
   sharePostToHangouts,
   getHangoutGroups,
+  getOwnHangouts,
+  linkHangoutChannel,
   type CmsPerformer,
   type CmsShow,
   type CreatorChannel,
@@ -36,6 +39,7 @@ import {
   type ChannelVideo,
   type CreatorMediaItem,
   type HangoutGroup,
+  type OwnHangout,
 } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 
@@ -124,6 +128,16 @@ export function ContentTab({ t }: ContentTabProps) {
   const [channelVideosLoading, setChannelVideosLoading] = useState<number | null>(null);
   const [channelVideosError, setChannelVideosError] = useState<Record<number, string>>({});
   const [deletingVideoId, setDeletingVideoId] = useState<number | null>(null);
+  const [togglingFeaturedVideoId, setTogglingFeaturedVideoId] = useState<number | null>(null);
+  const [featuredVideoError, setFeaturedVideoError] = useState<string>("");
+
+  // ── Members-only hangout linking state ──
+  const [linkableHangouts, setLinkableHangouts] = useState<OwnHangout[]>([]);
+  const [linkableHangoutsLoading, setLinkableHangoutsLoading] = useState(false);
+  const [linkableHangoutsError, setLinkableHangoutsError] = useState<string>("");
+  const [selectedHangoutId, setSelectedHangoutId] = useState<number | "">("");
+  const [linkingHangout, setLinkingHangout] = useState(false);
+  const [linkHangoutError, setLinkHangoutError] = useState<string>("");
 
   // Profile edit
   const [cmsProfileForm, setCmsProfileForm] = useState<Partial<CmsPerformer>>({});
@@ -474,6 +488,64 @@ export function ContentTab({ t }: ContentTabProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmsContentSection]);
 
+  // ── Members-only hangout linking handlers ──
+  const loadLinkableHangouts = () => {
+    setLinkableHangoutsLoading(true);
+    setLinkableHangoutsError("");
+    getOwnHangouts()
+      .then((res) => {
+        if (res.success) setLinkableHangouts(res.hangouts);
+      })
+      .catch((err) => setLinkableHangoutsError(err.message || "Failed to load hangouts"))
+      .finally(() => setLinkableHangoutsLoading(false));
+  };
+
+  useEffect(() => {
+    if (cmsContentSection === "channels" && linkableHangouts.length === 0 && !linkableHangoutsLoading) {
+      loadLinkableHangouts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmsContentSection]);
+
+  const subscriptionChannel = ownChannels.find((c) => c.accessType === "subscription") || null;
+  const linkedHangout = linkableHangouts.find(
+    (h) => h.channel_id != null && h.channel_id === subscriptionChannel?.id
+  ) || null;
+
+  const handleLinkHangout = async () => {
+    if (!subscriptionChannel || selectedHangoutId === "") return;
+    setLinkingHangout(true);
+    setLinkHangoutError("");
+    try {
+      await linkHangoutChannel(Number(selectedHangoutId), subscriptionChannel.id);
+      setLinkableHangouts((prev) =>
+        prev.map((h) =>
+          h.id === Number(selectedHangoutId) ? { ...h, channel_id: subscriptionChannel.id } : h
+        )
+      );
+      setSelectedHangoutId("");
+    } catch (err) {
+      setLinkHangoutError(err instanceof Error ? err.message : "Failed to link hangout");
+    } finally {
+      setLinkingHangout(false);
+    }
+  };
+
+  const handleUnlinkHangout = async (hangoutId: number) => {
+    setLinkingHangout(true);
+    setLinkHangoutError("");
+    try {
+      await linkHangoutChannel(hangoutId, null);
+      setLinkableHangouts((prev) =>
+        prev.map((h) => (h.id === hangoutId ? { ...h, channel_id: null } : h))
+      );
+    } catch (err) {
+      setLinkHangoutError(err instanceof Error ? err.message : "Failed to unlink hangout");
+    } finally {
+      setLinkingHangout(false);
+    }
+  };
+
   const openChannelCreate = () => {
     setEditingChannelId(null);
     setChannelForm({ name: "", description: "", tags: "", accessType: "free", priceUsd: 0, telegramChannelId: "", bridgeEnabled: false });
@@ -716,6 +788,24 @@ export function ContentTab({ t }: ContentTabProps) {
       // non-critical; video remains visible; user can retry
     } finally {
       setDeletingVideoId(null);
+    }
+  };
+
+  const handleToggleFeaturedVideo = async (channelId: number, video: ChannelVideo) => {
+    setTogglingFeaturedVideoId(video.id);
+    setFeaturedVideoError("");
+    try {
+      const res = await updateChannelVideo(channelId, video.id, { is_featured: !video.is_featured });
+      setChannelVideos((prev) => ({
+        ...prev,
+        [channelId]: (prev[channelId] || []).map((v) => (v.id === video.id ? res.video : v)),
+      }));
+    } catch (err) {
+      setFeaturedVideoError(
+        err instanceof Error ? err.message : "Failed to update featured status"
+      );
+    } finally {
+      setTogglingFeaturedVideoId(null);
     }
   };
 
@@ -1914,6 +2004,9 @@ export function ContentTab({ t }: ContentTabProps) {
               {expandedVideosChannelId === ch.id && (
                 <div className="border-t p-4 space-y-3" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                   <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Channel Videos</p>
+                  {featuredVideoError && (
+                    <p className="text-xs text-red-400">{featuredVideoError}</p>
+                  )}
                   {channelVideosLoading === ch.id ? (
                     <div className="text-center py-6 text-white/40 text-sm">Loading videos...</div>
                   ) : channelVideosError[ch.id] ? (
@@ -1968,6 +2061,18 @@ export function ContentTab({ t }: ContentTabProps) {
                               )}
                             </div>
                           </div>
+                          <button
+                            onClick={() => handleToggleFeaturedVideo(ch.id, vid)}
+                            disabled={togglingFeaturedVideoId === vid.id}
+                            title={vid.is_featured ? "Remove from Featured Videos" : "Add to Featured Videos (up to 5)"}
+                            className="flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50 transition-colors"
+                            style={vid.is_featured
+                              ? { background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }
+                              : { background: "rgba(255,255,255,0.06)", color: "#8E8E93", border: "1px solid rgba(255,255,255,0.1)" }
+                            }
+                          >
+                            {togglingFeaturedVideoId === vid.id ? "..." : vid.is_featured ? "★ Featured" : "☆ Feature"}
+                          </button>
                           <button
                             onClick={() => handleDeleteChannelVideoConfirmed(ch.id, vid.id)}
                             disabled={deletingVideoId === vid.id}
@@ -2054,6 +2159,64 @@ export function ContentTab({ t }: ContentTabProps) {
               )}
             </div>
           ))}
+
+          {/* Members-only hangout linking */}
+          <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <p className="text-sm font-semibold text-white">Members-Only Hangout</p>
+            <p className="text-xs text-white/50">
+              Link one of your hangouts to your subscription channel so it appears on your public
+              profile, private and exclusive to your active paid subscribers.
+            </p>
+
+            {linkHangoutError && <p className="text-xs text-red-400">{linkHangoutError}</p>}
+            {linkableHangoutsError && <p className="text-xs text-red-400">{linkableHangoutsError}</p>}
+
+            {!subscriptionChannel ? (
+              <p className="text-xs text-white/40">
+                You need a subscription-access channel first — create one above and set its access type to "Subscription".
+              </p>
+            ) : linkedHangout ? (
+              <div className="flex items-center justify-between rounded-lg px-3 py-2.5" style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.2)" }}>
+                <div>
+                  <p className="text-xs font-medium text-white/90">{linkedHangout.name}</p>
+                  <p className="text-[11px] text-white/40">Linked to {subscriptionChannel.name}</p>
+                </div>
+                <button
+                  onClick={() => handleUnlinkHangout(linkedHangout.id)}
+                  disabled={linkingHangout}
+                  className="flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.15)" }}
+                >
+                  {linkingHangout ? "..." : "Unlink"}
+                </button>
+              </div>
+            ) : linkableHangoutsLoading ? (
+              <p className="text-xs text-white/40">Loading your hangouts...</p>
+            ) : linkableHangouts.length === 0 ? (
+              <p className="text-xs text-white/40">You don't have any hangouts yet.</p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedHangoutId}
+                  onChange={(e) => setSelectedHangoutId(e.target.value === "" ? "" : Number(e.target.value))}
+                  className="flex-1 px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
+                >
+                  <option value="">Select a hangout...</option>
+                  {linkableHangouts.map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleLinkHangout}
+                  disabled={selectedHangoutId === "" || linkingHangout}
+                  className="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >
+                  {linkingHangout ? "Linking..." : "Link"}
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Channel delete confirm */}
           <ConfirmDialog

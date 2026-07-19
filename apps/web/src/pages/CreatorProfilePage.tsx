@@ -52,6 +52,7 @@ import {
   type PublicCreatorMediaItem,
   type PublicCreatorChannel,
   type PublicCreatorFeaturedVideo,
+  type PublicCreatorHangout,
   type PublicCallPackage,
   type CreatorRecentPost,
   type CreatorNextAvailability,
@@ -517,6 +518,74 @@ function ChannelCoverCard({ channel }: { channel: PublicCreatorChannel }) {
         </div>
         <div className="mt-1 text-[11px] text-white/75 font-medium">
           {channel.post_count} {channel.post_count === 1 ? "video" : "videos"}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ─── Hangout preview card ─────────────────────────────────────────────────────
+// The creator's members-only hangout. Locked (blurred + lock badge) for
+// non-subscribers/non-owner; tapping it either deep-links into the hangout
+// chat, or opens the existing subscribe flow — access itself is enforced
+// server-side (joinGroup → EntitlementAccessService), this is just UI intent.
+
+function HangoutPreviewCard({
+  hangout,
+  unlocked,
+  onLockedClick,
+}: {
+  hangout: PublicCreatorHangout;
+  unlocked: boolean;
+  onLockedClick: () => void;
+}) {
+  const navigate = useNavigate();
+  const cover = hangout.avatar_url || "/default-channel-cover.png";
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (unlocked) {
+          navigate(`/hangouts/${hangout.id}`);
+        } else {
+          onLockedClick();
+        }
+      }}
+      className="group relative aspect-[4/5] w-full rounded-2xl overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-transform active:scale-[0.98]"
+      aria-label={unlocked ? `Abrir hangout ${hangout.name}` : `Suscríbete para acceder al hangout ${hangout.name}`}
+    >
+      <img
+        src={cover}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        className={`absolute inset-0 w-full h-full object-cover ${!unlocked ? "blur-md scale-105" : ""}`}
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/10" aria-hidden="true" />
+      <span
+        className={`absolute top-2 left-2 px-2 py-0.5 text-[10px] font-bold rounded-full uppercase tracking-wider ${
+          unlocked ? "bg-fuchsia-500/90 text-white" : "bg-white/85 text-black"
+        }`}
+      >
+        {unlocked ? "HANGOUT" : "SUB"}
+      </span>
+      {!unlocked && (
+        <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+          <div className="flex items-center justify-center w-11 h-11 rounded-full bg-black/50 backdrop-blur-sm border border-white/20">
+            <Lock size={18} className="text-white" />
+          </div>
+        </div>
+      )}
+      <div className="absolute bottom-0 inset-x-0 p-3">
+        <div className="text-white font-semibold text-sm leading-tight line-clamp-2">
+          {hangout.name}
+        </div>
+        <div className="mt-1 text-[11px] text-white/75 font-medium">
+          {unlocked ? "Toca para entrar" : "Solo para suscriptores"}
         </div>
       </div>
     </button>
@@ -1016,7 +1085,7 @@ export default function CreatorProfilePage() {
     );
   }
 
-  const { creator, channels, media, featuredVideos, callPackages, recentPosts, socialLinks, nextAvailability } = data;
+  const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
   const hasCallPackages = activePackages.length > 0;
   const cheapestPackage = hasCallPackages
@@ -1037,6 +1106,8 @@ export default function CreatorProfilePage() {
   const hasSocialLinks = Object.keys(filteredSocialLinks).length > 0;
   const hasRecentPosts = recentPosts && recentPosts.length > 0;
   const hasChannels = Array.isArray(channels) && channels.length > 0;
+  const hangout = Array.isArray(hangouts) && hangouts.length > 0 ? hangouts[0] : null;
+  const hasHangout = !!hangout;
 
   // Contenido sub-sections
   // Support both snake_case (API) and camelCase (possible transform) field names
@@ -1044,15 +1115,15 @@ export default function CreatorProfilePage() {
     const mt = (m as unknown as { mediaType?: string }).mediaType ?? m.media_type;
     const isPrem = (m as unknown as { isPremium?: boolean }).isPremium ?? m.is_premium;
     return (mt === "photo" || mt === "image") && !isPrem;
-  }).slice(0, 6);
+  }).slice(0, 10);
 
   const featuredVideoList: PublicCreatorFeaturedVideo[] = Array.isArray(featuredVideos)
-    ? featuredVideos.slice(0, 3)
+    ? featuredVideos.slice(0, 5)
     : [];
 
   const hasPhotos = publicPhotos.length > 0;
   const hasFeaturedVideos = featuredVideoList.length > 0;
-  const hasContenido = hasPhotos || hasFeaturedVideos || hasChannels;
+  const hasContenido = hasPhotos || hasFeaturedVideos || hasChannels || hasHangout;
 
   const profileUrl = `https://pnptv.app/creator/${creator.username}`;
   const isOwnProfile = !!user && (
@@ -1488,12 +1559,12 @@ export default function CreatorProfilePage() {
                 {hasPhotos && (
                   <div>
                     <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Fotos
+                      Fotos destacadas
                     </h3>
-                    {/* Mobile: horizontal scroll snap — each tile ~40vw. Desktop: 6-col grid */}
+                    {/* Mobile: horizontal scroll snap — each tile ~40vw. Desktop: 5-col grid (up to 10 pics, 2 rows) */}
                     <div
                       className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1
-                                 sm:grid sm:grid-cols-6 sm:overflow-visible sm:snap-none"
+                                 sm:grid sm:grid-cols-5 sm:overflow-visible sm:snap-none"
                     >
                       {publicPhotos.map((photo) => {
                         const thumbSrc =
@@ -1636,6 +1707,22 @@ export default function CreatorProfilePage() {
                       {channels.map((ch) => (
                         <ChannelCoverCard key={ch.id} channel={ch} />
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── 7d. Hangout ────────────────────────────────────────────── */}
+                {hasHangout && hangout && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Hangout
+                    </h3>
+                    <div className="max-w-[45%] sm:max-w-[200px]">
+                      <HangoutPreviewCard
+                        hangout={hangout}
+                        unlocked={isSubscribed || isOwnProfile}
+                        onLockedClick={handleSubscribeCta}
+                      />
                     </div>
                   </div>
                 )}

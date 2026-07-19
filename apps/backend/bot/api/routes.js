@@ -14010,6 +14010,111 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     })
   );
 
+  // GET /api/webapp/creator/hangouts/mine — list the caller's own top-level
+  // hangout groups, for the Creator Studio "link my subscriber hangout" picker.
+  app.get(
+    '/api/webapp/creator/hangouts/mine',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const { userId } = userCtx(req);
+      try {
+        const { rows } = await getPool().query(
+          `SELECT id, name, avatar_url, is_public, channel_id
+             FROM hangout_groups
+            WHERE creator_id = $1 AND parent_group_id IS NULL
+            ORDER BY created_at DESC`,
+          [String(userId)]
+        );
+        res.json({ success: true, hangouts: rows.map((g) => ({
+          id: g.id,
+          name: g.name,
+          avatar_url: g.avatar_url,
+          is_public: g.is_public,
+          channel_id: g.channel_id,
+        })) });
+      } catch (err) {
+        logger.error('list own hangouts failed', { userId, error: err.message });
+        res.status(500).json({ success: false, error: 'Failed to load hangouts' });
+      }
+    })
+  );
+
+  // PATCH /api/webapp/creator/hangouts/:id/link-channel — designate this
+  // hangout as the creator's members-only hangout by linking it to their
+  // subscription channel (access is then gated by EntitlementAccessService via
+  // that channel, same path used by hangoutGroupController.joinGroup).
+  // Body: { channelId: number | null } — null unlinks.
+  app.patch(
+    '/api/webapp/creator/hangouts/:id/link-channel',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const groupId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(groupId)) return res.status(400).json({ success: false, error: 'Invalid hangout id' });
+      const { userId, isAdmin } = userCtx(req);
+      const { channelId } = req.body || {};
+
+      try {
+        const { rows: groupRows } = await getPool().query(
+          'SELECT id, creator_id, channel_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NULL',
+          [groupId]
+        );
+        if (!groupRows.length) return res.status(404).json({ success: false, error: 'Hangout not found' });
+        if (!isAdmin && String(groupRows[0].creator_id) !== String(userId)) {
+          return res.status(403).json({ success: false, error: 'You do not own this hangout' });
+        }
+
+        // Unlink: clear both FKs (hangout_groups.channel_id and the
+        // reverse creator_channels.hangout_group_id set below on link).
+        if (channelId == null) {
+          const prevChannelId = groupRows[0].channel_id;
+          await Promise.all([
+            getPool().query('UPDATE hangout_groups SET channel_id = NULL WHERE id = $1', [groupId]),
+            prevChannelId
+              ? getPool().query('UPDATE creator_channels SET hangout_group_id = NULL WHERE id = $1 AND hangout_group_id = $2', [prevChannelId, groupId])
+              : Promise.resolve(),
+          ]);
+          return res.json({ success: true, channel_id: null });
+        }
+
+        const chId = parseInt(channelId, 10);
+        if (!Number.isFinite(chId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });
+        const { rows: chRows } = await getPool().query(
+          `SELECT id, creator_id, access_type, hangout_group_id FROM creator_channels WHERE id = $1 AND is_active = true`,
+          [chId]
+        );
+        if (!chRows.length) return res.status(404).json({ success: false, error: 'Channel not found' });
+        if (!isAdmin && String(chRows[0].creator_id) !== String(userId)) {
+          return res.status(403).json({ success: false, error: 'You do not own this channel' });
+        }
+        if (chRows[0].access_type !== 'subscription') {
+          return res.status(422).json({
+            success: false,
+            error: 'Only a subscription-access channel can be linked as your members-only hangout. Create or convert a channel to "subscription" access first.',
+            code: 'CHANNEL_NOT_SUBSCRIPTION',
+          });
+        }
+        if (chRows[0].hangout_group_id !== null && Number(chRows[0].hangout_group_id) !== groupId) {
+          return res.status(409).json({ success: false, error: 'That channel is already linked to a different hangout', code: 'CHANNEL_ALREADY_LINKED' });
+        }
+
+        // Clear any previous channel link on this hangout before setting the new one,
+        // so a channel never points at a hangout that no longer points back.
+        const prevChannelId = groupRows[0].channel_id;
+        await Promise.all([
+          getPool().query('UPDATE hangout_groups SET channel_id = $1 WHERE id = $2', [chId, groupId]),
+          getPool().query('UPDATE creator_channels SET hangout_group_id = $1 WHERE id = $2', [groupId, chId]),
+          (prevChannelId && prevChannelId !== chId)
+            ? getPool().query('UPDATE creator_channels SET hangout_group_id = NULL WHERE id = $1 AND hangout_group_id = $2', [prevChannelId, groupId])
+            : Promise.resolve(),
+        ]);
+        res.json({ success: true, channel_id: chId });
+      } catch (err) {
+        logger.error('link hangout to channel failed', { userId, groupId, error: err.message });
+        res.status(500).json({ success: false, error: 'Failed to link hangout' });
+      }
+    })
+  );
+
   // POST /api/webapp/channels/:channelId/videos/:videoId/view
   // Increment view_count with 1-hour Redis dedup per viewer.
   app.post(
@@ -15917,7 +16022,7 @@ app.get('/api/public/creator/:username',
       logger.warn('Public creator profile: channels fetch failed (non-fatal)', { creatorId, error: chErr.message });
     }
 
-    // 12. Featured videos — most recent 3 published videos across all active channels
+    // 12. Featured videos — creator-curated (cv.is_featured), up to 5, across all active channels
     let featuredVideos = [];
     try {
       const { rows: fvRows } = await pool.query(
@@ -15928,8 +16033,9 @@ app.get('/api/public/creator/:username',
          WHERE cc.creator_id = $1
            AND cc.is_active = true
            AND cv.status = 'published'
+           AND cv.is_featured = true
          ORDER BY cv.created_at DESC
-         LIMIT 3`,
+         LIMIT 5`,
         [creatorId]
       );
       featuredVideos = fvRows.map((v) => ({
@@ -15944,6 +16050,31 @@ app.get('/api/public/creator/:username',
       }));
     } catch (fvErr) {
       logger.warn('Public creator profile: featuredVideos fetch failed (non-fatal)', { creatorId, error: fvErr.message });
+    }
+
+    // 13. Hangout — the creator's members-only hangout, if they've linked one
+    // to a subscription-access channel. Access itself is enforced at join time
+    // via EntitlementAccessService (hangout -> channel delegation); this is
+    // just "does one exist, so the tile can render."
+    let hangouts = [];
+    try {
+      const { rows: hgRows } = await pool.query(
+        `SELECT hg.id, hg.name, hg.avatar_url
+           FROM hangout_groups hg
+           JOIN creator_channels cc ON cc.id = hg.channel_id
+          WHERE cc.creator_id = $1
+            AND cc.access_type = 'subscription'
+            AND cc.is_active = true
+          LIMIT 1`,
+        [creatorId]
+      );
+      hangouts = hgRows.map((h) => ({
+        id: Number(h.id),
+        name: h.name,
+        avatar_url: h.avatar_url || null,
+      }));
+    } catch (hgErr) {
+      logger.warn('Public creator profile: hangouts fetch failed (non-fatal)', { creatorId, error: hgErr.message });
     }
 
     return res.json({
@@ -15966,6 +16097,7 @@ app.get('/api/public/creator/:username',
       media,
       channels,
       featuredVideos,
+      hangouts,
       callPackages,
       recentPosts,
       socialLinks,

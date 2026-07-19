@@ -3760,6 +3760,28 @@ export function getOwnChannels(): Promise<{ success: boolean; channels: CreatorC
   return request("/api/webapp/creator/channels");
 }
 
+export interface OwnHangout {
+  id: number;
+  name: string;
+  avatar_url: string | null;
+  is_public: boolean;
+  channel_id: number | null;
+}
+
+export function getOwnHangouts(): Promise<{ success: boolean; hangouts: OwnHangout[] }> {
+  return request("/api/webapp/creator/hangouts/mine");
+}
+
+export function linkHangoutChannel(
+  hangoutId: number,
+  channelId: number | null
+): Promise<{ success: boolean; channel_id: number | null }> {
+  return request(`/api/webapp/creator/hangouts/${hangoutId}/link-channel`, {
+    method: "PATCH",
+    body: { channelId },
+  });
+}
+
 export function createCreatorChannel(data: {
   name: string;
   slug?: string;
@@ -8821,6 +8843,12 @@ export interface PublicCreatorFeaturedVideo {
   created_at: string;
 }
 
+export interface PublicCreatorHangout {
+  id: number;
+  name: string;
+  avatar_url: string | null;
+}
+
 export interface CreatorPublicProfile {
   creator: {
     id: string;
@@ -8840,6 +8868,7 @@ export interface CreatorPublicProfile {
   media: PublicCreatorMediaItem[];
   channels: PublicCreatorChannel[];
   featuredVideos: PublicCreatorFeaturedVideo[];
+  hangouts: PublicCreatorHangout[];
   callPackages: PublicCallPackage[];
   recentPosts: CreatorRecentPost[];
   socialLinks: Record<string, string>;
