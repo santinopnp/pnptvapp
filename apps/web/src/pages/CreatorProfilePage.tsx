@@ -34,6 +34,7 @@ import {
   Copy,
   Check,
   Clock,
+  Image as ImageIcon,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -534,10 +535,12 @@ function HangoutPreviewCard({
   hangout,
   unlocked,
   onLockedClick,
+  aspectClassName = "aspect-[4/5]",
 }: {
   hangout: PublicCreatorHangout;
   unlocked: boolean;
   onLockedClick: () => void;
+  aspectClassName?: string;
 }) {
   const navigate = useNavigate();
   const cover = hangout.avatar_url || "/default-channel-cover.png";
@@ -552,7 +555,7 @@ function HangoutPreviewCard({
           onLockedClick();
         }
       }}
-      className="group relative aspect-[4/5] w-full rounded-2xl overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-transform active:scale-[0.98]"
+      className={`group relative ${aspectClassName} w-full rounded-2xl overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-transform active:scale-[0.98]`}
       aria-label={unlocked ? `Abrir hangout ${hangout.name}` : `Suscríbete para acceder al hangout ${hangout.name}`}
     >
       <img
@@ -589,6 +592,120 @@ function HangoutPreviewCard({
         </div>
       </div>
     </button>
+  );
+}
+
+// ─── Content category tile (row-of-4 "Contenido" layout) ──────────────────────
+// One square cover tile per category (Fotos / Videos / Canales). Tapping opens
+// a CategorySheet with the fuller view — the same markup each category used to
+// render inline, just moved behind a tap instead of always-visible.
+
+function ContentCategoryTile({
+  label,
+  count,
+  coverUrl,
+  icon,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  coverUrl: string | null | undefined;
+  /** Rendered centered over the cover when there's no image (or as a subtle corner mark when there is). */
+  icon?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative aspect-square rounded-2xl overflow-hidden text-left focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-transform active:scale-[0.97]"
+      aria-label={`Ver ${label} (${count})`}
+    >
+      {coverUrl ? (
+        <img
+          src={coverUrl}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ background: "var(--pnp-surface)" }}
+          aria-hidden="true"
+        >
+          {icon}
+        </div>
+      )}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/0" aria-hidden="true" />
+      <span
+        className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white bg-black/55 backdrop-blur-sm"
+        aria-hidden="true"
+      >
+        {count}
+      </span>
+      <div className="absolute bottom-0 inset-x-0 p-2.5">
+        <div className="text-white font-semibold text-xs leading-tight line-clamp-2">
+          {label}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ─── Category sheet — full-screen modal shell for a tile's fuller view ────────
+
+function CategorySheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
+      style={{ background: "rgba(0,0,0,0.75)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div
+        className="w-full sm:max-w-lg max-h-[85dvh] sm:max-h-[80dvh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col"
+        style={{ background: "var(--pnp-background)", border: "1px solid rgba(255,255,255,0.08)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-white/8"
+          style={{ background: "var(--pnp-surface)" }}
+        >
+          <h3 className="text-sm font-bold text-pnp-textPrimary">{title}</h3>
+          <button
+            onClick={onClose}
+            className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-white/10 transition-colors text-pnp-textSecondary"
+            aria-label="Cerrar"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4">{children}</div>
+      </div>
+    </div>
   );
 }
 
@@ -836,6 +953,8 @@ export default function CreatorProfilePage() {
   const [unsubscribeLoading, setUnsubscribeLoading] = useState(false);
 
   const [lightboxItem, setLightboxItem] = useState<PublicCreatorMediaItem | null>(null);
+  // Which "Contenido" category tile's fuller view is open (row-of-4-tiles layout)
+  const [activeCategorySheet, setActiveCategorySheet] = useState<"pics" | "videos" | "channels" | null>(null);
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60 | undefined>(undefined);
 
@@ -1553,183 +1672,52 @@ export default function CreatorProfilePage() {
             <SectionHeading>Contenido</SectionHeading>
 
             {hasContenido ? (
-              <div className="space-y-5">
-
-                {/* ── 7a. Fotos ──────────────────────────────────────────────── */}
+              <div className="grid grid-cols-4 gap-2">
                 {hasPhotos && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Fotos destacadas
-                    </h3>
-                    {/* Mobile: horizontal scroll snap — each tile ~40vw. Desktop: 5-col grid (up to 10 pics, 2 rows) */}
-                    <div
-                      className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1
-                                 sm:grid sm:grid-cols-5 sm:overflow-visible sm:snap-none"
-                    >
-                      {publicPhotos.map((photo) => {
-                        const thumbSrc =
-                          (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
-                          photo.thumb_url ??
-                          photo.url;
-                        return (
-                          <button
-                            key={photo.id}
-                            type="button"
-                            onClick={() => setLightboxItem(photo)}
-                            aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
-                            className="flex-none w-[40vw] sm:w-auto aspect-square rounded-xl overflow-hidden
-                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-opacity hover:opacity-85 active:scale-[0.97]"
-                          >
-                            {thumbSrc ? (
-                              <img
-                                src={thumbSrc}
-                                alt={photo.caption ?? "Foto del creador"}
-                                loading="lazy"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className="w-full h-full"
-                                style={{ background: "var(--pnp-surface)" }}
-                                aria-hidden="true"
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <ContentCategoryTile
+                    label="Fotos destacadas"
+                    count={publicPhotos.length}
+                    coverUrl={
+                      (publicPhotos[0] as unknown as { thumbUrl?: string | null }).thumbUrl ??
+                      publicPhotos[0].thumb_url ??
+                      publicPhotos[0].url
+                    }
+                    icon={<ImageIcon size={22} className="text-pnp-textSecondary" />}
+                    onClick={() => setActiveCategorySheet("pics")}
+                  />
                 )}
 
-                {/* ── 7b. Videos destacados ───────────────────────────────────── */}
                 {hasFeaturedVideos && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Videos destacados
-                    </h3>
-                    <div className="space-y-2">
-                      {featuredVideoList.map((vid) => {
-                        const duration = formatDuration(vid.duration_seconds);
-                        return (
-                          <button
-                            key={vid.id}
-                            type="button"
-                            onClick={() =>
-                              navigate(
-                                `/channels?channel=${encodeURIComponent(vid.channel_slug)}&video=${vid.id}`
-                              )
-                            }
-                            aria-label={`Reproducir: ${vid.title}`}
-                            className="group relative w-full aspect-video rounded-2xl overflow-hidden
-                                       focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-transform active:scale-[0.98]"
-                          >
-                            {/* Thumbnail */}
-                            {vid.thumb_url ? (
-                              <img
-                                src={vid.thumb_url}
-                                alt=""
-                                aria-hidden="true"
-                                loading="lazy"
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className="absolute inset-0"
-                                style={{ background: "var(--pnp-surface)" }}
-                                aria-hidden="true"
-                              />
-                            )}
-
-                            {/* Gradient overlay */}
-                            <div
-                              className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/10"
-                              aria-hidden="true"
-                            />
-
-                            {/* Play button — scales on group hover */}
-                            <div
-                              className="absolute inset-0 flex items-center justify-center"
-                              aria-hidden="true"
-                            >
-                              <div
-                                className="flex items-center justify-center w-12 h-12 rounded-full
-                                           bg-white/20 backdrop-blur-sm border border-white/30
-                                           group-hover:bg-white/30 group-hover:scale-110
-                                           transition-all duration-150"
-                              >
-                                <Play size={22} className="text-white ml-0.5" fill="currentColor" />
-                              </div>
-                            </div>
-
-                            {/* Duration badge — top right */}
-                            {duration && (
-                              <span
-                                className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md
-                                           text-[10px] font-semibold text-white
-                                           bg-black/60 backdrop-blur-sm"
-                                aria-hidden="true"
-                              >
-                                {duration}
-                              </span>
-                            )}
-
-                            {/* Title + channel tag — bottom */}
-                            <div className="absolute bottom-0 inset-x-0 p-3 text-left">
-                              <p className="text-white font-semibold text-sm leading-tight line-clamp-2">
-                                {vid.title}
-                              </p>
-                              <span
-                                className="inline-block mt-1.5 px-2 py-0.5 rounded-full
-                                           text-[10px] font-medium text-white/80 bg-white/15
-                                           backdrop-blur-sm border border-white/20"
-                              >
-                                {vid.channel_name}
-                              </span>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <ContentCategoryTile
+                    label="Videos destacados"
+                    count={featuredVideoList.length}
+                    coverUrl={featuredVideoList[0].thumb_url}
+                    icon={<Play size={22} className="text-pnp-textSecondary" />}
+                    onClick={() => setActiveCategorySheet("videos")}
+                  />
                 )}
 
-                {/* ── 7c. Canales ────────────────────────────────────────────── */}
                 {hasChannels && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Canales
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {channels.map((ch) => (
-                        <ChannelCoverCard key={ch.id} channel={ch} />
-                      ))}
-                    </div>
-                  </div>
+                  <ContentCategoryTile
+                    label="Canales"
+                    count={channels.length}
+                    coverUrl={channels[0].cover_image_url}
+                    icon={<Users size={22} className="text-pnp-textSecondary" />}
+                    onClick={() => setActiveCategorySheet("channels")}
+                  />
                 )}
 
-                {/* ── 7d. Hangout ────────────────────────────────────────────── */}
                 {hasHangout && hangout && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Hangout
-                    </h3>
-                    <div className="max-w-[45%] sm:max-w-[200px]">
-                      <HangoutPreviewCard
-                        hangout={hangout}
-                        unlocked={isSubscribed || isOwnProfile}
-                        onLockedClick={handleSubscribeCta}
-                      />
-                    </div>
-                  </div>
+                  <HangoutPreviewCard
+                    hangout={hangout}
+                    unlocked={isSubscribed || isOwnProfile}
+                    onLockedClick={handleSubscribeCta}
+                    aspectClassName="aspect-square"
+                  />
                 )}
-
               </div>
             ) : (
-              /* Section-level empty state — only when ALL three sub-sections are empty */
+              /* Section-level empty state — only when ALL categories are empty */
               !isOwnProfile && (
                 <div
                   className="rounded-2xl p-6 text-center text-sm text-pnp-textSecondary border border-white/8"
@@ -1738,6 +1726,145 @@ export default function CreatorProfilePage() {
                   Este creador aún no ha publicado contenido.
                 </div>
               )
+            )}
+
+            {activeCategorySheet === "pics" && (
+              <CategorySheet title="Fotos destacadas" onClose={() => setActiveCategorySheet(null)}>
+                <div className="grid grid-cols-3 gap-2">
+                  {publicPhotos.map((photo) => {
+                    const thumbSrc =
+                      (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
+                      photo.thumb_url ??
+                      photo.url;
+                    return (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        onClick={() => setLightboxItem(photo)}
+                        aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
+                        className="aspect-square rounded-xl overflow-hidden focus:outline-none focus:ring-2
+                                   focus:ring-pnp-accent focus:ring-offset-2 focus:ring-offset-pnp-background
+                                   transition-opacity hover:opacity-85 active:scale-[0.97]"
+                      >
+                        {thumbSrc ? (
+                          <img
+                            src={thumbSrc}
+                            alt={photo.caption ?? "Foto del creador"}
+                            loading="lazy"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-full h-full"
+                            style={{ background: "var(--pnp-surface)" }}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </CategorySheet>
+            )}
+
+            {activeCategorySheet === "videos" && (
+              <CategorySheet title="Videos destacados" onClose={() => setActiveCategorySheet(null)}>
+                <div className="space-y-2">
+                  {featuredVideoList.map((vid) => {
+                    const duration = formatDuration(vid.duration_seconds);
+                    return (
+                      <button
+                        key={vid.id}
+                        type="button"
+                        onClick={() =>
+                          navigate(
+                            `/channels?channel=${encodeURIComponent(vid.channel_slug)}&video=${vid.id}`
+                          )
+                        }
+                        aria-label={`Reproducir: ${vid.title}`}
+                        className="group relative w-full aspect-video rounded-2xl overflow-hidden
+                                   focus:outline-none focus:ring-2 focus:ring-pnp-accent
+                                   focus:ring-offset-2 focus:ring-offset-pnp-background
+                                   transition-transform active:scale-[0.98]"
+                      >
+                        {/* Thumbnail */}
+                        {vid.thumb_url ? (
+                          <img
+                            src={vid.thumb_url}
+                            alt=""
+                            aria-hidden="true"
+                            loading="lazy"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="absolute inset-0"
+                            style={{ background: "var(--pnp-surface)" }}
+                            aria-hidden="true"
+                          />
+                        )}
+
+                        {/* Gradient overlay */}
+                        <div
+                          className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/10"
+                          aria-hidden="true"
+                        />
+
+                        {/* Play button — scales on group hover */}
+                        <div
+                          className="absolute inset-0 flex items-center justify-center"
+                          aria-hidden="true"
+                        >
+                          <div
+                            className="flex items-center justify-center w-12 h-12 rounded-full
+                                       bg-white/20 backdrop-blur-sm border border-white/30
+                                       group-hover:bg-white/30 group-hover:scale-110
+                                       transition-all duration-150"
+                          >
+                            <Play size={22} className="text-white ml-0.5" fill="currentColor" />
+                          </div>
+                        </div>
+
+                        {/* Duration badge — top right */}
+                        {duration && (
+                          <span
+                            className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md
+                                       text-[10px] font-semibold text-white
+                                       bg-black/60 backdrop-blur-sm"
+                            aria-hidden="true"
+                          >
+                            {duration}
+                          </span>
+                        )}
+
+                        {/* Title + channel tag — bottom */}
+                        <div className="absolute bottom-0 inset-x-0 p-3 text-left">
+                          <p className="text-white font-semibold text-sm leading-tight line-clamp-2">
+                            {vid.title}
+                          </p>
+                          <span
+                            className="inline-block mt-1.5 px-2 py-0.5 rounded-full
+                                       text-[10px] font-medium text-white/80 bg-white/15
+                                       backdrop-blur-sm border border-white/20"
+                          >
+                            {vid.channel_name}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </CategorySheet>
+            )}
+
+            {activeCategorySheet === "channels" && (
+              <CategorySheet title="Canales" onClose={() => setActiveCategorySheet(null)}>
+                <div className="grid grid-cols-2 gap-3">
+                  {channels.map((ch) => (
+                    <ChannelCoverCard key={ch.id} channel={ch} />
+                  ))}
+                </div>
+              </CategorySheet>
             )}
           </section>
 
