@@ -5,10 +5,11 @@
 
 // ── Revenue-split constants ──────────────────────────────────────────────────
 // 70% to creator, 30% to platform — applies to all non-membership revenue
-// (call packages, tips, token heartbeats, creator subscriptions, admin payouts).
+// (call packages, token heartbeats, creator subscriptions, admin payouts).
 // CREATOR_REVENUE_RATE + PLATFORM_COMMISSION_RATE MUST equal exactly 1.
 const PLATFORM_COMMISSION_RATE = 0.30;
 const CREATOR_REVENUE_RATE     = 0.70;
+const TIP_CREATOR_RATE         = 1.0; // 100% to creator — tips are fully exempt from platform commission
 
 // ── Gifted-token policy ──────────────────────────────────────────────────────
 // Tokens gifted before PNP Live's public launch are restricted to these
@@ -29,6 +30,7 @@ module.exports = {
   // Exported as top-level named constants for direct destructured imports.
   PLATFORM_COMMISSION_RATE,
   CREATOR_REVENUE_RATE,
+  TIP_CREATOR_RATE,
   EARNINGS_HOLD_HOURS,
   EARNINGS_HOLD_HOURS_EFIPAY,
   GIFTED_ALLOWED_PERFORMER_USER_IDS,

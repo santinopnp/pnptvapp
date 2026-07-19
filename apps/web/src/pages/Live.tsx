@@ -460,7 +460,7 @@ export default function Live() {
         const q = searchQuery.toLowerCase();
         return (
           (p.displayName?.toLowerCase().includes(q) ?? false) ||
-          (p.username?.toLowerCase().includes(q) ?? false)
+          (p.displayName?.toLowerCase().includes(q) ?? false)
         );
       })
     : sortedPerformers;

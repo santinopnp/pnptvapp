@@ -156,6 +156,7 @@ const XAutoCampaigns = lazy(() => import("@/pages/admin/XAutoCampaigns"));
 const MeruLinks = lazy(() => import("@/pages/admin/MeruLinks"));
 const DuplicateAccounts = lazy(() => import("@/pages/admin/DuplicateAccounts"));
 const PaymentHealth = lazy(() => import("@/pages/admin/PaymentHealth"));
+const CallAnalytics = lazy(() => import("@/pages/admin/CallAnalytics"));
 const HangoutTelegramHealth = lazy(() => import("@/pages/admin/HangoutTelegramHealth"));
 const Monitoring = lazy(() => import("@/pages/admin/Monitoring"));
 const WellnessShell = lazy(() => import("@/pages/WellnessShell"));
@@ -863,6 +864,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <ReferralAdmin />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "calls",
+        element: (
+          <ModuleLoader>
+            <CallAnalytics />
           </ModuleLoader>
         ),
       },

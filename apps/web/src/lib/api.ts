@@ -6977,6 +6977,40 @@ export function bookCallWithTokens(data: {
   return request("/api/webapp/book-call/checkout/tokens", { method: "POST", body: data });
 }
 
+// ─── Creator Tips ─────────────────────────────────────────────────────────────
+
+export interface CreatorTipPayload {
+  amount: number;
+  message?: string;
+  email?: string;
+  payCurrency?: string;
+}
+
+export interface CreatorTipResponse {
+  success: boolean;
+  orderId: string;
+  invoiceUrl: string;
+  nowpaymentsInvoiceId?: string;
+  amount: number;
+}
+
+export function createCreatorTip(
+  creatorId: string,
+  payload: CreatorTipPayload
+): Promise<CreatorTipResponse> {
+  return request(`/api/webapp/creators/${encodeURIComponent(creatorId)}/tip`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function getCreatorTipStatus(
+  creatorId: string,
+  orderId: string
+): Promise<{ success: boolean; status: string; amount: number }> {
+  return request(`/api/webapp/creators/${encodeURIComponent(creatorId)}/tip/status/${encodeURIComponent(orderId)}`);
+}
+
 export interface LiveCallPackage {
   id: number;
   durationMinutes: number;
@@ -7081,7 +7115,15 @@ export function getCallBooking(
 
 export interface CallSurveyPayload {
   rating: 1 | 2 | 3 | 4 | 5;
+  tech_quality?: 1 | 2 | 3 | 4 | 5;
+  performance_quality?: 1 | 2 | 3 | 4 | 5;
+  presentation?: 1 | 2 | 3 | 4 | 5;
+  politeness?: 1 | 2 | 3 | 4 | 5;
   feedback?: string;
+  tech_improvement?: string;
+  app_feedback?: string;
+  equipment_feedback?: string;
+  share_with_model?: boolean;
 }
 
 export function submitCallSurvey(
@@ -8997,4 +9039,82 @@ export function fetchOgPreview(path: string): Promise<{
   type?: string;
 }> {
   return request(`/api/webapp/og-preview?path=${encodeURIComponent(path)}`);
+}
+
+export function getCallAnalytics(): Promise<{
+  success: boolean;
+  callAnalytics: {
+    surveyStats: {
+      total_surveys: number;
+      avg_rating: string | null;
+      avg_tech_quality: string | null;
+      avg_performance_quality: string | null;
+      avg_presentation: string | null;
+      avg_politeness: string | null;
+      shared_with_model: number;
+      has_tech_feedback: number;
+      has_app_feedback: number;
+      has_equipment_feedback: number;
+    };
+    ratingDistribution: { rating: number; count: number }[];
+    topCreators: {
+      creator_id: string;
+      username: string | null;
+      display_name: string | null;
+      survey_count: number;
+      avg_rating: string | null;
+      avg_tech_quality: string | null;
+      avg_performance_quality: string | null;
+      avg_presentation: string | null;
+      avg_politeness: string | null;
+    }[];
+    recentFeedback: {
+      id: string;
+      created_at: string;
+      rating: number | null;
+      tech_quality: number | null;
+      performance_quality: number | null;
+      presentation: number | null;
+      politeness: number | null;
+      feedback: string | null;
+      tech_improvement: string | null;
+      app_feedback: string | null;
+      equipment_feedback: string | null;
+      share_with_model: boolean;
+      creator_username: string | null;
+      member_username: string | null;
+    }[];
+  };
+  tipAnalytics: {
+    overallStats: {
+      total_tips: number;
+      completed_tips: number;
+      pending_tips: number;
+      total_usd: string;
+      avg_usd: string;
+      max_usd: string;
+    };
+    topCreators: {
+      creator_id: string;
+      username: string | null;
+      display_name: string | null;
+      tip_count: number;
+      total_usd: string;
+      avg_usd: string;
+    }[];
+    recentTips: {
+      id: string;
+      amount_usd: string;
+      message: string | null;
+      status: string;
+      created_at: string;
+      completed_at: string | null;
+      pay_currency: string | null;
+      payer_username: string | null;
+      creator_username: string | null;
+    }[];
+    dailyStats: { date: string; tip_count: number; total_usd: string }[];
+  };
+}> {
+  return request("/api/admin/users/analytics/calls");
 }

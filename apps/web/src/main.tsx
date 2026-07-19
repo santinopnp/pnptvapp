@@ -162,19 +162,9 @@ if (!resetInProgress) {
   });
 }
 
-// ── Service Worker update detection (user-driven via UpdateAvailableModal) ──
-// New SW finishes installing → mark pending and dispatch `pnptv:update-available`.
-// The UpdateAvailableModal in App.tsx renders a non-dismissible modal (or a
-// non-blocking toast if a realtime session is active) and the user clicks
-// "Update now" to post SKIP_WAITING. controllerchange below then reloads.
-function dispatchUpdateAvailable(): void {
-  try {
-    window.dispatchEvent(new CustomEvent("pnptv:update-available"));
-  } catch {
-    // ignore event dispatch failures
-  }
-}
-
+// ── Service Worker update detection (silent auto-apply) ──
+// When a new SW finishes installing, apply it immediately without prompting.
+// controllerchange fires after SKIP_WAITING and reloads the page silently.
 function applyWaitingWorker(reg: ServiceWorkerRegistration): void {
   if (reg.waiting) {
     reg.waiting.postMessage({ type: "SKIP_WAITING" });
@@ -185,16 +175,15 @@ function applyWaitingWorker(reg: ServiceWorkerRegistration): void {
 
 if (!resetInProgress && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((reg) => {
-    let updateAnnounced = false;
+    let updateApplied = false;
 
     const announceWaitingWorker = (origin: string) => {
       if (!reg.waiting) return;
-      if (updateAnnounced) return;
-      updateAnnounced = true;
+      if (updateApplied) return;
+      updateApplied = true;
       markSwUpdatePending();
-      // Always show the update prompt — never silently apply.
-      dispatchSwUpdateStatus(`${origin}-prompt`);
-      dispatchUpdateAvailable();
+      dispatchSwUpdateStatus(`${origin}-silent`);
+      applyWaitingWorker(reg);
     };
 
     // Poll for updates every 10 min while the tab is open
@@ -226,7 +215,7 @@ if (!resetInProgress && "serviceWorker" in navigator) {
       if (reg.installing) watchInstalling(reg.installing);
     });
 
-    // Session-change events no longer trigger silent apply — the prompt handles it.
+    // Updates are applied silently — no user prompt needed.
   });
 
   // controllerchange fires after SKIP_WAITING — always reload to activate new SW.

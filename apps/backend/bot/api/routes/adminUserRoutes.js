@@ -31,4 +31,20 @@ router.post('/:userId/send-message', AdminUserController.sendDirectMessage);
 // DELETE /api/admin/users/:userId/erase
 router.delete('/:userId/erase', usersController.adminEraseUser);
 
+// GET /api/admin/users/analytics/calls — survey + tip metrics (90-day window)
+router.get('/analytics/calls', async (req, res) => {
+  try {
+    const { getCallAnalytics, getTipAnalytics } = require('../../../services/adminDashboardService');
+    const [callAnalytics, tipAnalytics] = await Promise.all([
+      getCallAnalytics(),
+      getTipAnalytics(),
+    ]);
+    return res.json({ success: true, callAnalytics, tipAnalytics });
+  } catch (err) {
+    const logger = require('../../../utils/logger');
+    logger.error('GET /analytics/calls error:', err);
+    return res.status(500).json({ success: false, error: { code: 'ANALYTICS_ERROR', message: err.message } });
+  }
+});
+
 module.exports = router;

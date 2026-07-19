@@ -44,7 +44,10 @@ import {
   getCreatorSubscriptionStatus,
   getWalletBalance,
   payCreatorSubWithTokens,
+  createCreatorTip,
+  getCreatorTipStatus,
   ApiError,
+  type CreatorTipPayload,
   type CreatorPublicProfile,
   type PublicCreatorMediaItem,
   type PublicCreatorChannel,
@@ -767,6 +770,18 @@ export default function CreatorProfilePage() {
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60 | undefined>(undefined);
 
+  // Tip state
+  const [showTipPanel, setShowTipPanel] = useState(false);
+  const [tipAmount, setTipAmount] = useState<number>(10);
+  const [tipMessage, setTipMessage] = useState("");
+  const [tipPending, setTipPending] = useState(false);
+  const [tipError, setTipError] = useState<string | null>(null);
+  const [tipSuccess, setTipSuccess] = useState(false);
+  const [tipOrderId, setTipOrderId] = useState<string | null>(null);
+  const [tipInvoiceUrl, setTipInvoiceUrl] = useState<string | null>(null);
+  const tipPopupRef = React.useRef<Window | null>(null);
+  const tipPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Share / QR state
   const [copied, setCopied] = useState(false);
 
@@ -885,6 +900,65 @@ export default function CreatorProfilePage() {
       // user cancelled or API unavailable
     }
   }
+
+  const handleSendTip = async () => {
+    if (tipAmount < 1 || tipAmount > 500) {
+      setTipError("Amount must be between $1 and $500.");
+      return;
+    }
+    setTipPending(true);
+    setTipError(null);
+    try {
+      const creatorRef = creator.username || creator.id;
+      const payload: CreatorTipPayload = {
+        amount: tipAmount,
+        message: tipMessage.trim() || undefined,
+      };
+      const result = await createCreatorTip(creatorRef, payload);
+      setTipOrderId(result.orderId);
+      setTipInvoiceUrl(result.invoiceUrl);
+
+      // Open NowPayments popup (centered)
+      const w = window.innerWidth, h = window.innerHeight;
+      const pw = Math.min(520, w - 40), ph = Math.min(700, h - 40);
+      const left = Math.round((w - pw) / 2);
+      const top = Math.round((h - ph) / 2);
+      tipPopupRef.current = window.open(
+        result.invoiceUrl,
+        "pnptv_tip",
+        `width=${pw},height=${ph},left=${left},top=${top},resizable=yes,scrollbars=yes,noopener,noreferrer`
+      );
+
+      // Poll for completion
+      tipPollRef.current = setInterval(async () => {
+        try {
+          const status = await getCreatorTipStatus(creatorRef, result.orderId);
+          if (status.status === "completed") {
+            clearInterval(tipPollRef.current!);
+            tipPopupRef.current?.close();
+            setTipSuccess(true);
+            setShowTipPanel(false);
+          } else if (status.status === "failed" || status.status === "expired") {
+            clearInterval(tipPollRef.current!);
+            setTipError("Payment failed or expired. Please try again.");
+            setTipPending(false);
+          }
+        } catch {
+          // non-fatal polling error
+        }
+      }, 5000);
+    } catch (err) {
+      setTipError(err instanceof Error ? err.message : "Failed to create payment. Please try again.");
+      setTipPending(false);
+    }
+  };
+
+  // Cleanup tip poll on unmount
+  useEffect(() => {
+    return () => {
+      if (tipPollRef.current) clearInterval(tipPollRef.current);
+    };
+  }, []);
 
   // ── Loading ──
   if (isLoading) return <PageSkeleton />;
@@ -1255,6 +1329,135 @@ export default function CreatorProfilePage() {
                   );
                 })}
               </div>
+            </section>
+          )}
+
+          {/* ── TIP SECTION ──────────────────────────────────────────────────── */}
+          {tipSuccess && (
+            <div
+              className="rounded-2xl p-4 flex items-center gap-3"
+              style={{ background: "rgba(52,199,89,0.12)", border: "1px solid rgba(52,199,89,0.3)" }}
+            >
+              <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#34C759" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span className="text-sm font-semibold" style={{ color: "#34C759" }}>
+                Tip sent! Thank you for supporting {creator.first_name || creator.username}.
+              </span>
+            </div>
+          )}
+
+          {!tipSuccess && (
+            <section>
+              {!showTipPanel ? (
+                <button
+                  onClick={() => setShowTipPanel(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
+                  style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--pnp-text-primary)" }}
+                >
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Send a Tip
+                </button>
+              ) : (
+                <div
+                  className="rounded-2xl p-4 space-y-3"
+                  style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)" }}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-pnp-textPrimary">Send a Tip</p>
+                    <button
+                      onClick={() => { setShowTipPanel(false); setTipError(null); }}
+                      className="text-pnp-textSecondary hover:text-white transition-colors"
+                      style={{ background: "none", border: "none", cursor: "pointer" }}
+                      aria-label="Close tip panel"
+                    >
+                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Tip disclosure */}
+                  <div
+                    className="rounded-xl px-3 py-2 text-xs leading-relaxed"
+                    style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.2)", color: "#34C759" }}
+                  >
+                    💚 <strong>100% of your tip goes directly to {creator.first_name || creator.username}</strong> — no platform fee whatsoever. Tips are fully exempt from any commission.
+                  </div>
+
+                  {/* Quick amount buttons */}
+                  <div>
+                    <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Choose amount (USD):</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {[5, 10, 20, 50, 100].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => setTipAmount(amt)}
+                          className="px-3 py-1.5 rounded-xl text-sm font-semibold transition-all"
+                          style={{
+                            background: tipAmount === amt ? "var(--pnp-accent)" : "var(--pnp-surface-hover, #2C2C2E)",
+                            color: tipAmount === amt ? "#fff" : "var(--pnp-text-secondary, #8E8E93)",
+                            border: "1px solid transparent",
+                          }}
+                        >
+                          ${amt}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-sm" style={{ color: "var(--pnp-text-secondary)" }}>$</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={500}
+                        value={tipAmount}
+                        onChange={(e) => setTipAmount(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}
+                        className="w-24 rounded-xl px-3 py-2 text-sm"
+                        style={{
+                          background: "var(--pnp-surface-hover, #2C2C2E)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          color: "#EBEBF5",
+                          outline: "none",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Optional message */}
+                  <textarea
+                    value={tipMessage}
+                    onChange={(e) => setTipMessage(e.target.value.slice(0, 500))}
+                    placeholder={`Leave a message for ${creator.first_name || creator.username} (optional)`}
+                    rows={2}
+                    className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+                    style={{
+                      background: "var(--pnp-surface-hover, #2C2C2E)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      color: "#EBEBF5",
+                      outline: "none",
+                    }}
+                  />
+
+                  {tipError && (
+                    <p className="text-xs" style={{ color: "#FF6B6B" }}>{tipError}</p>
+                  )}
+
+                  <button
+                    onClick={handleSendTip}
+                    disabled={tipPending || tipAmount < 1}
+                    className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40 btn-gradient"
+                  >
+                    {tipPending ? "Opening payment..." : `Send $${tipAmount} Tip via Crypto`}
+                  </button>
+
+                  <p className="text-xs text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    Powered by NowPayments. Pay with Bitcoin, Dash, USDT, and more.
+                  </p>
+                </div>
+              )}
             </section>
           )}
 

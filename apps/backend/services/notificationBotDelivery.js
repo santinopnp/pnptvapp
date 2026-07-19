@@ -79,6 +79,10 @@ function buildUrl(type, entityType, entityId) {
       return `${base}/subscribe`;
     case 'live_stream_started':
       return entityId ? `${base}/live/${entityId}` : `${base}/live`;
+    case 'call_booking':
+    case 'call_reminder':
+    case 'call_survey':
+      return entityId ? `${base}/call/${entityId}` : `${base}/my-access`;
     default:
       return base;
   }
@@ -110,9 +114,6 @@ async function getTelegramId(userId) {
  * Fire-and-forget: never throws.
  */
 async function sendNotificationViaTelegram(userId, { type, message, entityType = null, entityId = null }) {
-  // Telegram notification mirroring disabled — notifications are in-app and push only
-  return;
-
   const bot = getBot();
   if (!bot) return;
 

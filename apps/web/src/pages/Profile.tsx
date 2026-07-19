@@ -2241,8 +2241,8 @@ export default function Profile() {
               channelId={myChannel.id}
               channelName={myChannel.name}
               channelSlug={myChannel.slug}
-              accessType={myChannel.access_type}
-              pricePerMonth={myChannel.price_usd}
+              accessType={myChannel.accessType}
+              pricePerMonth={myChannel.priceUsd}
               creatorUsername={user?.username ?? null}
               onPublished={(v) => setChannelVideos((prev) => [v, ...prev])}
               variant="compact"

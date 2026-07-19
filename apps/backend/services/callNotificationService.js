@@ -13,6 +13,10 @@ const emailService = require('./emailservice');
 const { sendNotificationViaTelegram } = require('./notificationBotDelivery');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const PushNotificationService = require('./pushNotificationService');
+const sendSystemDM = require('./sendSystemDM');
+
+const SYSTEM_DM_SENDER_ID = process.env.SYSTEM_DM_SENDER_ID || '8552451957';
 
 const APP_URL = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
 
@@ -265,6 +269,31 @@ async function sendBookingConfirmationToMember(memberId, booking, callInfo) {
     entityType: 'call',
     entityId: null,
   }).catch((err) => logger.warn('[callNotificationService] Telegram member confirm failed', { memberId, error: err.message }));
+
+  // Push notification with deep link to call room
+  try {
+    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    await PushNotificationService.sendToUser(memberId, {
+      title: '📞 Your call is confirmed!',
+      body: `Call with ${creatorName} is booked. Tap to view details.`,
+      url: callId ? `/call/${callId}` : '/my-access',
+      tag: `call_confirmed_${callId || memberId}`,
+    });
+  } catch (pushErr) {
+    logger.warn('[callNotificationService] push (member confirm) failed', { error: pushErr.message });
+  }
+
+  // System DM from @pnptv
+  try {
+    const timeStr = booking.start_at
+      ? new Date(booking.start_at).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
+      : 'por coordinar';
+    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
+    await sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `📞 Tu llamada privada con ${escHtml(creatorName)} está confirmada!\n\n⏰ Horario: ${timeStr}\n\n👉 Únete aquí: ${callUrl}`, query);
+  } catch (dmErr) {
+    logger.warn('[callNotificationService] system DM (member confirm) failed', { error: dmErr.message });
+  }
 }
 
 /**
@@ -308,6 +337,31 @@ async function sendBookingConfirmationToCreator(creatorId, booking, memberInfo, 
     entityType: 'call',
     entityId: null,
   }).catch((err) => logger.warn('[callNotificationService] Telegram creator confirm failed', { creatorId, error: err.message }));
+
+  // Push notification
+  try {
+    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    await PushNotificationService.sendToUser(creatorId, {
+      title: '📞 Nueva llamada privada reservada',
+      body: `${memberUsername} reservó una llamada contigo. Revisa los detalles.`,
+      url: callId ? `/call/${callId}` : '/my-access',
+      tag: `call_confirmed_creator_${callId || creatorId}`,
+    });
+  } catch (pushErr) {
+    logger.warn('[callNotificationService] push (creator confirm) failed', { error: pushErr.message });
+  }
+
+  // System DM
+  try {
+    const timeStr = booking.start_at
+      ? new Date(booking.start_at).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
+      : 'por coordinar';
+    const callId = booking.creditId || booking.credit_id || booking.bookingId || booking.booking_id || null;
+    const callUrl = callId ? `${APP_URL}/call/${callId}` : `${APP_URL}/my-access`;
+    await sendSystemDM(SYSTEM_DM_SENDER_ID, String(creatorId), `📞 Nueva llamada privada!\n\n${escHtml(memberUsername)} reservó una sesión contigo.\n⏰ Horario: ${timeStr}\n\n👉 Entra aquí: ${callUrl}`, query);
+  } catch (dmErr) {
+    logger.warn('[callNotificationService] system DM (creator confirm) failed', { error: dmErr.message });
+  }
 }
 
 /**
@@ -371,8 +425,21 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
   const msUntil1h = startMs - ONE_HOUR_MS - nowMs;
   if (msUntil1h > 0) {
     const t = setTimeout(() => {
-      sendReminder('Your call starts in 1 hour!', false)
+      sendReminder('Your call starts in 1 hour!', true)
         .catch((err) => logger.warn('[callNotificationService] 1h reminder failed', { bookingId, error: err.message }));
+      // Push — fire-and-forget
+      PushNotificationService.sendToUser(memberId, {
+        title: '⏰ Tu llamada empieza en 1 hora',
+        body: 'Tu sesión privada comienza pronto — prepárate!',
+        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
+        tag: `call_reminder_1h_${bookingId}`,
+      }).catch(() => {});
+      PushNotificationService.sendToUser(creatorId, {
+        title: '⏰ Llamada privada en 1 hora',
+        body: 'Tu próxima sesión privada empieza en 1 hora — prepara tu setup.',
+        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
+        tag: `call_reminder_1h_creator_${bookingId}`,
+      }).catch(() => {});
     }, msUntil1h);
     if (t.unref) t.unref(); // don't hold Node process open
     logger.info('[callNotificationService] 1h reminder scheduled', { bookingId, inMs: msUntil1h });
@@ -386,6 +453,19 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
     const t = setTimeout(() => {
       sendReminder('Your call starts in 15 minutes!', true)
         .catch((err) => logger.warn('[callNotificationService] 15min reminder failed', { bookingId, error: err.message }));
+      // Push — fire-and-forget
+      PushNotificationService.sendToUser(memberId, {
+        title: '🔴 Tu llamada empieza en 15 minutos',
+        body: 'Entra ahora para estar listo.',
+        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
+        tag: `call_reminder_15m_${bookingId}`,
+      }).catch(() => {});
+      PushNotificationService.sendToUser(creatorId, {
+        title: '🔴 Llamada en 15 minutos',
+        body: 'Tu próxima sesión privada empieza en 15 minutos — entra al cuarto.',
+        url: joinUrl ? joinUrl.replace(/^https?:\/\/[^/]+/, '') : '/my-access',
+        tag: `call_reminder_15m_creator_${bookingId}`,
+      }).catch(() => {});
     }, msUntil15m);
     if (t.unref) t.unref();
     logger.info('[callNotificationService] 15min reminder scheduled', { bookingId, inMs: msUntil15m });
@@ -440,13 +520,22 @@ async function reconcileReminders() {
 function postCallSurveyHtml({ creatorName, surveyUrl }) {
   return buildBaseEmailHtml({
     headerSubtitle: 'Book a Call',
-    title: `How was your call with ${creatorName}?`,
+    title: `How was your call with ${escHtml(creatorName)}?`,
     contentHtml: `
     <p>Hi there,</p>
-    <p>Your 1-on-1 call with <strong>${creatorName}</strong> has ended. We hope it was great!</p>
-    <p>If you have a minute, leave a quick rating — it helps creators improve and helps other members choose the right person for them.</p>
-    <div style="text-align:center;"><a href="${surveyUrl}" class="btn">Rate your call</a></div>
-    <p>Takes less than 30 seconds.<br><strong>The PNPtv Team</strong></p>
+    <p>Your private call with <strong>${escHtml(creatorName)}</strong> has ended. We hope it was an amazing experience!</p>
+    <p>We'd love your feedback — it takes less than 2 minutes and helps improve the experience for everyone.</p>
+    <p style="margin:16px 0 8px;font-weight:600;">You'll be asked to rate:</p>
+    <ul style="margin:0 0 16px;padding-left:20px;line-height:1.8;">
+      <li>&#11088; <strong>Tech Quality</strong> — How was the video/audio connection?</li>
+      <li>&#11088; <strong>Performance</strong> — How was the overall experience with the creator?</li>
+      <li>&#11088; <strong>Presentation</strong> — How was the creator's appearance and setting?</li>
+      <li>&#11088; <strong>Politeness</strong> — How courteous and professional was the creator?</li>
+    </ul>
+    <p style="margin:0 0 8px;">Plus a few quick questions about what we could improve in tech quality, your thoughts on the app, and the creator's equipment setup.</p>
+    <div style="text-align:center;margin:24px 0;"><a href="${escHtml(surveyUrl)}" class="btn">Rate Your Call</a></div>
+    <p>Your feedback is private by default. You'll have the option to share it directly with ${escHtml(creatorName)} if you'd like.</p>
+    <p>Thank you!<br><strong>The PNPtv Team</strong></p>
     `,
   });
 }
@@ -482,6 +571,25 @@ async function sendPostCallSurveyPrompt(memberId, bookingId, creatorDisplayName)
         subject: `How was your call with ${creatorName}?`,
         html: postCallSurveyHtml({ creatorName, surveyUrl }),
       });
+    }
+
+    // Push notification
+    try {
+      await PushNotificationService.sendToUser(memberId, {
+        title: '⭐ ¿Cómo fue tu llamada?',
+        body: 'Deja tu calificación — solo toma 10 segundos.',
+        url: `/booking/${encodeURIComponent(bookingId)}/confirm?survey=1`,
+        tag: `call_survey_${bookingId}`,
+      });
+    } catch (pushErr) {
+      logger.warn('[callNotificationService] push (survey) failed', { error: pushErr.message });
+    }
+
+    // System DM
+    try {
+      await sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `⭐ ¿Cómo estuvo tu llamada?\n\nTu opinión ayuda a la comunidad. Deja tu calificación aquí:\n${surveyUrl}`, query);
+    } catch (dmErr) {
+      logger.warn('[callNotificationService] system DM (survey) failed', { error: dmErr.message });
     }
 
     logger.info('[callNotificationService] post-call survey prompt sent', { memberId, bookingId });
@@ -554,6 +662,178 @@ async function sendPendingNotifications() {
   }
 }
 
+/**
+ * Send a copy of the member's completed survey to the creator (only when member opted in).
+ * Non-fatal — all errors are swallowed.
+ */
+async function sendSurveyToCreator({
+  creatorId, memberUsername, rating,
+  techQuality, performanceQuality, presentation, politeness,
+  techImprovement, appFeedback, equipmentFeedback, feedback,
+}) {
+  try {
+    const creatorInfo = await fetchUserInfo(creatorId);
+    if (!creatorInfo.email) {
+      logger.info('[callNotificationService] sendSurveyToCreator: no email for creator', { creatorId });
+      return;
+    }
+
+    const stars = (n) => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : 'N/A';
+
+    const rows = [
+      ['Overall', stars(rating)],
+      ['Tech Quality', stars(techQuality)],
+      ['Performance', stars(performanceQuality)],
+      ['Presentation', stars(presentation)],
+      ['Politeness', stars(politeness)],
+    ].map(([label, val]) =>
+      `<tr><td style="padding:6px 12px;color:#8E8E93;font-size:14px;">${label}</td><td style="padding:6px 12px;font-size:14px;font-weight:600;">${val}</td></tr>`
+    ).join('');
+
+    const openEnded = [
+      ['Tech quality improvements', techImprovement],
+      ['App feedback', appFeedback],
+      ['Equipment/setup feedback', equipmentFeedback],
+      ['General feedback', feedback],
+    ].filter(([, v]) => v).map(([label, val]) =>
+      `<div style="margin-bottom:12px;"><p style="font-weight:600;margin:0 0 4px;font-size:13px;color:#8E8E93;">${escHtml(label)}</p><p style="margin:0;font-size:14px;">${escHtml(val)}</p></div>`
+    ).join('');
+
+    const html = buildBaseEmailHtml({
+      headerSubtitle: 'Survey Results',
+      title: 'A member shared their call feedback with you',
+      contentHtml: `
+      <p>Hi ${escHtml(creatorInfo.display_name || creatorInfo.username || 'there')},</p>
+      <p>A member (<strong>${escHtml(memberUsername)}</strong>) chose to share their call feedback with you:</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;">${rows}</table>
+      ${openEnded ? `<div style="margin-top:16px;">${openEnded}</div>` : ''}
+      <p style="margin-top:20px;font-size:13px;color:#8E8E93;">This feedback was submitted by the member. If you have questions, contact support.</p>
+      <p><strong>The PNPtv Team</strong></p>
+      `,
+    });
+
+    await sendBookingEmail({
+      to: creatorInfo.email,
+      subject: `New call feedback from ${memberUsername}`,
+      html,
+    });
+
+    logger.info('[callNotificationService] survey copy sent to creator', { creatorId, memberUsername });
+  } catch (err) {
+    logger.warn('[callNotificationService] sendSurveyToCreator failed', { creatorId, error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation notifications — all 4 channels
+// ---------------------------------------------------------------------------
+
+/**
+ * Notify both member and creator when a booking is cancelled.
+ * cancelledByRole: 'member' | 'creator' | 'system'
+ * Fire-and-forget from callers; all errors are swallowed internally.
+ */
+async function sendCancellationNotifications({ memberId, creatorId, creditId, bookingId, memberDisplayName, creatorDisplayName, cancelledByRole, startAt }) {
+  const timeStr = startAt
+    ? new Date(startAt).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
+    : null;
+  const timeNote = timeStr ? ` programada para el ${timeStr}` : '';
+
+  const memberSubject = cancelledByRole === 'creator'
+    ? `Tu llamada con ${creatorDisplayName} fue cancelada`
+    : 'Tu llamada privada fue cancelada';
+  const creatorSubject = cancelledByRole === 'member'
+    ? `${memberDisplayName} canceló su llamada contigo`
+    : 'Llamada privada cancelada';
+
+  const memberBody = cancelledByRole === 'creator'
+    ? `Tu llamada${timeNote} fue cancelada por ${creatorDisplayName}. Tu crédito ha sido devuelto y puedes reservar otra sesión cuando quieras.`
+    : `Tu llamada${timeNote} fue cancelada. Tu crédito ha sido devuelto.`;
+  const creatorBody = cancelledByRole === 'member'
+    ? `${memberDisplayName} canceló su llamada${timeNote}. El crédito fue devuelto al cliente.`
+    : `La llamada${timeNote} con ${memberDisplayName} fue cancelada.`;
+
+  // --- Email ---
+  try {
+    const transporter = emailService.transporters.pnptv || emailService.transporters.easybots;
+    if (transporter) {
+      const [mResult, cResult] = await Promise.allSettled([
+        query('SELECT email FROM users WHERE id = $1', [memberId]),
+        query('SELECT email FROM users WHERE id = $1', [creatorId]),
+      ]);
+      const memberEmail = mResult.status === 'fulfilled' ? mResult.value.rows[0]?.email : null;
+      const creatorEmail = cResult.status === 'fulfilled' ? cResult.value.rows[0]?.email : null;
+
+      if (memberEmail) {
+        await transporter.sendMail({
+          from: `PNPtv! <${process.env.SMTP_FROM || 'support@pnptv.app'}>`,
+          to: memberEmail,
+          subject: memberSubject,
+          html: buildBaseEmailHtml({
+            headerSubtitle: 'Book a Call',
+            title: 'Llamada cancelada',
+            contentHtml: `<p>${escHtml(memberBody)}</p><div style="text-align:center;margin:20px 0;"><a href="${APP_URL}/my-access" class="btn">Ver mis créditos</a></div>`,
+          }),
+        });
+      }
+      if (creatorEmail) {
+        await transporter.sendMail({
+          from: `PNPtv! <${process.env.SMTP_FROM || 'support@pnptv.app'}>`,
+          to: creatorEmail,
+          subject: creatorSubject,
+          html: buildBaseEmailHtml({
+            headerSubtitle: 'Book a Call',
+            title: 'Llamada cancelada',
+            contentHtml: `<p>${escHtml(creatorBody)}</p>`,
+          }),
+        });
+      }
+    }
+  } catch (emailErr) {
+    logger.warn('[callNotificationService] cancellation email failed', { error: emailErr.message });
+  }
+
+  // --- Telegram ---
+  try {
+    await sendNotificationViaTelegram(memberId, {
+      type: 'call_booking',
+      message: escHtml(memberBody),
+      entityType: 'booking',
+      entityId: creditId || bookingId || null,
+    });
+  } catch (tgErr) {
+    logger.warn('[callNotificationService] cancellation TG (member) failed', { error: tgErr.message });
+  }
+  try {
+    await sendNotificationViaTelegram(creatorId, {
+      type: 'call_booking',
+      message: escHtml(creatorBody),
+      entityType: 'booking',
+      entityId: creditId || bookingId || null,
+    });
+  } catch (tgErr) {
+    logger.warn('[callNotificationService] cancellation TG (creator) failed', { error: tgErr.message });
+  }
+
+  // --- Push ---
+  PushNotificationService.sendToUser(memberId, {
+    title: '📞 Llamada cancelada',
+    body: memberSubject,
+    url: '/my-access',
+    tag: `call_cancelled_${creditId || bookingId}`,
+  }).catch(() => {});
+  PushNotificationService.sendToUser(creatorId, {
+    title: '📞 Llamada cancelada',
+    body: creatorSubject,
+    url: '/my-access',
+    tag: `call_cancelled_creator_${creditId || bookingId}`,
+  }).catch(() => {});
+
+  // --- System DM ---
+  sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), `❌ ${memberBody}`, query).catch(() => {});
+  sendSystemDM(SYSTEM_DM_SENDER_ID, String(creatorId), `❌ ${creatorBody}`, query).catch(() => {});
+}
+
 module.exports = {
   sendBookingConfirmationToMember,
   sendBookingConfirmationToCreator,
@@ -561,4 +841,6 @@ module.exports = {
   reconcileReminders,
   sendPostCallSurveyPrompt,
   sendPendingNotifications,
+  sendSurveyToCreator,
+  sendCancellationNotifications,
 };

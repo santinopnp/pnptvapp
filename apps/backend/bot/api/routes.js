@@ -12240,6 +12240,155 @@ app.get('/api/webapp/payments/usdc/status/:orderId', requireSessionAuth, usdcSta
   });
 }));
 
+// ── Creator tip endpoints ─────────────────────────────────────────────────────
+// Tips are 100% commission-free to the creator (TIP_CREATOR_RATE = 1.0).
+// Uses NowPayments hosted invoice. Idempotency key = UUID stored in creator_tips.order_id.
+
+const creatorTipLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  message: { success: false, error: 'Too many tip requests. Please wait before trying again.', code: 'RATE_LIMITED' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// POST /api/webapp/creators/:creatorId/tip
+app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLimiter, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+  }
+
+  const { amount, message: rawMessage, email: rawEmail, payCurrency } = req.body || {};
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Validate amount
+  const parsedAmount = typeof amount === 'number' ? amount : parseFloat(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount < 1 || parsedAmount > 500) {
+    return res.status(400).json({ success: false, error: 'Amount must be between $1 and $500.' });
+  }
+
+  // Validate message (optional)
+  if (rawMessage != null && (typeof rawMessage !== 'string' || rawMessage.length > 500)) {
+    return res.status(400).json({ success: false, error: 'Message must be a string of 500 characters or fewer.' });
+  }
+  const sanitizedMessage = rawMessage ? String(rawMessage).trim().slice(0, 500) : null;
+
+  // Validate email (optional)
+  if (rawEmail != null && (typeof rawEmail !== 'string' || rawEmail.length > 254 || !EMAIL_RE.test(rawEmail.trim()))) {
+    return res.status(400).json({ success: false, error: 'Invalid email address.' });
+  }
+  const customerEmail = rawEmail ? String(rawEmail).trim().toLowerCase() : null;
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const { creatorId } = req.params;
+
+  // Look up the creator by username OR uuid
+  const creatorRes = await dbQuery(
+    `SELECT u.id, u.email, u.username, p.user_id AS performer_user_id
+     FROM users u
+     JOIN performers p ON p.user_id = u.id
+     WHERE (u.username ILIKE $1 OR u.id::text = $1) AND p.status = 'active'
+     LIMIT 1`,
+    [String(creatorId)]
+  );
+  if (creatorRes.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Creator not found' });
+  }
+  const creator = creatorRes.rows[0];
+  const creatorUserId = String(creator.id);
+  const creatorUsername = creator.username || creatorId;
+
+  // Prevent self-tipping
+  const payerUserId = String(user.telegram_id || user.id);
+  if (payerUserId === creatorUserId) {
+    return res.status(400).json({ success: false, error: 'You cannot tip yourself' });
+  }
+
+  const orderId = crypto.randomUUID();
+  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
+
+  // Create NowPayments hosted invoice
+  let invoiceData;
+  try {
+    const invoiceBody = {
+      price_amount: parsedAmount,
+      price_currency: 'usd',
+      order_id: orderId,
+      order_description: `Tip for ${creatorUsername} on PNPtv!`,
+      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
+    };
+    if (customerEmail) invoiceBody.customer_email = customerEmail;
+    if (payCurrency) invoiceBody.pay_currency = String(payCurrency).toLowerCase();
+
+    const invoiceResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    invoiceData = invoiceResp.data;
+  } catch (invoiceErr) {
+    logger.error('[tip/create] NowPayments invoice creation failed', { error: invoiceErr.message, creatorId, payerUserId });
+    return res.status(502).json({ success: false, error: 'Payment provider error. Please try again.', code: 'INVOICE_FAILED' });
+  }
+
+  const nowpaymentsInvoiceId = invoiceData?.id || invoiceData?.invoice_id || null;
+  const invoiceUrl = nowpaymentsInvoiceId
+    ? `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`
+    : invoiceData?.invoice_url || null;
+
+  // Insert into dash_subscription_orders
+  await dbQuery(
+    `INSERT INTO dash_subscription_orders (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
+     VALUES ($1, 'creator_tip', $2, $3, $4, 'pending', $5, $6)
+     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+    [
+      payerUserId,
+      customerEmail || null,
+      parsedAmount,
+      orderId,
+      creatorUserId,
+      JSON.stringify({ provider: 'nowpayments', flow: 'tip', creatorUsername, message: sanitizedMessage, invoiceUrl }),
+    ]
+  );
+
+  // Insert into creator_tips
+  await dbQuery(
+    `INSERT INTO creator_tips (payer_id, creator_id, amount_usd, order_id, message, status)
+     VALUES ($1, $2, $3, $4, $5, 'pending')
+     ON CONFLICT (order_id) DO NOTHING`,
+    [payerUserId, creatorUserId, parsedAmount, orderId, sanitizedMessage]
+  );
+
+  logger.info('[tip/create] Tip invoice created', { orderId, payerUserId, creatorUserId, amount: parsedAmount });
+
+  return res.json({ success: true, orderId, invoiceUrl, nowpaymentsInvoiceId, amount: parsedAmount });
+}));
+
+// GET /api/webapp/creators/:creatorId/tip/status/:orderId
+app.get('/api/webapp/creators/:creatorId/tip/status/:orderId', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  const { orderId } = req.params;
+  const payerUserId = String(user.telegram_id || user.id);
+  const { query: dbQuery } = require('../../config/postgres');
+
+  const result = await dbQuery(
+    `SELECT status, usd_amount, created_at FROM dash_subscription_orders
+     WHERE btcpay_invoice_id = $1 AND user_id = $2 AND plan_id = 'creator_tip'
+     LIMIT 1`,
+    [orderId, payerUserId]
+  );
+  if (result.rows.length === 0) {
+    return res.status(404).json({ success: false, error: 'Order not found' });
+  }
+  const row = result.rows[0];
+  return res.json({ success: true, status: row.status, amount: row.usd_amount });
+}));
+
 // POST /api/webapp/payments/efipay/checkout — proxy to easybots.store EfiPay checkout
 // Supports: creator_membership, channel_access, call_package, token_package
 app.post('/api/webapp/payments/efipay/checkout', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -12434,6 +12583,20 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
               order_id, error: clawbackErr.message,
             });
           }
+          return res.json({ received: true });
+        }
+
+        // creator_tip refund: mark tip refunded and void the earnings record
+        if (order && order.plan_id === 'creator_tip') {
+          await dbQuery(
+            `UPDATE creator_tips SET status = 'refunded' WHERE order_id = $1`,
+            [order_id]
+          );
+          await dbQuery(
+            `UPDATE creator_earnings SET status = 'void' WHERE source_payment_id = $1`,
+            [order_id]
+          );
+          logger.info('[NOWPayments] Tip refunded', { order_id });
           return res.json({ received: true });
         }
 
@@ -12749,6 +12912,63 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         return res.json({ received: true });
       }
     }
+  }
+
+  // ── Creator tip: 100% goes to creator (no platform commission) ─────────────
+  if (order.plan_id === 'creator_tip') {
+    const { TIP_CREATOR_RATE } = require('../../config/monetizationConfig');
+    const grossAmount = parseFloat(order.usd_amount) || 0;
+    const tipCreatorId = order.creator_id ? String(order.creator_id) : null;
+
+    try {
+      // Insert creator earnings — is_tip=true, 100% to creator
+      if (grossAmount > 0 && tipCreatorId) {
+        const earningsInsert = await dbQuery(
+          `INSERT INTO creator_earnings
+             (creator_id, amount_gross, amount_creator, amount_platform, status,
+              available_at, source_payment_id, period_month, is_tip)
+           VALUES ($1, $2, $3, $4, 'available', NOW(), $5, date_trunc('month', CURRENT_DATE), true)
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [
+            tipCreatorId,
+            grossAmount,
+            Math.round(grossAmount * TIP_CREATOR_RATE * 100) / 100,
+            0,
+            order_id,
+          ]
+        );
+        const earningsId = earningsInsert.rows[0]?.id || null;
+
+        // Update creator_tips record to completed
+        await dbQuery(
+          `UPDATE creator_tips
+           SET status = 'completed', nowpayments_payment_id = $2, pay_currency = $3,
+               earnings_id = $4, completed_at = NOW()
+           WHERE order_id = $1`,
+          [order_id, String(payment_id), pay_currency || null, earningsId]
+        );
+      }
+
+      // Mark DSO completed
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:tip:${payment_id}`]
+      );
+
+      logger.info('[NOWPayments] Creator tip settled', {
+        order_id, creator_id: tipCreatorId, payerId: order.user_id, grossAmount, payCurrency: pay_currency,
+      });
+    } catch (tipErr) {
+      logger.error('[NOWPayments] Creator tip settlement failed', { order_id, error: tipErr.message });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:tip_failed:${tipErr.message}`.slice(0, 500)]
+      ).catch(() => {});
+      return res.status(500).json({ error: 'tip_settlement_failed' });
+    }
+
+    return res.json({ received: true, type: 'creator_tip' });
   }
 
   // call_package orders: route to callCheckoutService.onCallPaymentSuccess instead of grantEntitlementsForPlan

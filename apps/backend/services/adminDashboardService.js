@@ -947,4 +947,149 @@ Object.assign(AdminDashboardService, {
   },
 });
 
+async function getCallAnalytics() {
+  const surveyStats = await query(`
+    SELECT
+      COUNT(*)::int AS total_surveys,
+      ROUND(AVG(rating)::numeric, 2) AS avg_rating,
+      ROUND(AVG(tech_quality)::numeric, 2) AS avg_tech_quality,
+      ROUND(AVG(performance_quality)::numeric, 2) AS avg_performance_quality,
+      ROUND(AVG(presentation)::numeric, 2) AS avg_presentation,
+      ROUND(AVG(politeness)::numeric, 2) AS avg_politeness,
+      COUNT(*) FILTER (WHERE share_with_model = true)::int AS shared_with_model,
+      COUNT(*) FILTER (WHERE tech_improvement IS NOT NULL AND tech_improvement != '')::int AS has_tech_feedback,
+      COUNT(*) FILTER (WHERE app_feedback IS NOT NULL AND app_feedback != '')::int AS has_app_feedback,
+      COUNT(*) FILTER (WHERE equipment_feedback IS NOT NULL AND equipment_feedback != '')::int AS has_equipment_feedback
+    FROM call_booking_surveys
+    WHERE created_at > NOW() - INTERVAL '90 days'
+  `);
+
+  const ratingDist = await query(`
+    SELECT rating, COUNT(*)::int AS count
+    FROM call_booking_surveys
+    WHERE created_at > NOW() - INTERVAL '90 days'
+    GROUP BY rating ORDER BY rating
+  `);
+
+  const topCreators = await query(`
+    SELECT
+      cbs.creator_id,
+      u.username,
+      COALESCE(NULLIF(TRIM(u.first_name || ' ' || COALESCE(u.last_name, '')), ''), u.username) AS display_name,
+      COUNT(*)::int AS survey_count,
+      ROUND(AVG(cbs.rating)::numeric, 2) AS avg_rating,
+      ROUND(AVG(cbs.tech_quality)::numeric, 2) AS avg_tech_quality,
+      ROUND(AVG(cbs.performance_quality)::numeric, 2) AS avg_performance_quality,
+      ROUND(AVG(cbs.presentation)::numeric, 2) AS avg_presentation,
+      ROUND(AVG(cbs.politeness)::numeric, 2) AS avg_politeness
+    FROM call_booking_surveys cbs
+    LEFT JOIN users u ON u.id::text = cbs.creator_id
+    WHERE cbs.created_at > NOW() - INTERVAL '90 days'
+    GROUP BY cbs.creator_id, u.username, u.first_name, u.last_name
+    HAVING COUNT(*) >= 2
+    ORDER BY avg_rating DESC, survey_count DESC
+    LIMIT 10
+  `);
+
+  const recentFeedback = await query(`
+    SELECT
+      cbs.id,
+      cbs.created_at,
+      cbs.rating,
+      cbs.tech_quality,
+      cbs.performance_quality,
+      cbs.presentation,
+      cbs.politeness,
+      cbs.feedback,
+      cbs.tech_improvement,
+      cbs.app_feedback,
+      cbs.equipment_feedback,
+      cbs.share_with_model,
+      u_creator.username AS creator_username,
+      u_member.username AS member_username
+    FROM call_booking_surveys cbs
+    LEFT JOIN users u_creator ON u_creator.id::text = cbs.creator_id
+    LEFT JOIN users u_member ON u_member.id::text = cbs.member_id
+    WHERE cbs.created_at > NOW() - INTERVAL '30 days'
+      AND (
+        (cbs.feedback IS NOT NULL AND cbs.feedback != '')
+        OR (cbs.tech_improvement IS NOT NULL AND cbs.tech_improvement != '')
+        OR (cbs.app_feedback IS NOT NULL AND cbs.app_feedback != '')
+        OR (cbs.equipment_feedback IS NOT NULL AND cbs.equipment_feedback != '')
+      )
+    ORDER BY cbs.created_at DESC
+    LIMIT 20
+  `);
+
+  return {
+    surveyStats: surveyStats.rows[0] || {},
+    ratingDistribution: ratingDist.rows,
+    topCreators: topCreators.rows,
+    recentFeedback: recentFeedback.rows,
+  };
+}
+
+async function getTipAnalytics() {
+  const overallStats = await query(`
+    SELECT
+      COUNT(*)::int AS total_tips,
+      COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_tips,
+      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_tips,
+      COALESCE(SUM(amount_usd) FILTER (WHERE status = 'completed'), 0)::numeric AS total_usd,
+      COALESCE(AVG(amount_usd) FILTER (WHERE status = 'completed'), 0)::numeric AS avg_usd,
+      COALESCE(MAX(amount_usd) FILTER (WHERE status = 'completed'), 0)::numeric AS max_usd
+    FROM creator_tips
+    WHERE created_at > NOW() - INTERVAL '90 days'
+  `);
+
+  const topCreators = await query(`
+    SELECT
+      ct.creator_id,
+      u.username,
+      COALESCE(NULLIF(TRIM(u.first_name || ' ' || COALESCE(u.last_name, '')), ''), u.username) AS display_name,
+      COUNT(*)::int AS tip_count,
+      COALESCE(SUM(ct.amount_usd), 0)::numeric AS total_usd,
+      COALESCE(AVG(ct.amount_usd), 0)::numeric AS avg_usd
+    FROM creator_tips ct
+    LEFT JOIN users u ON u.id::text = ct.creator_id
+    WHERE ct.status = 'completed'
+      AND ct.created_at > NOW() - INTERVAL '90 days'
+    GROUP BY ct.creator_id, u.username, u.first_name, u.last_name
+    ORDER BY total_usd DESC
+    LIMIT 10
+  `);
+
+  const recentTips = await query(`
+    SELECT
+      ct.id, ct.amount_usd, ct.message, ct.status, ct.created_at, ct.completed_at, ct.pay_currency,
+      u_payer.username AS payer_username,
+      u_creator.username AS creator_username
+    FROM creator_tips ct
+    LEFT JOIN users u_payer ON u_payer.id::text = ct.payer_id
+    LEFT JOIN users u_creator ON u_creator.id::text = ct.creator_id
+    ORDER BY ct.created_at DESC
+    LIMIT 20
+  `);
+
+  const dailyStats = await query(`
+    SELECT
+      DATE_TRUNC('day', created_at)::date AS date,
+      COUNT(*)::int AS tip_count,
+      COALESCE(SUM(amount_usd) FILTER (WHERE status = 'completed'), 0)::numeric AS total_usd
+    FROM creator_tips
+    WHERE created_at > NOW() - INTERVAL '30 days'
+    GROUP BY 1
+    ORDER BY 1
+  `);
+
+  return {
+    overallStats: overallStats.rows[0] || {},
+    topCreators: topCreators.rows,
+    recentTips: recentTips.rows,
+    dailyStats: dailyStats.rows,
+  };
+}
+
 module.exports = AdminDashboardService;
+module.exports.getCallAnalytics = getCallAnalytics;
+module.exports.getTipAnalytics = getTipAnalytics;

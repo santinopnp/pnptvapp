@@ -371,6 +371,52 @@ async function onCallPaymentSuccess(paymentId) {
           entityId: credit.id,
         }).catch(() => {});
 
+        // Email to creator about new purchase
+        try {
+          const { rows: cRows } = await query('SELECT email, first_name FROM users WHERE id = $1', [creator_id]);
+          if (cRows[0]?.email) {
+            const creatorTransporter = emailService.transporters.pnptv || emailService.transporters.easybots;
+            if (creatorTransporter) {
+              await creatorTransporter.sendMail({
+                from: '"PNPtv" <hello@pnptv.app>',
+                to: cRows[0].email,
+                subject: '💰 Alguien compró tu paquete de llamada — PNPtv',
+                html: `
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f4f4f4; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 20px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+  .header { text-align: center; padding-bottom: 20px; border-bottom: 3px solid #667eea; }
+  .header h1 { color: #667eea; margin: 0; font-size: 28px; }
+  .badge { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 20px; border-radius: 8px; text-align: center; margin: 20px 0; }
+  .badge h2 { margin: 0; font-size: 20px; }
+  .details { background: #f8f9fa; padding: 16px 20px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #667eea; }
+  .details p { margin: 8px 0; }
+  .btn { display: inline-block; padding: 12px 28px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+  .footer { text-align: center; padding-top: 20px; border-top: 1px solid #ddd; color: #999; font-size: 12px; }
+</style></head><body>
+<div class="container">
+  <div class="header"><h1>PNPtv!</h1><p>Creator Earnings</p></div>
+  <div class="badge"><h2>¡Nueva venta!</h2></div>
+  <p>Hola${cRows[0].first_name ? ` ${escapeHtml(cRows[0].first_name)}` : ''},</p>
+  <p>Un cliente acaba de comprar tu paquete <b>${escapeHtml(pkgResult.rows[0]?.title || `${pkg.duration_minutes}-min llamada`)}</b>.</p>
+  <div class="details">
+    <p><strong>Paquete:</strong> ${escapeHtml(String(pkg.duration_minutes))} min × ${escapeHtml(String(quantity))} sesión(es)</p>
+    <p><strong>Precio total:</strong> $${escapeHtml(parseFloat(grossAmount).toFixed(2))} USD</p>
+    <p><strong>Tu ganancia:</strong> <b>$${escapeHtml(parseFloat(amountCreator).toFixed(2))} USD</b></p>
+    <p><em>Las ganancias estarán disponibles para retiro en 7 días.</em></p>
+  </div>
+  <div style="text-align:center;margin:20px 0;"><a href="${process.env.APP_PUBLIC_URL || 'https://pnptv.app'}/creator/dashboard" class="btn">Ver en tu panel →</a></div>
+  <div class="footer"><p>PNPtv! &middot; <a href="mailto:support@pnptv.app" style="color:inherit;">support@pnptv.app</a></p></div>
+</div></body></html>`.trim(),
+              });
+            }
+          }
+        } catch (creatorEmailErr) {
+          logger.warn('[callCheckoutService] creator payment email failed', { error: creatorEmailErr.message });
+        }
+
         // Email receipt to buyer
         if (buyerEmail) {
           const transporter = emailService.transporters.pnptv || emailService.transporters.easybots;

@@ -14,7 +14,7 @@ const { query, getPool } = require('../../../config/postgres');
 const { getRedis } = require('../../../config/redis');
 const callCheckoutService = require('../../../services/callCheckoutService');
 const callPackageService = require('../../../services/callPackageService');
-const { generateToken: generateLiveKitToken, LIVEKIT_WS_URL } = require('../../../services/livekitService');
+const jaasService = require('../../../services/jaasService');
 const CallBookingService = require('../../../services/CallBookingService');
 const moment = require('moment-timezone');
 const logger = require('../../../utils/logger');
@@ -67,7 +67,7 @@ async function resolveBooking(rawId, callerUserId) {
        LEFT JOIN users u_creator ON u_creator.id = COALESCE(cc.creator_id, prf.user_id)
        JOIN users u_member  ON u_member.id  = COALESCE(cc.member_id,  b.user_id)
        WHERE b.id = $1
-         AND b.status IN ('confirmed', 'held', 'awaiting_payment')
+         AND b.status IN ('confirmed', 'held', 'awaiting_payment', 'completed', 'no_show')
          AND (
            COALESCE(cc.member_id,  b.user_id)   = $2
            OR COALESCE(cc.creator_id, prf.user_id) = $2
@@ -102,7 +102,7 @@ async function resolveBooking(rawId, callerUserId) {
        JOIN users u_creator ON u_creator.id = cc.creator_id
        JOIN users u_member  ON u_member.id  = cc.member_id
        LEFT JOIN bookings b ON b.credit_id = cc.id
-                           AND b.status IN ('confirmed', 'held', 'awaiting_payment')
+                           AND b.status IN ('confirmed', 'held', 'awaiting_payment', 'completed', 'no_show')
        WHERE cc.id = $1
          AND (cc.member_id = $2 OR cc.creator_id = $2)`,
       [creditId, callerUserId]
@@ -222,11 +222,6 @@ async function getBooking(req, res) {
       return res.status(404).json({ success: false, error: 'Booking not found' });
     }
 
-    // Only issue LiveKit tokens for confirmed bookings
-    if (credit.booking_status && credit.booking_status !== 'confirmed') {
-      return res.status(403).json({ success: false, error: 'Booking is not yet confirmed.' });
-    }
-
     const roomName = `booking-${credit.booking_uuid || credit.id}`;
     const isModerator = userId === String(credit.creator_id);
 
@@ -328,10 +323,18 @@ async function joinBooking(req, res) {
     // TTL = booking duration + 30 min buffer so the token outlasts the call
     const ttlSeconds = (credit.duration_minutes || 60) * 60 + 30 * 60;
 
-    const livekitToken = await generateLiveKitToken(roomName, userId, displayName, isModerator, { ttlSeconds });
-    const livekitUrl = LIVEKIT_WS_URL;
+    let jaasUrl;
+    try {
+      const jaasToken = jaasService.generateJaasToken(roomName, userId, displayName, isModerator, ttlSeconds);
+      jaasUrl = jaasService.getJaasRoomUrl(roomName, jaasToken);
+    } catch (jaasErr) {
+      if (jaasErr.code === 'JAAS_NOT_CONFIGURED') {
+        return res.status(503).json({ success: false, error: 'Video call service is not configured' });
+      }
+      throw jaasErr;
+    }
 
-    logger.info('[callBookingController] joinBooking LiveKit token issued', {
+    logger.info('[callBookingController] joinBooking JaaS URL issued', {
       creditId: credit.id,
       userId,
       roomName,
@@ -351,7 +354,7 @@ async function joinBooking(req, res) {
       logger.warn('[callBookingController] could not start session on join (non-fatal)', { error: sessErr.message });
     }
 
-    return res.json({ livekitUrl, livekitToken, roomName, ttlSeconds });
+    return res.json({ jaasUrl, roomName, ttlSeconds });
   } catch (err) {
     logger.error('[callBookingController] joinBooking error', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to join call' });
@@ -393,11 +396,44 @@ async function submitSurvey(req, res) {
     }
     // UUID resolution happens below after rating validation
 
-    const { rating, feedback } = req.body;
+    const {
+      rating, feedback,
+      tech_quality, performance_quality, presentation, politeness,
+      tech_improvement, app_feedback, equipment_feedback, share_with_model,
+    } = req.body;
+
     const numRating = Number(rating);
     if (!Number.isInteger(numRating) || numRating < 1 || numRating > 5) {
       return res.status(400).json({ success: false, error: 'rating must be an integer from 1 to 5' });
     }
+
+    // Validate optional 1-5 rating fields
+    function validateRating(val) {
+      if (val == null) return null;
+      const n = Number(val);
+      return (Number.isInteger(n) && n >= 1 && n <= 5) ? n : 'INVALID';
+    }
+    const validatedTechQuality = validateRating(tech_quality);
+    const validatedPerformanceQuality = validateRating(performance_quality);
+    const validatedPresentation = validateRating(presentation);
+    const validatedPoliteness = validateRating(politeness);
+
+    if ([validatedTechQuality, validatedPerformanceQuality, validatedPresentation, validatedPoliteness].includes('INVALID')) {
+      return res.status(400).json({ success: false, error: 'Rating fields must be integers from 1 to 5' });
+    }
+
+    // Sanitize text fields
+    function sanitizeText(val) {
+      if (typeof val !== 'string') return null;
+      return val.trim().slice(0, 2000) || null;
+    }
+    const sanitizedFeedback = sanitizeText(feedback);
+    const sanitizedTechImprovement = sanitizeText(tech_improvement);
+    const sanitizedAppFeedback = sanitizeText(app_feedback);
+    const sanitizedEquipmentFeedback = sanitizeText(equipment_feedback);
+
+    // Validate share_with_model as boolean
+    const shareWithModel = share_with_model === true || share_with_model === 'true';
 
     // Validate the credit belongs to this member and has been used at least once.
     // When caller passes a UUID (bookings.id), resolve credit_id through the bookings join.
@@ -427,17 +463,19 @@ async function submitSurvey(req, res) {
       return res.status(409).json({ success: false, error: 'Cannot submit survey before the call has taken place' });
     }
 
-    // Sanitize feedback text
-    const sanitizedFeedback = typeof feedback === 'string'
-      ? feedback.trim().slice(0, 2000) || null
-      : null;
-
     // Insert survey (UNIQUE constraint on credit_id prevents duplicates)
     try {
       await query(
-        `INSERT INTO call_booking_surveys (credit_id, member_id, creator_id, rating, feedback)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [creditId, memberId, credit.creator_id, numRating, sanitizedFeedback]
+        `INSERT INTO call_booking_surveys
+           (credit_id, member_id, creator_id, rating, feedback,
+            tech_quality, performance_quality, presentation, politeness,
+            tech_improvement, app_feedback, equipment_feedback, share_with_model)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          creditId, memberId, credit.creator_id, numRating, sanitizedFeedback,
+          validatedTechQuality, validatedPerformanceQuality, validatedPresentation, validatedPoliteness,
+          sanitizedTechImprovement, sanitizedAppFeedback, sanitizedEquipmentFeedback, shareWithModel,
+        ]
       );
     } catch (insertErr) {
       if (insertErr.code === '23505') {
@@ -445,6 +483,24 @@ async function submitSurvey(req, res) {
         return res.status(409).json({ success: false, error: 'Survey already submitted for this booking' });
       }
       throw insertErr;
+    }
+
+    // Fire-and-forget: send survey copy to creator when member opted in
+    if (shareWithModel) {
+      const callNotificationService = require('../../../services/callNotificationService');
+      callNotificationService.sendSurveyToCreator({
+        creatorId: credit.creator_id,
+        memberUsername: sessionUser.username || memberId,
+        rating: numRating,
+        techQuality: validatedTechQuality,
+        performanceQuality: validatedPerformanceQuality,
+        presentation: validatedPresentation,
+        politeness: validatedPoliteness,
+        techImprovement: sanitizedTechImprovement,
+        appFeedback: sanitizedAppFeedback,
+        equipmentFeedback: sanitizedEquipmentFeedback,
+        feedback: sanitizedFeedback,
+      }).catch((err) => logger.warn('[callBookingController] sendSurveyToCreator failed', { error: err.message }));
     }
 
     logger.info('[callBookingController] survey submitted', { creditId, memberId, rating: numRating });

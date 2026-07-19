@@ -152,10 +152,10 @@ class CallBookingService {
         throw { statusCode: 400, message: `This credit is for ${credit.pkg_duration} minutes, but ${durationMinutes} were requested.` };
       }
 
-      // HIGH-03: Enforce 30-min minimum lead-time before booking
+      // Enforce 15-min minimum lead-time before booking
       const startMoment = moment.utc(startAt);
-      if (startMoment.diff(moment.utc(), 'minutes') < 30) {
-        throw { statusCode: 400, message: 'Bookings must be at least 30 minutes in advance', code: 'TOO_SOON' };
+      if (startMoment.diff(moment.utc(), 'minutes') < 15) {
+        throw { statusCode: 400, message: 'Bookings must be at least 15 minutes in advance', code: 'TOO_SOON' };
       }
 
       // 3. Check slot availability using a pessimistic lock on existing overlapping bookings
@@ -399,6 +399,25 @@ class CallBookingService {
           logger.warn('[CallBookingService] cancelBooking notification error (non-fatal)', {
             bookingId, error: notifErr.message,
           });
+        }
+
+        // Full multi-channel cancellation notifications (email + push + system DM)
+        try {
+          const callNotifSvc = require('./callNotificationService');
+          if (typeof callNotifSvc.sendCancellationNotifications === 'function') {
+            callNotifSvc.sendCancellationNotifications({
+              memberId: booking.user_id,
+              creatorId: booking.creator_user_id,
+              creditId: booking.credit_id || null,
+              bookingId,
+              memberDisplayName: booking.member_display_name || booking.member_username || 'El cliente',
+              creatorDisplayName: booking.creator_display_name || booking.creator_username || 'El creador',
+              cancelledByRole: cancelledByRole || 'system',
+              startAt: booking.start_time_utc || null,
+            }).catch((err) => logger.warn('[CallBookingService] sendCancellationNotifications failed', { error: err.message }));
+          }
+        } catch (notifErr2) {
+          logger.warn('[CallBookingService] cancellation notif require failed', { error: notifErr2.message });
         }
       })();
     }

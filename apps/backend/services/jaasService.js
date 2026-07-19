@@ -91,7 +91,7 @@ function generateJaasToken(roomName, userId, displayName, isModerator, ttlSecond
  * @returns {string} Full iframe src URL
  */
 function getJaasRoomUrl(roomName, jaasToken) {
-  const config = '#config.startWithVideoMuted=false&config.startWithAudioMuted=false';
+  const config = '#config.startWithVideoMuted=false&config.startWithAudioMuted=false&config.lobby.enabled=true';
   return `https://8x8.vc/${JAAS_APP_ID}/${encodeURIComponent(roomName)}?jwt=${jaasToken}${config}`;
 }
 
