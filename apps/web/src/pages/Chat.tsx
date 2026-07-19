@@ -255,7 +255,16 @@ function HangoutChatPanel({
   const groupId = activeGroup.id;
   const [messages, setMessages] = useState<GroupMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [inputText, setInputText] = useState("");
+  // Restore any unsent draft for this room. Safe as a lazy initializer —
+  // HangoutChatPanel is `key`'d by groupId in the parent, so it fully
+  // remounts on room switch rather than reusing state across groups.
+  const [inputText, setInputText] = useState(() => {
+    try {
+      return localStorage.getItem(`hangout-draft-${groupId}`) || "";
+    } catch {
+      return "";
+    }
+  });
   const [sending, setSending] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -277,6 +286,22 @@ function HangoutChatPanel({
   const [shareFeedSending, setShareFeedSending] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<GroupMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Persist the draft as the user types, keyed by room. Skip while editing an
+  // existing message — inputText is repurposed for edit text in that mode and
+  // must not clobber the real unsent draft.
+  useEffect(() => {
+    if (editingMsg) return;
+    try {
+      if (inputText) {
+        localStorage.setItem(`hangout-draft-${groupId}`, inputText);
+      } else {
+        localStorage.removeItem(`hangout-draft-${groupId}`);
+      }
+    } catch {
+      // localStorage unavailable (private browsing, quota) — draft persistence is best-effort
+    }
+  }, [inputText, groupId, editingMsg]);
 
   // Inject UX polish styles
   useEffect(() => {
@@ -564,6 +589,10 @@ function HangoutChatPanel({
     if (sending) return;
     setSending(true);
     setChatError(null);
+    // Completing an edit doesn't consume the real composer draft (inputText
+    // held the edit text, not the draft) — restore it below instead of
+    // blanking it, same as cancelEdit().
+    const wasEditing = !!editingMsg;
     try {
       if (editingMsg) {
         const editData = await editGroupMessage(groupId, editingMsg.id, inputText.trim());
@@ -589,7 +618,13 @@ function HangoutChatPanel({
           );
         }
       }
-      setInputText("");
+      if (wasEditing) {
+        let draft = "";
+        try { draft = localStorage.getItem(`hangout-draft-${groupId}`) || ""; } catch { /* best-effort */ }
+        setInputText(draft);
+      } else {
+        setInputText("");
+      }
       setReplyTo(null);
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (err) {
@@ -722,6 +757,13 @@ function HangoutChatPanel({
   // Message actions
   const startReply = (msg: GroupMessage) => {
     setContextMenu(null);
+    // If a reply is started while mid-edit, inputText still holds the edit
+    // text — restore the real draft instead of leaking edit text into it.
+    if (editingMsg) {
+      let draft = "";
+      try { draft = localStorage.getItem(`hangout-draft-${groupId}`) || ""; } catch { /* best-effort */ }
+      setInputText(draft);
+    }
     setEditingMsg(null);
     setReplyTo(msg);
     inputRef.current?.focus();
@@ -737,7 +779,11 @@ function HangoutChatPanel({
 
   const cancelEdit = () => {
     setEditingMsg(null);
-    setInputText("");
+    // Restore whatever real draft was preserved while editing, rather than
+    // blanking it — the effect above never wrote over it during edit mode.
+    let draft = "";
+    try { draft = localStorage.getItem(`hangout-draft-${groupId}`) || ""; } catch { /* best-effort */ }
+    setInputText(draft);
   };
 
   const handleDeleteMsg = (msg: GroupMessage) => {
