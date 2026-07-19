@@ -43,6 +43,12 @@ let lastProcessedDateKey = null;
 // Default: 3132 (from the community group structure)
 const WALL_OF_FAME_TOPIC_ID = parseInt(process.env.WALL_OF_FAME_TOPIC_ID || '3132');
 const GROUP_ID = process.env.GROUP_ID || '-1003291737499';
+const WOF_APP_URL = 'https://pnptv.app/social';
+
+function isTopicMissingError(err) {
+  const desc = err?.response?.description || err?.message || '';
+  return /thread not found|TOPIC_CLOSED|TOPIC_DELETED|message_thread_id/i.test(desc);
+}
 
 /**
  * Track Wall of Fame message IDs to exclude from cleanup
