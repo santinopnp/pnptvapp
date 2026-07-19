@@ -286,9 +286,12 @@ async function removeFromHangoutById(groupId, userId) {
 // ── Hangout-native ranking helpers ───────────────────────────────────────────
 
 async function getHangoutGroups() {
+  // Only process hangout groups that are linked to a Telegram group —
+  // i.e. the 3 community groups (Cloudy Days, Lads Up Late, Clay Adams).
+  // Creator hangouts (is_public=true but no telegram_chat_id) must not receive rank messages.
   const { rows } = await query(
     `SELECT id, name FROM hangout_groups
-      WHERE is_wall_of_fame = false AND is_public = true
+      WHERE is_wall_of_fame = false AND telegram_chat_id IS NOT NULL
       ORDER BY is_main DESC, id`
   );
   return rows;
