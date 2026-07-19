@@ -1,6 +1,56 @@
 const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
 const sanitizeHtml = require('sanitize-html');
+const https = require('https');
+
+// ── Redis key patterns ────────────────────────────────────────────────────
+// email:suppressed:<address>       TTL-less → permanent hard-bounce suppress
+// email:sent:<address>:<date>      counter, TTL 86400 → per-day send volume
+// email:delivery:<messageId>       hash, TTL 7d → delivery status per message
+
+const SUPPRESS_PREFIX = 'email:suppressed:';
+const DELIVERY_PREFIX = 'email:delivery:';
+const SEND_COUNT_PREFIX = 'email:sent:';
+
+// ── Hostinger Mail API client ─────────────────────────────────────────────
+// Base: https://api.mail.hostinger.com  (NOT api.hostinger.com)
+// Auth: Bearer token, order-scoped. Mailbox resource IDs from /api/v1/me.
+//
+// Known mailboxes (from GET /api/v1/me):
+//   noreply@pnptv.app  → AC2d383e41e81e1cb3feba76324096
+//   support@pnptv.app  → ACbaf8cd14bb90ffd57edf302bc5a7
+const HOSTINGER_API_KEY = process.env.HOSTINGER_API_KEY;
+const HOSTINGER_MAIL_BASE = 'https://api.mail.hostinger.com';
+const HOSTINGER_MAILBOX_NOREPLY = process.env.HOSTINGER_MAILBOX_NOREPLY || 'AC2d383e41e81e1cb3feba76324096';
+const HOSTINGER_MAILBOX_SUPPORT = process.env.HOSTINGER_MAILBOX_SUPPORT || 'ACbaf8cd14bb90ffd57edf302bc5a7';
+
+function hostingerRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    if (!HOSTINGER_API_KEY) return reject(new Error('HOSTINGER_API_KEY not set'));
+    const payload = body ? JSON.stringify(body) : null;
+    const url = new URL(`${HOSTINGER_MAIL_BASE}${path}`);
+    const req = https.request(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${HOSTINGER_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode === 204) return resolve({ status: 204, body: null });
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: res.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
 
 /**
  * Email Service - Handles sending emails from multiple domains
@@ -20,6 +70,204 @@ class EmailService {
     // Initialize transporters if config is available
     this.initTransporters();
   }
+
+  // ── Redis helper ──────────────────────────────────────────────────────
+  _redis() {
+    try {
+      const { getRedis } = require('../config/redis');
+      return getRedis();
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Suppression list ──────────────────────────────────────────────────
+
+  async isSuppressed(email) {
+    const redis = this._redis();
+    if (!redis) return false;
+    try {
+      return !!(await redis.get(`${SUPPRESS_PREFIX}${email.toLowerCase()}`));
+    } catch { return false; }
+  }
+
+  async suppress(email, reason = 'hard-bounce') {
+    const redis = this._redis();
+    if (!redis) return;
+    const key = `${SUPPRESS_PREFIX}${email.toLowerCase()}`;
+    try {
+      await redis.set(key, JSON.stringify({ reason, suppressedAt: new Date().toISOString() }));
+      logger.warn('[email] address suppressed', { email, reason });
+    } catch (err) {
+      logger.error('[email] suppress write failed', { email, error: err.message });
+    }
+  }
+
+  async unsuppress(email) {
+    const redis = this._redis();
+    if (!redis) return;
+    try {
+      await redis.del(`${SUPPRESS_PREFIX}${email.toLowerCase()}`);
+      logger.info('[email] suppression removed', { email });
+    } catch { /* ignore */ }
+  }
+
+  async listSuppressed(cursor = '0', count = 100) {
+    const redis = this._redis();
+    if (!redis) return { cursor: '0', emails: [] };
+    try {
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${SUPPRESS_PREFIX}*`, 'COUNT', count);
+      const emails = keys.map((k) => k.replace(SUPPRESS_PREFIX, ''));
+      return { cursor: nextCursor, emails };
+    } catch { return { cursor: '0', emails: [] }; }
+  }
+
+  // ── Delivery tracking ─────────────────────────────────────────────────
+
+  async _trackSent(messageId, meta) {
+    const redis = this._redis();
+    if (!redis || !messageId) return;
+    try {
+      await redis.setex(
+        `${DELIVERY_PREFIX}${messageId}`,
+        7 * 86400,
+        JSON.stringify({ ...meta, sentAt: new Date().toISOString(), status: 'sent' })
+      );
+      // per-address daily send count (for rate-guard awareness)
+      const today = new Date().toISOString().slice(0, 10);
+      const countKey = `${SEND_COUNT_PREFIX}${meta.to}:${today}`;
+      await redis.incr(countKey);
+      await redis.expire(countKey, 86400);
+    } catch { /* non-critical */ }
+  }
+
+  async getDeliveryStatus(messageId) {
+    const redis = this._redis();
+    if (!redis) return null;
+    try {
+      const raw = await redis.get(`${DELIVERY_PREFIX}${messageId}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  async getDailyCount(email) {
+    const redis = this._redis();
+    if (!redis) return 0;
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      return parseInt(await redis.get(`${SEND_COUNT_PREFIX}${email}:${today}`) || '0', 10);
+    } catch { return 0; }
+  }
+
+  // ── Retry helper ──────────────────────────────────────────────────────
+
+  async _sendWithRetry(transporter, mailOptions, { retries = 2, delayMs = 2000 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const info = await transporter.sendMail(mailOptions);
+        if (attempt > 0) {
+          logger.info('[email] sent after retry', { attempt, messageId: info.messageId, to: mailOptions.to });
+        }
+        return info;
+      } catch (err) {
+        lastErr = err;
+        // Hard errors (bad address, auth failure) — don't retry
+        const isHard = err.responseCode >= 500 && err.responseCode < 600;
+        if (isHard || attempt === retries) break;
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+      }
+    }
+    throw lastErr;
+  }
+
+  // ── Hostinger Mail API helpers ────────────────────────────────────────
+
+  /** Return authenticated account info + mailbox list */
+  hostingerGetMe() {
+    return hostingerRequest('GET', '/api/v1/me');
+  }
+
+  /** Mailbox quota (storage used / total) */
+  hostingerGetQuota(mailboxId = HOSTINGER_MAILBOX_SUPPORT) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/quota`);
+  }
+
+  /** List messages in a folder (default: INBOX, page 1) */
+  hostingerListMessages(mailboxId, folder = 'INBOX', page = 1, perPage = 25) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/folders/${encodeURIComponent(folder)}/messages?page=${page}&perPage=${perPage}`);
+  }
+
+  /** Full-text search within a folder */
+  hostingerSearchMessages(mailboxId, folder = 'INBOX', query = {}) {
+    return hostingerRequest('POST', `/api/v1/mailboxes/${mailboxId}/folders/${encodeURIComponent(folder)}/messages/search`, query);
+  }
+
+  /** Get single message (with body) */
+  hostingerGetMessage(mailboxId, folder, uid) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/folders/${encodeURIComponent(folder)}/messages/${uid}`);
+  }
+
+  /** Get plain-text body of a message */
+  hostingerGetMessageText(mailboxId, folder, uid) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/folders/${encodeURIComponent(folder)}/messages/${uid}/text`);
+  }
+
+  /** List folders in a mailbox */
+  hostingerListFolders(mailboxId) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/folders`);
+  }
+
+  /**
+   * Send an email via the Hostinger Mail HTTP API (replaces SMTP for noreply sends).
+   * Outgoing sender address is determined by the mailboxId.
+   */
+  async sendViaHostingerApi({
+    to, subject, html, text, displayName,
+    cc = [], bcc = [],
+    mailboxId = HOSTINGER_MAILBOX_NOREPLY,
+  }) {
+    if (!HOSTINGER_API_KEY) throw new Error('HOSTINGER_API_KEY not set');
+    if (!to) throw new Error('to is required');
+    const toArr = Array.isArray(to) ? to : [to];
+    const result = await hostingerRequest('POST', `/api/v1/mailboxes/${mailboxId}/send`, {
+      to: toArr,
+      ...(cc.length ? { cc } : {}),
+      ...(bcc.length ? { bcc } : {}),
+      ...(displayName ? { displayName } : {}),
+      subject,
+      html,
+      text: text || this.stripHtml(html || ''),
+    });
+    if (result.status !== 200 && result.status !== 202 && result.status !== 204) {
+      throw new Error(`Hostinger send failed: ${JSON.stringify(result.body)}`);
+    }
+    return result;
+  }
+
+  /** List webhooks on a mailbox */
+  hostingerListWebhooks(mailboxId = HOSTINGER_MAILBOX_SUPPORT) {
+    return hostingerRequest('GET', `/api/v1/mailboxes/${mailboxId}/webhooks`);
+  }
+
+  /** Create a webhook (returns one-time secret in response — store it!) */
+  hostingerCreateWebhook(mailboxId, { name, url, events = ['message.received'], description = '' }) {
+    return hostingerRequest('POST', `/api/v1/mailboxes/${mailboxId}/webhooks`, { name, url, events, description });
+  }
+
+  /** Delete a webhook */
+  hostingerDeleteWebhook(mailboxId, webhookId) {
+    return hostingerRequest('DELETE', `/api/v1/mailboxes/${mailboxId}/webhooks/${webhookId}`);
+  }
+
+  /** Trigger a test delivery on a webhook */
+  hostingerTestWebhook(mailboxId, webhookId) {
+    return hostingerRequest('POST', `/api/v1/mailboxes/${mailboxId}/webhooks/${webhookId}/test`);
+  }
+
+  /** Expose resource IDs for use by other services */
+  static get MAILBOX_NOREPLY() { return HOSTINGER_MAILBOX_NOREPLY; }
+  static get MAILBOX_SUPPORT() { return HOSTINGER_MAILBOX_SUPPORT; }
 
   /**
    * Initialize email transporters for both domains
@@ -141,6 +389,12 @@ class EmailService {
         throw new Error('Invalid email address format');
       }
 
+      // Suppression list check — skip hard-bounced addresses silently
+      if (await this.isSuppressed(to)) {
+        logger.info('[email] skipped — address is suppressed', { to, subject });
+        return { success: false, messageId: null, mode: 'suppressed' };
+      }
+
       // If no transporter, log email instead
       if (!this.transporters.pnptv) {
         logger.info('Email would be sent (no transporter configured):', {
@@ -162,7 +416,9 @@ class EmailService {
         attachments,
       };
 
-      const info = await this.transporters.pnptv.sendMail(mailOptions);
+      const info = await this._sendWithRetry(this.transporters.pnptv, mailOptions);
+      await this._trackSent(info.messageId, { to, subject, from, transporter: 'pnptv' });
+
       logger.info('Email sent successfully:', {
         to,
         subject,
@@ -176,10 +432,15 @@ class EmailService {
         mode: 'sent',
       };
     } catch (error) {
+      // Auto-suppress on permanent delivery failure (5xx SMTP response)
+      if (error.responseCode >= 550 && error.responseCode < 560) {
+        await this.suppress(to, `smtp-${error.responseCode}`);
+      }
       logger.error('Error sending email:', {
         to,
         subject,
         error: error.message,
+        responseCode: error.responseCode,
       });
       throw error;
     }

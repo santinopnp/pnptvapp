@@ -13451,6 +13451,71 @@ app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asy
 const btcpayWebhookController = require('./controllers/btcpayWebhookController');
 app.post('/api/webhooks/btcpay', webhookLimiter, asyncHandler(btcpayWebhookController.handleBtcpayWebhook));
 
+// ── Hostinger Mail webhook — message.received on support@pnptv.app ────────────
+// Hostinger sends Authorization: Bearer <webhook-secret> with each delivery.
+// The secret was returned once at webhook creation time; stored as env var.
+// Event payload: { event: "message.received", data: { uid, from, to, subject, date, folder } }
+app.post('/api/webhooks/hostinger-mail', express.json(), asyncHandler(async (req, res) => {
+  // Verify webhook secret
+  const secret = process.env.HOSTINGER_WEBHOOK_SECRET;
+  if (secret) {
+    const authHeader = req.headers.authorization || '';
+    const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (provided !== secret) {
+      logger.warn('[hostinger-mail-webhook] invalid secret');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
+  const { event, data } = req.body || {};
+  if (event !== 'message.received' || !data) {
+    return res.status(200).json({ ok: true }); // ack unknown events silently
+  }
+
+  // Forward to Telegram support group
+  try {
+    const { getBotInstance } = require('../../bot/core/bot');
+    const bot = getBotInstance();
+    const supportGroupId = process.env.SUPPORT_GROUP_ID;
+    if (bot && supportGroupId) {
+      const from = String(data.from || '').replace(/[<>&]/g, '') || 'unknown';
+      const subject = String(data.subject || '(no subject)').replace(/[<>&]/g, '');
+      const folder = data.folder || 'INBOX';
+      const uid = data.uid || '';
+      const receivedAt = data.date ? new Date(data.date).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : 'now';
+
+      const text =
+        `📬 <b>Nuevo email en support@pnptv.app</b>\n` +
+        `De: <code>${from}</code>\n` +
+        `Asunto: <b>${subject}</b>\n` +
+        `Recibido: ${receivedAt}`;
+
+      await bot.telegram.sendMessage(Number(supportGroupId), text, { parse_mode: 'HTML' });
+
+      // Optionally fetch and forward the plain-text body (best-effort)
+      try {
+        const emailservice = require('../../services/emailservice');
+        const mailboxId = process.env.HOSTINGER_MAILBOX_SUPPORT || 'ACbaf8cd14bb90ffd57edf302bc5a7';
+        const textRes = await emailservice.hostingerGetMessageText(mailboxId, folder, uid);
+        const body = textRes?.body?.data?.text || textRes?.body?.data?.html || '';
+        if (body) {
+          const snippet = body.slice(0, 600).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+          await bot.telegram.sendMessage(
+            Number(supportGroupId),
+            `<blockquote>${snippet}${body.length > 600 ? '\n…' : ''}</blockquote>`,
+            { parse_mode: 'HTML' }
+          );
+        }
+      } catch { /* body fetch is best-effort */ }
+    }
+  } catch (err) {
+    logger.error('[hostinger-mail-webhook] telegram notify failed', { error: err.message });
+  }
+
+  res.status(200).json({ ok: true });
+}));
+// ── End Hostinger Mail webhook ────────────────────────────────────────────────
+
 // --- Self-declaration age verification (for gate, not AI-photo) ---
 app.post('/api/verify-age-self', authLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
@@ -16798,6 +16863,51 @@ app.get('/api/webapp/drm/fairplay-cert',
 );
 
 // ── End DRM License Proxy ──────────────────────────────────────────────────────
+
+// ── Email suppression management (admin) ─────────────────────────────────────
+// GET  /api/webapp/admin/email/suppressed        — list all suppressed addresses
+// POST /api/webapp/admin/email/suppressed        — manually suppress an address
+// DELETE /api/webapp/admin/email/suppressed/:email — remove suppression
+// GET  /api/webapp/admin/email/delivery/:messageId — look up delivery record
+
+app.get('/api/webapp/admin/email/suppressed', adminGuard, asyncHandler(async (req, res) => {
+  const emailservice = require('../../services/emailservice');
+  const cursor = req.query.cursor || '0';
+  const result = await emailservice.listSuppressed(cursor, 200);
+  res.json(result);
+}));
+
+app.post('/api/webapp/admin/email/suppressed', adminGuard, asyncHandler(async (req, res) => {
+  const { email, reason = 'manual' } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const emailservice = require('../../services/emailservice');
+  await emailservice.suppress(email, reason);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/webapp/admin/email/suppressed/:email', adminGuard, asyncHandler(async (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  const emailservice = require('../../services/emailservice');
+  await emailservice.unsuppress(email);
+  res.json({ ok: true });
+}));
+
+app.get('/api/webapp/admin/email/delivery/:messageId', adminGuard, asyncHandler(async (req, res) => {
+  const emailservice = require('../../services/emailservice');
+  const record = await emailservice.getDeliveryStatus(req.params.messageId);
+  if (!record) return res.status(404).json({ error: 'not found' });
+  res.json(record);
+}));
+
+// GET /api/webapp/admin/email/daily-count/:email — how many emails sent today to this address
+app.get('/api/webapp/admin/email/daily-count/:email', adminGuard, asyncHandler(async (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  const emailservice = require('../../services/emailservice');
+  const count = await emailservice.getDailyCount(email);
+  res.json({ email, count });
+}));
+
+// ── End Email suppression management ──────────────────────────────────────────
 
 // ==========================================
 // OG PRERENDER — serves dynamic meta tags for social media crawlers
