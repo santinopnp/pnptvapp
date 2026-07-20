@@ -75,6 +75,13 @@ class PlatformBanService {
       const knownIps = ipRes.rows.map((r) => r.ip_address);
 
       // ── 3. Insert platform ban record ────────────────────────────────────────
+      // pnptv_id is VARCHAR(36) (a UUID) — some legacy/dedup-conflict rows carry
+      // corrupted values (e.g. "CONFLICT_<uuid>", raw hex hashes) that overflow
+      // that column, which would otherwise abort the whole ban. Only pass it
+      // through when it's actually UUID-shaped.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const safePnptvId = u.pnptv_id && UUID_RE.test(u.pnptv_id) ? u.pnptv_id : null;
+
       const banRes = await query(
         `INSERT INTO platform_bans
            (user_id, telegram_id, pnptv_id, email, username,
@@ -84,7 +91,7 @@ class PlatformBanService {
         [
           String(u.id),
           u.telegram   || null,
-          u.pnptv_id   || null,
+          safePnptvId,
           u.email      || null,
           u.username   || null,
           u.x_id       || null,
@@ -98,11 +105,14 @@ class PlatformBanService {
       const banId = banRes.rows[0]?.id || null;
 
       // ── 4. Hard-set user to banned (superadmin bypass trigger) ───────────────
+      // Note: tier='banned' alone satisfies chk_tier_status_consistency and
+      // users_tier_check. subscription_status has its own chk_user_sub_status
+      // constraint that only allows free/active/churned/expired — 'banned' was
+      // never a valid value there, so it must NOT be set here.
       await query(`SET LOCAL pnptv.superadmin_bypass = 'true'`);
       await query(
         `UPDATE users SET
            tier                = 'banned',
-           subscription_status = 'banned',
            plan_id             = NULL,
            plan_expiry         = NULL,
            is_active           = FALSE,
