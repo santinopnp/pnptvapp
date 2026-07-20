@@ -36,6 +36,12 @@ import {
   Clock,
   Monitor,
   ChevronDown,
+  UserPlus,
+  UserCheck,
+  MessageCircle,
+  MoreVertical,
+  Flag,
+  Ban,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -48,6 +54,12 @@ import {
   payCreatorSubWithTokens,
   createCreatorTip,
   getCreatorTipStatus,
+  followUser,
+  unfollowUser,
+  blockUser,
+  unblockUser,
+  isUserBlocked,
+  createUserReport,
   ApiError,
   type CreatorTipPayload,
   type CreatorPublicProfile,
@@ -58,6 +70,8 @@ import {
   type PublicCallPackage,
   type CreatorRecentPost,
   type CreatorNextAvailability,
+  type CreatorExclusiveTeaser,
+  type ReportCategory,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -245,58 +259,46 @@ function availabilityDayLabel(avail: CreatorNextAvailability): string {
   return DAY_NAMES[avail.day_of_week] ?? "";
 }
 
-type CreatorTier = "creator" | "crystal" | "ice" | "diamond" | "full_time";
+// ─── Badge row — PRIME / Performer / Creador pills ─────────────────────────────
 
-// ─── Tier Badge ───────────────────────────────────────────────────────────────
-
-function TierBadge({ tier }: { tier: CreatorTier }) {
-  if (tier === "crystal") {
-    return (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-        style={{ background: "rgba(6,182,212,0.18)", color: "#22D3EE" }}
-      >
-        Crystal
-      </span>
-    );
-  }
-  if (tier === "ice") {
-    return (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-        style={{ background: "rgba(59,130,246,0.18)", color: "#60A5FA" }}
-      >
-        ICE
-      </span>
-    );
-  }
-  if (tier === "diamond") {
-    return (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-        style={{ background: "rgba(139,92,246,0.18)", color: "#A78BFA" }}
-      >
-        Diamond
-      </span>
-    );
-  }
-  if (tier === "full_time") {
-    return (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-        style={{ background: "rgba(230,145,56,0.18)", color: "#FCD34D" }}
-      >
-        Featured
-      </span>
-    );
-  }
+function CreatorBadgeRow({
+  isPrime,
+  creatorRole,
+  priceUsd,
+}: {
+  isPrime: boolean;
+  creatorRole: "live" | "content_creator" | "both" | null;
+  priceUsd: number | null;
+}) {
+  const isPerformer = creatorRole === "live" || creatorRole === "both";
   return (
-    <span
-      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-      style={{ background: "rgba(34,197,94,0.18)", color: "#4ADE80" }}
-    >
-      Creator
-    </span>
+    <>
+      {isPrime && (
+        <span
+          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wide"
+          style={{ background: "rgba(255,180,84,.16)", border: "1px solid rgba(255,180,84,.5)", color: "#FFB454" }}
+        >
+          PRIME
+        </span>
+      )}
+      {isPerformer && (
+        <span
+          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-bold"
+          style={{ background: "rgba(94,209,196,.14)", border: "1px solid rgba(94,209,196,.45)", color: "#5ED1C4" }}
+        >
+          ★ Performer
+        </span>
+      )}
+      <span
+        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-bold"
+        style={{ background: "rgba(212,0,122,.16)", border: "1px solid rgba(212,0,122,.5)", color: "#FF4DA6" }}
+      >
+        ★ Creador
+      </span>
+      {priceUsd != null && priceUsd > 0 && (
+        <span className="text-[11px] text-pnp-textSecondary">· ${priceUsd.toFixed(0)}/mo</span>
+      )}
+    </>
   );
 }
 
@@ -332,6 +334,17 @@ const PLATFORM_LABELS: Record<string, string> = {
   twitter: "X",
   x: "X",
   telegram: "Telegram",
+};
+
+const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
+  harassment: "Acoso o bullying",
+  hate: "Discurso de odio o discriminación",
+  spam_scam: "Spam o estafa",
+  impersonation: "Suplantación de identidad",
+  csam: "Seguridad infantil — urgente",
+  nudity_nonconsensual: "Contenido íntimo sin consentimiento",
+  self_harm: "Autolesión o suicidio",
+  other: "Otro",
 };
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
@@ -755,6 +768,30 @@ export default function CreatorProfilePage() {
   // Share / QR state
   const [copied, setCopied] = useState(false);
 
+  // Follow state
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  // ⋮ overflow menu (report / block)
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportCategory, setReportCategory] = useState<ReportCategory | "">("");
+  const [reportDescription, setReportDescription] = useState("");
+  const [reportSending, setReportSending] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  // Ver calendario popover
+  const [showCalendarPopover, setShowCalendarPopover] = useState(false);
+
+  // Publicaciones / Exclusivo tabs
+  const [profileTab, setProfileTab] = useState<"pubs" | "excl">("pubs");
+
   // Watermark label for lightbox — shown on all unlocked media the viewer opens
   const watermarkLabel = user
     ? `${user.username ? '@' + user.username : user.firstName ?? 'member'} · pnptv.app`
@@ -781,6 +818,10 @@ export default function CreatorProfilePage() {
       const result = await getPublicCreatorProfile(username);
       setData(result);
       setIsSubscribed(result.isSubscribed);
+      setIsFollowing(result.isFollowing);
+      setFollowerCount(result.creator.followerCount);
+      setFollowingCount(result.creator.followingCount);
+      isUserBlocked(result.creator.id).then((r) => { if (r.success) setIsBlocked(r.isBlocked); }).catch(() => {});
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         setIsNotFound(true);
@@ -846,6 +887,83 @@ export default function CreatorProfilePage() {
       // silent — subscription status unchanged
     } finally {
       setUnsubscribeLoading(false);
+    }
+  }
+
+  async function handleToggleFollow() {
+    if (!data) return;
+    if (!isAuthenticated) { navigate("/login"); return; }
+    setFollowLoading(true);
+    const wasFollowing = isFollowing;
+    // Optimistic update
+    setIsFollowing(!wasFollowing);
+    setFollowerCount((c) => Math.max(0, c + (wasFollowing ? -1 : 1)));
+    try {
+      const res = wasFollowing
+        ? await unfollowUser(data.creator.id)
+        : await followUser(data.creator.id);
+      if (res.success) {
+        setIsFollowing(res.isFollowing);
+        setFollowerCount(res.followerCount);
+      }
+    } catch {
+      // Rollback
+      setIsFollowing(wasFollowing);
+      setFollowerCount((c) => Math.max(0, c + (wasFollowing ? 1 : -1)));
+    } finally {
+      setFollowLoading(false);
+    }
+  }
+
+  function handleMessageClick() {
+    if (!data) return;
+    if (!isAuthenticated) { navigate("/login"); return; }
+    const isCreatorDmLocked =
+      user?.tier !== "prime" && user?.creator_status !== "active";
+    navigate(isCreatorDmLocked ? "/subscribe" : `/dm/${data.creator.id}`);
+  }
+
+  async function handleToggleBlock() {
+    if (!data) return;
+    setBlockLoading(true);
+    try {
+      if (isBlocked) {
+        await unblockUser(data.creator.id);
+        setIsBlocked(false);
+      } else {
+        await blockUser(data.creator.id);
+        setIsBlocked(true);
+      }
+      setShowBlockConfirm(false);
+      setMenuOpen(false);
+    } catch {
+      // silent — block status unchanged
+    } finally {
+      setBlockLoading(false);
+    }
+  }
+
+  async function handleSubmitReport() {
+    if (!data || !reportCategory || reportSending) return;
+    setReportSending(true);
+    setReportError(null);
+    try {
+      const res = await createUserReport({
+        reportedUserId: data.creator.id,
+        category: reportCategory,
+        description: reportDescription.trim() || undefined,
+        evidenceType: "profile",
+        evidenceId: data.creator.id,
+      });
+      if (res.success) {
+        setReportSent(true);
+      } else {
+        setReportError(res.error || "No se pudo enviar el reporte.");
+      }
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "No se pudo enviar el reporte.");
+    } finally {
+      setReportSending(false);
     }
   }
 
@@ -986,7 +1104,7 @@ export default function CreatorProfilePage() {
     );
   }
 
-  const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, socialLinks, nextAvailability } = data;
+  const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, exclusivePosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
   const hasCallPackages = activePackages.length > 0;
   const cheapestPackage = hasCallPackages
@@ -1006,6 +1124,7 @@ export default function CreatorProfilePage() {
     : {};
   const hasSocialLinks = Object.keys(filteredSocialLinks).length > 0;
   const hasRecentPosts = recentPosts && recentPosts.length > 0;
+  const hasExclusivePosts = exclusivePosts && exclusivePosts.length > 0;
   const hasChannels = Array.isArray(channels) && channels.length > 0;
   const hangout = Array.isArray(hangouts) && hangouts.length > 0 ? hangouts[0] : null;
   const hasHangout = !!hangout;
@@ -1074,8 +1193,8 @@ export default function CreatorProfilePage() {
             style={{ background: "var(--pnp-surface)" }}
             aria-label="Perfil del creador"
           >
-            {/* Avatar */}
-            <div className="relative">
+            {/* Avatar — gold ring for creators, per design tokens */}
+            <div className="relative rounded-full" style={{ boxShadow: "0 0 0 3px #000, 0 0 0 6px #FFB454" }}>
               <UserAvatar
                 userId={creator.id}
                 photoUrl={creator.photo_url}
@@ -1104,12 +1223,11 @@ export default function CreatorProfilePage() {
               <p className="text-sm text-pnp-textSecondary">@{creator.username}</p>
 
               <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
-                <TierBadge tier={creator.creator_type} />
-                <span className="flex items-center gap-1 text-xs text-pnp-textSecondary">
-                  <Users size={11} aria-hidden="true" />
-                  {(creator.creator_subscriber_count ?? 0).toLocaleString()}{" "}
-                  {(creator.creator_subscriber_count ?? 0) === 1 ? "suscriptor" : "suscriptores"}
-                </span>
+                <CreatorBadgeRow
+                  isPrime={creator.isPrime}
+                  creatorRole={creator.creator_role}
+                  priceUsd={creator.creator_price_usd}
+                />
               </div>
             </div>
 
@@ -1118,6 +1236,104 @@ export default function CreatorProfilePage() {
               <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 max-w-xs">
                 {creator.bio}
               </p>
+            )}
+
+            {/* ── Stats grid: Publicaciones / Seguidores / Siguiendo ─────────── */}
+            <div className="grid grid-cols-3 gap-2 w-full mt-1" role="group" aria-label="Estadísticas del creador">
+              {[
+                { label: "PUBLICACIONES", value: creator.postCount },
+                { label: "SEGUIDORES", value: followerCount },
+                { label: "SIGUIENDO", value: followingCount },
+              ].map((stat) => (
+                <div
+                  key={stat.label}
+                  className="rounded-lg py-3 px-1.5 text-center"
+                  style={{ background: "#161616", border: "1px solid #2A2A2A" }}
+                >
+                  <p className="text-base font-bold text-white leading-none">{stat.value.toLocaleString()}</p>
+                  <p className="mt-1 text-[8px] font-semibold tracking-widest text-pnp-textSecondary">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Meta row: Exclusivo / Llamadas / Miembro desde ──────────────── */}
+            <div className="flex items-center justify-center gap-3.5 flex-wrap text-[11px] text-pnp-textSecondary">
+              <span className="flex items-center gap-1">
+                <Lock size={11} className="text-pnp-accent" aria-hidden="true" />
+                <b className="text-white">{creator.exclusiveCount}</b> Exclusivo
+              </span>
+              <span>
+                <b className="text-white">{creator.completedCallsCount}</b> Llamadas
+              </span>
+              {creator.memberSince && (
+                <span className="flex items-center gap-1">
+                  <Calendar size={11} aria-hidden="true" />
+                  Miembro desde {new Date(creator.memberSince).toLocaleDateString("es-ES", { month: "long", year: "numeric" })}
+                </span>
+              )}
+            </div>
+
+            {/* ── Action row: Siguiendo / Mensaje / ⋮ ─────────────────────────── */}
+            {!isOwnProfile && (
+              <div className="flex items-center gap-2 w-full">
+                <button
+                  onClick={handleToggleFollow}
+                  disabled={followLoading}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] border text-sm font-semibold transition-colors disabled:opacity-50 min-h-[44px]"
+                  style={
+                    isFollowing
+                      ? { borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }
+                      : { borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }
+                  }
+                >
+                  {isFollowing ? <UserCheck size={14} aria-hidden="true" /> : <UserPlus size={14} aria-hidden="true" />}
+                  {isFollowing ? "Siguiendo" : "Seguir"}
+                </button>
+                <button
+                  onClick={handleMessageClick}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] border text-sm font-semibold transition-colors min-h-[44px]"
+                  style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
+                >
+                  <MessageCircle size={14} aria-hidden="true" />
+                  Mensaje
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setMenuOpen((v) => !v)}
+                    aria-label="Más opciones"
+                    aria-expanded={menuOpen}
+                    className="w-[46px] h-[44px] flex items-center justify-center rounded-[10px] border transition-colors"
+                    style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
+                  >
+                    <MoreVertical size={16} aria-hidden="true" />
+                  </button>
+                  {menuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                      <div
+                        role="menu"
+                        className="absolute right-0 top-[calc(100%+6px)] z-20 w-44 rounded-xl overflow-hidden border border-white/10 shadow-xl"
+                        style={{ background: "#1e1e1e" }}
+                      >
+                        <button
+                          role="menuitem"
+                          onClick={() => { setMenuOpen(false); setShowReportModal(true); }}
+                          className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-white/85 hover:bg-white/5 transition-colors"
+                        >
+                          <Flag size={14} aria-hidden="true" /> Reportar
+                        </button>
+                        <button
+                          role="menuitem"
+                          onClick={() => { setMenuOpen(false); setShowBlockConfirm(true); }}
+                          className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-red-400 hover:bg-white/5 transition-colors"
+                        >
+                          <Ban size={14} aria-hidden="true" /> {isBlocked ? "Desbloquear" : "Bloquear"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
           </section>
 
@@ -1133,16 +1349,28 @@ export default function CreatorProfilePage() {
                   Suscripciones pausadas
                 </div>
                 {hasCallPackages && (
-                  <button
-                    onClick={() => setShowBookCall(true)}
-                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
-                    style={{ background: "var(--pnp-surface)" }}
-                  >
-                    <PhoneCall size={16} aria-hidden="true" />
-                    {cheapestPackage
-                      ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
-                      : "Reservar llamada"}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowBookCall(true)}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
+                      style={{ background: "var(--pnp-surface)" }}
+                    >
+                      <PhoneCall size={16} aria-hidden="true" />
+                      {cheapestPackage
+                        ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
+                        : "Reservar llamada"}
+                    </button>
+                    {nextAvailability && (
+                      <button
+                        onClick={() => setShowCalendarPopover((v) => !v)}
+                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold transition-all active:scale-[0.98] min-h-[52px] shrink-0"
+                        style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                        aria-label="Ver calendario"
+                      >
+                        <Calendar size={16} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ) : isSubscribed ? (
@@ -1162,45 +1390,92 @@ export default function CreatorProfilePage() {
                   </button>
                 </div>
                 {hasCallPackages && (
-                  <button
-                    onClick={() => setShowBookCall(true)}
-                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
-                    style={{ background: "var(--pnp-surface)" }}
-                  >
-                    <PhoneCall size={16} aria-hidden="true" />
-                    {cheapestPackage
-                      ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
-                      : "Reservar llamada"}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowBookCall(true)}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
+                      style={{ background: "var(--pnp-surface)" }}
+                    >
+                      <PhoneCall size={16} aria-hidden="true" />
+                      {cheapestPackage
+                        ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
+                        : "Reservar llamada"}
+                    </button>
+                    {nextAvailability && (
+                      <button
+                        onClick={() => setShowCalendarPopover((v) => !v)}
+                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold transition-all active:scale-[0.98] min-h-[52px] shrink-0"
+                        style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                        aria-label="Ver calendario"
+                      >
+                        <Calendar size={16} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (
               /* Default CTA: subscribe + book */
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSubscribeCta}
-                  className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl text-base font-bold text-white transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
-                  style={{ background: "var(--pnp-accent)" }}
-                >
-                  <Star size={16} aria-hidden="true" />
-                  Suscribirse · {formatPrice(creator.creator_price_usd)}/mes
-                </button>
-
-                {hasCallPackages && (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
                   <button
-                    onClick={() => setShowBookCall(true)}
-                    className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px] shrink-0"
-                    style={{ background: "var(--pnp-surface)" }}
-                    aria-label="Reservar llamada"
+                    onClick={handleSubscribeCta}
+                    className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl text-base font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                    style={{ background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b" }}
                   >
-                    <PhoneCall size={16} aria-hidden="true" />
-                    <span className="hidden sm:inline">
-                      {cheapestPackage
-                        ? `Desde ${formatPrice(cheapestPackage.price_usd)}`
-                        : "Llamada"}
-                    </span>
+                    <Star size={16} aria-hidden="true" />
+                    Suscribirse · {formatPrice(creator.creator_price_usd)}/mes
+                  </button>
+
+                  {hasCallPackages && (
+                    <button
+                      onClick={() => setShowBookCall(true)}
+                      className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px] shrink-0"
+                      style={{ background: "var(--pnp-surface)" }}
+                      aria-label="Reservar llamada"
+                    >
+                      <PhoneCall size={16} aria-hidden="true" />
+                      <span className="hidden sm:inline">
+                        {cheapestPackage
+                          ? `Desde ${formatPrice(cheapestPackage.price_usd)}`
+                          : "Llamada"}
+                      </span>
+                    </button>
+                  )}
+                </div>
+                {hasCallPackages && nextAvailability && (
+                  <button
+                    onClick={() => setShowCalendarPopover((v) => !v)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl text-xs font-bold transition-all active:scale-[0.98]"
+                    style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                  >
+                    <Calendar size={14} aria-hidden="true" />
+                    Ver calendario
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Ver calendario popover — reuses the already-fetched nextAvailability slot */}
+            {showCalendarPopover && nextAvailability && (
+              <div
+                className="rounded-2xl p-4 border border-white/10 space-y-1"
+                style={{ background: "var(--pnp-surface)" }}
+                role="dialog"
+                aria-label="Próxima disponibilidad"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-pnp-textPrimary">Próxima disponibilidad</p>
+                  <button onClick={() => setShowCalendarPopover(false)} aria-label="Cerrar" className="text-pnp-textSecondary hover:text-white">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                <p className="text-sm text-pnp-textSecondary">
+                  {availabilityDayLabel(nextAvailability)} · {formatTimeRange(nextAvailability.start_time, nextAvailability.end_time)}
+                </p>
+                <p className="text-xs text-pnp-textSecondary flex items-center gap-1">
+                  <Clock size={11} aria-hidden="true" /> Zona horaria: {nextAvailability.timezone}
+                </p>
               </div>
             )}
 
@@ -1433,19 +1708,63 @@ export default function CreatorProfilePage() {
             </section>
           )}
 
-          {/* ── 6. RECENT POSTS ─────────────────────────────────────────────── */}
-          {hasRecentPosts && (
-            <section aria-label="Publicaciones recientes">
-              <SectionHeading>Publicaciones</SectionHeading>
-              <div className="space-y-3">
-                {recentPosts.slice(0, 3).map((post) => (
-                  <RecentPostCard
-                    key={post.id}
-                    post={post}
-                    creator={creator}
-                  />
-                ))}
+          {/* ── 6. PUBLICACIONES / EXCLUSIVO TABS ───────────────────────────── */}
+          {(hasRecentPosts || hasExclusivePosts) && (
+            <section aria-label="Publicaciones del creador">
+              <div className="flex border-b" style={{ borderColor: "#2A2A2A" }}>
+                <button
+                  onClick={() => setProfileTab("pubs")}
+                  className="flex-1 py-3 text-sm font-semibold transition-colors"
+                  style={
+                    profileTab === "pubs"
+                      ? { color: "#fff", borderBottom: "2px solid #2DD4BF" }
+                      : { color: "var(--pnp-text-secondary, #8E8E93)", borderBottom: "2px solid transparent" }
+                  }
+                >
+                  Publicaciones
+                </button>
+                <button
+                  onClick={() => setProfileTab("excl")}
+                  className="flex-1 py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5"
+                  style={
+                    profileTab === "excl"
+                      ? { color: "#fff", borderBottom: "2px solid #2DD4BF" }
+                      : { color: "var(--pnp-text-secondary, #8E8E93)", borderBottom: "2px solid transparent" }
+                  }
+                >
+                  <Lock size={12} aria-hidden="true" /> Exclusivo
+                </button>
               </div>
+
+              {profileTab === "pubs" ? (
+                hasRecentPosts ? (
+                  <div className="space-y-3 mt-4">
+                    {recentPosts.slice(0, 3).map((post) => (
+                      <RecentPostCard key={post.id} post={post} creator={creator} />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-pnp-textSecondary text-center py-6">
+                    Este creador aún no tiene publicaciones.
+                  </p>
+                )
+              ) : hasExclusivePosts ? (
+                <div className="space-y-3 mt-4">
+                  {exclusivePosts.map((post) => (
+                    <ExclusiveTeaserCard
+                      key={post.id}
+                      post={post}
+                      creator={creator}
+                      isSubscribed={isSubscribed}
+                      onUnlock={handleSubscribeCta}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-pnp-textSecondary text-center py-6">
+                  Este creador aún no tiene contenido exclusivo.
+                </p>
+              )}
             </section>
           )}
 
@@ -1459,7 +1778,7 @@ export default function CreatorProfilePage() {
                 {hasPhotos && (
                   <div>
                     <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Fotos
+                      Fotos destacadas
                     </h3>
                     <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
                       {publicPhotos.map((photo) => {
@@ -1879,6 +2198,131 @@ export default function CreatorProfilePage() {
           </div>
         );
       })()}
+
+      {/* ── Block confirmation ─────────────────────────────────────────────────── */}
+      {showBlockConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)" }}
+          onClick={() => setShowBlockConfirm(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+            style={{ background: "var(--pnp-surface-raised, #1e1e2e)", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold text-pnp-textPrimary text-center">
+              {isBlocked ? `¿Desbloquear a ${creator.first_name}?` : `¿Bloquear a ${creator.first_name}?`}
+            </h3>
+            {!isBlocked && (
+              <p className="text-sm text-pnp-textSecondary text-center">
+                No podrán contactarte ni ver tu perfil. Puedes desbloquear en cualquier momento.
+              </p>
+            )}
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowBlockConfirm(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-white/15 text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleToggleBlock}
+                disabled={blockLoading}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                style={{ background: "#EF4444" }}
+              >
+                {blockLoading ? "…" : isBlocked ? "Desbloquear" : "Bloquear"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Report modal ───────────────────────────────────────────────────────── */}
+      {showReportModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)" }}
+          onClick={() => !reportSending && setShowReportModal(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+            style={{ background: "var(--pnp-surface-raised, #1e1e2e)", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {reportSent ? (
+              <div className="text-center space-y-2 py-4">
+                <Check size={28} className="text-green-400 mx-auto" aria-hidden="true" />
+                <p className="text-sm font-semibold text-pnp-textPrimary">Reporte enviado</p>
+                <p className="text-xs text-pnp-textSecondary">Gracias — nuestro equipo lo revisará.</p>
+                <button
+                  onClick={() => { setShowReportModal(false); setReportSent(false); setReportCategory(""); setReportDescription(""); }}
+                  className="mt-2 px-5 py-2 rounded-xl text-sm font-medium text-white"
+                  style={{ background: "var(--pnp-accent)" }}
+                >
+                  Cerrar
+                </button>
+              </div>
+            ) : (
+              <>
+                <h3 className="text-base font-bold text-pnp-textPrimary text-center">Reportar a {creator.first_name}</h3>
+                <div className="space-y-2">
+                  {(["harassment", "hate", "spam_scam", "impersonation", "nudity_nonconsensual", "csam", "self_harm", "other"] as ReportCategory[]).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setReportCategory(cat)}
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm text-left border transition-colors"
+                      style={
+                        reportCategory === cat
+                          ? { borderColor: "#FFB454", background: "rgba(255,180,84,0.08)", color: "#fff" }
+                          : { borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)" }
+                      }
+                    >
+                      <span
+                        className="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                        style={{ borderColor: reportCategory === cat ? "#FFB454" : "rgba(255,255,255,0.25)" }}
+                      >
+                        {reportCategory === cat && <span className="w-2 h-2 rounded-full" style={{ background: "#FFB454" }} />}
+                      </span>
+                      {REPORT_CATEGORY_LABELS[cat]}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={reportDescription}
+                  onChange={(e) => setReportDescription(e.target.value.slice(0, 500))}
+                  placeholder="Detalles adicionales (opcional)"
+                  rows={2}
+                  className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#EBEBF5", outline: "none" }}
+                />
+                {reportError && <p className="text-xs" style={{ color: "#FF6B6B" }}>{reportError}</p>}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowReportModal(false)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-white/15 text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSubmitReport}
+                    disabled={!reportCategory || reportSending}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-40"
+                    style={{ background: "#EF4444" }}
+                  >
+                    {reportSending ? "Enviando…" : "Enviar reporte"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1963,5 +2407,102 @@ function RecentPostCard({ post, creator }: RecentPostCardProps) {
         <span>{post.likes_count.toLocaleString()}</span>
       </div>
     </article>
+  );
+}
+
+// ─── Exclusive Teaser Card — locked preview shown in the "Exclusivo" tab ───────
+
+interface ExclusiveTeaserCardProps {
+  post: CreatorExclusiveTeaser;
+  creator: CreatorPublicProfile["creator"];
+  isSubscribed: boolean;
+  onUnlock: () => void;
+}
+
+function ExclusiveTeaserCard({ post, creator, isSubscribed, onUnlock }: ExclusiveTeaserCardProps) {
+  const navigate = useNavigate();
+  const unlocked = isSubscribed && post.content != null;
+
+  if (unlocked) {
+    return (
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={() => navigate(`/social/post/${post.id}`)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate(`/social/post/${post.id}`); }}
+        className="rounded-2xl p-4 space-y-3 cursor-pointer transition-opacity hover:opacity-90 active:scale-[0.99]"
+        style={{ background: "var(--pnp-surface)" }}
+      >
+        <div className="flex items-center gap-2.5">
+          {creator.photo_url ? (
+            <img src={creator.photo_url} alt={creator.first_name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+          ) : (
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold text-white" style={{ background: "var(--pnp-accent)" }} aria-hidden="true">
+              {creator.first_name.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-pnp-textPrimary leading-none">{creator.first_name}</p>
+            <p className="text-xs text-pnp-textSecondary mt-0.5">{relativeTime(post.created_at)}</p>
+          </div>
+        </div>
+        {post.content && (
+          <p className="text-sm text-pnp-textPrimary leading-relaxed line-clamp-3 break-words">{post.content}</p>
+        )}
+        {post.media_url && (
+          <div className="aspect-video rounded-xl overflow-hidden">
+            {post.media_type === "video" ? (
+              <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+            ) : (
+              <img src={post.media_url} alt="Post media" loading="lazy" className="w-full h-full object-cover" />
+            )}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 text-xs text-pnp-textSecondary">
+          <Heart size={13} aria-hidden="true" />
+          <span>{post.likes_count.toLocaleString()}</span>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onUnlock}
+      className="relative w-full text-left rounded-2xl p-4 pt-7 mt-3 border transition-opacity hover:opacity-95"
+      style={{ background: "var(--pnp-surface)", borderColor: "rgba(255,255,255,0.08)" }}
+    >
+      {/* Lock medallion overlapping the top edge */}
+      <div
+        className="absolute -top-[17px] left-1/2 -translate-x-1/2 w-[34px] h-[34px] rounded-full flex items-center justify-center"
+        style={{ background: "#D4007A", boxShadow: "0 0 0 4px var(--pnp-background, #0a0a0a)" }}
+        aria-hidden="true"
+      >
+        <Lock size={14} className="text-white" />
+      </div>
+
+      {/* Blurred fake author row */}
+      <div className="flex items-center gap-2.5 opacity-45" style={{ filter: "blur(1px)" }} aria-hidden="true">
+        {creator.photo_url ? (
+          <img src={creator.photo_url} alt="" className="rounded-full object-cover shrink-0" style={{ width: 30, height: 30 }} />
+        ) : (
+          <div className="rounded-full shrink-0" style={{ width: 30, height: 30, background: "var(--pnp-accent)" }} />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-pnp-textPrimary leading-none">{creator.first_name}</p>
+          <p className="text-xs text-pnp-textSecondary mt-1">@{creator.username}</p>
+        </div>
+      </div>
+
+      <p className="mt-3.5 text-sm font-bold text-pnp-textPrimary text-center">Contenido exclusivo</p>
+      <p className="mt-1.5 text-xs text-pnp-textSecondary text-center">
+        Suscríbete por {formatPrice(creator.creator_price_usd)}/mes para desbloquear
+      </p>
+
+      <div className="flex items-center gap-4 mt-3.5 text-xs" style={{ color: "#5a5a5f" }}>
+        <span className="flex items-center gap-1"><Heart size={12} aria-hidden="true" /> {post.likes_count}</span>
+      </div>
+    </button>
   );
 }

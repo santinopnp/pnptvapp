@@ -15919,7 +15919,9 @@ app.get('/api/public/creator/:username',
               photo_file_id AS photo_url,
               bio, creator_type, creator_price_usd,
               creator_subscriber_count, creator_verified,
-              creator_subscription_paused, pnptv_id
+              creator_subscription_paused, pnptv_id,
+              creator_role, creator_enabled_at, created_at,
+              followers_count, following_count
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
        LIMIT 1`,
@@ -16192,6 +16194,88 @@ app.get('/api/public/creator/:username',
       logger.warn('Public creator profile: hangouts fetch failed (non-fatal)', { creatorId, error: hgErr.message });
     }
 
+    // 14. Post count — own posts + posts assigned to any of the creator's channels
+    let postCount = 0;
+    try {
+      const { rows: pcRows } = await pool.query(
+        `SELECT COUNT(*)::int as count FROM social_posts
+          WHERE is_deleted = false AND reply_to_id IS NULL
+            AND (user_id = $1 OR (channel_id IS NOT NULL AND channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $1::varchar)))`,
+        [creatorId]
+      );
+      postCount = pcRows[0]?.count ?? 0;
+    } catch (pcErr) {
+      logger.warn('Public creator profile: post count fetch failed (non-fatal)', { creatorId, error: pcErr.message });
+    }
+
+    // 15. Follow counts + viewer's follow status
+    let followerCount = Number(creator.followers_count) || 0;
+    let followingCount = Number(creator.following_count) || 0;
+    let isFollowing = false;
+    if (viewerId && viewerId !== creatorId) {
+      try {
+        const { rows: followRows } = await pool.query(
+          `SELECT 1 FROM user_follows WHERE follower_id = $1 AND following_id = $2 LIMIT 1`,
+          [viewerId, creatorId]
+        );
+        isFollowing = followRows.length > 0;
+      } catch (followErr) {
+        logger.warn('Public creator profile: follow status fetch failed (non-fatal)', { creatorId, error: followErr.message });
+      }
+    }
+
+    // 16. Exclusive post count + locked teasers for the "Exclusivo" tab.
+    // Teasers omit content/media entirely when the viewer isn't subscribed — no leak.
+    let exclusiveCount = 0;
+    let exclusivePosts = [];
+    try {
+      const { rows: excRows } = await pool.query(
+        `SELECT id, content, media_url, media_type, likes_count, created_at
+           FROM social_posts
+          WHERE user_id = $1 AND is_exclusive = true AND is_deleted = false AND reply_to_id IS NULL
+          ORDER BY created_at DESC
+          LIMIT 5`,
+        [creatorId]
+      );
+      const { rows: excCountRows } = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM social_posts
+          WHERE user_id = $1 AND is_exclusive = true AND is_deleted = false AND reply_to_id IS NULL`,
+        [creatorId]
+      );
+      exclusiveCount = excCountRows[0]?.count ?? 0;
+      exclusivePosts = excRows.map((p) => ({
+        id: String(p.id),
+        likes_count: p.likes_count || 0,
+        created_at: p.created_at,
+        // Only surfaced when unlocked — the teaser card never renders content/media otherwise.
+        content: isSubscribed ? p.content : null,
+        media_url: isSubscribed ? (p.media_url || null) : null,
+        media_type: isSubscribed ? (p.media_type || null) : null,
+      }));
+    } catch (excErr) {
+      logger.warn('Public creator profile: exclusive posts fetch failed (non-fatal)', { creatorId, error: excErr.message });
+    }
+
+    // 17. Completed call count (for the "Llamadas" meta stat)
+    let completedCallsCount = 0;
+    try {
+      const { rows: callRows } = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM bookings WHERE performer_id = $1 AND status = 'completed'`,
+        [creatorId]
+      );
+      completedCallsCount = callRows[0]?.count ?? 0;
+    } catch (callErr) {
+      logger.warn('Public creator profile: completed calls fetch failed (non-fatal)', { creatorId, error: callErr.message });
+    }
+
+    // 18. PRIME entitlement — drives the gold PRIME badge
+    let isPrime = false;
+    try {
+      isPrime = await EntitlementAccessService.hasEntitlement(creatorId, 'prime');
+    } catch (primeErr) {
+      logger.warn('Public creator profile: prime entitlement check failed (non-fatal)', { creatorId, error: primeErr.message });
+    }
+
     return res.json({
       success: true,
       creator: {
@@ -16201,20 +16285,30 @@ app.get('/api/public/creator/:username',
         photo_url: creator.photo_url || null,
         bio: creator.bio,
         creator_type: creator.creator_type,
+        creator_role: creator.creator_role || null,
         creator_price_usd: creator.creator_price_usd != null ? parseFloat(creator.creator_price_usd) : null,
         creator_subscriber_count: creator.creator_subscriber_count || 0,
         creator_verified: creator.creator_verified || false,
         creator_subscription_paused: creator.creator_subscription_paused || false,
         videoCount: videoCount + exclusiveMediaVideoCount,
         photoCount,
+        postCount,
+        followerCount,
+        followingCount,
+        exclusiveCount,
+        completedCallsCount,
+        isPrime,
+        memberSince: creator.creator_enabled_at || creator.created_at || null,
       },
       isSubscribed,
+      isFollowing,
       media,
       channels,
       featuredVideos,
       hangouts,
       callPackages,
       recentPosts,
+      exclusivePosts,
       socialLinks,
       nextAvailability,
     });

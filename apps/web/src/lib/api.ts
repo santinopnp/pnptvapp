@@ -8838,6 +8838,16 @@ export interface CreatorNextAvailability {
   days_from_now: number;
 }
 
+/** Locked teaser for the profile's "Exclusivo" tab. content/media are null until unlocked. */
+export interface CreatorExclusiveTeaser {
+  id: string;
+  content: string | null;
+  media_url: string | null;
+  media_type: string | null;
+  likes_count: number;
+  created_at: string;
+}
+
 export interface PublicCreatorChannel {
   id: number;
   name: string;
@@ -8873,21 +8883,31 @@ export interface CreatorPublicProfile {
     first_name: string;
     photo_url: string | null;
     bio: string | null;
-    creator_type: "creator" | "crystal" | "ice";
+    creator_type: "creator" | "crystal" | "ice" | "diamond" | "full_time";
+    creator_role: "live" | "content_creator" | "both" | null;
     creator_price_usd: number;
     creator_subscriber_count: number;
     creator_verified: boolean;
     creator_subscription_paused: boolean;
     videoCount?: number;
     photoCount?: number;
+    postCount: number;
+    followerCount: number;
+    followingCount: number;
+    exclusiveCount: number;
+    completedCallsCount: number;
+    isPrime: boolean;
+    memberSince: string | null;
   };
   isSubscribed: boolean;
+  isFollowing: boolean;
   media: PublicCreatorMediaItem[];
   channels: PublicCreatorChannel[];
   featuredVideos: PublicCreatorFeaturedVideo[];
   hangouts: PublicCreatorHangout[];
   callPackages: PublicCallPackage[];
   recentPosts: CreatorRecentPost[];
+  exclusivePosts: CreatorExclusiveTeaser[];
   socialLinks: Record<string, string>;
   nextAvailability: CreatorNextAvailability | null;
 }

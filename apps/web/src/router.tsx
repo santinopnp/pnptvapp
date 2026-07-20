@@ -237,6 +237,7 @@ const CreatorMyDocuments = lazy(() => import("@/components/creators/CreatorLayou
 const CreatorBenefits = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorBenefits })));
 const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorContent").then(m => ({ default: m.CreatorChannelsHub })));
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
+const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWizard"));
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
 const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
@@ -943,6 +944,7 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <ModuleLoader><CreatorOverview /></ModuleLoader> },
+      { path: "setup", element: <ModuleLoader><CreatorStudioWizard /></ModuleLoader> },
       { path: "content", element: <ModuleLoader><CreatorContent /></ModuleLoader> },
       { path: "earnings", element: <ModuleLoader><CreatorEarnings /></ModuleLoader> },
       { path: "payouts", element: <ModuleLoader><CreatorPayouts /></ModuleLoader> },

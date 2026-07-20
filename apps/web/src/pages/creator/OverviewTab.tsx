@@ -50,9 +50,28 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const navigate = useNavigate();
   const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [studioWizardDone] = useState(() => {
+    try { return localStorage.getItem("pnptv_studio_wizard_v1") === "done"; } catch { return false; }
+  });
 
   return (
     <>
+      {!studioWizardDone && (
+        <button
+          onClick={() => navigate("/creators/setup")}
+          className="glass-card-sm w-full p-4 mb-4 flex items-center justify-between gap-3 text-left"
+          style={{ border: "1px solid rgba(212,0,122,.35)" }}
+        >
+          <div>
+            <p className="text-sm font-semibold text-white">Get set up to sell</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              OBS, featured content, channels &amp; your hangout — 5 quick steps.
+            </p>
+          </div>
+          <span className="text-sm font-bold flex-shrink-0" style={{ color: "#FF4DA6" }}>→</span>
+        </button>
+      )}
+
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="glass-card-sm p-4 text-center">
           <p className="text-2xl font-bold text-white">{(dashboard.subscriberCount ?? 0)}</p>

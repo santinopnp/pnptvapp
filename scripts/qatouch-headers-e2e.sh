@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # E2E test case creation for Main Stage & Hangouts headers via QAtouch API
-# Usage: SECTION_KEY=<key> MILESTONE_KEY=<key> bash qatouch-headers-e2e.sh
-# Get these keys from: easybots.qatouch.com → PNPTV project → Sections / Milestones
+# Usage: TOKEN=<api_token> SECTION_KEY=<key> MILESTONE_KEY=<key> bash qatouch-headers-e2e.sh
+# Get these keys from: easybots.qatouch.com → PNPtv project → Sections / Milestones
 
 set -e
 API="https://api.qatouch.com/api/v1"
-TOKEN="8645eb8b8e532f65025806f315ba604e244d9397e5d27280b94d6a6cc9b9772f"
-PROJECT="PNPTV"
+TOKEN="${TOKEN:?Set TOKEN env var to your QATouch api-token first}"
+# "PNPtv" project's actual project_key is V072 (confirmed via GET /getAllProjects
+# against the live API on 2026-07-20) -- the old literal "PNPTV" here was never a
+# valid project_key, so POSTs from this script were likely failing/no-op silently.
+PROJECT="V072"
 SECTION="${SECTION_KEY:?Set SECTION_KEY from QAtouch dashboard}"
 MILESTONE="${MILESTONE_KEY:-}"  # optional
 
