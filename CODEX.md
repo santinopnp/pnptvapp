@@ -1,4 +1,5 @@
 # Codex Project Configuration for PNPtv App
+<!-- last verified: 2026-07-20 -->
 
 ## Context Ignored
 
