@@ -291,15 +291,17 @@ export function LandingPage() {
     try { return localStorage.getItem("pnptv_last_telegram_photo"); } catch { return null; }
   })();
 
-  // ── Post-magic-link passkey registration prompt ──────────────────────────
-  // Shown when the backend redirects to /login?magic_verified=1 after the user
-  // clicks the emailed magic link. The user is already authenticated at this
-  // point; we offer to register a passkey before proceeding to the app.
+  // ── Post-auth passkey registration prompt ────────────────────────────────
+  // Shown after magic link click OR after Telegram/registration auth.
+  // The user is already authenticated at this point; we offer to register a
+  // passkey before proceeding to the app.
   const [showPasskeyPrompt, setShowPasskeyPrompt] = useState(false);
   const [passkeyRegistering, setPasskeyRegistering] = useState(false);
-  const [passkeyPromptCountdown, setPasskeyPromptCountdown] = useState(15);
+  const [passkeyPromptCountdown, setPasskeyPromptCountdown] = useState(30);
   const pendingRedirectRef = useRef<string>("/");
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Device biometric label: "Face ID", "fingerprint", or "your device PIN"
+  const [biometricLabel, setBiometricLabel] = useState<string>("your device");
 
   // Active bottom sheet (carousel pills)
   const [activeSheet, setActiveSheet] = useState<string | null>(() => {
@@ -315,6 +317,24 @@ export function LandingPage() {
   const performerCountry = params.get("country") || null;
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  // Detect platform authenticator type for device-specific copy
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.PublicKeyCredential) return;
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("mac")) {
+      // Apple devices: check if it's iPhone/iPad (Touch ID / Face ID) vs Mac (Touch ID)
+      if (ua.includes("iphone") || ua.includes("ipad")) {
+        setBiometricLabel("Face ID or Touch ID");
+      } else {
+        setBiometricLabel("Touch ID or your Mac's PIN");
+      }
+    } else if (ua.includes("android")) {
+      setBiometricLabel("your fingerprint or face");
+    } else {
+      setBiometricLabel("Windows Hello or your PIN");
+    }
+  }, []);
 
   // iOS Safari freezes setInterval when the page is backgrounded (e.g. user switches
   // to Telegram app). On return, fire an immediate poll so the confirmed token is
@@ -338,7 +358,7 @@ export function LandingPage() {
               }
             } catch { /* ignore quota */ }
             const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-            window.location.href = sanitizeReturnTo(returnTo) ?? "/";
+            offerPasskeyOrRedirect(sanitizeReturnTo(returnTo) ?? "/");
           }
         })
         .catch(() => { /* interval will retry */ });
@@ -388,7 +408,7 @@ export function LandingPage() {
     }
 
     setShowPasskeyPrompt(true);
-    setPasskeyPromptCountdown(15);
+    setPasskeyPromptCountdown(30);
 
     countdownRef.current = setInterval(() => {
       setPasskeyPromptCountdown((prev) => {
@@ -411,6 +431,29 @@ export function LandingPage() {
     if (countdownRef.current) clearInterval(countdownRef.current);
     setShowPasskeyPrompt(false);
     window.location.href = pendingRedirectRef.current;
+  }, []);
+
+  // Offer passkey registration after any successful auth (Telegram, registration).
+  // `redirectTo` is where to send the user after they save or skip.
+  const offerPasskeyOrRedirect = useCallback((redirectTo: string) => {
+    if (typeof window === "undefined" || !window.PublicKeyCredential) {
+      window.location.href = redirectTo;
+      return;
+    }
+    pendingRedirectRef.current = redirectTo;
+    setShowPasskeyPrompt(true);
+    setPasskeyPromptCountdown(30);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setPasskeyPromptCountdown((prev) => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          window.location.href = pendingRedirectRef.current;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   }, []);
 
   const handleRegisterPasskeyAfterMagicLink = useCallback(async () => {
@@ -632,7 +675,7 @@ export function LandingPage() {
         setRegState("form");
         return;
       }
-      window.location.href = "/";
+      offerPasskeyOrRedirect("/");
     } catch {
       setRegError("Connection error. Please try again.");
       setRegState("form");
@@ -711,6 +754,7 @@ export function LandingPage() {
           }
           if (result.authenticated) {
             if (pollRef.current) clearInterval(pollRef.current);
+            pendingTokenRef.current = null;
             try {
               localStorage.setItem("pnptv_last_auth", "telegram");
               if (result.user?.username) {
@@ -722,7 +766,7 @@ export function LandingPage() {
               }
             } catch { /* ignore quota */ }
             const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-            window.location.href = sanitizeReturnTo(returnTo) ?? "/";
+            offerPasskeyOrRedirect(sanitizeReturnTo(returnTo) ?? "/");
           }
         } catch { /* keep polling */ }
       }, 3000);
@@ -783,19 +827,19 @@ export function LandingPage() {
 
                 {/* Pitch */}
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold text-white">Save a passkey for instant login next time?</p>
+                  <p className="text-sm font-semibold text-white">Skip the email next time — use {biometricLabel}</p>
                   <p className="text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary)" }}>
-                    Sign in with Face ID, Touch ID, or your device PIN — no email link needed.
+                    Save a passkey now and sign in instantly with {biometricLabel}. No passwords, no links.
                   </p>
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-col gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleRegisterPasskeyAfterMagicLink}
                     disabled={passkeyRegistering}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-70"
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-70"
                     style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
                   >
                     {passkeyRegistering ? (
@@ -805,23 +849,23 @@ export function LandingPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
                       </svg>
                     )}
-                    {passkeyRegistering ? "Setting up…" : "Save passkey"}
+                    {passkeyRegistering ? "Setting up…" : `Yes, use ${biometricLabel}`}
                   </button>
                   <button
                     type="button"
                     onClick={proceedAfterPrompt}
                     disabled={passkeyRegistering}
-                    className="px-4 py-3 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
-                    style={{ color: "var(--pnp-text-secondary)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    className="w-full py-2.5 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
+                    style={{ color: "var(--pnp-text-secondary)", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
                   >
-                    Not now →
+                    Not now, go to app
                   </button>
                 </div>
 
                 {/* Auto-proceed countdown */}
                 {!passkeyRegistering && (
                   <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary)" }}>
-                    Continuing to app in {passkeyPromptCountdown}s…
+                    Skipping automatically in {passkeyPromptCountdown}s…
                   </p>
                 )}
               </div>

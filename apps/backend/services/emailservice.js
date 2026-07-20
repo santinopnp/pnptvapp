@@ -395,7 +395,20 @@ class EmailService {
         return { success: false, messageId: null, mode: 'suppressed' };
       }
 
-      // If no transporter, log email instead
+      // Primary path: Hostinger Mail HTTP API (more reliable than SMTP, no auth rotation issues)
+      if (HOSTINGER_API_KEY) {
+        try {
+          const result = await this.sendViaHostingerApi({ to, subject, html, text });
+          const messageId = `hostinger-${Date.now()}`;
+          await this._trackSent(messageId, { to, subject, from: 'noreply@pnptv.app', transporter: 'hostinger-api' });
+          logger.info('Email sent via Hostinger API:', { to, subject });
+          return { success: true, messageId, mode: 'hostinger-api' };
+        } catch (apiErr) {
+          logger.warn('[email] Hostinger API failed, falling back to SMTP:', { error: apiErr.message, to });
+        }
+      }
+
+      // Fallback: SMTP transporter
       if (!this.transporters.pnptv) {
         logger.info('Email would be sent (no transporter configured):', {
           to,
