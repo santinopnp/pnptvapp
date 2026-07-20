@@ -130,6 +130,15 @@ const deleteMyAccount = async (req, res) => {
       [user.id, anonUsername]
     );
 
+    // Cascade-hide this user's posts so they don't linger visible in feeds
+    // after the account is gone — without this, a post stays live under the
+    // scrubbed "deleted_..." byline while the author's profile 404s (a dead
+    // end for anyone who taps through from the post).
+    await query(
+      `UPDATE social_posts SET is_deleted = true, updated_at = NOW() WHERE user_id = $1 AND is_deleted = false`,
+      [user.id]
+    );
+
     // Flush all Redis keys that cache this user's data.
     // Without this, profile caches and geo presence survive for up to 10 minutes
     // after deletion, meaning the deleted account continues to appear in search

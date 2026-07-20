@@ -41,9 +41,13 @@ class PlatformBanService {
    * @param {object}  [opts.evidence]    - JSON evidence payload (e.g. code reuse log)
    * @param {string}  [opts.bannedBy]    - Admin user ID or 'system'
    * @param {object}  [opts.botContext]  - Telegraf ctx OR { telegram } object for sending messages
+   * @param {boolean} [opts.notify=true] - Send the user a ban DM and ping the admin group.
+   *   Set false for bans against accounts that already left voluntarily (e.g. bulk-banning
+   *   self-deleted accounts to prevent rejoin) where an unsolicited "you've been banned"
+   *   message would be inappropriate — the ban record and access revocation still happen.
    * @returns {Promise<{success: boolean, banId: string|null}>}
    */
-  static async ban({ userId, reason, evidence = {}, bannedBy = 'system', botContext = null }) {
+  static async ban({ userId, reason, evidence = {}, bannedBy = 'system', botContext = null, notify = true }) {
     try {
       logger.warn('PlatformBanService.ban — initiating', { userId, reason, bannedBy });
 
@@ -138,52 +142,56 @@ class PlatformBanService {
       }
 
       // ── 7. Send Telegram message to the user ─────────────────────────────────
-      const telegramId = u.telegram || String(userId);
-      if (botContext) {
-        try {
-          const tg = botContext.telegram || botContext;
-          await tg.sendMessage(telegramId, BOT_MESSAGE(u.username, reason), { parse_mode: 'Markdown' });
-          logger.info('PlatformBanService — ban message sent', { telegramId });
-        } catch (msgErr) {
-          logger.warn('PlatformBanService — could not send ban message', { telegramId, error: msgErr.message });
-        }
-      } else {
-        // Fire-and-forget via raw Telegram Bot API
-        const botToken = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-        if (botToken) {
-          fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: telegramId,
-              text: BOT_MESSAGE(u.username, reason),
-              parse_mode: 'Markdown',
-            }),
-          }).catch(() => {});
-        }
-      }
-
-      // ── 8. Notify admin group ────────────────────────────────────────────────
-      const adminGroupId = process.env.ADMIN_GROUP_ID || process.env.SUPPORT_GROUP_ID;
-      if (adminGroupId) {
-        const ipList = knownIps.length ? knownIps.join(', ') : 'N/A';
-        const adminMsg =
-          `🚫 *PLATAFORMA — USUARIO BANEADO*\n\n` +
-          `👤 @${u.username || 'N/A'} (ID: \`${u.id}\`)\n` +
-          `🔒 Motivo: ${reason}\n` +
-          `🌐 IPs conocidas: \`${ipList}\`\n` +
-          `🤖 Ejecutado por: ${bannedBy}\n` +
-          `🆔 Ban ID: \`${banId}\``;
-        try {
+      if (notify) {
+        const telegramId = u.telegram || String(userId);
+        if (botContext) {
+          try {
+            const tg = botContext.telegram || botContext;
+            await tg.sendMessage(telegramId, BOT_MESSAGE(u.username, reason), { parse_mode: 'Markdown' });
+            logger.info('PlatformBanService — ban message sent', { telegramId });
+          } catch (msgErr) {
+            logger.warn('PlatformBanService — could not send ban message', { telegramId, error: msgErr.message });
+          }
+        } else {
+          // Fire-and-forget via raw Telegram Bot API
           const botToken = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
           if (botToken) {
             fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: adminGroupId, text: adminMsg, parse_mode: 'Markdown' }),
+              body: JSON.stringify({
+                chat_id: telegramId,
+                text: BOT_MESSAGE(u.username, reason),
+                parse_mode: 'Markdown',
+              }),
             }).catch(() => {});
           }
-        } catch (_) {}
+        }
+      }
+
+      // ── 8. Notify admin group ────────────────────────────────────────────────
+      if (notify) {
+        const adminGroupId = process.env.ADMIN_GROUP_ID || process.env.SUPPORT_GROUP_ID;
+        if (adminGroupId) {
+          const ipList = knownIps.length ? knownIps.join(', ') : 'N/A';
+          const adminMsg =
+            `🚫 *PLATAFORMA — USUARIO BANEADO*\n\n` +
+            `👤 @${u.username || 'N/A'} (ID: \`${u.id}\`)\n` +
+            `🔒 Motivo: ${reason}\n` +
+            `🌐 IPs conocidas: \`${ipList}\`\n` +
+            `🤖 Ejecutado por: ${bannedBy}\n` +
+            `🆔 Ban ID: \`${banId}\``;
+          try {
+            const botToken = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+            if (botToken) {
+              fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: adminGroupId, text: adminMsg, parse_mode: 'Markdown' }),
+              }).catch(() => {});
+            }
+          } catch (_) {}
+        }
       }
 
       logger.warn('PlatformBanService.ban — completed', { userId, banId, knownIps });
