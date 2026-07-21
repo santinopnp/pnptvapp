@@ -438,7 +438,10 @@ app.use(ipTracker); // Log every authenticated request IP for security
 // (geoip module is already required at the top of the file — reuse it.)
 const BLOCKED_US_REGIONS = new Set();
 // CO + VE geo-blocks lifted 2026-06-18 — full open access.
-const BLOCKED_COUNTRIES = new Set();
+// CO re-blocked 2026-07-21 per operator instruction — site-wide, not
+// content-specific (uses the existing app.use geo-block middleware below,
+// so it covers every route including public /v/ share pages).
+const BLOCKED_COUNTRIES = new Set(['CO']);
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
 const GEO_BLOCK_USER_WHITELIST = new Set(['7246621722', '8599671840']); // PNPLatinoBoy, SantinoFurioso
 const GEO_BLOCK_BYPASS_PATHS = [
@@ -471,7 +474,7 @@ function classifyGeo(ip) {
   const country = lookup.country;
   const region = lookup.region || '';
   if (BLOCKED_COUNTRIES.has(country)) {
-    return { blocked: true, country, region, reason: 'UK_OSA' };
+    return { blocked: true, country, region, reason: `${country}_JURISDICTION_BLOCK` };
   }
   if (country === 'US' && BLOCKED_US_REGIONS.has(region)) {
     return { blocked: true, country, region, reason: `US_${region}_AGE_VERIFICATION` };
