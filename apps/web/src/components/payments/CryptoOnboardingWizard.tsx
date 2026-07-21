@@ -320,19 +320,37 @@ export function CryptoOnboardingWizard({ lang }: { lang: "en" | "es" }) {
                 </p>
                 <p className="text-[11px] text-pnp-textSecondary mt-1 leading-relaxed">
                   {es
-                    ? 'Paga como cuando compras en línea — tarjeta débito, crédito o transferencia bancaria. Elige "USDT" o "USDC" cuando te pregunte qué moneda — esas siguen el dólar 1 a 1, así que tu saldo nunca sube ni baja solo.'
-                    : 'Pay the same way you\'d shop online — debit card, credit card, or bank transfer. Choose "USDT" or "USDC" when it asks which coin — those track the US dollar 1-to-1, so your balance never goes up or down on its own.'}
+                    ? "Paga con tarjeta débito, crédito o transferencia bancaria. Hay cientos de tokens y redes — lo simplificamos para ti. Estos son los que recomendamos porque son los que PNPtv muestra como preferidos en el checkout:"
+                    : "Pay with debit card, credit card, or bank transfer. There are hundreds of tokens and networks out there — we've narrowed it down for you. These are the ones we recommend because PNPtv shows them as preferred at checkout:"}
                 </p>
-                <p className="text-[11px] text-pnp-textSecondary mt-1.5 leading-relaxed">
+
+                {/* Token recommendation table */}
+                <div className="mt-2.5 rounded-lg overflow-hidden" style={{ border: "1px solid #2A2A2A" }}>
+                  {[
+                    { token: "USDT", chain: "BSC (BEP-20)", why: es ? "El stablecoin más usado en LatAm, comisiones casi cero" : "Most held stablecoin in LatAm, almost zero fees", star: true },
+                    { token: "USDC", chain: "Polygon",      why: es ? "El más confiable, ~$0.001 de comisión en Polygon"   : "Most trusted stablecoin, ~$0.001 gas on Polygon",  star: true },
+                    { token: "ETH",  chain: "Ethereum",     why: es ? "El más reconocido, pero comisiones de $5–15"         : "Most recognized, but gas fees can be $5–15",       star: false },
+                    { token: "BNB",  chain: "BSC",          why: es ? "Muy popular en LatAm, comisiones casi gratuitas"    : "Very popular in LatAm, nearly free fees",          star: false },
+                    { token: "MATIC/POL", chain: "Polygon", why: es ? "Comisiones súper baratas, adopción creciente"       : "Super cheap fees, growing adoption",               star: false },
+                  ].map(({ token, chain, why, star }) => (
+                    <div key={token} className="flex items-start gap-2 px-3 py-2" style={{ borderBottom: "1px solid #1c1c1c" }}>
+                      <span className="flex-shrink-0 font-bold text-[11px] w-16" style={{ color: star ? "#5ED1C4" : "#fff" }}>{token}</span>
+                      <span className="flex-shrink-0 text-[10px] w-20" style={{ color: "#A1A1A3" }}>{chain}</span>
+                      <span className="text-[10px] leading-relaxed" style={{ color: "#6b6b70" }}>{why}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[11px] text-pnp-textSecondary mt-2 leading-relaxed">
                   {es
-                    ? "Para montos pequeños (menos de ~$150), la mayoría de los proveedores te permiten comprar solo con tarjeta — sin necesidad de ID. Si uno te pide verificar identidad, prueba con otro proveedor de la lista."
-                    : "For small amounts (under about $150), most providers let you buy with just a card — no ID needed. If one asks you to verify your identity, just pick a different provider from the list."}
+                    ? "Para montos pequeños (menos de ~$150), la mayoría de los proveedores no piden ID. Si uno te lo pide, prueba con otro de la lista."
+                    : "For small amounts (under ~$150), most providers don't ask for ID. If one does, just pick another from the list."}
                 </p>
                 <p className="text-[11px] text-pnp-textSecondary mt-1.5 leading-relaxed">
                   <span className="text-white font-bold">{es ? "Tiempo: " : "Timing: "}</span>
                   {es
                     ? "los pagos con tarjeta llegan en minutos. Las transferencias bancarias pueden tardar hasta una hora."
-                    : "card payments land in your wallet in a few minutes. Bank transfers can take up to an hour."}
+                    : "card payments land in minutes. Bank transfers can take up to an hour."}
                 </p>
               </div>
             </div>
