@@ -1352,8 +1352,8 @@ export default function CreatorProfilePage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
-                      style={{ background: "var(--pnp-surface)" }}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
                     >
                       <PhoneCall size={16} aria-hidden="true" />
                       {cheapestPackage
@@ -1393,8 +1393,8 @@ export default function CreatorProfilePage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px]"
-                      style={{ background: "var(--pnp-surface)" }}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
                     >
                       <PhoneCall size={16} aria-hidden="true" />
                       {cheapestPackage
@@ -1430,8 +1430,8 @@ export default function CreatorProfilePage() {
                   {hasCallPackages && (
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl border border-white/15 text-sm font-semibold text-pnp-textPrimary transition-all hover:bg-white/8 active:scale-[0.98] min-h-[52px] shrink-0"
-                      style={{ background: "var(--pnp-surface)" }}
+                      className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px] shrink-0"
+                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
                       aria-label="Reservar llamada"
                     >
                       <PhoneCall size={16} aria-hidden="true" />
@@ -1491,7 +1491,257 @@ export default function CreatorProfilePage() {
             )}
           </div>
 
-          {/* ── 3. SOCIAL LINKS ROW ─────────────────────────────────────────── */}
+          {/* ── 3. CONTENIDO — Fotos / Videos / Canales / Hangout ───────────── */}
+          <section aria-label="Contenido del creador">
+            <SectionHeading>Contenido</SectionHeading>
+
+            {hasContenido ? (
+              <div className="space-y-6">
+                {/* ── 3a. Fotos — horizontal scroll strip ─────────────────────── */}
+                {hasPhotos && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Fotos destacadas
+                    </h3>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
+                      {publicPhotos.map((photo) => {
+                        const thumbSrc =
+                          (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
+                          photo.thumb_url ??
+                          photo.url;
+                        return (
+                          <button
+                            key={photo.id}
+                            type="button"
+                            onClick={() => setLightboxItem(photo)}
+                            aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
+                            className="flex-none w-[28vw] sm:w-32 aspect-square rounded-xl overflow-hidden
+                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
+                                       focus:ring-offset-2 focus:ring-offset-pnp-background
+                                       transition-opacity hover:opacity-85 active:scale-[0.97]"
+                          >
+                            {thumbSrc ? (
+                              <img
+                                src={thumbSrc}
+                                alt={photo.caption ?? "Foto del creador"}
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div
+                                className="w-full h-full"
+                                style={{ background: "var(--pnp-surface)" }}
+                                aria-hidden="true"
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs text-pnp-textSecondary">
+                      Hasta 10 fotos destacadas elegidas por el creador desde su feed.
+                    </p>
+                  </div>
+                )}
+
+                {/* ── 3b. Videos — horizontal scroll strip ────────────────────── */}
+                {hasFeaturedVideos && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
+                      Videos
+                    </h3>
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
+                      {featuredVideoList.map((vid) => {
+                        const duration = formatDuration(vid.duration_seconds);
+                        return (
+                          <button
+                            key={vid.id}
+                            type="button"
+                            onClick={() =>
+                              navigate(
+                                `/channels?channel=${encodeURIComponent(vid.channel_slug)}&video=${vid.id}`
+                              )
+                            }
+                            aria-label={`Reproducir: ${vid.title}`}
+                            className="group relative flex-none w-[58vw] sm:w-56 aspect-video rounded-2xl overflow-hidden
+                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
+                                       focus:ring-offset-2 focus:ring-offset-pnp-background
+                                       transition-transform active:scale-[0.98]"
+                          >
+                            {vid.thumb_url ? (
+                              <img
+                                src={vid.thumb_url}
+                                alt=""
+                                aria-hidden="true"
+                                loading="lazy"
+                                className="absolute inset-0 w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div
+                                className="absolute inset-0"
+                                style={{ background: "var(--pnp-surface)" }}
+                                aria-hidden="true"
+                              />
+                            )}
+
+                            <div
+                              className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-black/0"
+                              aria-hidden="true"
+                            />
+
+                            <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+                              <div
+                                className="flex items-center justify-center w-12 h-12 rounded-full
+                                           bg-white/20 backdrop-blur-sm border border-white/30
+                                           group-hover:bg-white/30 group-hover:scale-110
+                                           transition-all duration-150"
+                              >
+                                <Play size={22} className="text-white ml-0.5" fill="currentColor" />
+                              </div>
+                            </div>
+
+                            {duration && (
+                              <span
+                                className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md
+                                           text-[10px] font-semibold text-white
+                                           bg-black/60 backdrop-blur-sm"
+                                aria-hidden="true"
+                              >
+                                {duration}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs text-pnp-textSecondary">
+                      Hasta 5 videos destacados elegidos por el creador.
+                    </p>
+                  </div>
+                )}
+
+                {/* ── 3c. Canales — collapsible accordion ─────────────────────── */}
+                {hasChannels && (
+                  <div
+                    className="rounded-2xl overflow-hidden border border-white/8"
+                    style={{ background: "var(--pnp-surface)" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setChannelsExpanded((v) => !v)}
+                      className="w-full flex items-center gap-3 p-4 text-left"
+                      aria-expanded={channelsExpanded}
+                    >
+                      <Monitor size={20} className="text-pnp-accent flex-none" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm text-pnp-textPrimary">Canales</div>
+                        <div className="text-xs text-pnp-textSecondary">
+                          {channels.length} {channels.length === 1 ? "canal" : "canales"} de este creador
+                        </div>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        className={`text-pnp-textSecondary flex-none transition-transform ${channelsExpanded ? "rotate-180" : ""}`}
+                        aria-hidden="true"
+                      />
+                    </button>
+
+                    {channelsExpanded && (
+                      <div className="border-t border-white/8 divide-y divide-white/8">
+                        {channels.map((ch) => {
+                          const info = channelAccessInfo(ch);
+                          return (
+                            <button
+                              key={ch.id}
+                              type="button"
+                              onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
+                              className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/5 transition-colors"
+                            >
+                              <div
+                                className="w-11 h-11 rounded-xl overflow-hidden flex-none"
+                                style={{ background: "var(--pnp-background)" }}
+                              >
+                                {ch.cover_image_url && (
+                                  <img
+                                    src={ch.cover_image_url}
+                                    alt=""
+                                    aria-hidden="true"
+                                    loading="lazy"
+                                    className="w-full h-full object-cover"
+                                  />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-pnp-textPrimary truncate">{ch.name}</div>
+                                <div className="text-xs text-pnp-textSecondary truncate">{info.subtitle}</div>
+                              </div>
+                              <span
+                                className="flex-none px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                style={{
+                                  background: `${info.badgeColor}22`,
+                                  color: info.badgeColor,
+                                  border: `1px solid ${info.badgeColor}55`,
+                                }}
+                              >
+                                {info.badgeLabel}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── 3d. Hangout — full-width CTA card ───────────────────────── */}
+                {hasHangout && hangout && (
+                  <div
+                    className="rounded-2xl p-4 border"
+                    style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.25)" }}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <Users size={18} className="text-emerald-400 flex-none" aria-hidden="true" />
+                      <span className="font-bold text-sm text-pnp-textPrimary flex-1 min-w-0 truncate">
+                        {hangout.name}
+                      </span>
+                      {!(isSubscribed || isOwnProfile) && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-none"
+                          style={{ background: "rgba(212,0,122,0.15)", color: "#F472B6", border: "1px solid rgba(212,0,122,0.35)" }}
+                        >
+                          <Lock size={10} /> PRIVADO
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-pnp-textSecondary mb-3">
+                      Exclusivo para miembros de pago activos — del canal de pago del creador o de su perfil.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        isSubscribed || isOwnProfile ? navigate(`/hangouts/${hangout.id}`) : handleSubscribeCta()
+                      }
+                      className="w-full rounded-xl py-2.5 text-sm font-bold text-emerald-400 border border-emerald-400/40 hover:bg-emerald-400/10 transition-colors"
+                    >
+                      Entrar al hangout →
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Section-level empty state — only when ALL categories are empty */
+              !isOwnProfile && (
+                <div
+                  className="rounded-2xl p-6 text-center text-sm text-pnp-textSecondary border border-white/8"
+                  style={{ background: "var(--pnp-surface)" }}
+                >
+                  Este creador aún no ha publicado contenido.
+                </div>
+              )
+            )}
+          </section>
+
+          {/* ── 4. SOCIAL LINKS ROW ─────────────────────────────────────────── */}
           {hasSocialLinks && (
             <div
               className="flex gap-2 overflow-x-auto no-scrollbar py-1"
@@ -1517,7 +1767,7 @@ export default function CreatorProfilePage() {
             </div>
           )}
 
-          {/* ── 4. NEXT AVAILABILITY CARD ───────────────────────────────────── */}
+          {/* ── 5. NEXT AVAILABILITY CARD ───────────────────────────────────── */}
           {nextAvailability && hasCallPackages && (
             <div
               className="flex items-start gap-3 rounded-2xl p-4 border border-gray-700"
@@ -1541,7 +1791,7 @@ export default function CreatorProfilePage() {
             </div>
           )}
 
-          {/* ── 5. CALL PACKAGES ────────────────────────────────────────────── */}
+          {/* ── 6. CALL PACKAGES ────────────────────────────────────────────── */}
           {hasCallPackages && (
             <section aria-label="Paquetes de llamadas privadas">
               <SectionHeading>Llamadas Privadas</SectionHeading>
@@ -1708,7 +1958,7 @@ export default function CreatorProfilePage() {
             </section>
           )}
 
-          {/* ── 6. PUBLICACIONES / EXCLUSIVO TABS ───────────────────────────── */}
+          {/* ── 7. PUBLICACIONES / EXCLUSIVO TABS ───────────────────────────── */}
           {(hasRecentPosts || hasExclusivePosts) && (
             <section aria-label="Publicaciones del creador">
               <div className="flex border-b" style={{ borderColor: "#2A2A2A" }}>
@@ -1767,256 +2017,6 @@ export default function CreatorProfilePage() {
               )}
             </section>
           )}
-
-          {/* ── 7. CONTENIDO ────────────────────────────────────────────────── */}
-          <section aria-label="Contenido del creador">
-            <SectionHeading>Contenido</SectionHeading>
-
-            {hasContenido ? (
-              <div className="space-y-6">
-                {/* ── 7a. Fotos — horizontal scroll strip ─────────────────────── */}
-                {hasPhotos && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Fotos destacadas
-                    </h3>
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
-                      {publicPhotos.map((photo) => {
-                        const thumbSrc =
-                          (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
-                          photo.thumb_url ??
-                          photo.url;
-                        return (
-                          <button
-                            key={photo.id}
-                            type="button"
-                            onClick={() => setLightboxItem(photo)}
-                            aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
-                            className="flex-none w-[28vw] sm:w-32 aspect-square rounded-xl overflow-hidden
-                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-opacity hover:opacity-85 active:scale-[0.97]"
-                          >
-                            {thumbSrc ? (
-                              <img
-                                src={thumbSrc}
-                                alt={photo.caption ?? "Foto del creador"}
-                                loading="lazy"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className="w-full h-full"
-                                style={{ background: "var(--pnp-surface)" }}
-                                aria-hidden="true"
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-2 text-xs text-pnp-textSecondary">
-                      Hasta 10 fotos destacadas elegidas por el creador desde su feed.
-                    </p>
-                  </div>
-                )}
-
-                {/* ── 7b. Videos — horizontal scroll strip ────────────────────── */}
-                {hasFeaturedVideos && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Videos
-                    </h3>
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
-                      {featuredVideoList.map((vid) => {
-                        const duration = formatDuration(vid.duration_seconds);
-                        return (
-                          <button
-                            key={vid.id}
-                            type="button"
-                            onClick={() =>
-                              navigate(
-                                `/channels?channel=${encodeURIComponent(vid.channel_slug)}&video=${vid.id}`
-                              )
-                            }
-                            aria-label={`Reproducir: ${vid.title}`}
-                            className="group relative flex-none w-[58vw] sm:w-56 aspect-video rounded-2xl overflow-hidden
-                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-transform active:scale-[0.98]"
-                          >
-                            {vid.thumb_url ? (
-                              <img
-                                src={vid.thumb_url}
-                                alt=""
-                                aria-hidden="true"
-                                loading="lazy"
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className="absolute inset-0"
-                                style={{ background: "var(--pnp-surface)" }}
-                                aria-hidden="true"
-                              />
-                            )}
-
-                            <div
-                              className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-black/0"
-                              aria-hidden="true"
-                            />
-
-                            <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                              <div
-                                className="flex items-center justify-center w-12 h-12 rounded-full
-                                           bg-white/20 backdrop-blur-sm border border-white/30
-                                           group-hover:bg-white/30 group-hover:scale-110
-                                           transition-all duration-150"
-                              >
-                                <Play size={22} className="text-white ml-0.5" fill="currentColor" />
-                              </div>
-                            </div>
-
-                            {duration && (
-                              <span
-                                className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md
-                                           text-[10px] font-semibold text-white
-                                           bg-black/60 backdrop-blur-sm"
-                                aria-hidden="true"
-                              >
-                                {duration}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-2 text-xs text-pnp-textSecondary">
-                      Hasta 5 videos destacados elegidos por el creador.
-                    </p>
-                  </div>
-                )}
-
-                {/* ── 7c. Canales — collapsible accordion ─────────────────────── */}
-                {hasChannels && (
-                  <div
-                    className="rounded-2xl overflow-hidden border border-white/8"
-                    style={{ background: "var(--pnp-surface)" }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setChannelsExpanded((v) => !v)}
-                      className="w-full flex items-center gap-3 p-4 text-left"
-                      aria-expanded={channelsExpanded}
-                    >
-                      <Monitor size={20} className="text-pnp-accent flex-none" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm text-pnp-textPrimary">Canales</div>
-                        <div className="text-xs text-pnp-textSecondary">
-                          {channels.length} {channels.length === 1 ? "canal" : "canales"} de este creador
-                        </div>
-                      </div>
-                      <ChevronDown
-                        size={18}
-                        className={`text-pnp-textSecondary flex-none transition-transform ${channelsExpanded ? "rotate-180" : ""}`}
-                        aria-hidden="true"
-                      />
-                    </button>
-
-                    {channelsExpanded && (
-                      <div className="border-t border-white/8 divide-y divide-white/8">
-                        {channels.map((ch) => {
-                          const info = channelAccessInfo(ch);
-                          return (
-                            <button
-                              key={ch.id}
-                              type="button"
-                              onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
-                              className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/5 transition-colors"
-                            >
-                              <div
-                                className="w-11 h-11 rounded-xl overflow-hidden flex-none"
-                                style={{ background: "var(--pnp-background)" }}
-                              >
-                                {ch.cover_image_url && (
-                                  <img
-                                    src={ch.cover_image_url}
-                                    alt=""
-                                    aria-hidden="true"
-                                    loading="lazy"
-                                    className="w-full h-full object-cover"
-                                  />
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-sm text-pnp-textPrimary truncate">{ch.name}</div>
-                                <div className="text-xs text-pnp-textSecondary truncate">{info.subtitle}</div>
-                              </div>
-                              <span
-                                className="flex-none px-2 py-0.5 rounded-full text-[10px] font-bold"
-                                style={{
-                                  background: `${info.badgeColor}22`,
-                                  color: info.badgeColor,
-                                  border: `1px solid ${info.badgeColor}55`,
-                                }}
-                              >
-                                {info.badgeLabel}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ── 7d. Hangout — full-width CTA card ───────────────────────── */}
-                {hasHangout && hangout && (
-                  <div
-                    className="rounded-2xl p-4 border"
-                    style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.25)" }}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <Users size={18} className="text-emerald-400 flex-none" aria-hidden="true" />
-                      <span className="font-bold text-sm text-pnp-textPrimary flex-1 min-w-0 truncate">
-                        {hangout.name}
-                      </span>
-                      {!(isSubscribed || isOwnProfile) && (
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-none"
-                          style={{ background: "rgba(212,0,122,0.15)", color: "#F472B6", border: "1px solid rgba(212,0,122,0.35)" }}
-                        >
-                          <Lock size={10} /> PRIVADO
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-pnp-textSecondary mb-3">
-                      Exclusivo para miembros de pago activos — del canal de pago del creador o de su perfil.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        isSubscribed || isOwnProfile ? navigate(`/hangouts/${hangout.id}`) : handleSubscribeCta()
-                      }
-                      className="w-full rounded-xl py-2.5 text-sm font-bold text-emerald-400 border border-emerald-400/40 hover:bg-emerald-400/10 transition-colors"
-                    >
-                      Entrar al hangout →
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Section-level empty state — only when ALL categories are empty */
-              !isOwnProfile && (
-                <div
-                  className="rounded-2xl p-6 text-center text-sm text-pnp-textSecondary border border-white/8"
-                  style={{ background: "var(--pnp-surface)" }}
-                >
-                  Este creador aún no ha publicado contenido.
-                </div>
-              )
-            )}
-          </section>
 
           {/* ── 8. SHARE & QR SECTION ───────────────────────────────────────── */}
           <section
