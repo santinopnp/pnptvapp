@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 import { TIER_UPGRADE_THRESHOLDS, TIER_CONFIG, type TierId } from "@/components/profile/CreatorEnrollmentWizard";
@@ -21,6 +22,10 @@ interface OverviewTabProps {
 
 export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: OverviewTabProps) {
   const navigate = useNavigate();
+  const { user: authUser } = useAuth();
+  const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
+  const isPerformer = creatorRole === "performer" || creatorRole === "both";
+  const isContentCreator = creatorRole === "creator" || creatorRole === "both";
   const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
   const [studioWizardDone] = useState(() => {
     try { return localStorage.getItem("pnptv_studio_wizard_v1") === "done"; } catch { return false; }
@@ -152,20 +157,38 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
       <div className="glass-card-sm mb-4 p-4">
         <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Tus fuentes de ingreso</p>
         <div className="space-y-2">
-          <div
-            className="flex items-center gap-3 p-3 rounded-xl cursor-pointer"
-            style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
-            onClick={() => navigate("/creators/live")}
-          >
-            <span className="text-xl flex-shrink-0">📡</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white">PNP Live</p>
-              <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                1 token/min por viewer activo · Tips en vivo · Llamadas privadas
-              </p>
+          {isPerformer && (
+            <div
+              className="flex items-center gap-3 p-3 rounded-xl cursor-pointer"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+              onClick={() => navigate("/creators/live")}
+            >
+              <span className="text-xl flex-shrink-0">📡</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white">PNP Live</p>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  1 token/min por viewer activo · Tips en vivo · Llamadas privadas
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>
             </div>
-            <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>
-          </div>
+          )}
+          {isContentCreator && (
+            <div
+              className="flex items-center gap-3 p-3 rounded-xl cursor-pointer"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+              onClick={() => navigate("/creators/channels-hub")}
+            >
+              <span className="text-xl flex-shrink-0">🎬</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white">PNP Channels</p>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  Canales de video · Contenido exclusivo · Subscriptores
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>
+            </div>
+          )}
           <div
             className="flex items-center gap-3 p-3 rounded-xl cursor-pointer"
             style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}

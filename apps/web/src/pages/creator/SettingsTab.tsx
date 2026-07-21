@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
   getCreatorWallet,
@@ -55,15 +56,6 @@ const TIERS: { key: "ice" | "crystal" | "diamond"; label: string; price: number;
   { key: "diamond", label: "Diamond", price: 15, emoji: "💎" },
 ];
 
-const FIAT_PROVIDERS: { key: string; label: string }[] = [
-  { key: "venmo", label: "Venmo" },
-  { key: "cashapp", label: "CashApp" },
-  { key: "zelle", label: "Zelle" },
-  { key: "paypal", label: "PayPal" },
-  { key: "wise", label: "Wise" },
-  { key: "revolut", label: "Revolut" },
-];
-
 interface SettingsTabProps {
   dashboard: DashboardData & { success: boolean };
   t: CreatorStrings;
@@ -73,6 +65,8 @@ const DASH_ADDRESS_RE = /^[X7][1-9A-HJ-NP-Za-km-z]{33}$/;
 
 export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const { user: authUser } = useAuth();
+  const navigate = useNavigate();
+  const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
 
   // Live eligibility state — drives membership toggle gate
   const [liveEligibility, setLiveEligibility] = useState<CreatorLiveEligibility | null>(null);
@@ -524,11 +518,15 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
 
   return (
     <div className="space-y-4">
+
+      {/* ─── TU PERFIL ─────────────────────────────────────────────────────────── */}
+      <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-1" style={{ color: "rgba(255,255,255,0.3)" }}>Tu Perfil</p>
+
       {/* Profile Photo */}
       <div className="glass-card-sm p-5">
-        <p className="text-sm font-semibold text-white mb-1">Profile Photo</p>
+        <p className="text-sm font-semibold text-white mb-1">Foto de perfil</p>
         <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          This photo appears on your creator card, profile page, and everywhere your name is shown.
+          Aparece en tu tarjeta de creador, página de perfil y en todos los lugares donde se muestra tu nombre.
         </p>
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-full overflow-hidden flex-shrink-0 bg-white/5 border border-white/10">
@@ -546,11 +544,11 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
-              {profilePhotoUploading ? "Uploading..." : "Change Photo"}
+              {profilePhotoUploading ? "Subiendo..." : "Cambiar foto"}
               <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only"
                 onChange={handleProfilePhotoChange} disabled={profilePhotoUploading} />
             </label>
-            <p className="text-[10px] mt-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>JPG, PNG or WebP · Max 10 MB</p>
+            <p className="text-[10px] mt-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>JPG, PNG o WebP · Máx 10 MB</p>
           </div>
         </div>
         {profilePhotoSuccess && (
@@ -563,21 +561,21 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
 
       {/* Stage Name & Location */}
       <div className="glass-card-sm p-5">
-        <p className="text-sm font-semibold text-white mb-1">Stage Name &amp; Location</p>
+        <p className="text-sm font-semibold text-white mb-1">Nombre artístico y ubicación</p>
         <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          Your stage name appears on your creator profile and in the consents record. Location is required for compliance. Edit your bio in <strong className="text-white">Content → Profile</strong>.
+          Tu nombre artístico aparece en tu perfil y en los registros de cumplimiento. La ubicación es requerida. Edita tu bio en tu perfil público.
         </p>
         <div className="space-y-3">
           <div>
             <label htmlFor="settings-stage-name" className="block text-xs font-medium text-white/70 mb-1">
-              Stage Name <span style={{ color: "#D4007A" }}>*</span>
+              Nombre artístico <span style={{ color: "#D4007A" }}>*</span>
             </label>
             <input
               id="settings-stage-name"
               type="text"
               value={stageName}
               onChange={(e) => { setStageName(e.target.value); setProfileInfoError(null); setProfileInfoSuccess(null); }}
-              placeholder="Your performer name"
+              placeholder="Tu nombre artístico"
               maxLength={100}
               className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-white/30 transition-colors"
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)" }}
@@ -585,14 +583,14 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           </div>
           <div>
             <label htmlFor="settings-country" className="block text-xs font-medium text-white/70 mb-1">
-              Country
+              País
             </label>
             <input
               id="settings-country"
               type="text"
               value={locationCountry}
               onChange={(e) => { setLocationCountry(e.target.value); setProfileInfoError(null); setProfileInfoSuccess(null); }}
-              placeholder="e.g. United States"
+              placeholder="Ej. México"
               maxLength={100}
               className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-white/30 transition-colors"
               style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)" }}
@@ -615,9 +613,12 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           className="mt-4 text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40"
           style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
         >
-          {profileInfoSaving ? "Saving..." : "Save Profile Info"}
+          {profileInfoSaving ? "Guardando..." : "Guardar perfil"}
         </button>
       </div>
+
+      {/* ─── MEMBRESÍAS ────────────────────────────────────────────────────────── */}
+      <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>Membresías</p>
 
       {/* Membership toggle */}
       <div className="glass-card-sm p-5">
@@ -634,16 +635,15 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white">Accept new memberships</p>
+                <p className="text-sm font-semibold text-white">Aceptar nuevas membresías</p>
                 <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  Reach <strong className="text-white">10 followers</strong> on your free profile to unlock exclusive content monetization
+                  Consigue <strong className="text-white">10 seguidores</strong> para desbloquear la monetización de contenido exclusivo
                 </p>
               </div>
             </div>
-            {/* Follower progress bar */}
             <div className="mt-3">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Follower progress</span>
+                <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Progreso de seguidores</span>
                 <span className="text-[11px] font-semibold text-white">{liveEligibility.followersCount ?? 0}/10</span>
               </div>
               <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
@@ -662,11 +662,11 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           <div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-white">Accept new memberships</p>
+                <p className="text-sm font-semibold text-white">Aceptar nuevas membresías</p>
                 <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {subscriptionPaused
-                    ? "New memberships are paused."
-                    : "Fans can subscribe to your profile."}
+                    ? "Las nuevas membresías están pausadas."
+                    : "Los fans pueden suscribirse a tu perfil."}
                 </p>
               </div>
               <button
@@ -693,11 +693,23 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         )}
       </div>
 
-      {/* Payout Destinations Card — save up to 5 destinations and pick a lane at cashout */}
+      {/* ─── COBROS ────────────────────────────────────────────────────────────── */}
+      <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>Cobros</p>
+
+      {/* Payout Destinations */}
       <div className="glass-card-sm p-5">
-        <p className="text-sm font-semibold text-white mb-1">Payout destinations</p>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <p className="text-sm font-semibold text-white">Destinos de pago</p>
+          <button
+            onClick={() => navigate("/creators/payouts")}
+            className="text-[11px] font-semibold flex-shrink-0"
+            style={{ color: "#5ED1C4" }}
+          >
+            Solicitar cobro →
+          </button>
+        </div>
         <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          Save the destinations you want to be able to cash out to. You'll pick one at request time. All current lanes settle manually — once requested, an operator dispatches the funds within 24–72h.
+          Guarda los destinos a los que quieres cobrar. Seleccionas uno al momento de solicitar el pago en <strong className="text-white">Cobros</strong>. Los fondos se envían manualmente en 24–72h.
         </p>
 
         {walletLoading ? (
@@ -706,9 +718,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Meru */}
             <div>
-              <label className="block text-xs font-semibold text-white mb-1">📱 Meru handle</label>
+              <label className="block text-xs font-semibold text-white mb-1">📱 Meru</label>
               <input
                 type="text"
                 value={meruAccount}
@@ -719,9 +730,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
               />
             </div>
 
-            {/* BTC */}
             <div>
-              <label className="block text-xs font-semibold text-white mb-1">₿ Bitcoin address</label>
+              <label className="block text-xs font-semibold text-white mb-1">₿ Bitcoin</label>
               <input
                 type="text"
                 value={btcAddress}
@@ -733,9 +743,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
               />
             </div>
 
-            {/* Dash */}
             <div>
-              <label className="block text-xs font-semibold text-white mb-1">🥷 Dash address</label>
+              <label className="block text-xs font-semibold text-white mb-1">🥷 Dash</label>
               <input
                 type="text"
                 value={dashAddress}
@@ -794,10 +803,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           className="mt-4 text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40"
           style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
         >
-          {walletSaving ? "Saving..." : "Save destinations"}
+          {walletSaving ? "Guardando..." : "Guardar destinos"}
         </button>
-
-        <p className="mt-4 text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.payoutScheduleNote}</p>
       </div>
 
       {/* Tier selector */}
@@ -826,7 +833,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                   }}
                 >
                   {tier.emoji} {tier.label}
-                  {isCurrent && <span className="block text-xs font-normal mt-0.5 opacity-80">{t.tierCurrent}</span>}
+                  <span className="block text-[10px] font-normal mt-0.5 opacity-70">${tier.price}/mes</span>
+                  {isCurrent && <span className="block text-[10px] font-normal opacity-60">{t.tierCurrent}</span>}
                 </button>
               );
             })}
@@ -844,11 +852,17 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         </div>
       )}
 
-      {/* Stream Rules Card */}
+      {/* ─── MI SHOW (performer/both only) ───────────────────────────────────── */}
+      {(creatorRole === "performer" || creatorRole === "both") && (
+        <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>Mi Show</p>
+      )}
+
+      {/* Stream Rules — performer/both only */}
+      {(creatorRole === "performer" || creatorRole === "both") && (
       <div className="glass-card-sm p-5">
-        <p className="text-sm font-semibold text-white mb-1">My Stream Rules</p>
+        <p className="text-sm font-semibold text-white mb-1">Reglas de transmisión</p>
         <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          These rules appear in the "House Rules" section viewers see before joining your stream. Plain text only.
+          Se muestran en "Reglas de la casa" que los viewers ven antes de entrar a tu stream. Solo texto.
         </p>
         <div className="relative">
           <textarea
@@ -888,16 +902,19 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           className="mt-3 text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40"
           style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
         >
-          {streamRulesSaving ? "Saving..." : "Save Rules"}
+          {streamRulesSaving ? "Guardando..." : "Guardar reglas"}
         </button>
       </div>
+      )}
 
-      {/* ── My Replays ── */}
+      {/* ─── MI CONTENIDO ─────────────────────────────────────────────────────── */}
+      <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>Mi Contenido</p>
+
+      {/* My Replays */}
       <div className="glass-card-sm p-5">
-        <p className="text-sm font-semibold text-white mb-1">My Replays</p>
+        <p className="text-sm font-semibold text-white mb-1">Mis Replays</p>
         <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          Your stream recordings. Replays are available for 7 days after the stream ends.
-          Subscribers see these with a paywall; you can always view and delete your own.
+          Grabaciones de tus streams. Disponibles 7 días tras el stream. Los suscriptores las ven con acceso especial; siempre puedes ver y eliminar las tuyas.
         </p>
 
         {recordingsError && (
@@ -911,7 +928,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             {[1, 2].map((i) => <div key={i} className="h-14 bg-white/5 rounded-lg animate-pulse" />)}
           </div>
         ) : myRecordings.length === 0 ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>No recordings yet. Start a stream to create replays.</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Sin grabaciones aún. Inicia un stream para crear replays.</p>
         ) : (
           <div className="space-y-2">
             {myRecordings.map((rec) => (
@@ -943,7 +960,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     </p>
                     <p className="text-[10px] mt-0.5 truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                       {fmtBytes(rec.sizeBytes)}
-                      {rec.endedAt && ` · Expires ${fmtDate(new Date(new Date(rec.endedAt).getTime() + 7 * 86400000).toISOString())}`}
+                      {rec.endedAt && ` · Expira ${fmtDate(new Date(new Date(rec.endedAt).getTime() + 7 * 86400000).toISOString())}`}
                     </p>
                   </div>
                   {/* Edit icon */}
@@ -1006,14 +1023,14 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                         className="px-3 py-1 rounded text-[10px] font-semibold disabled:opacity-50 transition-colors"
                         style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}
                       >
-                        {editSaving ? "Saving..." : "Save"}
+                        {editSaving ? "Guardando..." : "Guardar"}
                       </button>
                       <button
                         onClick={cancelEditRec}
                         className="px-3 py-1 rounded text-[10px] font-semibold transition-colors"
                         style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
                       >
-                        Cancel
+                        Cancelar
                       </button>
                     </div>
                   </div>
@@ -1024,20 +1041,20 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         )}
       </div>
 
-      {/* ── My Album ── */}
+      {/* My Album */}
       <div className="glass-card-sm p-5">
         <div className="flex items-center justify-between mb-1">
-          <p className="text-sm font-semibold text-white">My Album</p>
+          <p className="text-sm font-semibold text-white">Mi Álbum</p>
           <button
             onClick={() => { setShowAddForm((v) => !v); setAlbumError(null); setAlbumSuccess(null); setAddFile(null); setAddFilePreview(null); setAddCaption(""); setAddPremium(false); setUploadProgress(null); }}
             className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
             style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }}
           >
-            {showAddForm ? "Cancel" : "+ Add media"}
+            {showAddForm ? "Cancelar" : "+ Agregar"}
           </button>
         </div>
         <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          Photos and videos shown on your performer card and album grid. Premium items are blurred for non-subscribers.
+          Fotos y videos en tu tarjeta de creador y galería de perfil. Los items premium aparecen difuminados para no-suscriptores.
         </p>
 
         {/* Add form */}
@@ -1082,10 +1099,10 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    {addType === "photo" ? "Tap to choose a photo" : "Tap to choose a video"}
+                    {addType === "photo" ? "Toca para elegir una foto" : "Toca para elegir un video"}
                   </span>
                   <span className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    {addType === "photo" ? "JPG · PNG · WebP · max 10 MB" : "MP4 · MOV · WebM · max 500 MB"}
+                    {addType === "photo" ? "JPG · PNG · WebP · máx 10 MB" : "MP4 · MOV · WebM · máx 500 MB"}
                   </span>
                 </>
               )}
@@ -1120,14 +1137,14 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             {/* Premium toggle */}
             <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
               <input type="checkbox" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} className="w-4 h-4 rounded accent-pink-600" />
-              <span className="text-xs text-white/80">Premium (subscribers only)</span>
+              <span className="text-xs text-white/80">Premium (solo suscriptores)</span>
             </label>
 
             {addType === "video" && uploadProgress && (
               <div className="space-y-1 mb-3">
                 <div className="flex justify-between text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  <span>Uploading… {uploadProgress.pct}%</span>
-                  <span>{uploadProgress.doneChunks} / {uploadProgress.totalChunks} chunks</span>
+                  <span>Subiendo… {uploadProgress.pct}%</span>
+                  <span>{uploadProgress.doneChunks} / {uploadProgress.totalChunks} partes</span>
                 </div>
                 <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
                   <div
@@ -1139,13 +1156,13 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             )}
             {addType === "video" && !uploadProgress && videoResume && (
               <p className="text-xs px-3 py-2 rounded-lg mb-3" style={{ background: "rgba(212,0,122,0.08)", color: "#D4007A" }}>
-                Previous upload can be resumed — select the same file and tap Save.
+                Subida anterior puede retomarse — selecciona el mismo archivo y toca Subir.
               </p>
             )}
             <button onClick={handleAddMedia} disabled={addSaving || !addFile || uploadProgress !== null}
               className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40"
               style={{ background: "linear-gradient(135deg,#D4007A,#E69138)", color: "#fff" }}>
-              {addSaving ? (addType === "video" ? "Uploading video..." : "Uploading...") : "Upload"}
+              {addSaving ? (addType === "video" ? "Subiendo video..." : "Subiendo...") : "Subir"}
             </button>
           </div>
         )}
@@ -1166,7 +1183,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             {[1, 2].map((i) => <div key={i} className="h-14 bg-white/5 rounded-lg animate-pulse" />)}
           </div>
         ) : albumItems.length === 0 ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>No media yet. Add photos or videos above.</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Sin media aún. Agrega fotos o videos arriba.</p>
         ) : (
           <div className="space-y-2">
             {albumItems.map((item, idx) => (
@@ -1190,11 +1207,11 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 {/* Meta */}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-white truncate">
-                    {item.type === "video" ? "Video" : "Photo"}
+                    {item.type === "video" ? "Video" : "Foto"}
                     {item.caption ? ` — ${item.caption}` : ""}
                   </p>
                   <p className="text-[10px] mt-0.5" style={{ color: item.isPremium ? "#E69138" : "#8E8E93" }}>
-                    {item.isPremium ? "Premium" : "Free"}
+                    {item.isPremium ? "Premium" : "Gratis"}
                   </p>
                 </div>
                 {/* Controls */}
@@ -1203,7 +1220,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     onClick={() => handleMoveItem(idx, -1)}
                     disabled={idx === 0}
                     className="w-6 h-6 rounded flex items-center justify-center text-white/40 hover:text-white/70 disabled:opacity-20 transition-colors"
-                    aria-label="Move up"
+                    aria-label="Mover arriba"
                   >
                     ▲
                   </button>
@@ -1211,7 +1228,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     onClick={() => handleMoveItem(idx, 1)}
                     disabled={idx === albumItems.length - 1}
                     className="w-6 h-6 rounded flex items-center justify-center text-white/40 hover:text-white/70 disabled:opacity-20 transition-colors"
-                    aria-label="Move down"
+                    aria-label="Mover abajo"
                   >
                     ▼
                   </button>
@@ -1224,12 +1241,12 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                         : { background: "rgba(255,255,255,0.06)", color: "var(--pnp-text-secondary, #8E8E93)" }
                     }
                   >
-                    {item.isPremium ? "Free" : "Lock"}
+                    {item.isPremium ? "Liberar" : "Bloquear"}
                   </button>
                   <button
                     onClick={() => handleDeleteMedia(item.id)}
                     className="w-6 h-6 rounded flex items-center justify-center text-red-400/60 hover:text-red-400 transition-colors"
-                    aria-label="Delete"
+                    aria-label="Eliminar"
                   >
                     ×
                   </button>
