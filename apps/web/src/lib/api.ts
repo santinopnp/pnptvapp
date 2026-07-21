@@ -16,6 +16,14 @@ export const NP_COINS = [
 ] as const;
 export type NpCoinCode = (typeof NP_COINS)[number]["code"];
 
+export const NP_COINS_SUBSCRIBE = [
+  { code: "usdtbsc",   label: "USDT", network: "BNB Smart Chain", icon: "₮", color: "#26a17b", recommended: true },
+  { code: "usdcbsc",   label: "USDC", network: "BNB Smart Chain", icon: "$",  color: "#2775ca" },
+  { code: "eth",       label: "ETH",  network: "Ethereum",        icon: "Ξ",  color: "#627eea" },
+  { code: "usdttrc20", label: "USDT", network: "TRON",            icon: "₮",  color: "#26a17b" },
+] as const;
+export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
+
 // Creators whose pay buttons are live before the June 1 launch gate lifts
 const LAUNCH_UNLOCKED = new Set(['SantinoFurioso', 'PNPLatinoBoy'].map(u => u.toLowerCase()));
 export const LAUNCH_DATE = new Date('2026-06-01T00:00:00-05:00');

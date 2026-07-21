@@ -18,6 +18,7 @@ import {
   redeemActivationCode,
   assertPaymentUrl,
   NP_COINS,
+  NP_COINS_SUBSCRIBE,
   getWalletBalance,
   paySubscriptionWithTokens,
   type SubscriptionPlan,
@@ -840,17 +841,6 @@ export default function Subscribe() {
       {/* Plan cards */}
       <div className="space-y-3 mb-6">
 
-        {/* Member tier plans */}
-        {memberPlans.length > 0 && (
-          <div className="mb-1">
-            <div className="text-xs font-semibold uppercase tracking-wider text-pnp-textSecondary">
-              {s.communityMember}
-            </div>
-            <p className="text-[10px] text-pnp-textSecondary/70 mt-0.5">
-              {s.communityMemberDesc}
-            </p>
-          </div>
-        )}
         {memberPlans.map((plan) => {
           const isSelected = selectedPlan === plan.id;
           const features = getPlanFeatures(plan, true);
@@ -965,46 +955,6 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-green-400 leading-none">{cryptoDisplayPrice}</span>
                   </button>
                 )}
-                {usdcAvailable !== false && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleQuickCheckout(plan.id, "usdtbsc"); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 transition-colors"
-                    title="Tether (USDT) on BNB Smart Chain — works with MetaMask, Trust Wallet, Binance"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
-                      <span>₮</span>
-                      <span>USDT</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-emerald-300 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
-                {btcAvailable && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleBitcoinCheckout(plan.id); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-orange-300">
-                      <span>₿</span>
-                      <span>Bitcoin</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-orange-400 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
-                {dashAvailable && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleDashCheckout(plan.id); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#008DE4]/40 bg-[#008DE4]/10 hover:bg-[#008DE4]/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-[#4DB8FF]">
-                      <span>Ð</span>
-                      <span>Dash</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-[#4DB8FF] leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
                 {tokenBalance !== null && tokenBalance > 0 && (
                   <button
                     disabled={submitting}
@@ -1029,42 +979,37 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
                   </button>
                 {cryptoPickerPlanId === plan.id && (
-                  <div className="w-full mt-1 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
-                      <p className="text-[9px] text-pnp-textSecondary/60">{t.lang === "es" ? "Elige tu moneda:" : "Choose your coin:"}</p>
-                      <p className="text-[9px] text-emerald-400/80 font-medium">
-                        {t.lang === "es" ? "USDT = la opción más fácil para principiantes" : "USDT is the easiest option for first-timers"}
-                      </p>
+                  <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
                     </div>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {NP_COINS.map((coin) => {
-                        const isUsdt = coin.code === "usdtbsc" || coin.code === "usdttrc20";
-                        return (
-                          <button
-                            key={coin.code}
-                            disabled={submitting}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCryptoPickerPlanId(null);
-                              handleQuickCheckout(plan.id, coin.code);
-                            }}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
-                              isUsdt
-                                ? "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300"
-                                : "border-white/15 bg-white/5 hover:bg-white/10 text-pnp-textPrimary"
-                            }`}
-                          >
-                            <span style={{ color: coin.color }}>{coin.icon}</span>
-                            <span>{coin.label}</span>
-                            {isUsdt && <span className="text-[8px] font-bold text-emerald-400/80 leading-none">★</span>}
-                          </button>
-                        );
-                      })}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }}
-                        className="px-2 py-1.5 rounded-lg border border-white/10 text-[10px] text-pnp-textSecondary/50 hover:text-pnp-textSecondary transition-colors"
-                      >✕</button>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {NP_COINS_SUBSCRIBE.map((coin) => (
+                        <button
+                          key={coin.code}
+                          disabled={submitting}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCryptoPickerPlanId(null);
+                            handleQuickCheckout(plan.id, coin.code);
+                          }}
+                          className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
+                        >
+                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-white">{coin.label}</span>
+                              {"recommended" in coin && coin.recommended && (
+                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                              )}
+                            </div>
+                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
+                          </div>
+                        </button>
+                      ))}
                     </div>
+                    <p className="text-[9px] text-pnp-textSecondary/40 mt-2 text-center">{t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}</p>
                   </div>
                 )}
                 {meruPanelPlanId === plan.id && (
@@ -1161,17 +1106,6 @@ export default function Subscribe() {
           );
         })}
 
-        {/* PRIME tier plans */}
-        {primePlans.length > 0 && (
-          <div className="mt-4 mb-1">
-            <div className="text-xs font-semibold uppercase tracking-wider text-pnp-textSecondary">
-              {s.prime}
-            </div>
-            <p className="text-[10px] text-pnp-textSecondary/70 mt-0.5">
-              {s.primeDesc}
-            </p>
-          </div>
-        )}
         {primePlans.map((plan) => {
           const isSelected = selectedPlan === plan.id;
           const isRecommended = plan.id === RECOMMENDED_PLAN || plan.sku === RECOMMENDED_PLAN;
@@ -1308,53 +1242,6 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-green-400 leading-none">{cryptoDisplayPrice}</span>
                   </button>
                 )}
-                {usdcAvailable !== false && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (RECURRING_PLANS.has(plan.id)) {
-                        handleCryptoSubscribe(plan.id, "usdtbsc");
-                      } else {
-                        handleQuickCheckout(plan.id, "usdtbsc");
-                      }
-                    }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 transition-colors"
-                    title="Tether (USDT) on BNB Smart Chain — works with MetaMask, Trust Wallet, Binance"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
-                      <span>₮</span>
-                      <span>USDT</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-emerald-300 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
-                {btcAvailable && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleBitcoinCheckout(plan.id); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-orange-300">
-                      <span>₿</span>
-                      <span>Bitcoin</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-orange-400 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
-                {dashAvailable && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleDashCheckout(plan.id); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#008DE4]/40 bg-[#008DE4]/10 hover:bg-[#008DE4]/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-[#4DB8FF]">
-                      <span>Ð</span>
-                      <span>Dash</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-[#4DB8FF] leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
                 {tokenBalance !== null && tokenBalance > 0 && (
                   <button
                     disabled={submitting}
@@ -1379,43 +1266,38 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
                   </button>
                 {cryptoPickerPlanId === plan.id && (
-                  <div className="w-full mt-1 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
-                      <p className="text-[9px] text-pnp-textSecondary/60">{t.lang === "es" ? "Elige tu moneda:" : "Choose your coin:"}</p>
-                      <p className="text-[9px] text-emerald-400/80 font-medium">
-                        {t.lang === "es" ? "USDT = la opción más fácil para principiantes" : "USDT is the easiest option for first-timers"}
-                      </p>
+                  <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
                     </div>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {NP_COINS.map((coin) => {
-                        const isUsdt = coin.code === "usdtbsc" || coin.code === "usdttrc20";
-                        return (
-                          <button
-                            key={coin.code}
-                            disabled={submitting}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCryptoPickerPlanId(null);
-                              if (RECURRING_PLANS.has(plan.id)) handleCryptoSubscribe(plan.id, coin.code);
-                              else handleQuickCheckout(plan.id, coin.code);
-                            }}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
-                              isUsdt
-                                ? "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300"
-                                : "border-white/15 bg-white/5 hover:bg-white/10 text-pnp-textPrimary"
-                            }`}
-                          >
-                            <span style={{ color: coin.color }}>{coin.icon}</span>
-                            <span>{coin.label}</span>
-                            {isUsdt && <span className="text-[8px] font-bold text-emerald-400/80 leading-none">★</span>}
-                          </button>
-                        );
-                      })}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }}
-                        className="px-2 py-1.5 rounded-lg border border-white/10 text-[10px] text-pnp-textSecondary/50 hover:text-pnp-textSecondary transition-colors"
-                      >✕</button>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {NP_COINS_SUBSCRIBE.map((coin) => (
+                        <button
+                          key={coin.code}
+                          disabled={submitting}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCryptoPickerPlanId(null);
+                            if (RECURRING_PLANS.has(plan.id)) handleCryptoSubscribe(plan.id, coin.code);
+                            else handleQuickCheckout(plan.id, coin.code);
+                          }}
+                          className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
+                        >
+                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-white">{coin.label}</span>
+                              {"recommended" in coin && coin.recommended && (
+                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                              )}
+                            </div>
+                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
+                          </div>
+                        </button>
+                      ))}
                     </div>
+                    <p className="text-[9px] text-pnp-textSecondary/40 mt-2 text-center">{t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}</p>
                   </div>
                 )}
                 {meruPanelPlanId === plan.id && (
