@@ -866,17 +866,55 @@ describe('Telegram Token Check — /api/webapp/auth/telegram/check', () => {
     expect(retry.body.authenticated).toBe(true);
   });
 
-  it('should reject token polling from a different browser session', async () => {
+  it('treats the confirmed token as the sole credential — any session holding it can complete login, by design', async () => {
+    // telegramGenerateToken deliberately does NOT bind the token to the
+    // issuing session ("no session binding so iOS Safari app-switches don't
+    // break polling" — see that function's comment, and commit 4f419508
+    // which re-confirmed this after finding the same thing). Binding to a
+    // session was tried before and broke the mobile flow, since Safari can
+    // lose/rotate the session cookie across the backgrounded app-switch to
+    // Telegram and back. The token's UUID entropy + short TTL is the actual
+    // security boundary here, not browser/session identity — so a second
+    // browser presenting the same confirmed token is expected to succeed,
+    // not be rejected.
     const issuer = request.agent(testApp);
-    const attacker = request.agent(testApp);
+    const otherBrowser = request.agent(testApp);
 
     const issue = await issuer.post('/api/webapp/auth/telegram/token').send({});
     const token = issue.body.token;
 
-    const res = await attacker.get('/api/webapp/auth/telegram/check').query({ token });
+    // Still pending: no session can authenticate with it yet.
+    const beforeConfirm = await otherBrowser.get('/api/webapp/auth/telegram/check').query({ token });
+    expect(beforeConfirm.body.authenticated).toBe(false);
 
-    expect(res.status).toBe(401);
-    expect(res.body.authenticated).toBe(false);
+    const { getRedis } = require('../config/redis');
+    const redis = getRedis();
+    const userData = JSON.stringify({ id: 55221, first_name: 'Other', username: 'otherbrowser' });
+    redis._store.set(`tg_login:${token}`, userData);
+
+    mockQueryFn.mockImplementation(async (sql) => {
+      if (sql.includes('WHERE telegram =')) return { rows: [] };
+      if (sql.includes('WHERE x_id =')) return { rows: [] };
+      if (sql.includes('WHERE twitter =')) return { rows: [] };
+      if (sql.includes('WHERE email =')) return { rows: [] };
+      if (sql.includes('SELECT id FROM users WHERE username')) return { rows: [] };
+      if (sql.includes('SELECT id FROM users WHERE id =')) return { rows: [] };
+      if (sql.includes('INSERT INTO users')) {
+        return { rows: [{
+          id: 'other-tg-user', pnptv_id: 'pnptv-o', first_name: 'Other',
+          last_name: null, username: 'otherbrowser', email: null, password_hash: null,
+          telegram: '55221', twitter: null, x_id: null, photo_file_id: null,
+          subscription_status: 'free', tier: 'free', role: 'user',
+          terms_accepted: false, atproto_did: null, atproto_handle: null, atproto_pds_url: null,
+        }] };
+      }
+      if (sql.includes('UPDATE users SET last_login_at')) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const afterConfirm = await otherBrowser.get('/api/webapp/auth/telegram/check').query({ token });
+    expect(afterConfirm.status).not.toBe(401);
+    expect(afterConfirm.body.authenticated).toBe(true);
   });
 });
 
