@@ -12,6 +12,7 @@ const RedisStore = require('connect-redis').default;
 const multer = require('multer');
 const axios = require('axios');
 const crypto = require('crypto');
+const os = require('os');
 const FileType = require('../utils/fileType');
 const geoip = require('geoip-lite');
 const { getRedis, cache } = require('../../config/redis');
@@ -15388,6 +15389,49 @@ app.delete('/api/webapp/creators/media/:id',
   const CMS_PUBLIC_URL = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
   const CMS_INTERNAL_URL = (process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055').replace(/\/$/, '');
 
+  // Best-effort video duration probe (ffprobe raw binary, same pattern as
+  // xPostService._ffprobeVideo). Accepts a local file path or an http(s) URL
+  // — ffprobe reads both directly. Never throws; resolves null on any failure.
+  async function probeVideoDurationSeconds(pathOrUrl) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const ff = spawnProcess('ffprobe', [
+        '-v', 'error',
+        '-print_format', 'json',
+        '-show_format',
+        pathOrUrl,
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        ff.kill('SIGKILL');
+        resolve(null);
+      }, 15000);
+
+      let stdout = '';
+      ff.stdout.on('data', (d) => { stdout += String(d); });
+      ff.on('error', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(null);
+      });
+      ff.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (code !== 0) return resolve(null);
+        try {
+          const duration = parseFloat(JSON.parse(stdout).format?.duration);
+          resolve(Number.isFinite(duration) ? Math.round(duration) : null);
+        } catch (_) {
+          resolve(null);
+        }
+      });
+    });
+  }
+
   // ----------------------------------------
   // TUS PROTOCOL — resumable upload endpoints
   // OPTIONS is registered before the global CORS middleware (see above) so that
@@ -15596,13 +15640,33 @@ app.delete('/api/webapp/creators/media/:id',
         const url = `${CMS_PUBLIC_URL}/assets/${fileId}`;
         const thumbUrl = meta.mediaType === 'video' ? `${CMS_PUBLIC_URL}/video-thumb/${fileId}.jpg` : null;
 
+        // Best-effort duration probe against the now-complete Directus asset URL —
+        // TUS chunks are relayed straight through to Directus, so no local file
+        // exists here to probe; the public asset URL is assumed readable immediately
+        // after the final PATCH (same asset URL is already used as the media's `url`).
+        let durationSeconds = null;
+        if (meta.mediaType === 'video') {
+          try {
+            durationSeconds = await probeVideoDurationSeconds(url);
+          } catch (probeErr) {
+            logger.warn('Creator tus: duration probe failed (non-fatal)', { uploadId: fileId, error: probeErr.message });
+          }
+        }
+
         try {
           await getPool().query(
-            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order)
+            `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
              VALUES ($1, $2, $3, $4, $5, $6,
-               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0))`,
-            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false]
+               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7)`,
+            [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds]
           );
+
+          if (meta.mediaType === 'video' && meta.isPremium) {
+            const ContentComplianceService = require('../../services/contentComplianceService');
+            ContentComplianceService.markCompliantIfNewlyQualified(meta.userId).catch((complianceErr) => {
+              logger.warn('Creator tus: compliance check failed (non-fatal)', { userId: meta.userId, error: complianceErr.message });
+            });
+          }
         } catch (dbErr) {
           logger.error('Creator tus: creator_media insert failed after upload completion', { uploadId: fileId, userId: meta.userId, error: dbErr.message });
           // Don't surface DB error to client — file is uploaded, a reconcile job can retry
@@ -15752,15 +15816,40 @@ app.delete('/api/webapp/creators/media/:id',
       const thumbUrl = isVideo ? `${CMS_PUBLIC_URL}/video-thumb/${fileResult.fileId}.jpg` : null;
       const mediaType = isVideo ? 'video' : 'photo';
 
+      // Best-effort duration probe — the whole file is already in memory (multer
+      // buffer), so write it to a temp file and ffprobe that rather than the
+      // remote URL (cheaper, and avoids depending on Directus having the asset
+      // ready to serve yet).
+      let durationSeconds = null;
+      if (isVideo) {
+        const tempPath = path.join(os.tmpdir(), `creator-media-${crypto.randomUUID()}`);
+        try {
+          await fs.promises.writeFile(tempPath, buffer);
+          durationSeconds = await probeVideoDurationSeconds(tempPath);
+        } catch (probeErr) {
+          logger.warn('Creator profile media: duration probe failed (non-fatal)', { userId, error: probeErr.message });
+        } finally {
+          fs.promises.unlink(tempPath).catch(() => {});
+        }
+      }
+
       // Insert row — sort_order defaults to MAX+1 if not supplied
       const { rows: inserted } = await getPool().query(
-        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order)
+        `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
          VALUES ($1, $2, $3, $4, $5, $6,
-           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)))
+           COALESCE($7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1)), $8)
          RETURNING id, media_type, url, thumb_url, caption, is_premium, sort_order, created_at`,
-        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null]
+        [userId, mediaType, assetUrl, thumbUrl, caption, isPremium, sortOrder !== undefined ? sortOrder : null, durationSeconds]
       );
       const row = inserted[0];
+
+      if (isVideo && isPremium) {
+        const ContentComplianceService = require('../../services/contentComplianceService');
+        ContentComplianceService.markCompliantIfNewlyQualified(userId).catch((complianceErr) => {
+          logger.warn('Creator profile media: compliance check failed (non-fatal)', { userId, error: complianceErr.message });
+        });
+      }
+
       return res.status(201).json({
         success: true,
         item: {
@@ -15817,6 +15906,17 @@ app.delete('/api/webapp/creators/media/:id',
 
       if (!rows.length) return res.status(404).json({ success: false, error: 'Media item not found or not yours' });
       const row = rows[0];
+
+      // A creator can flip is_premium on an already-uploaded video after the
+      // fact (e.g. it was uploaded free, then marked exclusive) — that can
+      // cross the content-compliance threshold just as much as a fresh upload.
+      if (row.media_type === 'video' && row.is_premium) {
+        const ContentComplianceService = require('../../services/contentComplianceService');
+        ContentComplianceService.markCompliantIfNewlyQualified(userId).catch((complianceErr) => {
+          logger.warn('Creator media patch: compliance check failed (non-fatal)', { userId, error: complianceErr.message });
+        });
+      }
+
       return res.json({
         success: true,
         item: {

@@ -20,6 +20,22 @@ const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840', '7246621722'];
 // Santino Furioso's user ID — purchase-bonus tokens (creator_gifts) are locked to his streams/tips.
 const SANTINO_USER_ID = '8599671840';
 
+// ── Creator content-compliance policy ────────────────────────────────────────
+// New creator_monthly subscribers' membership start is held until the creator has
+// at least this many seconds of exclusive (is_premium) video content; missing the
+// grace deadline suspends the creator. See services/contentComplianceService.js.
+const CONTENT_COMPLIANCE_MIN_SECONDS = 240;       // 4 minutes
+const CONTENT_COMPLIANCE_GRACE_DAYS = 7;
+const CONTENT_COMPLIANCE_SUSPENSION_MONTHS = 6;
+// Held subscribers whose creator is suspended for non-compliance are refunded in
+// tokens at 105% of what they paid (standard 6 tokens = $1 USD rate, see dashTokenService.js).
+const CONTENT_COMPLIANCE_REFUND_MULTIPLIER = 1.05;
+// SantinoFurioso only — explicitly confirmed exempt from this rule (real
+// superadmin/performer, already exempted from the similar onboarding-lock rule
+// in migration 223). PNPLatinoBoy is NOT included here despite being exempt from
+// that other rule — he is explicitly subject to content compliance.
+const CONTENT_COMPLIANCE_EXEMPT_USER_IDS = [SANTINO_USER_ID];
+
 // Earnings hold period: newly-recorded earnings sit in 'holding' status for this
 // many hours before maturing to 'available'. This gives the platform time to
 // process any refund or chargeback before paying out the creator.
@@ -35,6 +51,11 @@ module.exports = {
   EARNINGS_HOLD_HOURS_EFIPAY,
   GIFTED_ALLOWED_PERFORMER_USER_IDS,
   SANTINO_USER_ID,
+  CONTENT_COMPLIANCE_MIN_SECONDS,
+  CONTENT_COMPLIANCE_GRACE_DAYS,
+  CONTENT_COMPLIANCE_SUSPENSION_MONTHS,
+  CONTENT_COMPLIANCE_REFUND_MULTIPLIER,
+  CONTENT_COMPLIANCE_EXEMPT_USER_IDS,
   // ==========================================
   // SUBSCRIPTION SETTINGS
   // ==========================================

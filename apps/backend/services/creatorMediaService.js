@@ -7,8 +7,55 @@
  *   bot/api/controllers/*.js → require('../../../services/creatorMediaService')
  */
 
+const { spawn } = require('child_process');
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
+const ContentComplianceService = require('./contentComplianceService');
+
+// Best-effort video duration probe (ffprobe raw binary, same pattern as
+// xPostService._ffprobeVideo). The media is already uploaded elsewhere by the
+// time addMedia() runs, so we probe the remote URL directly — ffprobe reads
+// http(s) URLs natively, no download needed. Never throws; resolves null on
+// any failure (missing binary, 404, timeout, ...).
+async function probeVideoDurationSeconds(url) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const ff = spawn('ffprobe', [
+      '-v', 'error',
+      '-print_format', 'json',
+      '-show_format',
+      url,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ff.kill('SIGKILL');
+      resolve(null);
+    }, 15000);
+
+    let stdout = '';
+    ff.stdout.on('data', (d) => { stdout += String(d); });
+    ff.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(null);
+    });
+    ff.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) return resolve(null);
+      try {
+        const duration = parseFloat(JSON.parse(stdout).format?.duration);
+        resolve(Number.isFinite(duration) ? Math.round(duration) : null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  });
+}
 
 /**
  * List media for a creator, respecting premium gating.
@@ -71,13 +118,29 @@ async function addMedia(creatorId, { type, url, thumbUrl = null, caption = null,
   if (!['photo', 'video'].includes(type)) throw Object.assign(new Error('Invalid media_type'), { status: 400 });
   if (!url || typeof url !== 'string') throw Object.assign(new Error('url is required'), { status: 400 });
 
+  // Best-effort duration capture for video uploads — non-fatal, never blocks the insert.
+  let durationSeconds = null;
+  if (type === 'video') {
+    try {
+      durationSeconds = await probeVideoDurationSeconds(url);
+    } catch (probeErr) {
+      logger.warn('creatorMediaService: duration probe failed (non-fatal)', { creatorId, url, error: probeErr.message });
+    }
+  }
+
   const { rows } = await query(
-    `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order)
+    `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
      VALUES ($1::text, $2, $3, $4, $5, $6,
-       COALESCE((SELECT MAX(sort_order) + 1 FROM creator_media WHERE creator_id = $1::text), 0))
+       COALESCE((SELECT MAX(sort_order) + 1 FROM creator_media WHERE creator_id = $1::text), 0), $7)
      RETURNING id, media_type AS type, url, thumb_url, caption, is_premium, sort_order, created_at`,
-    [creatorId, type, url, thumbUrl, caption, isPremium]
+    [creatorId, type, url, thumbUrl, caption, isPremium, durationSeconds]
   );
+
+  if (type === 'video' && isPremium) {
+    ContentComplianceService.markCompliantIfNewlyQualified(creatorId).catch((complianceErr) => {
+      logger.warn('creatorMediaService: compliance check failed (non-fatal)', { creatorId, error: complianceErr.message });
+    });
+  }
 
   const row = rows[0];
   return {
@@ -121,6 +184,15 @@ async function updateMedia(mediaId, creatorId, patch) {
 
   if (rows.length === 0) throw Object.assign(new Error('Not found or not owned by creator'), { status: 404 });
   const row = rows[0];
+
+  // Flipping is_premium on an existing video can cross the compliance threshold
+  // just as much as a fresh upload — same as the routes.js PATCH handler.
+  if (row.type === 'video' && row.is_premium) {
+    ContentComplianceService.markCompliantIfNewlyQualified(creatorId).catch((complianceErr) => {
+      logger.warn('creatorMediaService: compliance check failed on update (non-fatal)', { creatorId, error: complianceErr.message });
+    });
+  }
+
   return { id: String(row.id), type: row.type, url: row.url, thumbUrl: row.thumb_url, caption: row.caption, isPremium: row.is_premium, sortOrder: row.sort_order, canView: true };
 }
 

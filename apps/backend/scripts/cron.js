@@ -886,6 +886,397 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // ── Creator content-compliance: deadline enforcement — daily at 09:05 UTC ──
+    // (5 min offset from the 2257 job above to avoid resource contention.)
+    // Suspends creators whose 7-day content-compliance grace deadline has passed
+    // without reaching 4+ minutes of exclusive video content, cancels their
+    // compliance_hold'd subscriptions, and refunds those subscribers in tokens
+    // at CONTENT_COMPLIANCE_REFUND_MULTIPLIER (105%) of what they paid. See
+    // services/contentComplianceService.js and migrations/318_creator_content_compliance.sql.
+    cron.schedule('5 9 * * *', async () => {
+      try {
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+        const { cache } = require(path.join(backendPath, 'config/redis'));
+        const ContentComplianceService = require(path.join(backendPath, 'services/contentComplianceService'));
+        const NotificationEmitter = require(path.join(backendPath, 'services/notificationEmitter'));
+        const EmailService = require(path.join(backendPath, 'services/emailservice'));
+        const {
+          CONTENT_COMPLIANCE_SUSPENSION_MONTHS,
+          CONTENT_COMPLIANCE_REFUND_MULTIPLIER,
+        } = require(path.join(backendPath, 'config/monetizationConfig'));
+
+        const { rows } = await pgQuery(`
+          SELECT id, username, first_name, email, email_verified
+          FROM users
+          WHERE creator_content_compliance_status = 'pending'
+            AND creator_content_compliance_deadline < NOW()
+        `);
+
+        if (rows.length === 0) {
+          logger.info('[compliance] Deadline enforcement: no expired creators');
+        }
+
+        let suspendedCount = 0;
+        const suspendedNames = [];
+
+        for (const creator of rows) {
+          try {
+            // Defensive race-check: markCompliantIfNewlyQualified() should already
+            // have cleared 'pending' if the creator just qualified. If that hasn't
+            // run yet, don't suspend — leave the row for the unlock path to clear.
+            const compliant = await ContentComplianceService.isCompliant(creator.id);
+            if (compliant) {
+              logger.info('[compliance] Creator already compliant at deadline check — skipping suspension', {
+                userId: creator.id,
+              });
+              continue;
+            }
+
+            // Idempotent: guarded by "suspension_reason IS DISTINCT FROM 'content_compliance'"
+            // so a creator who is re-selected on a later run (deadline/status are
+            // intentionally left untouched below) doesn't get re-suspended,
+            // re-notified, or have creator_suspended_until pushed out again.
+            const { rowCount } = await pgQuery(
+              `UPDATE users
+                 SET creator_status = 'suspended',
+                     creator_suspended_until = NOW() + ($2 || ' months')::interval,
+                     creator_suspension_reason = 'content_compliance',
+                     creator_content_compliance_status = 'pending',
+                     updated_at = NOW()
+               WHERE id = $1
+                 AND creator_suspension_reason IS DISTINCT FROM 'content_compliance'`,
+              [creator.id, String(CONTENT_COMPLIANCE_SUSPENSION_MONTHS)]
+            );
+
+            if (rowCount === 0) {
+              logger.info('[compliance] Creator already suspended for content compliance — skipping', {
+                userId: creator.id,
+              });
+              continue;
+            }
+
+            // Atomically flip each held subscription so this can't double-fire.
+            const { rows: heldSubs } = await pgQuery(
+              `UPDATE creator_subscriptions
+                 SET status = 'cancelled', compliance_hold = false
+               WHERE creator_id = $1 AND compliance_hold = true
+               RETURNING id, subscriber_id, price_usd`,
+              [creator.id]
+            );
+
+            for (const sub of heldSubs) {
+              try {
+                const priceUsd = parseFloat(sub.price_usd) || 0;
+                // 6 tokens = $1 USD base rate (see services/dashTokenService.js header).
+                const tokens = Math.round(priceUsd * 6 * CONTENT_COMPLIANCE_REFUND_MULTIPLIER);
+
+                await pgQuery(
+                  `INSERT INTO user_token_wallets (user_id, balance_tokens)
+                        VALUES ($1, $2)
+                   ON CONFLICT (user_id) DO UPDATE
+                     SET balance_tokens = user_token_wallets.balance_tokens + $2,
+                         updated_at = NOW()`,
+                  [String(sub.subscriber_id), tokens]
+                );
+
+                await Promise.all([
+                  cache.del(`wallet:${sub.subscriber_id}`).catch(() => {}),
+                  cache.del(`wallet:obj:${sub.subscriber_id}`).catch(() => {}),
+                ]);
+
+                await pgQuery(
+                  `UPDATE user_entitlements
+                     SET expires_at = NOW()
+                   WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2`,
+                  [String(sub.subscriber_id), String(creator.id)]
+                );
+
+                try {
+                  const EntitlementAccessService = require(path.join(backendPath, 'services/entitlementAccessService'));
+                  await EntitlementAccessService.invalidateCache(String(sub.subscriber_id));
+                } catch (cacheErr) {
+                  logger.warn('[compliance] entitlement cache invalidation failed (non-fatal)', {
+                    subscriberId: sub.subscriber_id,
+                    error: cacheErr.message,
+                  });
+                }
+
+                const refundMessage = `The creator you subscribed to didn't meet the platform's content requirement in time, so their new membership hold could not be lifted. Your subscription has been cancelled and we've credited your wallet with ${tokens} tokens (105% of what you paid) as an apology for the inconvenience.`;
+
+                NotificationEmitter.emit({
+                  type: 'creator_compliance_refund',
+                  category: 'commerce',
+                  priority: 'high',
+                  actorId: null,
+                  targetUserId: String(sub.subscriber_id),
+                  entityType: 'user',
+                  entityId: String(creator.id),
+                  message: refundMessage,
+                  metadata: {
+                    url: '/wallet',
+                    pushTitle: 'Subscription refunded in tokens',
+                    pushBody: `You've been credited ${tokens} tokens after a creator's subscription was cancelled.`,
+                  },
+                }).catch(() => {});
+
+                try {
+                  const { rows: subRows } = await pgQuery(
+                    'SELECT email, email_verified FROM users WHERE id = $1',
+                    [sub.subscriber_id]
+                  );
+                  const subUser = subRows[0];
+                  if (subUser?.email && subUser.email_verified) {
+                    await EmailService.send({
+                      to: subUser.email,
+                      subject: 'Your subscription was cancelled and refunded in tokens',
+                      html: `
+                        <p>Hi,</p>
+                        <p>The creator you recently subscribed to did not meet our platform's content requirement (at least 4 minutes of exclusive video content) within the required time window.</p>
+                        <p>As a result, their new-subscriber hold could not be lifted, and your subscription has been cancelled.</p>
+                        <p>We've credited your wallet with <strong>${tokens} tokens</strong> — 105% of what you paid — to make this right.</p>
+                        <p>We're sorry for the inconvenience. Please don't hesitate to reach out if you have any questions.</p>
+                      `,
+                    });
+                  }
+                } catch (emailErr) {
+                  logger.warn('[compliance] subscriber refund email failed (non-fatal)', {
+                    subscriberId: sub.subscriber_id,
+                    error: emailErr.message,
+                  });
+                }
+              } catch (subErr) {
+                logger.error('[compliance] Failed to process held subscription refund (non-fatal, continuing)', {
+                  creatorId: creator.id,
+                  subscriptionId: sub.id,
+                  error: subErr.message,
+                });
+              }
+            }
+
+            const reinstateDate = new Date(
+              Date.now() + CONTENT_COMPLIANCE_SUSPENSION_MONTHS * 30 * 24 * 60 * 60 * 1000
+            ).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            const suspensionMessage = `You've been suspended from the Creator Program for 6 months for not meeting the platform's content requirement (4+ minutes of exclusive video content) within the grace period. You'll be eligible to rejoin around ${reinstateDate}.`;
+
+            NotificationEmitter.emit({
+              type: 'creator_compliance_suspended',
+              category: 'commerce',
+              priority: 'high',
+              actorId: null,
+              targetUserId: String(creator.id),
+              entityType: 'user',
+              entityId: String(creator.id),
+              message: suspensionMessage,
+              metadata: {
+                url: '/creator-studio',
+                pushTitle: 'Creator Program suspension',
+                pushBody: suspensionMessage,
+              },
+            }).catch(() => {});
+
+            try {
+              if (creator.email && creator.email_verified) {
+                await EmailService.send({
+                  to: creator.email,
+                  subject: 'Your Creator Program account has been suspended',
+                  html: `
+                    <p>Hi,</p>
+                    <p>Your Creator Program account has been suspended for 6 months because our platform's content requirement (at least 4 minutes of exclusive video content) was not met within the required grace period.</p>
+                    <p>Your held subscriber(s) have been refunded in tokens and their subscription(s) cancelled.</p>
+                    <p>You'll be eligible to rejoin the Creator Program around <strong>${reinstateDate}</strong>.</p>
+                    <p>If you believe this is a mistake, please contact support.</p>
+                  `,
+                });
+              }
+            } catch (emailErr) {
+              logger.warn('[compliance] creator suspension email failed (non-fatal)', {
+                userId: creator.id,
+                error: emailErr.message,
+              });
+            }
+
+            suspendedCount++;
+            suspendedNames.push(creator.username || creator.first_name || creator.id);
+            logger.warn('[compliance] Creator suspended for missed content-compliance deadline', {
+              userId: creator.id,
+              username: creator.username,
+              refundedSubs: heldSubs.length,
+            });
+          } catch (innerErr) {
+            logger.error('[compliance] Deadline enforcement error for creator', {
+              userId: creator.id,
+              error: innerErr.message,
+            });
+          }
+        }
+
+        // Notify operator — mirrors the 2257 enforcement job's admin-ping style above.
+        if (suspendedCount > 0) {
+          const adminId = process.env.ADMIN_ID;
+          if (adminId && bot) {
+            await bot.telegram.sendMessage(
+              adminId,
+              `⚠️ CONTENT COMPLIANCE: ${suspendedCount} creator(s) suspended for missing the content deadline: ${suspendedNames.join(', ')}`
+            ).catch(() => {});
+          }
+        }
+      } catch (err) {
+        logger.error('[compliance] Deadline enforcement cron error', { error: err.message });
+      }
+    });
+
+    // ── Creator content-compliance: deadline reminder — daily at 09:05 UTC ──
+    // One-time reminder (this window naturally fires once per creator since the
+    // job runs daily) for creators whose compliance deadline is 1-2 days out.
+    cron.schedule('5 9 * * *', async () => {
+      try {
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+        const NotificationEmitter = require(path.join(backendPath, 'services/notificationEmitter'));
+        const EmailService = require(path.join(backendPath, 'services/emailservice'));
+
+        const { rows } = await pgQuery(`
+          SELECT id, username, email, email_verified, creator_content_compliance_deadline
+          FROM users
+          WHERE creator_content_compliance_status = 'pending'
+            AND creator_content_compliance_deadline BETWEEN NOW() + INTERVAL '1 day' AND NOW() + INTERVAL '2 days'
+        `);
+
+        if (rows.length === 0) {
+          logger.info('[compliance] Deadline reminder: no creators in reminder window');
+          return;
+        }
+
+        let sentCount = 0;
+        const reminded = [];
+
+        for (const creator of rows) {
+          try {
+            const deadlineStr = new Date(creator.creator_content_compliance_deadline).toLocaleDateString('en-US', {
+              year: 'numeric', month: 'long', day: 'numeric',
+            });
+            const message = `Reminder: you have until ${deadlineStr} to upload at least 4 minutes of exclusive video content, or your Creator Program account will be suspended for 6 months and your held subscriber(s) refunded.`;
+
+            NotificationEmitter.emit({
+              type: 'creator_compliance_reminder',
+              category: 'commerce',
+              priority: 'high',
+              actorId: null,
+              targetUserId: String(creator.id),
+              entityType: 'user',
+              entityId: String(creator.id),
+              message,
+              metadata: {
+                url: '/creator-studio/content',
+                pushTitle: 'Reminder — content deadline approaching',
+                pushBody: `Upload 4+ min of exclusive video by ${deadlineStr} to avoid suspension.`,
+              },
+            }).catch(() => {});
+
+            if (creator.email && creator.email_verified) {
+              await EmailService.send({
+                to: creator.email,
+                subject: 'Reminder — your content compliance deadline is approaching',
+                html: `
+                  <p>Hi,</p>
+                  <p>This is a reminder that you have until <strong>${deadlineStr}</strong> to upload at least 4 minutes of exclusive video content to your creator profile.</p>
+                  <p>If the deadline passes without enough content, your Creator Program account will be suspended for 6 months, and your held subscriber(s) will be refunded in tokens.</p>
+                  <p>Upload now to activate your held subscriber's membership and start earning.</p>
+                `,
+              });
+            }
+
+            sentCount++;
+            reminded.push(creator.username || creator.id);
+          } catch (innerErr) {
+            logger.error('[compliance] Reminder error for creator', {
+              userId: creator.id,
+              error: innerErr.message,
+            });
+          }
+        }
+
+        logger.info('[compliance] Deadline reminders sent', { count: sentCount });
+
+        const adminId = process.env.ADMIN_ID;
+        if (adminId && bot && sentCount > 0) {
+          await bot.telegram.sendMessage(
+            adminId,
+            `ℹ️ CONTENT COMPLIANCE: sent ${sentCount} deadline-approaching reminder(s): ${reminded.join(', ')}`
+          ).catch(() => {});
+        }
+      } catch (err) {
+        logger.error('[compliance] Deadline reminder cron error', { error: err.message });
+      }
+    });
+
+    // ── Creator content-compliance: auto-reinstatement — daily at 09:05 UTC ──
+    // Reinstates creators whose 6-month content-compliance suspension has elapsed.
+    // No notification per the plan (out of scope) — log line only.
+    cron.schedule('5 9 * * *', async () => {
+      try {
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+
+        const { rows } = await pgQuery(`
+          SELECT id, username
+          FROM users
+          WHERE creator_suspension_reason = 'content_compliance'
+            AND creator_suspended_until < NOW()
+        `);
+
+        if (rows.length === 0) {
+          logger.info('[compliance] Auto-reinstatement: no creators due');
+          return;
+        }
+
+        let reinstatedCount = 0;
+        const reinstated = [];
+
+        for (const creator of rows) {
+          try {
+            // Also clear compliance_status/deadline (not just the suspension fields) —
+            // otherwise Phase A's "status='pending' AND deadline < NOW()" would match
+            // this creator again on the very next run and re-suspend them in a loop.
+            // Reinstated creators fall back to "not yet evaluated"; the clock only
+            // restarts on their next new subscription, same as any grandfathered creator.
+            await pgQuery(
+              `UPDATE users
+                 SET creator_status = 'active',
+                     creator_suspended_until = NULL,
+                     creator_suspension_reason = NULL,
+                     creator_content_compliance_status = NULL,
+                     creator_content_compliance_deadline = NULL,
+                     updated_at = NOW()
+               WHERE id = $1`,
+              [creator.id]
+            );
+            reinstatedCount++;
+            reinstated.push(creator.username || creator.id);
+            logger.info('[compliance] Creator auto-reinstated after content-compliance suspension', {
+              userId: creator.id,
+              username: creator.username,
+            });
+          } catch (innerErr) {
+            logger.error('[compliance] Auto-reinstatement error for creator', {
+              userId: creator.id,
+              error: innerErr.message,
+            });
+          }
+        }
+
+        logger.info('[compliance] Auto-reinstatement complete', { count: reinstatedCount });
+
+        const adminId = process.env.ADMIN_ID;
+        if (adminId && bot && reinstatedCount > 0) {
+          await bot.telegram.sendMessage(
+            adminId,
+            `✅ CONTENT COMPLIANCE: ${reinstatedCount} creator(s) auto-reinstated after 6-month suspension: ${reinstated.join(', ')}`
+          ).catch(() => {});
+        }
+      } catch (err) {
+        logger.error('[compliance] Auto-reinstatement cron error', { error: err.message });
+      }
+    });
+
     // ── user_access_logs retention — daily at 03:50 UTC (staggered from media cleanup at 03:00) ──
     // Keeps 14 days — sufficient for security forensics; table grows ~377K rows/day.
     cron.schedule('50 3 * * *', async () => {

@@ -531,8 +531,19 @@ class CreatorService {
       );
       if (durationRows[0]?.duration_days) durationDays = durationRows[0].duration_days;
     } catch (_) { /* non-fatal, use default */ }
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + durationDays);
+
+    // Content-compliance gate: if the creator doesn't yet have 4 minutes of
+    // exclusive video content, the membership "start" is held — expires_at stays
+    // NULL (not counted as active by EntitlementAccessService.hasEntitlement)
+    // until ContentComplianceService.markCompliantIfNewlyQualified unlocks it.
+    const ContentComplianceService = require('./contentComplianceService');
+    const isContentCompliant = await ContentComplianceService.isCompliant(creatorId);
+
+    let expiresAt = null;
+    if (isContentCompliant) {
+      expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + durationDays);
+    }
 
     // Wrap all DB writes in a transaction so a mid-flight crash leaves no partial state
     const { getPool } = require('../config/postgres');
@@ -543,13 +554,13 @@ class CreatorService {
 
       // Upsert subscription
       const subResult = await client.query(
-        `INSERT INTO creator_subscriptions (creator_id, subscriber_id, price_usd, expires_at, payment_id, status)
-         VALUES ($1, $2, $3, $4, $5, 'active')
+        `INSERT INTO creator_subscriptions (creator_id, subscriber_id, price_usd, expires_at, payment_id, status, compliance_hold, held_duration_days)
+         VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)
          ON CONFLICT (creator_id, subscriber_id)
          DO UPDATE SET status = 'active', price_usd = $3, expires_at = $4, payment_id = $5,
-                       cancelled_at = NULL, auto_renew = TRUE
+                       cancelled_at = NULL, auto_renew = TRUE, compliance_hold = $6, held_duration_days = $7
          RETURNING id`,
-        [creatorId, subscriberId, priceUsd, expiresAt, paymentId || null]
+        [creatorId, subscriberId, priceUsd, expiresAt, paymentId || null, !isContentCompliant, durationDays]
       );
       rows = subResult.rows;
 
@@ -586,16 +597,20 @@ class CreatorService {
         WHERE NOT user_entitlements.is_lifetime
       `, [String(subscriberId), String(creatorId), paymentId || null, expiresAt, durationDays]);
 
-      // Record earnings (70/30 split) — held for EARNINGS_HOLD_HOURS before maturing to 'available'
-      const amountCreator = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
-      const amountPlatform = Math.round(priceUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
+      // Record earnings (70/30 split) — held for EARNINGS_HOLD_HOURS before maturing to 'available'.
+      // Skipped while content-compliance-held: ContentComplianceService.markCompliantIfNewlyQualified
+      // inserts this same row once the creator qualifies and the membership actually starts.
+      if (isContentCompliant) {
+        const amountCreator = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
+        const amountPlatform = Math.round(priceUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
 
-      await client.query(
-        `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-         VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
-         ON CONFLICT (source_payment_id) DO NOTHING`,
-        [creatorId, rows[0].id, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), paymentId || null]
-      );
+        await client.query(
+          `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+           VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
+           ON CONFLICT (source_payment_id) DO NOTHING`,
+          [creatorId, rows[0].id, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), paymentId || null]
+        );
+      }
 
       await client.query('COMMIT');
     } catch (err) {
@@ -610,6 +625,16 @@ class CreatorService {
       await EntitlementAccessService.invalidateCache(String(subscriberId));
     } catch (cacheErr) {
       logger.warn('subscribeToCreator: cache invalidation failed (non-fatal)', { subscriberId, error: cacheErr.message });
+    }
+
+    if (!isContentCompliant) {
+      try {
+        await ContentComplianceService.startComplianceClockIfNeeded(creatorId);
+      } catch (complianceErr) {
+        logger.warn('subscribeToCreator: startComplianceClockIfNeeded failed (non-fatal)', {
+          creatorId, error: complianceErr.message,
+        });
+      }
     }
 
     // Notify subscriber's frontend to refresh subscription state
