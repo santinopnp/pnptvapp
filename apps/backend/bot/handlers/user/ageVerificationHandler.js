@@ -546,15 +546,17 @@ By clicking "Confirm", you declare under your responsibility that you are of leg
       });
       edited = true;
     } catch (error) {
-      const alreadySame = error.description?.includes('message is not modified') ||
-        error.description?.includes('message to edit not found');
-      if (!alreadySame) {
+      if (error.description?.includes('message is not modified')) {
+        // Content is already identical on screen — nothing to do, not a failure.
+        edited = true;
+      } else {
+        // Includes "message to edit not found" and anything else: the edit did
+        // NOT happen, so the user is left staring at the old screen. Must fall
+        // through to the reply() below or they see no response at all.
         logger.warn('Could not edit manual age confirmation message, falling back to reply', {
           error: error.message,
           userId: ctx.from?.id,
         });
-      } else {
-        edited = true;
       }
     }
   }
