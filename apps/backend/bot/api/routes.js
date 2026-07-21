@@ -2697,8 +2697,8 @@ app.post('/api/webapp/auth/telegram', authLimiter, asyncHandler(webAppController
 app.post('/api/webapp/auth/telegram/token', authLimiter, asyncHandler(webAppController.telegramGenerateToken));
 app.get('/api/webapp/auth/telegram/check', telegramCheckLimiter, asyncHandler(webAppController.telegramCheckToken));
 app.post('/api/webapp/auth/telegram/widget', telegramWidgetLimiter, asyncHandler(webAppController.telegramWidgetAuth));
-app.post('/api/webapp/auth/email/register', authLimiter, asyncHandler(webAppController.emailRegister));
-app.post('/api/webapp/auth/email/login', authLimiter, asyncHandler(webAppController.emailLogin));
+app.post('/api/webapp/auth/email/register', (_req, res) => res.status(410).json({ error: 'Password registration has been removed. Use magic link or passkey.' }));
+app.post('/api/webapp/auth/email/login', (_req, res) => res.status(410).json({ error: 'Password login has been removed. Use magic link or passkey.' }));
 app.post('/api/webapp/auth/oidc/token-exchange', authLimiter, asyncHandler(webAppController.oidcTokenExchange));
 app.post('/api/webapp/auth/magic/start', magicLinkLimiter, asyncHandler(webAppController.magicLinkStart));
 app.get('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkVerify));
@@ -2871,8 +2871,8 @@ app.get('/api/webapp/auth/x/callback', asyncHandler(webAppController.xLoginCallb
 app.post('/api/webapp/auth/x/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkX));
 app.get('/api/me', asyncHandler(webAppController.authStatus));
 app.post('/api/webapp/auth/logout', asyncHandler(webAppController.logout));
-app.post('/api/webapp/auth/forgot-password', authLimiter, asyncHandler(webAppController.forgotPassword));
-app.post('/api/webapp/auth/reset-password', authLimiter, asyncHandler(webAppController.resetPassword));
+app.post('/api/webapp/auth/forgot-password', (_req, res) => res.status(410).json({ error: 'Password login has been removed. Use magic link to access your account.' }));
+app.post('/api/webapp/auth/reset-password', (_req, res) => res.status(410).json({ error: 'Password login has been removed. Use magic link to access your account.' }));
 
 // ── Authentik OIDC Routes ─────────────────────────────────────────────────────
 // Privacy-first: no third-party cookies.  PKCE (S256) eliminates the need to
@@ -3322,7 +3322,7 @@ const registerLimiter = rateLimit({
 });
 
 app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, res) => {
-  const { email, username, password } = req.body || {};
+  const { email, username } = req.body || {};
 
   // ── 1. Input validation ──────────────────────────────────────────────────────
   if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
@@ -3330,12 +3330,6 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
   }
   if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,30}$/.test(username.trim())) {
     return res.status(400).json({ error: 'Username must be 3–30 characters (letters, numbers, underscores only).' });
-  }
-  if (!password || typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  }
-  if (password.length > 128) {
-    return res.status(400).json({ error: 'Password is too long.' });
   }
 
   const cleanEmail = email.trim().toLowerCase();
@@ -3423,26 +3417,6 @@ app.post('/api/webapp/auth/register', registerLimiter, asyncHandler(async (req, 
       return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
     }
     logger.error('[Register] Failed to create Authentik user:', err.response?.data || err.message);
-    return res.status(503).json({ error: 'Registration failed. Please try again.' });
-  }
-
-  // ── 4. Set password ──────────────────────────────────────────────────────────
-  try {
-    await axios.post(`${AUTHENTIK_URL}/api/v3/core/users/${authentikUser.pk}/set_password/`, {
-      password,
-    }, {
-      headers: { Authorization: `Bearer ${AUTHENTIK_TOKEN}` },
-      timeout: 10000,
-    });
-  } catch (err) {
-    // Clean up the Authentik user so it can be retried
-    try {
-      await axios.delete(`${AUTHENTIK_URL}/api/v3/core/users/${authentikUser.pk}/`, {
-        headers: { Authorization: `Bearer ${AUTHENTIK_TOKEN}` },
-        timeout: 10000,
-      });
-    } catch { /* best-effort */ }
-    logger.error('[Register] Failed to set Authentik password:', err.response?.data || err.message);
     return res.status(503).json({ error: 'Registration failed. Please try again.' });
   }
 
