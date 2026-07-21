@@ -91,9 +91,15 @@ export default function UploadVideoModal({
   // Upload state
   const [uploadPct, setUploadPct] = useState(0);
   const [uploadedBytes, setUploadedBytes] = useState(0);
+  const [uploadSpeed, setUploadSpeed] = useState(0); // bytes/sec
+  const [uploadEta, setUploadEta] = useState<number | null>(null); // seconds
+  const [retryCount, setRetryCount] = useState(0);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const videoIdRef = useRef<number | null>(null);
   const uploadIdRef = useRef<string>("");
+  const uploadUrlRef = useRef<string>("");
+  const uploadStartRef = useRef<number>(0);
+  const lastProgressRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
 
   // AI + metadata
   const [aiLoading, setAiLoading] = useState(false);
@@ -137,11 +143,81 @@ export default function UploadVideoModal({
     setFile(f);
   };
 
+  const doXhrUpload = useCallback((fileToUpload: File, uploadUrl: string, videoId: number, uploadId: string, attempt: number) => {
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
+    uploadStartRef.current = Date.now();
+    lastProgressRef.current = { time: Date.now(), bytes: 0 };
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round((e.loaded / e.total) * 100);
+      setUploadPct(pct);
+      setUploadedBytes(e.loaded);
+
+      // Speed + ETA calculation using sliding window
+      const now = Date.now();
+      const elapsed = (now - lastProgressRef.current.time) / 1000;
+      if (elapsed > 0.5) {
+        const bytesDelta = e.loaded - lastProgressRef.current.bytes;
+        const speed = bytesDelta / elapsed;
+        setUploadSpeed(speed);
+        const remaining = e.total - e.loaded;
+        setUploadEta(speed > 0 ? Math.ceil(remaining / speed) : null);
+        lastProgressRef.current = { time: now, bytes: e.loaded };
+      }
+
+      saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: e.loaded });
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        clearResume();
+        setUploadPct(100);
+        setUploadSpeed(0);
+        setUploadEta(null);
+        setRetryCount(0);
+        setStep("metadata");
+        setTimeout(() => fetchThumbnails(videoId), 8000);
+      } else {
+        // Non-2xx → retry up to 3 times with exponential backoff
+        if (attempt < 3) {
+          const delay = Math.pow(2, attempt) * 1500;
+          setRetryCount(attempt + 1);
+          setTimeout(() => doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, attempt + 1), delay);
+        } else {
+          setRetryCount(0);
+          setError(`Error de subida (${xhr.status}). El archivo sigue seleccionado — pulsa "Subir a Mux" para intentar de nuevo.`);
+          setStep("pick");
+        }
+      }
+    });
+
+    xhr.addEventListener("error", () => {
+      if (attempt < 3) {
+        const delay = Math.pow(2, attempt) * 1500;
+        setRetryCount(attempt + 1);
+        setTimeout(() => doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, attempt + 1), delay);
+      } else {
+        setRetryCount(0);
+        setError("La subida falló tras 3 intentos. Revisa tu conexión — el archivo sigue seleccionado.");
+        setStep("pick");
+      }
+    });
+
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.send(fileToUpload);
+  }, [channelId]);
+
   const startUpload = useCallback(async (fileToUpload: File, description1Line: string) => {
     setError(null);
     setStep("uploading");
     setUploadPct(0);
     setUploadedBytes(0);
+    setUploadSpeed(0);
+    setUploadEta(null);
+    setRetryCount(0);
 
     let videoId: number;
     let uploadUrl: string;
@@ -154,6 +230,7 @@ export default function UploadVideoModal({
       uploadId = res.uploadId;
       videoIdRef.current = videoId;
       uploadIdRef.current = uploadId;
+      uploadUrlRef.current = uploadUrl;
       saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: 0 });
     } catch {
       setError("Error al iniciar la subida. Intenta de nuevo.");
@@ -174,41 +251,8 @@ export default function UploadVideoModal({
         .finally(() => setAiLoading(false));
     }
 
-    // PUT file directly to Mux upload URL
-    const xhr = new XMLHttpRequest();
-    xhrRef.current = xhr;
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        setUploadPct(pct);
-        setUploadedBytes(e.loaded);
-        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: e.loaded });
-      }
-    });
-
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        clearResume();
-        setUploadPct(100);
-        setStep("metadata");
-        // Load thumbnails when Mux processes (poll after short delay)
-        setTimeout(() => fetchThumbnails(videoId), 8000);
-      } else {
-        setError(`Error de subida (${xhr.status}). Intenta de nuevo.`);
-        setStep("pick");
-      }
-    });
-
-    xhr.addEventListener("error", () => {
-      setError("La subida falló. Revisa tu conexión e intenta de nuevo.");
-      setStep("pick");
-    });
-
-    xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
-    xhr.send(fileToUpload);
-  }, [channelId]);
+    doXhrUpload(fileToUpload, uploadUrl, videoId, uploadId, 0);
+  }, [channelId, doXhrUpload]);
 
   const fetchThumbnails = async (videoId: number) => {
     setThumbsLoading(true);
@@ -376,30 +420,61 @@ export default function UploadVideoModal({
     </div>
   );
 
+  const fmtSpeed = (bps: number) => {
+    if (bps < 1024) return `${bps.toFixed(0)} B/s`;
+    if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
+    return `${(bps / 1024 / 1024).toFixed(1)} MB/s`;
+  };
+  const fmtEta = (sec: number) => {
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+    return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  };
+
   const renderUploading = () => (
     <div className="p-6 space-y-5 flex flex-col items-center text-center">
       <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,.12)", border: "1px solid rgba(212,0,122,.3)" }}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
+        {retryCount > 0 ? (
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FFB454" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 4v6h6" /><path d="M23 20v-6h-6" />
+            <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15" />
+          </svg>
+        ) : (
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        )}
       </div>
 
       <div className="w-full">
         <div className="flex justify-between text-xs text-white/50 mb-1.5">
-          <span>Subiendo a Mux…</span>
-          <span>{uploadPct}%</span>
+          <span>
+            {retryCount > 0
+              ? `Reintentando… (${retryCount}/3)`
+              : "Subiendo a Mux…"}
+          </span>
+          <span style={{ color: retryCount > 0 ? "#FFB454" : undefined }}>{uploadPct}%</span>
         </div>
         <div className="w-full rounded-full overflow-hidden" style={{ height: 6, background: "#1E1E1E" }}>
           <div
             className="h-full rounded-full transition-all duration-300"
-            style={{ width: `${uploadPct}%`, background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+            style={{
+              width: `${uploadPct}%`,
+              background: retryCount > 0
+                ? "linear-gradient(90deg,#FFB454,#D4007A)"
+                : "linear-gradient(90deg,#D4007A,#7B61FF)",
+            }}
           />
         </div>
-        <p className="text-xs text-white/40 mt-1.5">
-          {fmtBytes(uploadedBytes)} de {file ? fmtBytes(file.size) : "—"}
-        </p>
+        <div className="flex justify-between text-xs text-white/40 mt-1.5">
+          <span>{fmtBytes(uploadedBytes)} de {file ? fmtBytes(file.size) : "—"}</span>
+          <span>
+            {uploadSpeed > 0 && `${fmtSpeed(uploadSpeed)}`}
+            {uploadEta !== null && uploadSpeed > 0 && ` · ${fmtEta(uploadEta)}`}
+          </span>
+        </div>
       </div>
 
       {aiLoading && (
@@ -410,7 +485,7 @@ export default function UploadVideoModal({
       )}
 
       <button
-        onClick={() => { xhrRef.current?.abort(); clearResume(); setStep("pick"); }}
+        onClick={() => { xhrRef.current?.abort(); clearResume(); setRetryCount(0); setStep("pick"); }}
         className="text-xs text-white/30 underline decoration-dotted hover:text-white/60"
       >
         Cancelar subida

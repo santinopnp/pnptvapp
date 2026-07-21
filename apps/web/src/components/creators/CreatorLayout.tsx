@@ -61,9 +61,8 @@ const navItems: Array<{
     icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4",
   },
   {
-    // Wizard: OBS, photos, video, content distribution, hangout, documents + identity verification.
     to: "/creators/setup",
-    label: "Documentación",
+    label: "Documentation",
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
   {
@@ -111,11 +110,6 @@ const navItems: Array<{
     icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
   },
   {
-    to: "/creators/consents",
-    label: "Consents",
-    icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
-  },
-  {
     to: "/creators/x-campaigns",
     label: "My AI Tools",
     icon: "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z",
@@ -152,52 +146,17 @@ export default function CreatorLayout() {
     );
   }
 
-  // Allow /creators/apply without creator_status check
-  const isApplyPath = location.pathname === "/creators/apply";
-
   // Admins and superadmins always pass — they manage the panel without being creators themselves.
   const isAdminRole = user?.role === "admin" || user?.role === "superadmin";
-  const isApprovedHold = user?.creator_status === "approved_hold";
   const hasCreatorAccess = isAdminRole || user?.creator_status === "active";
 
   if (!isAuthenticated) {
     return <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname)}`} replace />;
   }
 
-  // Self-service approved users sit in 'approved_hold' until Santino + PNPLatinoBoy
-  // click Activate in the admin panel. Show a friendly waiting screen instead of
-  // bouncing them back to /creators/apply.
-  if (!isApplyPath && !hasCreatorAccess && isApprovedHold) {
-    return (
-      <div className="min-h-dvh bg-pnp-background flex items-center justify-center p-6">
-        <div className="max-w-md w-full glass-card-sm p-8 text-center space-y-4">
-          <div
-            className="w-14 h-14 rounded-full flex items-center justify-center mx-auto"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-          >
-            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h1 className="text-lg font-bold text-white">You're approved — waiting on activation</h1>
-          <p className="text-sm text-pnp-textSecondary">
-            Your creator application is approved. Santino is doing a final review before unlocking the studio.
-            You'll get a notification the moment it's live.
-          </p>
-          <button
-            onClick={() => navigate("/")}
-            className="inline-flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-xl text-white transition-opacity hover:opacity-80"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-          >
-            Back to PNPtv
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isApplyPath && !hasCreatorAccess) {
-    return <Navigate to="/creators/apply" replace />;
+  // Hard gate — no loopholes. Non-creators and non-admins never see the studio shell.
+  if (!hasCreatorAccess) {
+    return <Navigate to="/" replace />;
   }
 
   // Filter navItems by the user's creator_role. Admins see everything.

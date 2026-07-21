@@ -4,6 +4,7 @@ import { Helmet } from "react-helmet-async";
 import { StepDots } from "@pnptv/ui-kit";
 import { getOwnChannels, provisionCreatorDefaults, uploadCreatorMediaFile, listOwnCreatorMedia, getCreatorSetupStatus, getCreatorConsents, type CreatorChannel, type CreatorMediaItem, type ChannelVideo } from "@/lib/api";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
+import { CreatorConsents } from "@/components/creators/CreatorLayout";
 
 const WIZARD_STORAGE_KEY = "pnptv_studio_wizard_v1";
 const TOTAL_STEPS = 6;
@@ -750,6 +751,14 @@ export default function CreatorStudioWizard() {
             {step === TOTAL_STEPS ? "Finish" : "Next →"}
           </button>
         </div>
+      </div>
+
+      {/* ── Documents & Consents ─────────────────────────────────────────── */}
+      <div className="mt-6">
+        <p className="text-[11px] font-bold uppercase tracking-widest mb-4" style={{ color: "rgba(255,255,255,0.45)" }}>
+          Documents & Consents
+        </p>
+        <CreatorConsents />
       </div>
     </div>
   );

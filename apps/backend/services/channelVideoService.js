@@ -929,7 +929,7 @@ async function createMuxUpload(userId, channelId) {
   const { uploadId, uploadUrl } = await muxService.createDirectUpload();
   const { rows: [video] } = await query(
     `INSERT INTO channel_videos
-       (creator_id, channel_id, title, status, mux_upload_id, mux_status)
+       (uploader_id, channel_id, title, status, mux_upload_id, mux_status)
      VALUES ($1, $2, 'Untitled', 'processing', $3, 'waiting')
      RETURNING id, mux_upload_id`,
     [userId, channelId, uploadId]
@@ -941,11 +941,11 @@ async function createMuxUpload(userId, channelId) {
 
 async function aiMetadataAll(userId, channelId, videoId, oneLiner) {
   const { rows: [video] } = await query(
-    'SELECT id, creator_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
+    'SELECT id, uploader_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
     [videoId, channelId]
   );
   if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
-  if (String(video.creator_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+  if (String(video.uploader_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
 
   const prompt = `You are a metadata assistant for PNPtv!, an adult gay/queer creator platform.
 The creator wrote this one-liner about their video: "${oneLiner.replace(/"/g, "'")}"
@@ -994,11 +994,11 @@ Tags should be relevant adult content categories. Return 4-6 tags max.`;
 async function getMuxThumbnails(userId, channelId, videoId) {
   const muxService = require('./muxService');
   const { rows: [video] } = await query(
-    'SELECT mux_playback_id, creator_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
+    'SELECT mux_playback_id, uploader_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
     [videoId, channelId]
   );
   if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
-  if (String(video.creator_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+  if (String(video.uploader_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
   if (!video.mux_playback_id) return [];
   return muxService.getThumbnailOptions(video.mux_playback_id);
 }
@@ -1043,6 +1043,24 @@ async function handleMuxWebhook(event) {
       [data.id]
     );
     logger.warn('mux webhook: asset errored', { assetId: data.id });
+  }
+
+  if (type === 'video.upload.cancelled') {
+    const uploadId = data.id;
+    await query(
+      `UPDATE channel_videos SET mux_status = 'cancelled', status = 'failed' WHERE mux_upload_id = $1`,
+      [uploadId]
+    );
+    logger.warn('mux webhook: upload cancelled', { uploadId });
+  }
+
+  if (type === 'video.upload.errored') {
+    const uploadId = data.id;
+    await query(
+      `UPDATE channel_videos SET mux_status = 'errored', status = 'failed' WHERE mux_upload_id = $1`,
+      [uploadId]
+    );
+    logger.warn('mux webhook: upload errored', { uploadId, error: data.error?.message });
   }
 }
 

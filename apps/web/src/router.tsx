@@ -232,9 +232,7 @@ const CreatorSettings = lazy(() => import("@/pages/creators/CreatorSettings"));
 const CreatorApply = lazy(() => import("@/pages/creators/CreatorApply"));
 const Appeal = lazy(() => import("@/pages/Appeal"));
 const CreatorSubscribers = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorSubscribers })));
-const CreatorConsents = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorConsents })));
 const CreatorXCampaignsPage = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorXCampaigns })));
-const CreatorMyDocuments = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorMyDocuments })));
 const CreatorBenefits = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorBenefits })));
 const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorContent").then(m => ({ default: m.CreatorChannelsHub })));
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
@@ -647,6 +645,16 @@ export const router = createBrowserRouter([
           </ModuleLoader>
         ),
       },
+      {
+        path: "creators/apply",
+        element: (
+          <ModuleLoader>
+            <VerificationGate>
+              <CreatorApply />
+            </VerificationGate>
+          </ModuleLoader>
+        ),
+      },
       { path: "creator", element: <Navigate to="/creators" replace /> },
       { path: "creator/:username", element: <CreatorUsernameRedirect /> },
       {
@@ -971,9 +979,8 @@ export const router = createBrowserRouter([
       { path: "availability", element: <ModuleLoader><CreatorAvailability /></ModuleLoader> },
       { path: "analytics", element: <ModuleLoader><CreatorAnalytics /></ModuleLoader> },
       { path: "settings", element: <ModuleLoader><CreatorSettings /></ModuleLoader> },
-      { path: "apply", element: <ModuleLoader><CreatorApply /></ModuleLoader> },
       { path: "subscribers", element: <ModuleLoader><CreatorSubscribers /></ModuleLoader> },
-      { path: "consents", element: <ModuleLoader><CreatorConsents /></ModuleLoader> },
+      { path: "consents", element: <Navigate to="/creators/setup" replace /> },
       { path: "x-campaigns", element: <ModuleLoader><CreatorXCampaignsPage /></ModuleLoader> },
       { path: "documents", element: <Navigate to="/creators/setup" replace /> },
       { path: "channels-hub", element: <ModuleLoader><CreatorChannelsHub /></ModuleLoader> },

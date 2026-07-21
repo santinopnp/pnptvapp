@@ -1641,20 +1641,20 @@ export function Layout() {
            clears the nav on notched phones. Cruise/island: pill sits at
            calc(1.75rem + safe-area) so we need ~5rem + safe-area clearance.
            Desktop: no bottom nav, just 3rem for the AnnouncementStrip. */}
-      <main className={`flex-1 overflow-y-auto overscroll-contain lg:overflow-visible ${
+      <main className={`flex-1 overflow-y-auto overscroll-contain lg:overflow-visible lg:pb-12 lg:pl-72 ${
         cruiseMode
-          ? "pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:pb-12"
-          : "lg:pb-12 lg:pl-72 pb-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))]"
+          ? "pb-[calc(5rem+env(safe-area-inset-bottom,0px))]"
+          : "pb-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))]"
       }`}>
         <Outlet />
       </main>
 
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
-        <div className={`fixed left-0 right-0 z-40 pointer-events-none ${
+        <div className={`fixed left-0 right-0 z-40 pointer-events-none lg:bottom-0 lg:left-72 ${
           cruiseMode
             ? "bottom-[calc(5rem+env(safe-area-inset-bottom,0px))]"
-            : "bottom-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))] lg:bottom-0 lg:left-72"
+            : "bottom-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))]"
         }`}>
           <div className="pointer-events-auto">
             <AnnouncementStrip />
@@ -1662,8 +1662,8 @@ export function Layout() {
         </div>
       )}
 
-      {/* Bottom nav */}
-      <div className={`flex-shrink-0 ${cruiseMode ? "" : "lg:hidden"}`}>
+      {/* Bottom nav — always hidden on desktop; cruise/classic applies to mobile only */}
+      <div className="flex-shrink-0 lg:hidden">
         <BottomNav />
       </div>
 
