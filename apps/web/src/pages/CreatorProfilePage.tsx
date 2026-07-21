@@ -20,13 +20,9 @@ import { Helmet } from "react-helmet-async";
 import {
   Lock,
   CheckCircle2,
-  Play,
   X,
   AlertTriangle,
-  Users,
-  BadgeCheck,
   PhoneCall,
-  Star,
   RefreshCw,
   Heart,
   Calendar,
@@ -34,7 +30,6 @@ import {
   Copy,
   Check,
   Clock,
-  Monitor,
   ChevronDown,
   UserPlus,
   UserCheck,
@@ -42,7 +37,6 @@ import {
   MoreVertical,
   Flag,
   Ban,
-  Flame,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -723,6 +717,19 @@ function SubscribePanel({ creatorId, priceUsd, videoCount, photoCount, onSuccess
   );
 }
 
+// ─── Media section heading — matches design spec (10px, 700, #A1A1A3, .08em) ──
+
+function MediaSectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3
+      className="font-bold uppercase"
+      style={{ fontSize: 10, letterSpacing: "0.08em", color: "#A1A1A3", margin: "0 0 8px" }}
+    >
+      {children}
+    </h3>
+  );
+}
+
 // ─── Section heading ──────────────────────────────────────────────────────────
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
@@ -1187,7 +1194,26 @@ export default function CreatorProfilePage() {
       </Helmet>
 
       <div className="min-h-dvh" style={{ background: "var(--pnp-background)" }}>
-        <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
+        {/* ── Volver header — black bar, design spec item 1 ─────────────────────── */}
+        <div
+          className="flex items-center px-4 py-3"
+          style={{ background: "#000", borderBottom: "1px solid #1c1c1c" }}
+        >
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-2 text-white"
+            style={{ fontSize: 13, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+            aria-label="Volver"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            Volver
+          </button>
+        </div>
+
+        <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
 
           {/* ── 1. HEADER CARD ──────────────────────────────────────────────── */}
           <section
@@ -1195,42 +1221,49 @@ export default function CreatorProfilePage() {
             style={{ background: "var(--pnp-surface)" }}
             aria-label="Perfil del creador"
           >
-            {/* Avatar — gold ring for creators, per design tokens */}
-            <div className="relative rounded-full" style={{ boxShadow: "0 0 0 3px #000, 0 0 0 6px #FFB454" }}>
+            {/* Avatar — 84px circle, 3px #FFB454 ring + 3px black gap */}
+            <div
+              className="relative rounded-full flex-none"
+              style={{
+                width: 84,
+                height: 84,
+                border: "3px solid #FFB454",
+                boxShadow: "0 0 0 3px #000",
+                borderRadius: "50%",
+                overflow: "hidden",
+              }}
+            >
               <UserAvatar
                 userId={creator.id}
                 photoUrl={creator.photo_url}
                 displayName={creator.first_name}
                 size="xl"
                 linkToProfile={false}
-                showOnline={true}
+                showOnline={false}
               />
             </div>
 
-            {/* Name + verified */}
+            {/* Identity row: name (Ethnocentric) + badges + price + shield, then @handle below */}
             <div className="space-y-1 min-w-0 w-full">
-              <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                <h1 className="text-2xl font-bold text-pnp-textPrimary leading-tight">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <h1
+                  className="text-pnp-textPrimary leading-tight"
+                  style={{ fontSize: 20, fontWeight: 400, fontFamily: "'Ethnocentric', sans-serif", letterSpacing: "0.02em", margin: 0 }}
+                >
                   {creator.first_name}
                 </h1>
-                {creator.creator_verified && (
-                  <BadgeCheck
-                    size={20}
-                    className="text-pnp-accent shrink-0"
-                    aria-label="Creador verificado"
-                  />
-                )}
-              </div>
-
-              <p className="text-sm text-pnp-textSecondary">@{creator.username}</p>
-
-              <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
                 <CreatorBadgeRow
                   isPrime={creator.isPrime}
                   creatorRole={creator.creator_role}
                   priceUsd={creator.creator_price_usd}
                 />
+                {creator.creator_verified && (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="#5ED1C4" aria-label="Creador verificado">
+                    <path d="M12 2l8 3.5v5.1c0 5-3.4 9.7-8 11.4-4.6-1.7-8-6.4-8-11.4V5.5L12 2z" />
+                  </svg>
+                )}
               </div>
+              <p className="text-pnp-textSecondary" style={{ fontSize: 12 }}>@{creator.username}</p>
             </div>
 
             {/* Bio */}
@@ -1250,43 +1283,43 @@ export default function CreatorProfilePage() {
                 <div
                   key={stat.label}
                   className="rounded-lg py-3 px-1.5 text-center"
-                  style={{ background: "#161616", border: "1px solid #2A2A2A" }}
+                  style={{ background: "#161616", border: "1px solid #2A2A2A", borderRadius: 8 }}
                 >
-                  <p className="text-base font-bold text-white leading-none">{stat.value.toLocaleString()}</p>
-                  <p className="mt-1 text-[8px] font-semibold tracking-widest text-pnp-textSecondary">{stat.label}</p>
+                  <p className="font-bold text-white leading-none" style={{ fontSize: 16 }}>{stat.value.toLocaleString()}</p>
+                  <p className="mt-1 font-semibold" style={{ fontSize: 8, letterSpacing: "0.08em", color: "#A1A1A3" }}>{stat.label}</p>
                 </div>
               ))}
             </div>
 
             {/* ── Meta row: Exclusivo / Llamadas / Miembro desde ──────────────── */}
-            <div className="flex items-center justify-center gap-3.5 flex-wrap text-[11px] text-pnp-textSecondary">
+            <div className="flex items-center justify-center gap-3.5 flex-wrap" style={{ fontSize: 11, color: "#A1A1A3" }}>
               <span className="flex items-center gap-1">
-                <Lock size={11} className="text-pnp-accent" aria-hidden="true" />
-                <b className="text-white">{creator.exclusiveCount}</b> Exclusivo
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth="2.2" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <b style={{ color: "#fff" }}>{creator.exclusiveCount}</b> Exclusivo
               </span>
               <span>
-                <b className="text-white">{creator.completedCallsCount}</b> Llamadas
+                <b style={{ color: "#fff" }}>{creator.completedCallsCount}</b> Llamadas
               </span>
               {creator.memberSince && (
                 <span className="flex items-center gap-1">
-                  <Calendar size={11} aria-hidden="true" />
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#A1A1A3" strokeWidth="2" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                  </svg>
                   Miembro desde {new Date(creator.memberSince).toLocaleDateString("es-ES", { month: "long", year: "numeric" })}
                 </span>
               )}
             </div>
 
-            {/* ── Action row: Siguiendo / Mensaje / ⋮ ─────────────────────────── */}
+            {/* ── Action row: Siguiendo / Mensaje / ⋮ — only for other profiles ── */}
             {!isOwnProfile && (
               <div className="flex items-center gap-2 w-full">
                 <button
                   onClick={handleToggleFollow}
                   disabled={followLoading}
                   className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] border text-sm font-semibold transition-colors disabled:opacity-50 min-h-[44px]"
-                  style={
-                    isFollowing
-                      ? { borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }
-                      : { borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }
-                  }
+                  style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
                 >
                   {isFollowing ? <UserCheck size={14} aria-hidden="true" /> : <UserPlus size={14} aria-hidden="true" />}
                   {isFollowing ? "Siguiendo" : "Seguir"}
@@ -1345,7 +1378,7 @@ export default function CreatorProfilePage() {
               /* Paused state */
               <div className="flex flex-col gap-2">
                 <div
-                  className="flex items-center justify-center gap-2 py-3 rounded-2xl border border-white/10 text-sm font-medium text-pnp-textSecondary min-h-[52px]"
+                  className="flex items-center justify-center gap-2 py-3 rounded-[10px] border border-white/10 text-sm font-medium text-pnp-textSecondary min-h-[52px]"
                   style={{ background: "var(--pnp-surface)" }}
                 >
                   Suscripciones pausadas
@@ -1354,24 +1387,21 @@ export default function CreatorProfilePage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
                       style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
                     >
-                      <PhoneCall size={16} aria-hidden="true" />
-                      {cheapestPackage
-                        ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
-                        : "Reservar llamada"}
+                      <PhoneCall size={14} aria-hidden="true" />
+                      Reservar llamada
                     </button>
-                    {nextAvailability && (
-                      <button
-                        onClick={() => setShowCalendarPopover((v) => !v)}
-                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold transition-all active:scale-[0.98] min-h-[52px] shrink-0"
-                        style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                        aria-label="Ver calendario"
-                      >
-                        <Calendar size={16} aria-hidden="true" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setShowCalendarPopover((v) => !v)}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all active:scale-[0.98] min-h-[52px]"
+                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                      aria-label="Ver calendario"
+                    >
+                      <Calendar size={14} aria-hidden="true" />
+                      Ver calendario
+                    </button>
                   </div>
                 )}
               </div>
@@ -1395,65 +1425,60 @@ export default function CreatorProfilePage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
                       style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
                     >
-                      <PhoneCall size={16} aria-hidden="true" />
-                      {cheapestPackage
-                        ? `Llamada desde ${formatPrice(cheapestPackage.price_usd)}`
-                        : "Reservar llamada"}
+                      <PhoneCall size={14} aria-hidden="true" />
+                      Reservar llamada
                     </button>
-                    {nextAvailability && (
-                      <button
-                        onClick={() => setShowCalendarPopover((v) => !v)}
-                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold transition-all active:scale-[0.98] min-h-[52px] shrink-0"
-                        style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                        aria-label="Ver calendario"
-                      >
-                        <Calendar size={16} aria-hidden="true" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setShowCalendarPopover((v) => !v)}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all active:scale-[0.98] min-h-[52px]"
+                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                    >
+                      <Calendar size={14} aria-hidden="true" />
+                      Ver calendario
+                    </button>
                   </div>
                 )}
               </div>
             ) : (
-              /* Default CTA: subscribe + book */
+              /* Default CTA: full-width subscribe, then secondary CTAs row below */
               <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+                {/* Subscribe — full-width, teal gradient, sparkle icon */}
+                {!creator.creator_subscription_paused && creator.creator_price_usd > 0 && (
                   <button
                     onClick={handleSubscribeCta}
-                    className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl text-base font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
-                    style={{ background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b" }}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                    style={{ background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b", fontSize: 14 }}
                   >
-                    <Star size={16} aria-hidden="true" />
-                    Suscribirse · {formatPrice(creator.creator_price_usd)}/mes
+                    {/* Sparkle icon matching design spec */}
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                    Suscribirse ${creator.creator_price_usd.toFixed(0)}/mo
                   </button>
-
-                  {hasCallPackages && (
+                )}
+                {/* Secondary CTAs — Reservar llamada + Ver calendario */}
+                {hasCallPackages && (
+                  <div className="flex gap-2">
                     <button
                       onClick={() => setShowBookCall(true)}
-                      className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px] shrink-0"
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[44px]"
                       style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
-                      aria-label="Reservar llamada"
                     >
-                      <PhoneCall size={16} aria-hidden="true" />
-                      <span className="hidden sm:inline">
-                        {cheapestPackage
-                          ? `Desde ${formatPrice(cheapestPackage.price_usd)}`
-                          : "Llamada"}
-                      </span>
+                      <PhoneCall size={14} aria-hidden="true" />
+                      Reservar llamada
                     </button>
-                  )}
-                </div>
-                {hasCallPackages && nextAvailability && (
-                  <button
-                    onClick={() => setShowCalendarPopover((v) => !v)}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl text-xs font-bold transition-all active:scale-[0.98]"
-                    style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                  >
-                    <Calendar size={14} aria-hidden="true" />
-                    Ver calendario
-                  </button>
+                    <button
+                      onClick={() => setShowCalendarPopover((v) => !v)}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-xs font-bold transition-all active:scale-[0.98] min-h-[44px]"
+                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
+                    >
+                      <Calendar size={14} aria-hidden="true" />
+                      Ver calendario
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -1495,17 +1520,13 @@ export default function CreatorProfilePage() {
 
           {/* ── 3. CONTENIDO — Fotos / Videos / Canales / Hangout ───────────── */}
           <section aria-label="Contenido del creador">
-            <SectionHeading>Contenido</SectionHeading>
-
             {hasContenido ? (
-              <div className="space-y-6">
-                {/* ── 3a. Fotos — horizontal scroll strip ─────────────────────── */}
+              <div className="space-y-5">
+                {/* ── 3a. FOTOS — 96×120 horizontal scroll strip ──────────────── */}
                 {hasPhotos && (
                   <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Fotos destacadas
-                    </h3>
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
+                    <MediaSectionHeading>FOTOS</MediaSectionHeading>
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
                       {publicPhotos.map((photo) => {
                         const thumbSrc =
                           (photo as unknown as { thumbUrl?: string | null }).thumbUrl ??
@@ -1517,10 +1538,8 @@ export default function CreatorProfilePage() {
                             type="button"
                             onClick={() => setLightboxItem(photo)}
                             aria-label={photo.caption ? `Ver foto: ${photo.caption}` : "Ver foto"}
-                            className="flex-none w-[28vw] sm:w-32 aspect-square rounded-xl overflow-hidden
-                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-opacity hover:opacity-85 active:scale-[0.97]"
+                            className="flex-none rounded-lg overflow-hidden focus:outline-none transition-opacity hover:opacity-85 active:scale-[0.97]"
+                            style={{ width: 96, height: 120 }}
                           >
                             {thumbSrc ? (
                               <img
@@ -1540,19 +1559,17 @@ export default function CreatorProfilePage() {
                         );
                       })}
                     </div>
-                    <p className="mt-2 text-xs text-pnp-textSecondary">
+                    <p style={{ marginTop: 6, fontSize: 10, color: "#6b6b70" }}>
                       Hasta 10 fotos destacadas elegidas por el creador desde su feed.
                     </p>
                   </div>
                 )}
 
-                {/* ── 3b. Videos — horizontal scroll strip ────────────────────── */}
+                {/* ── 3b. VIDEOS — 140×88 horizontal scroll strip ─────────────── */}
                 {hasFeaturedVideos && (
                   <div>
-                    <h3 className="text-sm font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-                      Videos
-                    </h3>
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1">
+                    <MediaSectionHeading>VIDEOS</MediaSectionHeading>
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
                       {featuredVideoList.map((vid) => {
                         const duration = formatDuration(vid.duration_seconds);
                         return (
@@ -1565,10 +1582,8 @@ export default function CreatorProfilePage() {
                               )
                             }
                             aria-label={`Reproducir: ${vid.title}`}
-                            className="group relative flex-none w-[58vw] sm:w-56 aspect-video rounded-2xl overflow-hidden
-                                       snap-start focus:outline-none focus:ring-2 focus:ring-pnp-accent
-                                       focus:ring-offset-2 focus:ring-offset-pnp-background
-                                       transition-transform active:scale-[0.98]"
+                            className="group relative flex-none rounded-lg overflow-hidden focus:outline-none transition-transform active:scale-[0.98]"
+                            style={{ width: 140, height: 88 }}
                           >
                             {vid.thumb_url ? (
                               <img
@@ -1586,27 +1601,30 @@ export default function CreatorProfilePage() {
                               />
                             )}
 
-                            <div
-                              className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-black/0"
-                              aria-hidden="true"
-                            />
-
+                            {/* Center play button */}
                             <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                              <div
-                                className="flex items-center justify-center w-12 h-12 rounded-full
-                                           bg-white/20 backdrop-blur-sm border border-white/30
-                                           group-hover:bg-white/30 group-hover:scale-110
-                                           transition-all duration-150"
+                              <span
+                                className="flex items-center justify-center rounded-full"
+                                style={{ width: 30, height: 30, background: "rgba(0,0,0,.55)" }}
                               >
-                                <Play size={22} className="text-white ml-0.5" fill="currentColor" />
-                              </div>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
+                              </span>
                             </div>
 
+                            {/* Duration chip — bottom-right */}
                             {duration && (
                               <span
-                                className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md
-                                           text-[10px] font-semibold text-white
-                                           bg-black/60 backdrop-blur-sm"
+                                className="absolute"
+                                style={{
+                                  bottom: 6,
+                                  right: 6,
+                                  fontSize: 9,
+                                  fontWeight: 600,
+                                  color: "#fff",
+                                  background: "rgba(0,0,0,.6)",
+                                  borderRadius: 4,
+                                  padding: "1px 5px",
+                                }}
                                 aria-hidden="true"
                               >
                                 {duration}
@@ -1616,7 +1634,7 @@ export default function CreatorProfilePage() {
                         );
                       })}
                     </div>
-                    <p className="mt-2 text-xs text-pnp-textSecondary">
+                    <p style={{ marginTop: 6, fontSize: 10, color: "#6b6b70" }}>
                       Hasta 5 videos destacados elegidos por el creador.
                     </p>
                   </div>
@@ -1625,31 +1643,36 @@ export default function CreatorProfilePage() {
                 {/* ── 3c. Canales — collapsible accordion ─────────────────────── */}
                 {hasChannels && (
                   <div
-                    className="rounded-2xl overflow-hidden border border-white/8"
-                    style={{ background: "var(--pnp-surface)" }}
+                    className="rounded-[12px] overflow-hidden"
+                    style={{ border: "1px solid #2A2A2A", background: "#161616" }}
                   >
                     <button
                       type="button"
                       onClick={() => setChannelsExpanded((v) => !v)}
-                      className="w-full flex items-center gap-3 p-4 text-left"
+                      className="w-full flex items-center gap-2.5 p-3.5 text-left"
+                      style={{ padding: 14 }}
                       aria-expanded={channelsExpanded}
                     >
-                      <Monitor size={20} className="text-pnp-accent flex-none" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm text-pnp-textPrimary">Canales</div>
-                        <div className="text-xs text-pnp-textSecondary">
+                      {/* TV icon in purple — matches design spec */}
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7B61FF" strokeWidth="2" aria-hidden="true" className="flex-none">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-semibold text-sm text-white">Canales</span>
+                        <span className="block mt-0.5" style={{ fontSize: 10, color: "#A1A1A3" }}>
                           {channels.length} {channels.length === 1 ? "canal" : "canales"} de este creador
-                        </div>
-                      </div>
+                        </span>
+                      </span>
                       <ChevronDown
-                        size={18}
-                        className={`text-pnp-textSecondary flex-none transition-transform ${channelsExpanded ? "rotate-180" : ""}`}
+                        size={13}
+                        className={`flex-none transition-transform duration-300 ${channelsExpanded ? "rotate-180" : ""}`}
+                        style={{ color: "#A1A1A3" }}
                         aria-hidden="true"
                       />
                     </button>
 
                     {channelsExpanded && (
-                      <div className="border-t border-white/8 divide-y divide-white/8">
+                      <div className="flex flex-col gap-1.5 p-1.5 pt-0">
                         {channels.map((ch) => {
                           const info = channelAccessInfo(ch);
                           return (
@@ -1657,11 +1680,12 @@ export default function CreatorProfilePage() {
                               key={ch.id}
                               type="button"
                               onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
-                              className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/5 transition-colors"
+                              className="w-full flex items-center gap-2.5 text-left hover:bg-white/5 transition-colors rounded-xl"
+                              style={{ padding: "12px 14px", border: "1px solid #2A2A2A", background: "#111", borderRadius: 12 }}
                             >
                               <div
-                                className="w-11 h-11 rounded-xl overflow-hidden flex-none"
-                                style={{ background: "var(--pnp-background)" }}
+                                className="rounded-[10px] overflow-hidden flex-none"
+                                style={{ width: 34, height: 34, background: "var(--pnp-background)" }}
                               >
                                 {ch.cover_image_url && (
                                   <img
@@ -1674,15 +1698,18 @@ export default function CreatorProfilePage() {
                                 )}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-sm text-pnp-textPrimary truncate">{ch.name}</div>
-                                <div className="text-xs text-pnp-textSecondary truncate">{info.subtitle}</div>
+                                <p className="font-semibold text-white truncate" style={{ fontSize: 12, margin: 0 }}>{ch.name}</p>
+                                <p className="truncate" style={{ fontSize: 10, color: "#A1A1A3", margin: "2px 0 0" }}>{info.subtitle}</p>
                               </div>
                               <span
-                                className="flex-none px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                className="flex-none rounded-full font-bold"
                                 style={{
+                                  padding: "3px 9px",
+                                  fontSize: 8,
+                                  letterSpacing: "0.06em",
                                   background: `${info.badgeColor}22`,
                                   color: info.badgeColor,
-                                  border: `1px solid ${info.badgeColor}55`,
+                                  border: `1px solid ${info.badgeColor}80`,
                                 }}
                               >
                                 {info.badgeLabel}
@@ -1695,36 +1722,49 @@ export default function CreatorProfilePage() {
                   </div>
                 )}
 
-                {/* ── 3d. Hangout — full-width CTA card ───────────────────────── */}
+                {/* ── 3d. Hangout — teal-tinted CTA card, always shows PRIVADO ── */}
                 {hasHangout && hangout && (
                   <div
-                    className="rounded-2xl p-4 border"
-                    style={{ background: "rgba(94,209,196,0.06)", borderColor: "rgba(94,209,196,0.35)" }}
+                    className="rounded-[12px] p-3.5"
+                    style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)", padding: 14 }}
                   >
-                    <div className="flex items-center gap-2 mb-2">
-                      <Users size={18} style={{ color: "#5ED1C4" }} className="flex-none" aria-hidden="true" />
-                      <span className="font-bold text-sm text-pnp-textPrimary flex-1 min-w-0 truncate">
-                        {hangout.name}
-                      </span>
-                      {!(isSubscribed || isOwnProfile) && (
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-none"
-                          style={{ background: "rgba(212,0,122,.16)", color: "#FF4DA6", border: "1px solid rgba(212,0,122,.5)" }}
-                        >
-                          <Lock size={10} /> PRIVADO
+                    <div className="flex items-start gap-2.5">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5ED1C4" strokeWidth="2" aria-hidden="true" className="flex-none mt-0.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-white" style={{ fontSize: 13 }}>{hangout.name}</span>
+                          {/* PRIVADO badge — always visible on hangout card */}
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full font-bold"
+                            style={{
+                              padding: "2px 8px",
+                              fontSize: 8,
+                              letterSpacing: "0.06em",
+                              background: "rgba(212,0,122,.16)",
+                              color: "#FF4DA6",
+                              border: "none",
+                            }}
+                          >
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                            </svg>
+                            PRIVADO
+                          </span>
+                        </div>
+                        <span className="block mt-1 leading-relaxed" style={{ fontSize: 10, color: "#A1A1A3", lineHeight: 1.5 }}>
+                          Exclusivo para miembros de pago activos — del canal de pago del creador o de su perfil.
                         </span>
-                      )}
+                      </div>
                     </div>
-                    <p className="text-xs text-pnp-textSecondary mb-3">
-                      Exclusivo para miembros de pago activos — del canal de pago del creador o de su perfil.
-                    </p>
                     <button
                       type="button"
                       onClick={() =>
                         isSubscribed || isOwnProfile ? navigate(`/hangouts/${hangout.id}`) : handleSubscribeCta()
                       }
-                      className="w-full rounded-xl py-2.5 text-sm font-bold transition-colors"
-                      style={{ color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
+                      className="w-full rounded-[10px] font-bold transition-colors mt-3"
+                      style={{ padding: 11, fontSize: 12, color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
                     >
                       Entrar al hangout →
                     </button>
@@ -2432,12 +2472,13 @@ function RecentPostCard({ post, creator }: RecentPostCardProps) {
         </div>
       )}
 
-      {/* Actions row */}
-      <div className="flex items-center gap-5 text-xs text-pnp-textSecondary" onClick={(e) => e.stopPropagation()}>
+      {/* Actions row — ♡ 💬 ↗ matching design spec */}
+      <div className="flex items-center gap-5 text-xs" style={{ color: "#A1A1A3" }} onClick={(e) => e.stopPropagation()}>
         <button
           onClick={handleLike}
           aria-label={likedByMe ? "Unlike" : "Like"}
-          className={`flex items-center gap-1.5 transition-colors ${likedByMe ? "text-red-500" : "hover:text-red-400"}`}
+          className={`flex items-center gap-1.5 transition-colors ${likedByMe ? "" : "hover:opacity-70"}`}
+          style={likedByMe ? { color: "#ef4444" } : {}}
         >
           <Heart size={14} fill={likedByMe ? "currentColor" : "none"} aria-hidden="true" />
           <span>{likesCount.toLocaleString()}</span>
@@ -2445,17 +2486,19 @@ function RecentPostCard({ post, creator }: RecentPostCardProps) {
         <button
           onClick={goToPost}
           aria-label="Comentar"
-          className="flex items-center gap-1.5 hover:text-pnp-accent transition-colors"
+          className="flex items-center gap-1.5 hover:opacity-70 transition-opacity"
         >
           <MessageCircle size={14} aria-hidden="true" />
           <span>{(post.replies_count || 0).toLocaleString()}</span>
         </button>
         <button
           onClick={goToPost}
-          aria-label="Hype"
-          className="flex items-center gap-1.5 hover:text-orange-400 transition-colors"
+          aria-label="Compartir"
+          className="flex items-center gap-1 hover:opacity-70 transition-opacity"
         >
-          <Flame size={14} aria-hidden="true" />
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+          </svg>
         </button>
       </div>
     </article>

@@ -296,7 +296,7 @@ function registerPrimeChannelMirrorHandler(bot) {
         return;
       }
 
-      // ── Non-video posts → social_posts bridge (existing behaviour) ───────────
+      // ── Non-video posts → pending creator approval ────────────────────────────
       const bridgeTs = ts + 1;
       let bridgeMediaUrl = null;
       let bridgeMediaType = null;
@@ -308,22 +308,48 @@ function registerPrimeChannelMirrorHandler(bot) {
         }
       }
 
-      const { rows: bridgeRows } = await query(
-        `INSERT INTO social_posts
-           (user_id, content, media_url, media_type, channel_id,
-            source_channel, is_wof, is_exclusive, is_shareable, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'channel_bridge', false, false, true, $6, $6)
-         RETURNING id`,
-        [creatorId, content || '', bridgeMediaUrl, bridgeMediaType, creatorChannelId, originalDate]
-      );
+      let bridgeRedis;
+      try { bridgeRedis = getRedis(); } catch { /* continue */ }
 
-      if (bridgeRows[0]?.id) {
-        await query(
-          `UPDATE creator_channels SET post_count = post_count + 1, updated_at = NOW() WHERE id = $1`,
-          [creatorChannelId]
-        );
-        logger.info(`[ChannelBridge] Bridged TG ${chatId} → app channel #${creatorChannelId} post #${bridgeRows[0].id}`);
+      if (!bridgeRedis) {
+        logger.warn(`[ChannelBridge] Redis unavailable, skipping unapproved post from TG ${chatId}`);
+        return;
       }
+
+      const pendingKey = `channel_bridge:post:${creatorChannelId}:${ts}`;
+      await bridgeRedis.set(pendingKey, JSON.stringify({
+        userId: creatorId,
+        content: content || '',
+        mediaUrl: bridgeMediaUrl,
+        mediaType: bridgeMediaType,
+        channelId: creatorChannelId,
+        originalDate: originalDate.toISOString(),
+      }), 'EX', 86400);
+
+      const postPreview = content ? content.slice(0, 180) + (content.length > 180 ? '…' : '') : '_(Sin texto)_';
+      const mediaLabel = bridgeMediaType === 'image' ? '🖼 Imagen' : bridgeMediaType ? `📎 ${bridgeMediaType}` : '';
+
+      try {
+        await ctx.telegram.sendMessage(
+          creatorId,
+          `📢 *Nueva publicación desde tu canal de Telegram*\n\n` +
+          `${mediaLabel ? mediaLabel + '\n' : ''}${postPreview}\n\n` +
+          `¿Deseas publicarla en PNPtv?`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '✅ Publicar',  callback_data: `cbp:approve:${pendingKey}` },
+                { text: '🗑 Descartar', callback_data: `cbp:discard:${pendingKey}` },
+              ]],
+            },
+          }
+        );
+      } catch (dmErr) {
+        logger.warn(`[ChannelBridge] Failed to DM creator ${creatorId} for post approval: ${dmErr.message}`);
+      }
+
+      logger.info(`[ChannelBridge] Post queued for approval: ${pendingKey}`);
     } catch (err) {
       logger.error(`[PrimeMirror] Error handling channel_post:`, err.message);
     }
@@ -562,6 +588,70 @@ function registerPrimeChannelMirrorHandler(bot) {
       await ctx.editMessageText(
         `⚠️ Error al procesar: ${err.message.slice(0, 120)}\n\nIntenta desde https://pnptv.app`
       ).catch(() => {});
+    }
+  });
+
+  // ── Phase 3b: Post approval callbacks ─────────────────────────────────────
+
+  bot.action(/^cbp:(approve|discard):(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const [, action, pendingKey] = ctx.match;
+
+    try {
+      const telegramId = String(ctx.from.id);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return ctx.editMessageText('⚠️ No autorizado.').catch(() => {});
+
+      let redis;
+      try { redis = getRedis(); } catch {
+        return ctx.editMessageText('⚠️ Error interno. Intenta de nuevo.').catch(() => {});
+      }
+
+      const rawData = await redis.get(pendingKey).catch(() => null);
+      if (!rawData) {
+        return ctx.editMessageText('⚠️ Esta publicación ya fue procesada o expiró.').catch(() => {});
+      }
+
+      if (action === 'discard') {
+        await redis.del(pendingKey).catch(() => {});
+        return ctx.editMessageText('🗑 Publicación descartada.').catch(() => {});
+      }
+
+      const data = JSON.parse(rawData);
+
+      const { rows: chRows } = await query(
+        'SELECT 1 FROM creator_channels WHERE id = $1 AND creator_id = $2',
+        [data.channelId, user.id]
+      );
+      if (!chRows[0]) {
+        return ctx.editMessageText('⚠️ No tienes permiso para aprobar esta publicación.').catch(() => {});
+      }
+
+      const { rows: postRows } = await query(
+        `INSERT INTO social_posts
+           (user_id, content, media_url, media_type, channel_id,
+            source_channel, is_wof, is_exclusive, is_shareable, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'channel_bridge', false, false, true, $6, NOW())
+         RETURNING id`,
+        [data.userId, data.content, data.mediaUrl, data.mediaType, data.channelId, data.originalDate]
+      );
+
+      await redis.del(pendingKey).catch(() => {});
+
+      if (postRows[0]?.id) {
+        await query(
+          `UPDATE creator_channels SET post_count = post_count + 1, updated_at = NOW() WHERE id = $1`,
+          [data.channelId]
+        );
+        logger.info(`[ChannelBridge] Approved post #${postRows[0].id} from ${pendingKey}`);
+        await ctx.editMessageText(
+          `✅ *¡Publicado en PNPtv!*\n\nTus seguidores podrán verlo en tu canal.`,
+          { parse_mode: 'Markdown' }
+        ).catch(() => {});
+      }
+    } catch (err) {
+      logger.error(`[ChannelBridge] cbp:${action} error:`, err.message);
+      await ctx.editMessageText(`⚠️ Error: ${err.message.slice(0, 120)}`).catch(() => {});
     }
   });
 

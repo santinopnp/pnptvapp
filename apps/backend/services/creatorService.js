@@ -487,6 +487,120 @@ class CreatorService {
     }
   }
 
+  /**
+   * Idempotently provisions 2 default channels (free + subscription) and a private
+   * subscriber hangout linked to the subscription channel. Called on creator activation
+   * and from the studio wizard self-serve button.
+   */
+  static async provisionDefaultChannels(userId) {
+    if (!userId) return;
+    try {
+      const { getPool } = require('../config/postgres');
+
+      const { rows: userRows } = await query(
+        `SELECT id, username, first_name, creator_price_usd FROM users WHERE id = $1`,
+        [userId]
+      );
+      if (!userRows.length) return;
+      const user = userRows[0];
+
+      // Idempotency: skip if any channel already has a linked hangout
+      const { rows: existing } = await query(
+        `SELECT id, access_type, hangout_group_id FROM creator_channels WHERE creator_id = $1 AND is_active = true`,
+        [userId]
+      );
+      if (existing.some((c) => c.hangout_group_id)) return;
+
+      const firstName = user.first_name || user.username || 'Creator';
+      const slug = (user.username || String(userId)).toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 60);
+      const suffix = Math.random().toString(36).slice(2, 6);
+
+      let freeChannelId = existing.find((c) => c.access_type === 'free')?.id;
+      let subChannelId = existing.find((c) => c.access_type === 'subscription')?.id;
+
+      const pool = getPool();
+      const client = await pool.connect();
+      let hangoutId;
+
+      try {
+        await client.query('BEGIN');
+
+        if (!freeChannelId) {
+          const { rows } = await client.query(
+            `INSERT INTO creator_channels (creator_id, name, slug, access_type, is_active, is_system)
+             VALUES ($1, $2, $3, 'free', true, true)
+             ON CONFLICT (slug) DO NOTHING RETURNING id`,
+            [userId, `${firstName} Free`, `${slug}-free-${suffix}`]
+          );
+          freeChannelId = rows[0]?.id;
+        }
+
+        if (!subChannelId) {
+          const priceUsd = user.creator_price_usd ? parseFloat(user.creator_price_usd) : 15;
+          const { rows } = await client.query(
+            `INSERT INTO creator_channels (creator_id, name, slug, access_type, price_usd, is_active, is_system)
+             VALUES ($1, $2, $3, 'subscription', $4, true, true)
+             ON CONFLICT (slug) DO NOTHING RETURNING id`,
+            [userId, `${firstName} Exclusive`, `${slug}-exclusive-${suffix}`, priceUsd]
+          );
+          subChannelId = rows[0]?.id;
+        }
+
+        // Private subscriber hangout
+        const { rows: hgRows } = await client.query(
+          `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members)
+           VALUES ($1, $2, $3, false, false, 200000) RETURNING id`,
+          [`${firstName}'s Subscribers`, `Private hangout for ${firstName}'s subscribers`, userId]
+        );
+        hangoutId = hgRows[0].id;
+
+        await client.query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner')`,
+          [hangoutId, userId]
+        );
+
+        // Seed 4 default topics
+        const topics = [
+          { name: 'General',      description: 'General discussion',       position: 0, is_read_only: false, is_wall_of_fame: false },
+          { name: 'New Members',  description: 'Welcome new members!',     position: 1, is_read_only: false, is_wall_of_fame: false },
+          { name: 'PNP Media',    description: 'Share media and content',  position: 2, is_read_only: false, is_wall_of_fame: false },
+          { name: 'Wall of Fame', description: 'Top content by community', position: 3, is_read_only: true,  is_wall_of_fame: true  },
+        ];
+        for (const td of topics) {
+          const { rows: tRows } = await client.query(
+            `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position, is_read_only, is_wall_of_fame)
+             VALUES ($1, $2, $3, false, true, 200000, $4, $5, $6, $7) RETURNING id`,
+            [td.name, td.description, userId, hangoutId, td.position, td.is_read_only, td.is_wall_of_fame]
+          );
+          await client.query(
+            `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner')`,
+            [tRows[0].id, userId]
+          );
+        }
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
+
+      // Link hangout ↔ subscription channel (both FKs, outside the transaction)
+      if (subChannelId && hangoutId) {
+        await Promise.all([
+          query(`UPDATE hangout_groups SET channel_id = $1 WHERE id = $2`, [subChannelId, hangoutId]),
+          query(`UPDATE creator_channels SET hangout_group_id = $1 WHERE id = $2`, [hangoutId, subChannelId]),
+        ]);
+      }
+
+      logger.info('provisionDefaultChannels: done', { userId, freeChannelId, subChannelId, hangoutId });
+      return { freeChannelId, subChannelId, hangoutId };
+    } catch (err) {
+      logger.error('provisionDefaultChannels: failed (non-fatal)', { userId, error: err.message });
+    }
+  }
+
   static async subscribeToCreator(subscriberId, creatorId, paymentId) {
     // paymentId is required — null would break ON CONFLICT (source_payment_id) deduplication
     // in creator_earnings, silently losing earnings on duplicate calls.

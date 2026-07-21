@@ -183,22 +183,6 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
         </div>
       </div>
 
-      {/* Upgrade to full-time */}
-      {dashboard.creatorType && !["full_time", ""].includes(dashboard.creatorType) && (
-        <div className="glass-card-sm p-4 mb-4" style={{ borderColor: "rgba(212,0,122,0.2)" }}>
-          <p className="text-sm font-medium text-white mb-1">{t.wantMore}</p>
-          <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {t.wantMoreDesc}
-          </p>
-          <button
-            onClick={() => navigate("/creators/apply")}
-            className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
-          >
-            {t.applyFullTime}
-          </button>
-        </div>
-      )}
     </>
   );
 }

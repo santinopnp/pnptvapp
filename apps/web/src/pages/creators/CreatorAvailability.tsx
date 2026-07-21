@@ -1,13 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Helmet } from "react-helmet-async";
-import { Link } from "react-router-dom";
-import { useAuth } from "@/hooks/useAuth";
 import {
-  setAcceptingCalls,
-  getAcceptingCallsStatus,
   getCreatorCallEarnings,
   getCreatorCallBookings,
-  ApiError,
   type CreatorCallEarnings,
   type CreatorCallBooking,
 } from "@/lib/api";
@@ -708,11 +703,10 @@ export default function CreatorAvailability() {
   return (
     <>
       <Helmet>
-        <title>Availability — Creator Studio — PNPtv!</title>
+        <title>Private calls — Creator Studio — PNPtv!</title>
       </Helmet>
       <div className="p-4 lg:p-6">
         <div className="space-y-4">
-          <AcceptingCallsToggle />
           <CallPackageManager />
 
           {/* ── Call Earnings ── */}
