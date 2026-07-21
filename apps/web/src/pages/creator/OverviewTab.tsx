@@ -27,27 +27,29 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
   const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
-  const [studioWizardDone] = useState(() => {
+  const studioWizardDone = (() => {
     try { return localStorage.getItem("pnptv_studio_wizard_v1") === "done"; } catch { return false; }
-  });
+  })();
 
   return (
     <>
-      {!studioWizardDone && (
-        <button
-          onClick={() => navigate("/creators/setup")}
-          className="glass-card-sm w-full p-4 mb-4 flex items-center justify-between gap-3 text-left"
-          style={{ border: "1px solid rgba(212,0,122,.35)" }}
-        >
-          <div>
-            <p className="text-sm font-semibold text-white">Get set up to sell</p>
-            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              OBS, contenido, canales, hangout y documentos — 6 pasos.
-            </p>
-          </div>
-          <span className="text-sm font-bold flex-shrink-0" style={{ color: "#FF4DA6" }}>→</span>
-        </button>
-      )}
+      <button
+        onClick={() => navigate("/creators/setup")}
+        className="glass-card-sm w-full p-4 mb-4 flex items-center justify-between gap-3 text-left"
+        style={{ border: `1px solid ${studioWizardDone ? "rgba(94,209,196,.3)" : "rgba(212,0,122,.35)"}` }}
+      >
+        <div>
+          <p className="text-sm font-semibold text-white">
+            {studioWizardDone ? "Studio Setup & Documentación" : "Empieza a monetizar →"}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {studioWizardDone
+              ? "Wizard, canales, hangout, consents y documentos"
+              : "OBS, contenido, canales, hangout y documentos — 6 pasos."}
+          </p>
+        </div>
+        <span className="text-sm font-bold flex-shrink-0" style={{ color: studioWizardDone ? "#5ED1C4" : "#FF4DA6" }}>→</span>
+      </button>
 
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="glass-card-sm p-4 text-center">
