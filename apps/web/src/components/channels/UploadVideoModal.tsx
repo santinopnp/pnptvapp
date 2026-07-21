@@ -131,7 +131,8 @@ export default function UploadVideoModal({
   useEffect(() => () => { xhrRef.current?.abort(); }, []);
 
   const validateFile = (f: File): string | null => {
-    if (!f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
+    // Some mobile browsers report empty MIME for video files; allow those through
+    if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
     if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 20 GB).";
     return null;
   };
@@ -206,7 +207,7 @@ export default function UploadVideoModal({
     });
 
     xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.setRequestHeader("Content-Type", fileToUpload.type && fileToUpload.type.startsWith("video/") ? fileToUpload.type : "video/mp4");
     xhr.send(fileToUpload);
   }, [channelId]);
 
@@ -273,7 +274,7 @@ export default function UploadVideoModal({
     setError(null);
     try {
       // Save latest edits first
-      await updateChannelVideo(channelId, videoIdRef.current, { title: title.trim(), description, tags });
+      await updateChannelVideo(channelId, videoIdRef.current, { title: title.trim(), description, tags, post_to_feed: announce });
       const video = await publishChannelVideo(channelId, videoIdRef.current);
       setStep("done");
       onPublished?.(video);

@@ -543,16 +543,18 @@ async function publishVideo({ videoId, userId, isAdmin }) {
   )).rows[0];
 
   let gifUrl = null;
-  try {
-    gifUrl = await Promise.race([
-      generateGifFromVideo(v.directus_file_id),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('GIF generation timed out')), 60_000)),
-    ]);
-  } catch (err) {
-    logger.warn('channel_videos: GIF generation failed, falling back to static JPG', {
-      videoId, channelId: v.channel_id, error: err.message,
-    });
-    gifUrl = null;
+  if (v.directus_file_id) {
+    try {
+      gifUrl = await Promise.race([
+        generateGifFromVideo(v.directus_file_id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('GIF generation timed out')), 60_000)),
+      ]);
+    } catch (err) {
+      logger.warn('channel_videos: GIF generation failed, falling back to static JPG', {
+        videoId, channelId: v.channel_id, error: err.message,
+      });
+      gifUrl = null;
+    }
   }
 
   await query(
@@ -600,7 +602,9 @@ async function publishVideo({ videoId, userId, isAdmin }) {
         price_usd: null,
         video_id: videoId,
         video_directus_id: final.directus_file_id ?? '',
-        video_url: final.video_url || (final.directus_file_id ? `${directusBase}/assets/${final.directus_file_id}` : ''),
+        video_url: final.mux_playback_id
+          ? `https://stream.mux.com/${final.mux_playback_id}.m3u8`
+          : (final.directus_file_id ? `${directusBase}/assets/${final.directus_file_id}` : ''),
         has_animated_gif: !!(final.gif_url),
       };
       // Promo posts are always public (is_exclusive=false, content_tier='free') so
@@ -760,7 +764,8 @@ async function listChannelVideos({ channelId, viewerId, includeDrafts = false })
   const r = await query(
     `SELECT cv.id, cv.title, cv.description, cv.tags, cv.duration_sec,
             cv.thumbnail_url, cv.gif_url, cv.status, cv.created_at,
-            cv.directus_file_id, cv.uploader_id, cv.view_count, cv.promo_post_id,
+            cv.directus_file_id, cv.mux_playback_id, cv.mux_status,
+            cv.uploader_id, cv.view_count, cv.promo_post_id,
             cv.tagged_creator_ids,
             cc.access_type, cc.price_usd, cc.creator_id, cc.slug AS channel_slug
        FROM channel_videos cv
@@ -817,7 +822,13 @@ async function listChannelVideos({ channelId, viewerId, includeDrafts = false })
     duration_sec: row.duration_sec,
     thumbnail_url: row.thumbnail_url,
     gif_url: row.gif_url,
-    video_url: viewerHasAccess ? directusFileUrl(row.directus_file_id) : null,
+    video_url: viewerHasAccess
+      ? (row.mux_playback_id
+          ? `https://stream.mux.com/${row.mux_playback_id}.m3u8`
+          : directusFileUrl(row.directus_file_id))
+      : null,
+    mux_playback_id: row.mux_playback_id || null,
+    mux_status: row.mux_status || null,
     status: row.status,
     created_at: row.created_at,
     view_count: row.view_count ?? 0,
@@ -900,7 +911,11 @@ function shapeForApi(row, channel, extra = {}) {
     filesize_bytes: row.filesize_bytes ? Number(row.filesize_bytes) : null,
     thumbnail_url: row.thumbnail_url,
     gif_url: row.gif_url,
-    video_url: directusFileUrl(row.directus_file_id),
+    video_url: row.mux_playback_id
+      ? `https://stream.mux.com/${row.mux_playback_id}.m3u8`
+      : directusFileUrl(row.directus_file_id),
+    mux_playback_id: row.mux_playback_id || null,
+    mux_status: row.mux_status || null,
     status: row.status,
     promo_post_id: row.promo_post_id ? Number(row.promo_post_id) : null,
     is_featured: row.is_featured ?? false,
