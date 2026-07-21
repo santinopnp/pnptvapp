@@ -4,6 +4,7 @@ import { useI18n } from "@/lib/i18n";
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 import { getSubscriptionPlans, NP_COINS, type SubscriptionPlan } from "@/lib/api";
+import { StepDots } from "@pnptv/ui-kit";
 
 // ── Pay with Crypto Wizard ─────────────────────────────────────────────────
 // A self-contained, reusable modal that walks a user through paying with
@@ -200,19 +201,8 @@ export function PayWithCryptoWizard({
         </div>
 
         {/* Step indicator */}
-        <div className="flex items-center gap-1.5 mb-5">
-          {(["plan", "coin", "pay"] as WizardStep[]).map((s, i) => (
-            <div
-              key={s}
-              className="h-1 flex-1 rounded-full transition-colors"
-              style={{
-                background:
-                  s === step || (["plan", "coin", "pay"].indexOf(step) > i)
-                    ? "linear-gradient(90deg,#D4007A,#E69138)"
-                    : "rgba(255,255,255,0.08)",
-              }}
-            />
-          ))}
+        <div className="mb-5">
+          <StepDots total={3} current={(["plan", "coin", "pay"] as WizardStep[]).indexOf(step) + 1} />
         </div>
 
         {/* Step: Plan */}
@@ -221,7 +211,7 @@ export function PayWithCryptoWizard({
             {loadingPlans && (
               <div className="space-y-2.5">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 rounded-xl bg-white/5 animate-pulse" />
+                  <div key={i} className="h-16 rounded-xl bg-pnp-surface animate-pulse" />
                 ))}
               </div>
             )}
@@ -231,7 +221,7 @@ export function PayWithCryptoWizard({
                 key={plan.id}
                 type="button"
                 onClick={() => { setSelectedPlanId(plan.id); setStep("coin"); }}
-                className="w-full text-left p-3.5 rounded-xl border border-white/10 bg-white/5 hover:border-pnp-accent/50 hover:bg-white/10 transition-all active:scale-[0.99]"
+                className="w-full text-left p-3.5 rounded-xl border border-pnp-border bg-pnp-surface hover:border-pnp-accent/50 hover:bg-pnp-surfaceHover transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -255,7 +245,7 @@ export function PayWithCryptoWizard({
         {step === "coin" && (
           <div className="space-y-4">
             {selectedPlan && (
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between">
+              <div className="rounded-xl border border-pnp-border bg-pnp-surface p-3 flex items-center justify-between">
                 <span className="text-sm text-pnp-textSecondary">
                   {selectedPlan.display_name || selectedPlan.name}
                 </span>
@@ -278,15 +268,15 @@ export function PayWithCryptoWizard({
                       onClick={() => handlePickCoin(coin.code)}
                       className={`flex flex-col items-center gap-1 py-3 rounded-xl border transition-colors disabled:opacity-50 ${
                         isUsdt
-                          ? "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"
-                          : "border-white/10 bg-white/5 hover:bg-white/10"
+                          ? "border-pnp-tealMuted/40 bg-pnp-tealMuted/10 hover:bg-pnp-tealMuted/20"
+                          : "border-pnp-border bg-pnp-surface hover:bg-pnp-surfaceHover"
                       }`}
                     >
                       <span className="text-lg leading-none" style={{ color: coin.color }}>{isPicking ? "…" : coin.icon}</span>
-                      <span className={`text-[11px] font-semibold ${isUsdt ? "text-emerald-300" : "text-pnp-textPrimary"}`}>
+                      <span className={`text-[11px] font-semibold ${isUsdt ? "text-pnp-tealMuted" : "text-pnp-textPrimary"}`}>
                         {coin.label}
                       </span>
-                      {isUsdt && <span className="text-[8px] font-bold text-emerald-400/80">★</span>}
+                      {isUsdt && <span className="text-[8px] font-bold text-pnp-tealMuted/80">★</span>}
                     </button>
                   );
                 })}
@@ -300,7 +290,7 @@ export function PayWithCryptoWizard({
         {step === "pay" && order && (
           <div className="space-y-3">
             {selectedPlan && (
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between">
+              <div className="rounded-xl border border-pnp-border bg-pnp-surface p-3 flex items-center justify-between">
                 <span className="text-sm text-pnp-textSecondary">
                   {selectedPlan.display_name || selectedPlan.name}
                 </span>
@@ -321,7 +311,7 @@ export function PayWithCryptoWizard({
                 type="button"
                 onClick={handleDone}
                 className="w-full min-h-[48px] rounded-xl font-semibold text-white transition-all active:scale-[0.98]"
-                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
               >
                 {es ? "Listo" : "Done"}
               </button>

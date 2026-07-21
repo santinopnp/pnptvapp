@@ -4,5 +4,7 @@ export { Input } from "./Input";
 export { Modal } from "./Modal";
 export { Skeleton } from "./Skeleton";
 export { Badge } from "./Badge";
+export { StepDots } from "./StepDots";
+export type { StepDotsProps } from "./StepDots";
 export { colors } from "./theme";
 export type { ColorToken } from "./theme";

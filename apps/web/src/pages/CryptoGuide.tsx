@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { WALLETS } from "@/lib/cryptoWallets";
+import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 
 type Lang = "en" | "es";
 
@@ -39,30 +41,6 @@ function ShieldIcon() {
     </svg>
   );
 }
-
-const WALLETS = {
-  metamask: {
-    name: "MetaMask",
-    emoji: "🦊",
-    color: "#F6851B",
-    android: "https://play.google.com/store/apps/details?id=io.metamask",
-    ios: "https://apps.apple.com/app/metamask-blockchain-wallet/id1438144202",
-  },
-  binance: {
-    name: "Binance",
-    emoji: "🟡",
-    color: "#F0B90B",
-    android: "https://play.google.com/store/apps/details?id=com.binance.dev",
-    ios: "https://apps.apple.com/app/binance-buy-bitcoin-crypto/id1436799971",
-  },
-  dash: {
-    name: "Dash Wallet",
-    emoji: "🥷",
-    color: "#008DE4",
-    android: "https://play.google.com/store/apps/details?id=hashengineering.darkcoin.wallet",
-    ios: "https://apps.apple.com/app/dash-wallet/id1206647026",
-  },
-};
 
 const S = {
   en: {
@@ -590,6 +568,13 @@ export default function CryptoGuide() {
             ))}
           </div>
         </section>
+
+        {/* New-to-crypto interactive wizard — gated step-through for first-timers.
+            The static "Beginner section" right below stays as a reference/detail
+            page; this is the guided entry point above it. */}
+        <div style={{ marginBottom: 48 }}>
+          <CryptoOnboardingWizard lang={lang} />
+        </div>
 
         {/* Beginner section */}
         <section style={{ marginBottom: 48, padding: "28px 24px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20 }}>

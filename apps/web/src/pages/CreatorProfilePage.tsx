@@ -1697,17 +1697,17 @@ export default function CreatorProfilePage() {
                 {hasHangout && hangout && (
                   <div
                     className="rounded-2xl p-4 border"
-                    style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.25)" }}
+                    style={{ background: "rgba(94,209,196,0.06)", borderColor: "rgba(94,209,196,0.35)" }}
                   >
                     <div className="flex items-center gap-2 mb-2">
-                      <Users size={18} className="text-emerald-400 flex-none" aria-hidden="true" />
+                      <Users size={18} style={{ color: "#5ED1C4" }} className="flex-none" aria-hidden="true" />
                       <span className="font-bold text-sm text-pnp-textPrimary flex-1 min-w-0 truncate">
                         {hangout.name}
                       </span>
                       {!(isSubscribed || isOwnProfile) && (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-none"
-                          style={{ background: "rgba(212,0,122,0.15)", color: "#F472B6", border: "1px solid rgba(212,0,122,0.35)" }}
+                          style={{ background: "rgba(212,0,122,.16)", color: "#FF4DA6", border: "1px solid rgba(212,0,122,.5)" }}
                         >
                           <Lock size={10} /> PRIVADO
                         </span>
@@ -1721,7 +1721,8 @@ export default function CreatorProfilePage() {
                       onClick={() =>
                         isSubscribed || isOwnProfile ? navigate(`/hangouts/${hangout.id}`) : handleSubscribeCta()
                       }
-                      className="w-full rounded-xl py-2.5 text-sm font-bold text-emerald-400 border border-emerald-400/40 hover:bg-emerald-400/10 transition-colors"
+                      className="w-full rounded-xl py-2.5 text-sm font-bold transition-colors"
+                      style={{ color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
                     >
                       Entrar al hangout →
                     </button>

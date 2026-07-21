@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
+import { StepDots } from "@pnptv/ui-kit";
 import { getOwnChannels, type CreatorChannel } from "@/lib/api";
 
 const WIZARD_STORAGE_KEY = "pnptv_studio_wizard_v1";
@@ -13,7 +14,7 @@ type StepIcon = {
 };
 
 const STEP_ICONS: Record<number, StepIcon> = {
-  1: { color: "#A78BFA", bg: "rgba(123,97,255,.15)", path: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" },
+  1: { color: "#7B61FF", bg: "rgba(123,97,255,.15)", path: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" },
   2: { color: "#FF4DA6", bg: "rgba(212,0,122,.15)", path: "M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25z" },
   3: { color: "#22C55E", bg: "rgba(34,197,94,.15)", path: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" },
   4: { color: "#FFB454", bg: "rgba(255,180,84,.15)", path: "M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" },
@@ -82,7 +83,7 @@ export default function CreatorStudioWizard() {
 
   if (wizardDone) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6" style={{ background: "var(--pnp-bg)" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6" style={{ background: "var(--pnp-background, #121212)" }}>
         <Helmet><title>Creator Studio — PNPtv!</title></Helmet>
         <p className="text-sm text-pnp-textSecondary">You've already finished the setup wizard.</p>
         <button
@@ -99,7 +100,7 @@ export default function CreatorStudioWizard() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: "var(--pnp-bg)" }}>
+    <div className="min-h-screen" style={{ background: "var(--pnp-background, #121212)" }}>
       <Helmet><title>Creator Studio — Get set up to sell — PNPtv!</title></Helmet>
       <div className="max-w-lg mx-auto px-4 py-8 space-y-5">
 
@@ -119,30 +120,11 @@ export default function CreatorStudioWizard() {
         </div>
 
         {/* Step dots */}
-        <div className="flex gap-1.5">
-          {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((n) => {
-            const isCurrent = n === step;
-            const isDone = n < step;
-            return (
-              <button
-                key={n}
-                onClick={() => setStep(n as typeof step)}
-                className="w-[30px] h-[30px] rounded-full text-xs font-bold flex items-center justify-center transition-colors"
-                style={
-                  isCurrent
-                    ? { background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "#fff" }
-                    : isDone
-                      ? { background: "rgba(212,0,122,.18)", color: "#FF4DA6" }
-                      : { background: "#1E1E1E", color: "rgba(255,255,255,.35)" }
-                }
-                aria-label={`Go to step ${n}`}
-                aria-current={isCurrent ? "step" : undefined}
-              >
-                {n}
-              </button>
-            );
-          })}
-        </div>
+        <StepDots
+          total={TOTAL_STEPS}
+          current={step}
+          onStepClick={(n) => setStep(n as typeof step)}
+        />
 
         {/* Step 1: Download OBS */}
         {step === 1 && (

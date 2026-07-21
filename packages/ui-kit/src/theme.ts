@@ -29,6 +29,14 @@ export const colors = {
   error: "#FF453A",
   warning: "#FFD60A",
   purple: "#A78BFA",
+  /** Base purple for gradients/icon strokes — `purple` above is the lighter
+   * accent shade used for text/icons on tinted backgrounds; both are part
+   * of the same two-tier pink/purple system used across the creator UI. */
+  purpleBase: "#7B61FF",
+  teal: "#2DD4BF",
+  tealAccent: "#22D3EE",
+  tealMuted: "#5ED1C4",
+  gold: "#FFB454",
 } as const;
 
 export type ColorToken = keyof typeof colors;
