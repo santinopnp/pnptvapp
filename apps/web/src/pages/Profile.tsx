@@ -2291,11 +2291,15 @@ export default function Profile() {
         );
       })()}
 
-      {/* ── My Channel Videos (own profile, creator with channel) ── */}
+      {/* ── My Channel Videos (own profile, creator with channel) ──
+          Horizontal scroll strip, matching the subscriber-facing creator-view
+          video album (140x88, centered play button) instead of the old 3-col
+          square grid, so a creator's own free-channel videos read the same
+          as everyone else's albums. */}
       {isOwnProfile && myChannel && (
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-white/60 uppercase tracking-wide">Mis Videos</p>
+            <p className="text-[10px] font-bold px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Mis Videos</p>
             <UploadVideoButton
               channelId={myChannel.id}
               channelName={myChannel.name}
@@ -2308,9 +2312,9 @@ export default function Profile() {
             />
           </div>
           {channelVideosLoading ? (
-            <div className="grid grid-cols-3 gap-1">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
               {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="aspect-square rounded-lg" />
+                <Skeleton key={i} className="flex-none w-[140px] h-[88px] rounded-lg" />
               ))}
             </div>
           ) : channelVideos.length === 0 ? (
@@ -2318,9 +2322,9 @@ export default function Profile() {
               Sin videos aún. Sube tu primero.
             </p>
           ) : (
-            <div className="grid grid-cols-3 gap-1 rounded-xl overflow-hidden">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
               {channelVideos.map((v) => (
-                <div key={v.id} className="relative aspect-square bg-pnp-border/30 group">
+                <div key={v.id} className="relative flex-none w-[140px] h-[88px] rounded-lg overflow-hidden bg-white/5 group">
                   {v.gif_url || v.thumbnail_url ? (
                     <img
                       src={v.gif_url || v.thumbnail_url!}
@@ -2333,6 +2337,15 @@ export default function Profile() {
                       <svg className="w-6 h-6 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
                       </svg>
+                    </div>
+                  )}
+                  {(v.gif_url || v.thumbnail_url) && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-[30px] h-[30px] rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                          <path d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                        </svg>
+                      </div>
                     </div>
                   )}
                   <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 px-1.5 py-1">
