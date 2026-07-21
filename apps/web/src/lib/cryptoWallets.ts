@@ -1,27 +1,20 @@
-// Shared wallet metadata — used by both CryptoGuide.tsx (static reference guide)
-// and CryptoOnboardingWizard.tsx (gated step-through for first-timers), so the
-// wallet list/links/colors only need updating in one place.
 export const WALLETS = {
+  trust: {
+    name: "Trust Wallet",
+    letter: "T",
+    grad: "linear-gradient(135deg,#3375BB,#5ED1C4)",
+    color: "#3375BB",
+    android: "https://play.google.com/store/apps/details?id=com.wallet.crypto.trustapp",
+    ios: "https://apps.apple.com/app/trust-crypto-bitcoin-wallet/id1288339409",
+  },
   metamask: {
     name: "MetaMask",
-    emoji: "🦊",
+    letter: "M",
+    grad: "linear-gradient(135deg,#F6851B,#FFB454)",
     color: "#F6851B",
     android: "https://play.google.com/store/apps/details?id=io.metamask",
     ios: "https://apps.apple.com/app/metamask-blockchain-wallet/id1438144202",
-  },
-  binance: {
-    name: "Binance",
-    emoji: "🟡",
-    color: "#F0B90B",
-    android: "https://play.google.com/store/apps/details?id=com.binance.dev",
-    ios: "https://apps.apple.com/app/binance-buy-bitcoin-crypto/id1436799971",
-  },
-  dash: {
-    name: "Dash Wallet",
-    emoji: "🥷",
-    color: "#008DE4",
-    android: "https://play.google.com/store/apps/details?id=hashengineering.darkcoin.wallet",
-    ios: "https://apps.apple.com/app/dash-wallet/id1206647026",
+    chrome: "https://chrome.google.com/webstore/detail/metamask/nkbihfbeogaeaoehlefnkodbefgpgknn",
   },
 } as const;
 
