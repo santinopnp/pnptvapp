@@ -542,11 +542,19 @@ export default function Live() {
       </button>
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-pnp-textPrimary">{t.live.liveTitle}</h1>
           <p className="text-sm mt-1 text-pnp-textSecondary">{t.live.liveSubtitle}</p>
         </div>
+        <button
+          type="button"
+          onClick={() => navigate("/models")}
+          className="flex-shrink-0 px-3.5 py-2 rounded-lg text-xs font-bold text-pnp-textPrimary transition-colors hover:bg-white/10"
+          style={{ border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)" }}
+        >
+          ⭐ All Models
+        </button>
       </div>
 
       {/* ── Discovery Header — search + categories, unified sticky strip ── */}

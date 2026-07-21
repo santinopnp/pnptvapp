@@ -1946,11 +1946,14 @@ function ChannelsInner() {
 
       <div className="max-w-6xl xl:max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Channels</h1>
             <p className="text-sm mt-1 text-pnp-textSecondary">Exclusive content from your favorite creators</p>
           </div>
+          <Button variant="secondary" size="sm" onClick={() => navigate("/models")} className="flex-shrink-0">
+            ⭐ Browse Models
+          </Button>
         </div>
 
         {/* ── Tab switcher ── */}

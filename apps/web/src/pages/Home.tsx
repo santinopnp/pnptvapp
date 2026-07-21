@@ -20,6 +20,7 @@ export default function Home() {
   const location = useLocation();
   const { tier, isPrime, isMember, isAdmin } = useTier();
   const { showTutorial, dismissTutorial, dismissForever } = useTutorial("home");
+  const es = t.lang === "es";
 
   const benefitsByTier: Record<string, readonly string[]> = {
     free: t.home.benefitsFree,
@@ -218,7 +219,7 @@ export default function Home() {
             feature and dives the user straight into it. The "NEW" pill on
             each card hooks the eye; the brief subtitle calls out what's
             actually new in the upgrade. */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           {/* Hangouts */}
           <button
             onClick={() => navigate("/hangouts")}
@@ -294,6 +295,31 @@ export default function Home() {
             <h3 className="text-sm font-bold text-white mb-0.5">{t.home.featureDmCalls}</h3>
             <p className="text-[11px] leading-relaxed" style={{ color: "var(--pnp-text-secondary)" }}>
               {isPrime ? t.home.featureDmCallsPrime : t.home.featureDmCallsLocked}
+            </p>
+          </button>
+
+          {/* Models & Creators directory */}
+          <button
+            onClick={() => navigate("/models")}
+            className="group rounded-2xl p-4 text-left transition-all hover:scale-[1.02]"
+            style={{
+              background: "linear-gradient(135deg, rgba(255,180,84,0.12), rgba(212,0,122,0.06))",
+              border: "1px solid rgba(255,180,84,0.25)",
+            }}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: "rgba(255,180,84,0.2)" }}
+              >
+                <svg className="w-5 h-5" style={{ color: "#FFB454" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.562.562 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                </svg>
+              </div>
+            </div>
+            <h3 className="text-sm font-bold text-white mb-0.5">{es ? "Modelos" : "Models"}</h3>
+            <p className="text-[11px] leading-relaxed" style={{ color: "var(--pnp-text-secondary)" }}>
+              {es ? "Encuentra y sigue a tus creadores favoritos" : "Find and follow your favorite creators"}
             </p>
           </button>
         </div>
