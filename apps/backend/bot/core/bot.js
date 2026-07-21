@@ -614,9 +614,14 @@ const startBot = async () => {
             const chat = await ctx.telegram.getChat(chatId);
             groupName = chat.title || groupName;
           } catch (_) {}
+          // viaDeepLink: true marks this as a real, just-now click on this
+          // group's own /start grp_<chatId> link -- as opposed to the 7-day
+          // context pre-fill handleNewChatMemberWithCustomWelcome() sets for
+          // every new group member regardless of how they joined. Only this
+          // flag lets completeCreatorOnboarding() award the group's badge.
           await redis.set(
             `onboard:grp:${ctx.from.id}`,
-            JSON.stringify({ name: groupName, chatId }),
+            JSON.stringify({ name: groupName, chatId, viaDeepLink: true }),
             'EX', 1800
           );
           const { showLanguageSelection } = require('../handlers/user/onboarding');

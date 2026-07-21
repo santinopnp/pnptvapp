@@ -1266,7 +1266,18 @@ const completeCreatorOnboarding = async (ctx, email) => {
     const stored = await redis.get(`onboard:grp:${userId}`);
     let groupName = 'PNPtv';
     let groupChatId = null;
-    try { const p = JSON.parse(stored); groupName = p.name || groupName; groupChatId = p.chatId || null; } catch (_) {}
+    let joinedViaDeepLink = false;
+    try {
+      const p = JSON.parse(stored);
+      groupName = p.name || groupName;
+      groupChatId = p.chatId || null;
+      // Only true when this context came from an actual /start grp_<chatId>
+      // click just now (bot.js sets it, 30-min TTL). The 7-day context
+      // handleNewChatMemberWithCustomWelcome() pre-fills on every new group
+      // member -- regardless of how they joined -- leaves this unset, so
+      // simply having been a group member can never earn the group badge.
+      joinedViaDeepLink = p.viaDeepLink === true;
+    } catch (_) {}
     await redis.del(`onboard:grp:${userId}`);
     await redis.set(`onboard:done:${userId}`, '1', 'EX', 60 * 60 * 24 * 30);
 
@@ -1286,11 +1297,11 @@ const completeCreatorOnboarding = async (ctx, email) => {
       } catch (e) { logger.debug('Could not create invite link:', e.message); }
     }
 
-    let hangoutId = null, hangoutName = null;
+    let hangoutId = null, hangoutName = null, hangoutBadgeSlug = null;
     if (groupChatId) {
       try {
-        const { rows } = await dbQuery('SELECT id, name FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1', [String(groupChatId)]);
-        if (rows.length) { hangoutId = rows[0].id; hangoutName = rows[0].name || groupName; }
+        const { rows } = await dbQuery('SELECT id, name, badge_slug FROM hangout_groups WHERE telegram_chat_id = $1 LIMIT 1', [String(groupChatId)]);
+        if (rows.length) { hangoutId = rows[0].id; hangoutName = rows[0].name || groupName; hangoutBadgeSlug = rows[0].badge_slug || null; }
       } catch (e) { logger.debug('Could not fetch hangout:', e.message); }
     }
 
@@ -1308,6 +1319,23 @@ const completeCreatorOnboarding = async (ctx, email) => {
             String(groupChatId), pnptvUserId, String(userId),
             ctx.from.username || null, 100, 'joined_pnptv'
           );
+          // Per-hangout "you joined the right way" badge — only defined for a
+          // handful of hangouts (hangout_groups.badge_slug), and only ever
+          // awarded here, right where trackMigration just confirmed this is a
+          // genuine new join via THIS group's own unique deep link. Gated on
+          // joinedViaDeepLink specifically (not just `tracked`) so it can
+          // never fire off the 7-day "was welcomed as a new member" context
+          // that handleNewChatMemberWithCustomWelcome() sets for every new
+          // group member regardless of how they got there — that pre-fill
+          // is what produced the original mis-awarded badges.
+          if (hangoutBadgeSlug && joinedViaDeepLink) {
+            try {
+              const gamificationService = require('../../../services/gamificationService');
+              await gamificationService.awardBadge(pnptvUserId, hangoutBadgeSlug, null, `Joined via group deep link: ${groupChatId}`);
+            } catch (badgeErr) {
+              logger.warn('completeCreatorOnboarding: group badge award failed (non-critical)', { userId, hangoutBadgeSlug, error: badgeErr.message });
+            }
+          }
           const milestone = await groupManagerService.checkMilestone(String(groupChatId));
           if (milestone) {
             const celebMsg = `*Milestone reached!* ${milestone} members from this group have now joined PNPtv! Amazing community growth!`;
