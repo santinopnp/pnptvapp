@@ -79,7 +79,7 @@ function ClassicNav() {
 
   return (
     <nav className="glass-nav border-t border-pnp-border safe-area-bottom" translate="no" lang="en">
-      <div className="flex items-center justify-around h-16 max-w-lg mx-auto">
+      <div className="flex items-center justify-around h-16 w-full max-w-lg mx-auto px-1">
         {classicNavItems.map((item) => {
           const active = getIsActive(item);
           return (
@@ -88,7 +88,7 @@ function ClassicNav() {
               to={item.to}
               end
               className={() =>
-                `flex flex-col items-center justify-center gap-0.5 px-3 min-h-[44px] transition-colors ${
+                `flex flex-col items-center justify-center gap-0.5 flex-1 min-h-[44px] transition-colors ${
                   active ? "nav-active" : "text-pnp-textSecondary hover:text-pnp-textPrimary"
                 }`
               }

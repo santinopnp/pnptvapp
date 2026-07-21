@@ -1091,7 +1091,7 @@ export function Layout() {
   return (
     <div className="app-shell bg-pnp-background">
       {/* ── Desktop sidebar ─────────────────────────────────────────────────── */}
-      <aside className={`${cruiseMode ? "hidden" : "hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex"} lg:w-72 lg:flex-col border-r border-pnp-border glass-nav`}>
+      <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col border-r border-pnp-border glass-nav">
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
           <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
@@ -1436,7 +1436,7 @@ export function Layout() {
             {/* Scrollable link menu — native <details> for collapsibles
                  (built-in a11y, prefers-reduced-motion-respecting, no JS state). */}
             <nav className="flex-1 overflow-y-auto" aria-label="Mobile navigation" translate="no" lang="en">
-              <div className="px-3 py-3 space-y-2">
+              <div className="px-3 py-3 space-y-2 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
 
                 {/* ── Navigation (open by default) ────────────────────────── */}
                 <details open className="group">
@@ -1637,16 +1637,25 @@ export function Layout() {
       )}
 
       {/* ── Main content ─────────────────────────────────────────────────────── */}
-      {/* pb-28 mobile = 64px BottomNav + ~44px AnnouncementStrip; pb-12 desktop
-           = ~44px AnnouncementStrip (no bottom nav on lg). Without this, the
-           strip overlays the bottom of any video <controls> bar in the feed. */}
-      <main className={`flex-1 overflow-y-auto overscroll-contain lg:overflow-visible lg:pb-12 pb-28 ${cruiseMode ? "" : "lg:pl-72"}`}>
+      {/* Mobile classic: 4rem BottomNav h-16 + safe-area-inset-bottom so content
+           clears the nav on notched phones. Cruise/island: pill sits at
+           calc(1.75rem + safe-area) so we need ~5rem + safe-area clearance.
+           Desktop: no bottom nav, just 3rem for the AnnouncementStrip. */}
+      <main className={`flex-1 overflow-y-auto overscroll-contain lg:overflow-visible ${
+        cruiseMode
+          ? "pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:pb-12"
+          : "lg:pb-12 lg:pl-72 pb-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))]"
+      }`}>
         <Outlet />
       </main>
 
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
-        <div className={`fixed left-0 right-0 z-40 pointer-events-none ${cruiseMode ? "bottom-28" : "bottom-16 lg:bottom-0 lg:left-72"}`}>
+        <div className={`fixed left-0 right-0 z-40 pointer-events-none ${
+          cruiseMode
+            ? "bottom-[calc(5rem+env(safe-area-inset-bottom,0px))]"
+            : "bottom-[calc(4rem+max(0.75rem,env(safe-area-inset-bottom,0px)))] lg:bottom-0 lg:left-72"
+        }`}>
           <div className="pointer-events-auto">
             <AnnouncementStrip />
           </div>

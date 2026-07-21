@@ -293,7 +293,7 @@
   .chat-overlay-safe {
     position: fixed;
     top: 0;
-    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(4rem + max(0.75rem, env(safe-area-inset-bottom, 0px)));
     height: auto;
     z-index: 50;
   }
