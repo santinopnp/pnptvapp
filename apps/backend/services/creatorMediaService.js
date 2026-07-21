@@ -8,15 +8,25 @@
  */
 
 const { spawn } = require('child_process');
+const path = require('path');
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
 const ContentComplianceService = require('./contentComplianceService');
 
+// The main album upload endpoints store files on local disk and save a
+// relative `/uploads/...` URL (served from the repo-root public/ dir) — only
+// the Directus paths save absolute http(s) URLs. ffprobe needs a real path
+// or URL, so map relative URLs onto the public dir before probing.
+function resolveProbeTarget(url) {
+  if (typeof url === 'string' && url.startsWith('/')) {
+    return path.join(__dirname, '../../../public', url);
+  }
+  return url;
+}
+
 // Best-effort video duration probe (ffprobe raw binary, same pattern as
-// xPostService._ffprobeVideo). The media is already uploaded elsewhere by the
-// time addMedia() runs, so we probe the remote URL directly — ffprobe reads
-// http(s) URLs natively, no download needed. Never throws; resolves null on
-// any failure (missing binary, 404, timeout, ...).
+// xPostService._ffprobeVideo). Never throws; resolves null on any failure
+// (missing binary, missing file, 404, timeout, ...).
 async function probeVideoDurationSeconds(url) {
   return new Promise((resolve) => {
     let settled = false;
@@ -24,7 +34,7 @@ async function probeVideoDurationSeconds(url) {
       '-v', 'error',
       '-print_format', 'json',
       '-show_format',
-      url,
+      resolveProbeTarget(url),
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     const timer = setTimeout(() => {

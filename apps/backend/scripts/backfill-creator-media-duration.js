@@ -14,11 +14,22 @@
 // or already marked compliant).
 
 const { spawnSync } = require('child_process');
+const path = require('path');
 const { getPool } = require('../config/postgres');
 const ContentComplianceService = require('../services/contentComplianceService');
 
 const CONFIRM = process.argv.includes('--confirm');
 const BATCH_SIZE = 100;
+
+// Album uploads store files on local disk with a relative `/uploads/...` URL
+// served from the repo-root public/ dir; only Directus-backed rows have
+// absolute http(s) URLs. Map relative URLs onto the public dir for ffprobe.
+function resolveProbeTarget(url) {
+  if (typeof url === 'string' && url.startsWith('/')) {
+    return path.join(__dirname, '../../../public', url);
+  }
+  return url;
+}
 
 // Same pattern as scripts/scanFreeVideosOver4Min.js — raw ffprobe binary, works
 // on both local paths and http(s) URLs.
@@ -27,7 +38,7 @@ function ffprobeDuration(url) {
     '-v', 'error',
     '-show_entries', 'format=duration',
     '-of', 'default=noprint_wrappers=1:nokey=1',
-    url,
+    resolveProbeTarget(url),
   ], { encoding: 'utf8', timeout: 15000 });
   if (r.error || r.status !== 0) return null;
   const sec = parseFloat((r.stdout || '').trim());
