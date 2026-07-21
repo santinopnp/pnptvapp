@@ -819,7 +819,14 @@ describe('Telegram Token Check — /api/webapp/auth/telegram/check', () => {
     expect(res.status).toBe(400);
   });
 
-  it('should consume the token (delete from Redis) after successful authentication', async () => {
+  it('should leave the confirmed token in Redis after successful authentication, so a lost response can be recovered by a later poll', async () => {
+    // Deliberately NOT deleted on first read: the app-switch to Telegram and
+    // back is exactly when a poll's response is most likely to get dropped
+    // (backgrounded tab, network handoff). If that read had also deleted the
+    // key, the login would be unrecoverable — every later poll, including the
+    // visibilitychange-triggered retry, would see nothing. Login processing
+    // is idempotent, so leaving the value in place until its own TTL expires
+    // means a second poll can pick up where a lost one left off.
     const { getRedis } = require('../config/redis');
     const redis = getRedis();
     const agent = request.agent(testApp);
@@ -849,10 +856,14 @@ describe('Telegram Token Check — /api/webapp/auth/telegram/check', () => {
     });
 
     const res = await agent.get('/api/webapp/auth/telegram/check').query({ token });
-
     expect(res.body.authenticated).toBe(true);
-    expect(redis.eval).toHaveBeenCalled();
-    expect(redis._store.has(`tg_login:${token}`)).toBe(false);
+    expect(redis._store.has(`tg_login:${token}`)).toBe(true);
+
+    // A second poll for the same token — simulating the client never having
+    // received the first response — must also succeed instead of coming back
+    // as if the token never existed.
+    const retry = await agent.get('/api/webapp/auth/telegram/check').query({ token });
+    expect(retry.body.authenticated).toBe(true);
   });
 
   it('should reject token polling from a different browser session', async () => {

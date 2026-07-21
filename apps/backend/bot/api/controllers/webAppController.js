@@ -413,9 +413,21 @@ const telegramCheckToken = async (req, res) => {
 
     const redis = getRedis();
 
-    // Atomically get-and-delete the token so only one poll ever consumes it
-    const luaScript = `local v = redis.call('GET', KEYS[1]); if v ~= false and v ~= 'pending' then redis.call('DEL', KEYS[1]) end; return v`;
-    const data = await redis.eval(luaScript, 1, `${TELEGRAM_LOGIN_PREFIX}${token}`);
+    // Plain GET, no delete-on-read. This used to be an atomic get-and-delete
+    // ("only one poll ever consumes it"), but that made the flow unrecoverable
+    // on mobile: the app-switch to Telegram and back is exactly the moment a
+    // request is most likely to get dropped (backgrounding mid-fetch, Wi-Fi/
+    // cellular handoff). If THAT poll happened to be the one that read and
+    // deleted the confirmed value but its response never reached the client
+    // (frozen tab, dropped connection), the token was gone from Redis and
+    // every later poll — including the visibilitychange-triggered retry —
+    // saw nothing, so the user just sat on "Waiting for Telegram…" until the
+    // 3-minute client timeout with no way to recover short of starting over.
+    // Login processing below is idempotent (finds-or-links the same user,
+    // regenerates the same session) so leaving the confirmed value in place
+    // and letting it expire on its own 300s TTL is safe — it just means a
+    // lost response can be recovered by the next poll instead of being fatal.
+    const data = await redis.get(`${TELEGRAM_LOGIN_PREFIX}${token}`);
 
     if (!data || data === 'pending') {
       return res.json({ authenticated: false });
