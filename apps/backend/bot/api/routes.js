@@ -448,7 +448,18 @@ const GEO_BLOCK_BYPASS_PATHS = [
   /^\/blocked-jurisdiction$/,
   /^\/health$/,
   /^\/api\/health\b/,
-  /^\/auth\//,                  // login flow stays open so admins can sign in
+  // Login flow stays open so admins (and everyone else) can sign in — the
+  // block is meant to gate app access after login, not the login screen
+  // itself. /^\/auth\// never matched anything real: every auth route the
+  // frontend actually calls lives under /api/webapp/auth/... or one of the
+  // two legacy /api/telegram-auth /api/auth-status paths, none of which
+  // start with literal "/auth/". Before this fix, every login method —
+  // Telegram deep-link, magic link, passkey, OIDC — was silently 451'd for
+  // blocked-country users, surfacing to them as "click the button, get an
+  // error, nothing happens" with no indication it was the geo-block at all.
+  /^\/api\/webapp\/auth\//,
+  /^\/api\/auth-status$/,
+  /^\/api\/telegram-auth$/,
   /^\/assets\//,
   /^\/sw\.js$/,
   /^\/favicon\.ico$/,
