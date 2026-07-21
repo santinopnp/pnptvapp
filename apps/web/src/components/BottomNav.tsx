@@ -310,7 +310,7 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
       title: "Creators",
       desc: "Find your favourite PNP Model and follow them",
       cta: "Explore",
-      to: "/channels",
+      to: "/models",
       accentColor: "#22C55E",
       bg: "rgba(34,197,94,.08)",
       border: "rgba(34,197,94,.2)",

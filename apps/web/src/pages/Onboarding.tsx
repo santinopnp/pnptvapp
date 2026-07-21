@@ -7,6 +7,7 @@ import {
   completeOnboarding,
   type OnboardingStepKey,
 } from "@/lib/api";
+import { PayWithCryptoWizard } from "@/components/payments/PayWithCryptoWizard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,9 @@ function StepTiers({
     },
   ] as const;
 
+  const es = t.lang === "es";
+  const [showCryptoWizard, setShowCryptoWizard] = useState(false);
+
   return (
     <StepWrapper title={o.tiersTitle} subtitle={o.tiersBody}>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -184,6 +188,18 @@ function StepTiers({
       >
         {state.isSubmitting ? "…" : o.continueBtn}
       </button>
+
+      <button
+        type="button"
+        onClick={() => setShowCryptoWizard(true)}
+        className="w-full min-h-[44px] rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-150 active:scale-[0.98] border"
+        style={{ borderColor: "rgba(16,185,129,0.35)", background: "rgba(16,185,129,0.08)", color: "#34D399" }}
+      >
+        <span aria-hidden="true">🪙</span>
+        {es ? "Prefiero pagar con cripto ahora" : "I'd rather pay with crypto now"}
+      </button>
+
+      <PayWithCryptoWizard open={showCryptoWizard} onClose={() => setShowCryptoWizard(false)} />
     </StepWrapper>
   );
 }

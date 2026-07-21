@@ -241,6 +241,7 @@ const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWiza
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
 const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
+const Models = lazy(() => import("@/pages/Models"));
 
 export const router = createBrowserRouter([
   {
@@ -301,6 +302,16 @@ export const router = createBrowserRouter([
           <ModuleLoader>
             <VerificationGate>
               <Nearby />
+            </VerificationGate>
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "models",
+        element: (
+          <ModuleLoader>
+            <VerificationGate>
+              <Models />
             </VerificationGate>
           </ModuleLoader>
         ),

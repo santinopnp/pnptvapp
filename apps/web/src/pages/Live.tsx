@@ -13,6 +13,7 @@ import type { EventItem } from "@/components/events/EventCard";
 import { CallPackageCards } from "@/components/creators/CallPackageCards";
 import { SpotlightStrip, type SpotlightItem } from "@/components/SpotlightStrip";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
+import { PayWithCryptoWizard } from "@/components/payments/PayWithCryptoWizard";
 import { getUpcomingEvents, getCastingStatus, submitCastingApplication, type CastingStatus } from "@/lib/api";
 import {
   getFeaturedPerformers,
@@ -109,6 +110,7 @@ export default function Live() {
   const [santinoGiftBalance, setSantinoGiftBalance] = useState<number>(0);
   const [dpnsHandle, setDpnsHandle] = useState<string | null>(null);
   const [showBuyModal, setShowBuyModal] = useState(false);
+  const [showCryptoWizard, setShowCryptoWizard] = useState(false);
   const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
   const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
   const [buyError, setBuyError] = useState<string | null>(null);
@@ -516,6 +518,26 @@ export default function Live() {
           style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
         >
           {isAuthenticated ? "Conseguir" : "Entrar"}
+        </span>
+      </button>
+
+      {/* Pay-with-crypto wizard entry point */}
+      <button
+        type="button"
+        onClick={() => isAuthenticated ? setShowCryptoWizard(true) : login()}
+        aria-label="Pay with crypto"
+        className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95"
+        style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.14), rgba(6,182,212,0.10))", border: "1px solid rgba(16,185,129,0.28)" }}
+      >
+        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#10B981,#06B6D4)" }}>
+          <span className="text-base">🪙</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-pnp-textPrimary">Pagar con cripto</p>
+          <p className="text-xs text-pnp-textSecondary mt-0.5 truncate">Desbloquea PNP Prime con USDT, BTC y más</p>
+        </div>
+        <span className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap" style={{ background: "linear-gradient(90deg,#10B981,#06B6D4)" }}>
+          Iniciar
         </span>
       </button>
 
@@ -1270,6 +1292,12 @@ export default function Live() {
         onClose={() => setShowBuyModal(false)}
         onSuccess={(newBalance) => setTokenBalance(newBalance)}
         dpnsHandle={dpnsHandle}
+      />
+
+      {/* Pay with Crypto Wizard */}
+      <PayWithCryptoWizard
+        open={showCryptoWizard}
+        onClose={() => setShowCryptoWizard(false)}
       />
 
       {/* Wallet History Modal */}

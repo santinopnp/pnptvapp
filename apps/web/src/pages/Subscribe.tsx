@@ -29,6 +29,7 @@ import { useI18n } from "@/lib/i18n";
 
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
+import { PayWithCryptoWizard } from "@/components/payments/PayWithCryptoWizard";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d"]);
@@ -124,6 +125,9 @@ export default function Subscribe() {
 
   // Crypto nudge — shown after any payment failure
   const [showCryptoNudge, setShowCryptoNudge] = useState(false);
+
+  // Pay-with-crypto wizard — a guided plan → coin → invoice flow
+  const [showCryptoWizard, setShowCryptoWizard] = useState(false);
 
   function failWithNudge(msg: string) {
     setError(msg);
@@ -748,6 +752,24 @@ export default function Subscribe() {
       {/* Current tier status banner */}
       {renderTierBanner()}
 
+      {/* Pay-with-crypto wizard entry point */}
+      <button
+        type="button"
+        onClick={() => setShowCryptoWizard(true)}
+        className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95"
+        style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.14), rgba(6,182,212,0.10))", border: "1px solid rgba(16,185,129,0.28)" }}
+      >
+        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#10B981,#06B6D4)" }}>
+          <span className="text-base">🪙</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-pnp-textPrimary">{t.lang === "es" ? "Asistente de pago con cripto" : "Pay-with-crypto wizard"}</p>
+          <p className="text-xs text-pnp-textSecondary mt-0.5">{t.lang === "es" ? "Elige plan, elige moneda, listo" : "Pick a plan, pick a coin, done"}</p>
+        </div>
+        <span className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap" style={{ background: "linear-gradient(90deg,#10B981,#06B6D4)" }}>
+          {t.lang === "es" ? "Iniciar" : "Start"}
+        </span>
+      </button>
 
       {/* Promo code banner — applied state */}
       {appliedPromo && (
@@ -844,9 +866,12 @@ export default function Subscribe() {
           const isDimmed = (!!(usdcOrder && !usdcPaymentSuccess) || !!(btcOrder && !btcSuccess) || !!(dashOrder && !dashSuccess)) && selectedPlan !== plan.id;
           return (
             <div key={plan.id} className={`transition-all duration-200 ${isDimmed ? "opacity-50 pointer-events-none" : ""}`}>
-            <button
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setSelectedPlan(plan.id)}
-              className={`w-full text-left p-4 border-2 transition-all duration-200 ${
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan.id); } }}
+              className={`w-full text-left p-4 border-2 transition-all duration-200 cursor-pointer ${
                 isPanelActive ? "rounded-t-xl rounded-b-none" : "rounded-xl"
               } ${
                 isSelected
@@ -1065,7 +1090,7 @@ export default function Subscribe() {
                   </div>
                 )}
               </div>
-            </button>
+            </div>
             {usdcOrder && selectedPlan === plan.id && (
               <div ref={orderPanelRef}>
                 <NowPaymentsWaitingPanel
@@ -1171,9 +1196,12 @@ export default function Subscribe() {
           ].join(" ");
           return (
             <div key={plan.id} className={`transition-all duration-200 ${isDimmed ? "opacity-50 pointer-events-none" : ""}`}>
-            <button
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setSelectedPlan(plan.id)}
-              className={primeBtnClass}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan.id); } }}
+              className={`cursor-pointer ${primeBtnClass}`}
             >
               <div className="flex items-start justify-between mb-2">
                 <div>
@@ -1413,7 +1441,7 @@ export default function Subscribe() {
                   </div>
                 )}
               </div>
-            </button>
+            </div>
             {usdcOrder && selectedPlan === plan.id && (
               <div ref={orderPanelRef}>
                 <NowPaymentsWaitingPanel
@@ -1639,6 +1667,18 @@ export default function Subscribe() {
       >
         {s.goBack}
       </button>
+
+      <PayWithCryptoWizard
+        open={showCryptoWizard}
+        onClose={() => setShowCryptoWizard(false)}
+        onSuccess={async () => {
+          await refreshUser();
+          setTimeout(() => {
+            setPaymentSuccess(true);
+            trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "nowpayments_wizard" });
+          }, 500);
+        }}
+      />
 
     </div>
   );

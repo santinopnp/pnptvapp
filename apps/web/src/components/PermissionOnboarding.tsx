@@ -43,7 +43,16 @@ export function PermissionOnboarding({ isAuthenticated }: Props) {
         } catch { /* ignore */ }
       }
 
-      timerRef.current = setTimeout(() => setVisible(true), SHOW_DELAY_MS);
+      // Don't pop over an already-open dialog (e.g. a payment wizard the user
+      // is mid-flow on) — wait and re-check instead of stacking on top of it.
+      const tryShow = () => {
+        if (document.querySelector('[role="dialog"]')) {
+          timerRef.current = setTimeout(tryShow, SHOW_DELAY_MS);
+          return;
+        }
+        setVisible(true);
+      };
+      timerRef.current = setTimeout(tryShow, SHOW_DELAY_MS);
     };
 
     check();
