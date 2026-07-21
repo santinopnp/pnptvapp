@@ -2062,10 +2062,11 @@ const channelPurchaseLimiter = rateLimit({ windowMs: 60 * 1000, max: 3, keyGener
 // Token-wallet spend routes: cap at 10/5min per user. Prevents a script from
 // hammering the connection pool via rapid debit→grant cycles.
 const walletSpendLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Wait a few minutes and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
-// Token-buy invoice-creation endpoints: cap at 5 / 10 min per user. Each call
-// creates a real BTCPay/NowPayments invoice; keep this tighter than walletSpendLimiter
-// to avoid provider-side quota noise and pending-row pollution.
-const walletBuyLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many invoice attempts. Please wait a few minutes.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
+// Token-buy invoice-creation endpoints: cap at 20 / 10 min per user. Users
+// legitimately browse multiple methods (Dash, NowPayments, BTC) and packages
+// before deciding — all three endpoints share this counter, so 20 gives enough
+// room to shop around without exhausting real BTCPay/NowPayments quota.
+const walletBuyLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Demasiados intentos. Espera 10 minutos antes de intentar de nuevo.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
 // Status-poll limiter for the checkout modals. BuyTokens modal polls the NP
 // order every 6s for up to 30 min = 300 polls/session. Cap at 200 req / min
 // per user to allow the poll cadence + a bit of jitter.
@@ -8794,6 +8795,7 @@ app.get('/api/webapp/channels', softAuth, asyncHandler(async (req, res) => {
         params.push(`%${search}%`);
         paramIdx++;
       }
+      conditions.push(`(SELECT COUNT(*)::int FROM channel_videos cv WHERE cv.channel_id = cc.id AND cv.status = 'published') > 0`);
 
       const countRes = await getPool().query(`SELECT COUNT(*)::int AS total FROM creator_channels cc WHERE ${conditions.join(' AND ')}`, params);
       const total = countRes.rows[0]?.total || 0;
@@ -13440,6 +13442,28 @@ app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asy
 const btcpayWebhookController = require('./controllers/btcpayWebhookController');
 app.post('/api/webhooks/btcpay', webhookLimiter, asyncHandler(btcpayWebhookController.handleBtcpayWebhook));
 
+// Mux webhook — raw body required for HMAC signature verification
+app.post('/api/webhooks/mux',
+  webhookLimiter,
+  express.raw({ type: 'application/json' }),
+  asyncHandler(async (req, res) => {
+    const muxService = require('../../services/muxService');
+    const channelVideoService = require('../../services/channelVideoService');
+    const signature = req.headers['mux-signature'];
+    const secret = process.env.MUX_WEBHOOK_SECRET;
+    if (!secret || !signature || !muxService.verifyWebhookSignature(req.body.toString(), signature, secret)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    try {
+      const event = JSON.parse(req.body.toString());
+      await channelVideoService.handleMuxWebhook(event);
+    } catch (err) {
+      logger.warn('mux webhook: handler error', { err: err.message });
+    }
+    res.json({ received: true });
+  })
+);
+
 // ── Hostinger Mail webhook — message.received on support@pnptv.app ────────────
 // Hostinger sends Authorization: Bearer <webhook-secret> with each delivery.
 // The secret was returned once at webhook creation time; stored as env var.
@@ -14111,6 +14135,62 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     requireSessionAuth,
     asyncHandler(async (_req, res) => {
       res.json({ success: true, tags: channelVideoService.TAG_TAXONOMY });
+    })
+  );
+
+  // POST /api/webapp/channels/:channelId/videos/mux-upload-url
+  // Returns a Mux direct upload URL so the browser can PUT the file directly
+  // to Mux, bypassing the VPS entirely.
+  app.post(
+    '/api/webapp/channels/:channelId/videos/mux-upload-url',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const channelId = parseInt(req.params.channelId, 10);
+      if (!Number.isFinite(channelId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });
+      const { userId } = userCtx(req);
+      try {
+        const result = await channelVideoService.createMuxUpload(userId, channelId);
+        res.json({ success: true, ...result });
+      } catch (err) { handleSvcError(res, err); }
+    })
+  );
+
+  // POST /api/webapp/channels/:channelId/videos/:videoId/ai/all
+  // Single Grok call → title + description + tags from one-liner description.
+  app.post(
+    '/api/webapp/channels/:channelId/videos/:videoId/ai/all',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const videoId = parseInt(req.params.videoId, 10);
+      if (!Number.isFinite(videoId)) return res.status(400).json({ success: false, error: 'Invalid video id' });
+      const { oneLiner } = req.body || {};
+      if (!oneLiner || typeof oneLiner !== 'string' || !oneLiner.trim()) {
+        return res.status(400).json({ success: false, error: 'oneLiner is required' });
+      }
+      const { userId } = userCtx(req);
+      try {
+        const result = await channelVideoService.aiMetadataAll(
+          userId, req.params.channelId, videoId, oneLiner.trim().slice(0, 300)
+        );
+        res.json({ success: true, ...result });
+      } catch (err) { handleSvcError(res, err); }
+    })
+  );
+
+  // GET /api/webapp/channels/:channelId/videos/:videoId/mux-thumbnails
+  app.get(
+    '/api/webapp/channels/:channelId/videos/:videoId/mux-thumbnails',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const videoId = parseInt(req.params.videoId, 10);
+      if (!Number.isFinite(videoId)) return res.status(400).json({ success: false, error: 'Invalid video id' });
+      const { userId } = userCtx(req);
+      try {
+        const thumbnails = await channelVideoService.getMuxThumbnails(
+          userId, req.params.channelId, videoId
+        );
+        res.json({ success: true, thumbnails });
+      } catch (err) { handleSvcError(res, err); }
     })
   );
 
@@ -16093,17 +16173,19 @@ app.get('/api/public/creator/:username',
     let recentPosts = [];
     try {
       const { rows: postRows } = await pool.query(
-        `SELECT id, content, media_url, media_type, likes_count, created_at
-         FROM social_posts
-         WHERE user_id = $1
-           AND is_deleted = false
-           AND is_exclusive = false
-           AND reply_to_id IS NULL
-           AND repost_of_id IS NULL
-           AND content_tier = 'free'
-         ORDER BY created_at DESC
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.likes_count, sp.replies_count, sp.created_at,
+                (CASE WHEN spl.post_id IS NOT NULL THEN true ELSE false END) AS liked_by_me
+         FROM social_posts sp
+         LEFT JOIN social_post_likes spl ON spl.post_id = sp.id AND spl.user_id = $2::text
+         WHERE sp.user_id = $1
+           AND sp.is_deleted = false
+           AND sp.is_exclusive = false
+           AND sp.reply_to_id IS NULL
+           AND sp.repost_of_id IS NULL
+           AND sp.content_tier = 'free'
+         ORDER BY sp.created_at DESC
          LIMIT 3`,
-        [creatorId]
+        [creatorId, viewerId]
       );
       recentPosts = postRows.map((p) => ({
         id: String(p.id),
@@ -16111,6 +16193,8 @@ app.get('/api/public/creator/:username',
         media_url: p.media_url || null,
         media_type: p.media_type || null,
         likes_count: p.likes_count || 0,
+        replies_count: p.replies_count || 0,
+        liked_by_me: p.liked_by_me === true,
         created_at: p.created_at,
       }));
     } catch (postsErr) {
@@ -16223,6 +16307,10 @@ app.get('/api/public/creator/:username',
         post_count: Number(c.post_count) || 0,
         subscriber_count: Number(c.subscriber_count) || 0,
       }));
+      // Visitors only see channels that have content; the creator always sees their own
+      if (viewerId !== creatorId) {
+        channels = channels.filter((c) => c.post_count > 0);
+      }
     } catch (chErr) {
       logger.warn('Public creator profile: channels fetch failed (non-fatal)', { creatorId, error: chErr.message });
     }
@@ -16264,7 +16352,8 @@ app.get('/api/public/creator/:username',
     let hangouts = [];
     try {
       const { rows: hgRows } = await pool.query(
-        `SELECT hg.id, hg.name, hg.avatar_url
+        `SELECT hg.id, hg.name, hg.avatar_url,
+                (SELECT COUNT(*)::int FROM hangout_group_members hgm WHERE hgm.group_id = hg.id) AS member_count
            FROM hangout_groups hg
            JOIN creator_channels cc ON cc.id = hg.channel_id
           WHERE cc.creator_id = $1
@@ -16277,7 +16366,12 @@ app.get('/api/public/creator/:username',
         id: Number(h.id),
         name: h.name,
         avatar_url: h.avatar_url || null,
+        member_count: Number(h.member_count) || 0,
       }));
+      // Visitors only see the hangout once it has members (besides the creator)
+      if (viewerId !== creatorId) {
+        hangouts = hangouts.filter((h) => h.member_count > 1);
+      }
     } catch (hgErr) {
       logger.warn('Public creator profile: hangouts fetch failed (non-fatal)', { creatorId, error: hgErr.message });
     }

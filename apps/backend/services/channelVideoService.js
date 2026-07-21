@@ -921,6 +921,131 @@ function shapeForApi(row, channel, extra = {}) {
   };
 }
 
+// ── Mux: direct upload URL ────────────────────────────────────────────────────
+
+async function createMuxUpload(userId, channelId) {
+  const muxService = require('./muxService');
+  await loadOwnedChannel(String(channelId), String(userId), false);
+  const { uploadId, uploadUrl } = await muxService.createDirectUpload();
+  const { rows: [video] } = await query(
+    `INSERT INTO channel_videos
+       (creator_id, channel_id, title, status, mux_upload_id, mux_status)
+     VALUES ($1, $2, 'Untitled', 'processing', $3, 'waiting')
+     RETURNING id, mux_upload_id`,
+    [userId, channelId, uploadId]
+  );
+  return { videoId: video.id, uploadId, uploadUrl };
+}
+
+// ── Mux: single AI call (title + description + tags) ─────────────────────────
+
+async function aiMetadataAll(userId, channelId, videoId, oneLiner) {
+  const { rows: [video] } = await query(
+    'SELECT id, creator_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
+    [videoId, channelId]
+  );
+  if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
+  if (String(video.creator_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+
+  const prompt = `You are a metadata assistant for PNPtv!, an adult gay/queer creator platform.
+The creator wrote this one-liner about their video: "${oneLiner.replace(/"/g, "'")}"
+
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "title": "compelling video title, max 80 chars, match creator language (Spanish or English)",
+  "description": "2-3 sentence engaging description in same language as the one-liner",
+  "tags": ["tag1","tag2","tag3","tag4","tag5"]
+}
+Tags should be relevant adult content categories. Return 4-6 tags max.`;
+
+  let result = { title: oneLiner.slice(0, 80), description: oneLiner, tags: [] };
+  try {
+    const raw = await grokService.chat({
+      mode: 'safe',
+      language: 'auto',
+      prompt,
+      maxTokens: 400,
+      systemOverride: 'You are a metadata assistant. Return only valid JSON.',
+    });
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      result = {
+        title: String(parsed.title || result.title).slice(0, 255),
+        description: String(parsed.description || result.description),
+        tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 8) : [],
+      };
+    }
+  } catch (err) {
+    logger.warn('aiMetadataAll: grok failed, using one-liner fallback', { err: err.message });
+  }
+
+  await query(
+    `UPDATE channel_videos SET title = $1, description = $2, tags = $3,
+       ai_generated_meta = $4 WHERE id = $5`,
+    [result.title, result.description, JSON.stringify(result.tags),
+     JSON.stringify({ title: 'ai', description: 'ai', tags: 'ai' }), videoId]
+  );
+  return result;
+}
+
+// ── Mux: thumbnail options ────────────────────────────────────────────────────
+
+async function getMuxThumbnails(userId, channelId, videoId) {
+  const muxService = require('./muxService');
+  const { rows: [video] } = await query(
+    'SELECT mux_playback_id, creator_id FROM channel_videos WHERE id = $1 AND channel_id = $2',
+    [videoId, channelId]
+  );
+  if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
+  if (String(video.creator_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
+  if (!video.mux_playback_id) return [];
+  return muxService.getThumbnailOptions(video.mux_playback_id);
+}
+
+// ── Mux: webhook handler ──────────────────────────────────────────────────────
+
+async function handleMuxWebhook(event) {
+  const muxService = require('./muxService');
+  const { type, data } = event;
+
+  if (type === 'video.upload.asset_created') {
+    const { id: assetId, upload_id: uploadId } = data;
+    await query(
+      `UPDATE channel_videos SET mux_asset_id = $1, mux_status = 'preparing'
+       WHERE mux_upload_id = $2`,
+      [assetId, uploadId]
+    );
+    logger.info('mux webhook: upload linked to asset', { uploadId, assetId });
+  }
+
+  if (type === 'video.asset.ready') {
+    const { id: assetId, playback_ids, duration } = data;
+    const playbackId = playback_ids?.[0]?.id;
+    if (!playbackId) { logger.warn('mux webhook: asset.ready missing playback_id', { assetId }); return; }
+    const durationSec = duration ? Math.round(duration) : null;
+    const thumbUrl = muxService.getThumbnailUrl(playbackId, { percentage: 25 });
+    await query(
+      `UPDATE channel_videos
+       SET mux_playback_id = $1, mux_status = 'ready',
+           status = CASE WHEN status = 'processing' THEN 'draft' ELSE status END,
+           duration_sec = COALESCE($2, duration_sec),
+           thumbnail_url = COALESCE(thumbnail_url, $3)
+       WHERE mux_asset_id = $4`,
+      [playbackId, durationSec, thumbUrl, assetId]
+    );
+    logger.info('mux webhook: asset ready', { assetId, playbackId });
+  }
+
+  if (type === 'video.asset.errored') {
+    await query(
+      `UPDATE channel_videos SET mux_status = 'errored', status = 'failed' WHERE mux_asset_id = $1`,
+      [data.id]
+    );
+    logger.warn('mux webhook: asset errored', { assetId: data.id });
+  }
+}
+
 // ── Maintenance ──────────────────────────────────────────────────────────────
 
 async function failStuckVideoUploads() {
@@ -950,4 +1075,8 @@ module.exports = {
   listChannelVideos,
   failStuckVideoUploads,
   TAG_TAXONOMY,
+  createMuxUpload,
+  aiMetadataAll,
+  getMuxThumbnails,
+  handleMuxWebhook,
 };

@@ -185,6 +185,10 @@ router.delete('/cms/shows/:id', authGuard, creatorGuard, creatorLockGuard, cmsCr
 
 router.post('/cms/upload', authGuard, creatorGuard, creatorLockGuard, ...cmsCreatorController.uploadMedia);
 
+// ── Self-serve onboarding provisioning ───────────────────────────────────────
+// Idempotent: creates 2 default channels + subscriber hangout if not already present.
+router.post('/provision-defaults', authGuard, creatorGuard, creatorController.provisionDefaults);
+
 // ── Channel management (active creators) ─────────────────────────────────────
 router.get('/channels', authGuard, creatorController.listOwnChannels);
 router.post('/channels', authGuard, creatorGuard, creatorLockGuard, creatorController.createChannel);

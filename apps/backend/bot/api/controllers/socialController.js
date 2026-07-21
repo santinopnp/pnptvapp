@@ -78,6 +78,19 @@ const getUserPhotoFromDb = async (userId) => {
   } catch { return null; }
 };
 
+// Resolve the creator's canonical free or subscription channel id.
+// Returns null if the creator has no channel of that type (rare edge-case: channel deleted).
+async function resolveCreatorChannel(userId, isExclusive) {
+  const accessType = isExclusive ? 'subscription' : 'free';
+  const { rows } = await dbQuery(
+    `SELECT id FROM creator_channels
+      WHERE creator_id = $1 AND access_type = $2 AND is_active = true
+      ORDER BY is_system DESC, id ASC LIMIT 1`,
+    [String(userId), accessType]
+  );
+  return rows[0]?.id ?? null;
+}
+
 // ── Feed ──────────────────────────────────────────────────────────────────────
 
 const FREE_FEED_LIMIT = 5;
@@ -380,6 +393,11 @@ const createPost = async (req, res) => {
         return res.status(403).json({ error: 'Cannot hype exclusive content' });
       }
       communityHypeOrig = orig;
+    }
+
+    // Auto-mirror to creator's free channel when no explicit channel was given
+    if (!channelId && !replyToId && !repostOfId && !hangoutGroupId && user.creator_status === 'active') {
+      channelId = await resolveCreatorChannel(user.id, false).catch(() => null);
     }
 
     const post = await SocialPostService.createPost(user.id, content.trim(), null, null, replyToId, repostOfId, false, exclusive, shareable, null, null, null, hangoutGroupId, null, rawCategory || null);
@@ -989,6 +1007,11 @@ const createPostWithMedia = async (req, res) => {
       }
     }
 
+    // Auto-mirror to creator's free or subscription channel when no explicit channel was given
+    if (!channelId && !replyToId && !repostOfId && !hangoutGroupId && user.creator_status === 'active') {
+      channelId = await resolveCreatorChannel(user.id, exclusive).catch(() => null);
+    }
+
     const post = await SocialPostService.createPost(
       user.id, content.toString().trim(), mediaUrl, mediaType, replyToId, repostOfId, false, exclusive, shareable, videoThumbnailUrl, vTitle, vDesc, hangoutGroupId, null, rawCategory || null
     );
@@ -1339,6 +1362,11 @@ const createPostWithMultiMedia = async (req, res) => {
     const resolvedCategory = (rawCategory && VALID_CATS.has(rawCategory))
       ? rawCategory
       : SocialPostService._classifyByKeywords(content ? content.toString() : '');
+
+    // Auto-mirror to creator's free or subscription channel when no explicit channel was given
+    if (!channelId && !replyToId && !repostOfId && user.creator_status === 'active') {
+      channelId = await resolveCreatorChannel(user.id, exclusive).catch(() => null);
+    }
 
     const result = await dbQuery(
       `INSERT INTO social_posts

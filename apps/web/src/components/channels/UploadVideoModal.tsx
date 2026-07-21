@@ -1,40 +1,29 @@
 /**
- * UploadVideoModal — 5-step wizard for uploading a video to a creator channel.
+ * UploadVideoModal — Studio Express (3-step Mux upload wizard)
  *
- *   1. Pick file        (drag-drop / tap)
- *   2. Uploading        (XHR with progress bar)
- *   3. AI assist        (Grok title / description / tags — all editable, all skippable)
- *   4. Preview          (final social_post promo card preview)
- *   5. Publish + done   (calls /publish; success toast; "view" or "upload another")
+ *   Step 1 "Sube tu video"   — drag-drop + one-liner description
+ *                              Upload goes direct browser→Mux (bypass VPS)
+ *                              AI call fires in parallel as upload runs
+ *   Step 2 "Pulido por IA"   — review/edit title, description, tags
+ *                              Thumbnail picker from Mux-generated frames
+ *   Step 3 "Publicar"        — toggle feed announce → publish → done
  *
- * Mobile-first bottom sheet. Desktop centers as a modal.
- *
- * The CTA button on the promo post is rendered later by SocialPostCard, not
- * here — this preview shows the four CTA variants so the creator knows what
- * viewers will see depending on access_type and their entitlements.
+ * Resumable: upload state stored in localStorage, restored on next open.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  uploadChannelVideoChunked,
-  getChannelVideoResume,
-  aiTitleChannelVideo,
-  aiDescriptionChannelVideo,
-  aiTagsChannelVideo,
+  getMuxUploadUrl,
+  aiAllChannelVideo,
+  getMuxThumbnails,
   updateChannelVideo,
   publishChannelVideo,
   getChannelTagTaxonomy,
-  updateVideoTaggedCreators,
-  searchCreators,
   type ChannelVideo,
-  type MentionUser,
-  type ChunkUploadProgress,
 } from "@/lib/api";
-import { useI18n } from "@/lib/i18n";
-import { useTutorial } from "@/hooks/useTutorial";
-import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 
 type AccessType = "free" | "subscription" | "prime" | "paid";
+type Step = "pick" | "uploading" | "metadata" | "publish" | "done";
 
 interface Props {
   channelId: number;
@@ -47,654 +36,665 @@ interface Props {
   onPublished?: (video: ChannelVideo) => void;
 }
 
-type Step = "pick" | "uploading" | "edit" | "preview" | "publishing" | "done";
+const RESUME_KEY = "mux_upload_resume";
+const MAX_FILE_BYTES = 20 * 1024 * 1024 * 1024;
 
-// Step strings — inline EN/ES per the project pattern (channels are creator-
-// facing tools; full i18n bundle integration would be a follow-up cleanup).
-const STR = {
-  en: {
-    title: "Upload to channel",
-    pickHint: "Drop a video file here or tap to choose",
-    pickButton: "Choose video",
-    pickFormats: "MP4, MOV, WebM up to 20 GB",
-    uploadCancel: "Cancel upload",
-    uploading: "Uploading…",
-    uploadProgress: "{pct}% — {ofTotal}",
-    titleLabel: "Title",
-    titleAi: "✨ Generate with AI",
-    titlePlaceholder: "What's this video about?",
-    descLabel: "Description",
-    descAi: "✨ Generate bilingual (EN/ES)",
-    descPlaceholder: "Tease what viewers will see…",
-    tagsLabel: "Tags",
-    tagsAi: "✨ Suggest tags",
-    tagsHint: "Tap to add. Up to 8.",
-    backBtn: "← Back",
-    nextBtn: "Next →",
-    publishBtn: "Publish",
-    publishing: "Publishing…",
-    publishedTitle: "Published!",
-    publishedBody: "Your video is live in {channel}. A teaser GIF was posted to the feed.",
-    closeBtn: "Close",
-    uploadAnother: "Upload another",
-    aiUnavailable: "AI assist unavailable — write your own.",
-    requiredTitle: "Add a title to publish",
-    previewHeading: "How this will look in the feed",
-    previewByline: "Posted by @{creator}",
-    previewCtaFree: "Watch now →",
-    previewCtaPrime: "Subscribe to PRIME →",
-    previewCtaSub: "Subscribe to {creator} →",
-    previewCtaPaid: "Get pass — ${price}/mo →",
-    previewNote: "Each viewer sees the CTA that matches their entitlements — PRIME members and existing subscribers see “Watch now” instead.",
-    announceLabel: "📢 Announce on social feed",
-    announceHint: "Posts a teaser to the public feed and notifies your followers (Telegram, push, email).",
-    publishedBodySilent: "Your video is live in {channel}. No announcement was posted.",
-  },
-  es: {
-    title: "Subir al canal",
-    pickHint: "Arrastra un video aquí o toca para elegir",
-    pickButton: "Elegir video",
-    pickFormats: "MP4, MOV, WebM hasta 20 GB",
-    uploadCancel: "Cancelar carga",
-    uploading: "Subiendo…",
-    uploadProgress: "{pct}% — {ofTotal}",
-    titleLabel: "Título",
-    titleAi: "✨ Generar con IA",
-    titlePlaceholder: "¿De qué trata el video?",
-    descLabel: "Descripción",
-    descAi: "✨ Generar bilingüe (EN/ES)",
-    descPlaceholder: "Un teaser de lo que verán…",
-    tagsLabel: "Tags",
-    tagsAi: "✨ Sugerir tags",
-    tagsHint: "Toca para agregar. Máx 8.",
-    backBtn: "← Atrás",
-    nextBtn: "Siguiente →",
-    publishBtn: "Publicar",
-    publishing: "Publicando…",
-    publishedTitle: "¡Publicado!",
-    publishedBody: "Tu video está en {channel}. Se posteó un GIF teaser al feed.",
-    closeBtn: "Cerrar",
-    uploadAnother: "Subir otro",
-    aiUnavailable: "IA no disponible — escribe tú mismo.",
-    requiredTitle: "Pon un título para publicar",
-    previewHeading: "Cómo se verá en el feed",
-    previewByline: "Publicado por @{creator}",
-    previewCtaFree: "Ver ahora →",
-    previewCtaPrime: "Suscríbete a PRIME →",
-    previewCtaSub: "Suscríbete a {creator} →",
-    previewCtaPaid: "Obtén el pase — ${price}/mes →",
-    previewNote: "Cada usuario verá el CTA que corresponde a sus permisos — miembros PRIME o suscritos ven “Ver ahora”.",
-    announceLabel: "📢 Anunciar en el feed social",
-    announceHint: "Publica un teaser en el feed público y notifica a tus seguidores (Telegram, push, email).",
-    publishedBodySilent: "Tu video está en {channel}. No se publicó ningún anuncio.",
-  },
-};
-
-function fmtBytes(b: number | null | undefined): string {
-  if (!b || b <= 0) return "0 B";
-  const u = ["B", "KB", "MB", "GB"];
-  let i = 0; let v = b;
-  while (v > 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+function fmtBytes(b: number) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
+  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-export function UploadVideoModal({
-  channelId, channelName, channelSlug, accessType, pricePerMonth, creatorUsername,
-  onClose, onPublished,
+interface ResumeState {
+  uploadId: string;
+  videoId: number;
+  channelId: number;
+  fileName: string;
+  fileSize: number;
+  uploadUrl: string;
+  bytesUploaded: number;
+}
+
+function saveResume(state: ResumeState) {
+  try { localStorage.setItem(RESUME_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+}
+function clearResume() {
+  try { localStorage.removeItem(RESUME_KEY); } catch { /* ignore */ }
+}
+function loadResume(channelId: number): ResumeState | null {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY);
+    if (!raw) return null;
+    const parsed: ResumeState = JSON.parse(raw);
+    if (parsed.channelId === channelId && parsed.bytesUploaded > 0) return parsed;
+  } catch { /* ignore */ }
+  return null;
+}
+
+export default function UploadVideoModal({
+  channelId,
+  channelName,
+  channelSlug,
+  accessType,
+  pricePerMonth,
+  creatorUsername,
+  onClose,
+  onPublished,
 }: Props) {
-  const i18n = useI18n();
-  const s = STR[i18n.lang === "es" ? "es" : "en"];
-
   const [step, setStep] = useState<Step>("pick");
-  const [error, setError] = useState<string | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-
   const [file, setFile] = useState<File | null>(null);
-  const [progressPct, setProgressPct] = useState(0);
-  const [chunkProgress, setChunkProgress] = useState<ChunkUploadProgress | null>(null);
-  const [videoResume, setVideoResume] = useState<{ uploadId: string; chunksUploaded: number } | null>(null);
-  const [video, setVideo] = useState<ChannelVideo | null>(null);
+  const [oneLiner, setOneLiner] = useState("");
+  const [drag, setDrag] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // Upload state
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadedBytes, setUploadedBytes] = useState(0);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const videoIdRef = useRef<number | null>(null);
+  const uploadIdRef = useRef<string>("");
+
+  // AI + metadata
+  const [aiLoading, setAiLoading] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [taxonomy, setTaxonomy] = useState<string[]>([]);
+  const [thumbnails, setThumbnails] = useState<Array<{ label: string; url: string }>>([]);
+  const [selectedThumb, setSelectedThumb] = useState<string | null>(null);
+  const [thumbsLoading, setThumbsLoading] = useState(false);
 
-  const [aiBusy, setAiBusy] = useState<"title" | "description" | "tags" | null>(null);
-  const [postToFeed, setPostToFeed] = useState(true);
+  // Publish
+  const [announce, setAnnounce] = useState(true);
+  const [publishing, setPublishing] = useState(false);
 
-  const [taggedCreators, setTaggedCreators] = useState<MentionUser[]>([]);
-  const [creatorTagSearch, setCreatorTagSearch] = useState("");
-  const [creatorTagResults, setCreatorTagResults] = useState<MentionUser[]>([]);
-  const [creatorTagSearching, setCreatorTagSearching] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const { showTutorial, dismissTutorial, dismissForever } = useTutorial("channelUpload");
-
-  // Load taxonomy lazily once we open
+  // Resume
+  const [resume, setResume] = useState<ResumeState | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    getChannelTagTaxonomy(channelId)
-      .then((r) => { if (!cancelled) setTaxonomy(r.tags || []); })
-      .catch(() => null);
-    return () => { cancelled = true; };
+    const r = loadResume(channelId);
+    setResume(r);
   }, [channelId]);
 
-  // ── Step transitions ────────────────────────────────────────────────────
+  // Load tag taxonomy once
+  useEffect(() => {
+    getChannelTagTaxonomy(channelId).then((r) => setTaxonomy(r.tags || [])).catch(() => {});
+  }, [channelId]);
 
-  const handlePickFile = (f: File) => {
-    if (!f.type.startsWith("video/")) {
-      setError("Only video files are allowed.");
-      return;
-    }
-    if (f.size > 20 * 1024 * 1024 * 1024) {
-      setError("File too large (max 20 GB).");
-      return;
-    }
+  // Cleanup XHR on unmount
+  useEffect(() => () => { xhrRef.current?.abort(); }, []);
+
+  const validateFile = (f: File): string | null => {
+    if (!f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
+    if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 20 GB).";
+    return null;
+  };
+
+  const handleFileSelect = (f: File) => {
+    const err = validateFile(f);
+    if (err) { setError(err); return; }
     setError(null);
     setFile(f);
-    const resume = getChannelVideoResume(channelId, f);
-    setVideoResume(resume);
-    void doUpload(f);
   };
 
-  const doUpload = useCallback(async (f: File) => {
+  const startUpload = useCallback(async (fileToUpload: File, description1Line: string) => {
+    setError(null);
     setStep("uploading");
-    setProgressPct(0);
-    setChunkProgress(null);
+    setUploadPct(0);
+    setUploadedBytes(0);
+
+    let videoId: number;
+    let uploadUrl: string;
+    let uploadId: string;
+
     try {
-      const resume = getChannelVideoResume(channelId, f);
-      const r = await uploadChannelVideoChunked(channelId, f, {
-        title: f.name.replace(/\.[a-z0-9]+$/i, "").slice(0, 255),
-        resumeUploadId: resume?.uploadId,
-        resumeChunksDone: resume?.chunksUploaded,
-        onProgress: (p) => { setChunkProgress(p); setProgressPct(p.pct); },
-      });
-      setChunkProgress(null);
-      setVideoResume(null);
-      setVideo(r.video);
-      setTitle(r.video.title);
-      setDescription(r.video.description || "");
-      setTags(r.video.tags || []);
-      setStep("edit");
-    } catch (err) {
-      setChunkProgress(null);
-      setError(err instanceof Error ? err.message : "Upload failed");
+      const res = await getMuxUploadUrl(channelId);
+      videoId = res.videoId;
+      uploadUrl = res.uploadUrl;
+      uploadId = res.uploadId;
+      videoIdRef.current = videoId;
+      uploadIdRef.current = uploadId;
+      saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: 0 });
+    } catch {
+      setError("Error al iniciar la subida. Intenta de nuevo.");
       setStep("pick");
+      return;
     }
+
+    // Fire AI in parallel (non-blocking)
+    if (description1Line.trim()) {
+      setAiLoading(true);
+      aiAllChannelVideo(channelId, videoId, description1Line.trim())
+        .then((r) => {
+          setTitle(r.title || "");
+          setDescription(r.description || "");
+          setTags(r.tags || []);
+        })
+        .catch(() => {})
+        .finally(() => setAiLoading(false));
+    }
+
+    // PUT file directly to Mux upload URL
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        setUploadPct(pct);
+        setUploadedBytes(e.loaded);
+        saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: e.loaded });
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        clearResume();
+        setUploadPct(100);
+        setStep("metadata");
+        // Load thumbnails when Mux processes (poll after short delay)
+        setTimeout(() => fetchThumbnails(videoId), 8000);
+      } else {
+        setError(`Error de subida (${xhr.status}). Intenta de nuevo.`);
+        setStep("pick");
+      }
+    });
+
+    xhr.addEventListener("error", () => {
+      setError("La subida falló. Revisa tu conexión e intenta de nuevo.");
+      setStep("pick");
+    });
+
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.send(fileToUpload);
   }, [channelId]);
 
-  const persistEdits = useCallback(async () => {
-    if (!video) return null;
-    const r = await updateChannelVideo(channelId, video.id, {
-      title: title.trim(),
-      description: description.trim() || null,
-      tags,
-    });
-    setVideo(r.video);
-    return r.video;
-  }, [channelId, video, title, description, tags]);
-
-  const onClickAiTitle = async () => {
-    if (!video) return;
-    setAiBusy("title"); setAiError(null);
+  const fetchThumbnails = async (videoId: number) => {
+    setThumbsLoading(true);
     try {
-      await persistEdits();
-      const r = await aiTitleChannelVideo(channelId, video.id);
-      setTitle(r.title);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : s.aiUnavailable);
-    } finally { setAiBusy(null); }
-  };
-  const onClickAiDesc = async () => {
-    if (!video) return;
-    setAiBusy("description"); setAiError(null);
-    try {
-      await persistEdits();
-      const r = await aiDescriptionChannelVideo(channelId, video.id);
-      setDescription(r.description);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : s.aiUnavailable);
-    } finally { setAiBusy(null); }
-  };
-  const onClickAiTags = async () => {
-    if (!video) return;
-    setAiBusy("tags"); setAiError(null);
-    try {
-      await persistEdits();
-      const r = await aiTagsChannelVideo(channelId, video.id);
-      setTags(r.tags);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : s.aiUnavailable);
-    } finally { setAiBusy(null); }
-  };
-
-  const onClickPublish = async () => {
-    if (!video) return;
-    if (!title.trim()) { setError(s.requiredTitle); return; }
-    setError(null);
-    setStep("publishing");
-    try {
-      // Merge all edits (title/desc/tags/post_to_feed) into a single PATCH call
-      const updated = await updateChannelVideo(channelId, video.id, {
-        title: title.trim(),
-        description: description.trim() || null,
-        tags,
-        post_to_feed: postToFeed,
-      });
-      setVideo(updated.video);
-      if (taggedCreators.length > 0) {
-        await updateVideoTaggedCreators(channelId, video.id, taggedCreators.map((c) => c.id)).catch(() => {});
+      const r = await getMuxThumbnails(channelId, videoId);
+      if (r.thumbnails && r.thumbnails.length > 0) {
+        setThumbnails(r.thumbnails);
+        setSelectedThumb(r.thumbnails[0].url);
       }
-      const r = await publishChannelVideo(channelId, video.id);
-      setVideo(r.video);
+    } catch { /* thumbnails optional */ }
+    setThumbsLoading(false);
+  };
+
+  const handlePublish = async () => {
+    if (!videoIdRef.current) return;
+    if (!title.trim()) { setError("El título es requerido para publicar."); return; }
+    setPublishing(true);
+    setError(null);
+    try {
+      // Save latest edits first
+      await updateChannelVideo(channelId, videoIdRef.current, { title: title.trim(), description, tags });
+      const video = await publishChannelVideo(channelId, videoIdRef.current);
       setStep("done");
-      onPublished?.(r.video);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Publish failed");
-      setStep("preview");
+      onPublished?.(video);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error al publicar. Intenta de nuevo.");
+    } finally {
+      setPublishing(false);
     }
   };
 
-  // ── CTA preview for the creator ─────────────────────────────────────────
+  const resetAll = () => {
+    xhrRef.current?.abort();
+    setStep("pick");
+    setFile(null);
+    setOneLiner("");
+    setError(null);
+    setUploadPct(0);
+    setUploadedBytes(0);
+    setTitle("");
+    setDescription("");
+    setTags([]);
+    setThumbnails([]);
+    setSelectedThumb(null);
+    videoIdRef.current = null;
+    uploadIdRef.current = "";
+    clearResume();
+  };
 
-  const ctaLabel = (() => {
-    switch (accessType) {
-      case "free": return s.previewCtaFree;
-      case "prime": return s.previewCtaPrime;
-      case "subscription": return s.previewCtaSub.replace("{creator}", creatorUsername || channelName);
-      case "paid": return s.previewCtaPaid.replace("{price}", String(pricePerMonth ?? "?"));
-    }
-  })();
+  // ── Drag & drop ──────────────────────────────────────────────────────────────
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDrag(false);
+    const f = e.dataTransfer.files[0];
+    if (f) handleFileSelect(f);
+  }, []);
 
-  // ── Render helpers ──────────────────────────────────────────────────────
+  const accessBadge = {
+    free: { label: "GRATIS", color: "#34D399" },
+    subscription: { label: "PAGO", color: "#FBBF24" },
+    prime: { label: "PRIME", color: "#FFB454" },
+    paid: { label: "PAGO", color: "#FBBF24" },
+  }[accessType];
 
-  function renderPick() {
-    return (
-      <div className="px-5 py-6">
+  // ── Step renders ─────────────────────────────────────────────────────────────
+
+  const renderPick = () => (
+    <div className="p-5 space-y-4">
+      {/* Resume banner */}
+      {resume && (
         <div
-          className="border-2 border-dashed rounded-2xl p-10 text-center"
-          style={{ borderColor: "rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.02)" }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const f = e.dataTransfer.files?.[0];
-            if (f) handlePickFile(f);
-          }}
+          className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-sm"
+          style={{ background: "rgba(212,0,122,.1)", border: "1px solid rgba(212,0,122,.35)" }}
         >
-          <div className="text-5xl mb-3" aria-hidden>🎬</div>
-          <p className="text-sm text-white/70 mb-3">{s.pickHint}</p>
+          <div>
+            <p className="font-semibold text-white">Subida sin terminar</p>
+            <p className="text-xs text-white/60 mt-0.5">{resume.fileName} · {fmtBytes(resume.bytesUploaded)} subidos</p>
+          </div>
           <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="px-5 py-2.5 rounded-xl text-sm font-bold text-white"
-            style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg"
+            style={{ background: "#D4007A", color: "#fff" }}
+            onClick={() => { clearResume(); setResume(null); }}
           >
-            {s.pickButton}
+            Limpiar
           </button>
-          <p className="text-[11px] text-white/40 mt-3">{s.pickFormats}</p>
         </div>
+      )}
+
+      {/* Drop zone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        onClick={() => document.getElementById("mux-file-input")?.click()}
+        className="cursor-pointer rounded-2xl flex flex-col items-center justify-center gap-3 py-10 px-4 transition-colors"
+        style={{
+          border: `2px dashed ${drag ? "#D4007A" : "rgba(212,0,122,.3)"}`,
+          background: drag ? "rgba(212,0,122,.06)" : "rgba(255,255,255,.02)",
+          minHeight: 180,
+        }}
+      >
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={drag ? "#D4007A" : "rgba(255,255,255,.35)"} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15 10l-4 4l-4-4" />
+          <path d="M11 14V3" />
+          <path d="M5 21h14" />
+          <rect x="3" y="3" width="4" height="4" rx="1" />
+          <rect x="17" y="3" width="4" height="4" rx="1" />
+        </svg>
+        {file ? (
+          <div className="text-center">
+            <p className="text-sm font-semibold text-white">{file.name}</p>
+            <p className="text-xs text-white/50 mt-0.5">{fmtBytes(file.size)}</p>
+          </div>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm font-semibold text-white">Arrastra tu video aquí</p>
+            <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 20 GB</p>
+          </div>
+        )}
         <input
-          ref={fileInputRef}
+          id="mux-file-input"
           type="file"
           accept="video/*"
-          className="sr-only"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handlePickFile(f);
-          }}
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
         />
-        {error && <p className="mt-3 text-xs text-red-400 text-center">{error}</p>}
-        {file && videoResume && step === "pick" && (
-          <p className="text-xs mt-2 text-center" style={{ color: "#D4007A" }}>
-            Previous upload can be resumed — tap upload to continue from chunk {videoResume.chunksUploaded}.
-          </p>
-        )}
       </div>
-    );
-  }
 
-  function renderUploading() {
-    return (
-      <div className="px-5 py-8 text-center">
-        <p className="text-sm text-white/70 mb-3">{s.uploading}</p>
-        <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
-          <div
-            className="h-full transition-[width] duration-150"
+      {/* One-liner */}
+      {file && (
+        <div>
+          <label className="block text-xs font-semibold text-white/60 mb-1.5">
+            ¿De qué trata en una línea? <span className="text-white/30">(la IA hace el resto)</span>
+          </label>
+          <textarea
+            rows={2}
+            maxLength={300}
+            value={oneLiner}
+            onChange={(e) => setOneLiner(e.target.value)}
+            placeholder="Ej: Mi primera sesión en cuero con mi compañero de cuarto..."
+            className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
             style={{
-              width: `${progressPct}%`,
-              background: "linear-gradient(90deg,#ff3377,#ff9933)",
+              background: "#161616",
+              border: "1px solid #2A2A2A",
+              color: "#fff",
+              outline: "none",
             }}
           />
         </div>
-        <p className="mt-2 text-[11px] text-white/50">
-          {chunkProgress
-            ? `${chunkProgress.pct}% — ${chunkProgress.doneChunks} / ${chunkProgress.totalChunks} chunks`
-            : s.uploadProgress.replace("{pct}", String(progressPct)).replace("{ofTotal}", fmtBytes(file?.size))}
+      )}
+
+      {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
+
+      <button
+        disabled={!file}
+        onClick={() => file && startUpload(file, oneLiner)}
+        className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30"
+        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
+      >
+        Subir a Mux →
+      </button>
+      <p className="text-center text-xs text-white/30">
+        Tu video va directo a Mux — sin pasar por nuestros servidores
+      </p>
+    </div>
+  );
+
+  const renderUploading = () => (
+    <div className="p-6 space-y-5 flex flex-col items-center text-center">
+      <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,.12)", border: "1px solid rgba(212,0,122,.3)" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+      </div>
+
+      <div className="w-full">
+        <div className="flex justify-between text-xs text-white/50 mb-1.5">
+          <span>Subiendo a Mux…</span>
+          <span>{uploadPct}%</span>
+        </div>
+        <div className="w-full rounded-full overflow-hidden" style={{ height: 6, background: "#1E1E1E" }}>
+          <div
+            className="h-full rounded-full transition-all duration-300"
+            style={{ width: `${uploadPct}%`, background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
+          />
+        </div>
+        <p className="text-xs text-white/40 mt-1.5">
+          {fmtBytes(uploadedBytes)} de {file ? fmtBytes(file.size) : "—"}
         </p>
       </div>
-    );
-  }
 
-  function renderEdit() {
-    return (
-      <div className="px-5 py-5 space-y-4">
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold">{s.titleLabel}</label>
-            <button
-              type="button"
-              onClick={onClickAiTitle}
-              disabled={aiBusy === "title"}
-              className="text-[11px] text-white/70 hover:text-white disabled:opacity-50"
-            >
-              {aiBusy === "title" ? "…" : s.titleAi}
-            </button>
-          </div>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={s.titlePlaceholder}
-            maxLength={255}
-            className="w-full px-3 py-2.5 rounded-xl text-sm text-white border focus:outline-none"
-            style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.10)" }}
-          />
+      {aiLoading && (
+        <p className="text-xs text-white/40 flex items-center gap-2">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-white/20 border-t-pink-500 animate-spin" />
+          IA generando metadata…
+        </p>
+      )}
+
+      <button
+        onClick={() => { xhrRef.current?.abort(); clearResume(); setStep("pick"); }}
+        className="text-xs text-white/30 underline decoration-dotted hover:text-white/60"
+      >
+        Cancelar subida
+      </button>
+    </div>
+  );
+
+  const renderMetadata = () => (
+    <div className="p-5 space-y-4">
+      <p className="text-xs font-bold tracking-widest text-white/40">PASO 2 DE 3</p>
+
+      {aiLoading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl animate-pulse" style={{ height: i === 2 ? 64 : 40, background: "#161616" }} />
+          ))}
+          <p className="text-xs text-center text-white/40">IA generando metadata…</p>
         </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold">{s.descLabel}</label>
-            <button
-              type="button"
-              onClick={onClickAiDesc}
-              disabled={aiBusy === "description"}
-              className="text-[11px] text-white/70 hover:text-white disabled:opacity-50"
-            >
-              {aiBusy === "description" ? "…" : s.descAi}
-            </button>
+      ) : (
+        <>
+          {/* Title */}
+          <div>
+            <label className="block text-xs font-semibold text-white/60 mb-1">Título</label>
+            <input
+              type="text"
+              maxLength={255}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Título del video"
+              className="w-full rounded-xl px-3 py-2.5 text-sm"
+              style={{ background: "#161616", border: "1px solid #2A2A2A", color: "#fff", outline: "none" }}
+            />
           </div>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder={s.descPlaceholder}
-            rows={4}
-            className="w-full px-3 py-2.5 rounded-xl text-sm text-white border focus:outline-none resize-y"
-            style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.10)" }}
-          />
-        </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold">{s.tagsLabel}</label>
-            <button
-              type="button"
-              onClick={onClickAiTags}
-              disabled={aiBusy === "tags"}
-              className="text-[11px] text-white/70 hover:text-white disabled:opacity-50"
-            >
-              {aiBusy === "tags" ? "…" : s.tagsAi}
-            </button>
+          {/* Description */}
+          <div>
+            <label className="block text-xs font-semibold text-white/60 mb-1">Descripción</label>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Descripción del video"
+              className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
+              style={{ background: "#161616", border: "1px solid #2A2A2A", color: "#fff", outline: "none" }}
+            />
           </div>
-          <p className="text-[11px] text-white/40 mb-2">{s.tagsHint}</p>
-          <div className="flex flex-wrap gap-1.5">
-            {taxonomy.map((t) => {
-              const selected = tags.includes(t);
-              return (
+
+          {/* Tags */}
+          <div>
+            <label className="block text-xs font-semibold text-white/60 mb-1.5">Tags</label>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
                 <button
-                  key={t}
-                  type="button"
-                  onClick={() => {
-                    setTags((cur) =>
-                      cur.includes(t) ? cur.filter((x) => x !== t) : (cur.length >= 8 ? cur : [...cur, t])
-                    );
-                  }}
-                  className="text-[11px] px-2.5 py-1 rounded-full border transition-colors"
-                  style={{
-                    background: selected ? "rgba(255,51,119,0.15)" : "rgba(255,255,255,0.04)",
-                    borderColor: selected ? "rgba(255,51,119,0.45)" : "rgba(255,255,255,0.10)",
-                    color: selected ? "#ff8aa8" : "rgba(255,255,255,0.65)",
-                  }}
+                  key={tag}
+                  onClick={() => setTags(tags.filter((t) => t !== tag))}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors"
+                  style={{ background: "rgba(212,0,122,.15)", border: "1px solid rgba(212,0,122,.4)", color: "#FF4DA6" }}
                 >
-                  {selected ? "✓ " : ""}{t}
+                  {tag} ✕
                 </button>
-              );
-            })}
+              ))}
+              {taxonomy.filter((t) => !tags.includes(t)).slice(0, 8).map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => tags.length < 8 && setTags([...tags, tag])}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold transition-colors"
+                  style={{ background: "#161616", border: "1px solid #2A2A2A", color: "#A1A1A3" }}
+                >
+                  + {tag}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        </>
+      )}
 
-        {/* Tag Creators */}
-        <div>
-          <label className="block text-[11px] uppercase tracking-wider text-white/55 font-semibold mb-1">
-            Tag Creators <span className="normal-case font-normal text-white/40">(max 5)</span>
-          </label>
-          {taggedCreators.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {taggedCreators.map((c) => (
-                <span key={c.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/80">
-                  @{c.username}
-                  <button
-                    type="button"
-                    onClick={() => setTaggedCreators((prev) => prev.filter((x) => x.id !== c.id))}
-                    className="text-white/40 hover:text-white ml-0.5"
-                  >
-                    ×
-                  </button>
-                </span>
+      {/* Thumbnail picker */}
+      <div>
+        <label className="block text-xs font-semibold text-white/60 mb-1.5">Portada</label>
+        {thumbsLoading ? (
+          <div className="flex gap-2">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex-1 rounded-xl animate-pulse" style={{ height: 72, background: "#161616" }} />
+            ))}
+          </div>
+        ) : thumbnails.length > 0 ? (
+          <div className="flex gap-2">
+            {thumbnails.map((t) => (
+              <button
+                key={t.url}
+                onClick={() => setSelectedThumb(t.url)}
+                className="flex-1 rounded-xl overflow-hidden transition-all"
+                style={{
+                  border: `2px solid ${selectedThumb === t.url ? "#D4007A" : "transparent"}`,
+                  outline: selectedThumb === t.url ? "2px solid rgba(212,0,122,.3)" : "none",
+                }}
+              >
+                <img src={t.url} alt={t.label} className="w-full object-cover" style={{ height: 72 }} loading="lazy" />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-white/30">La portada estará lista cuando Mux termine de procesar el video.</p>
+        )}
+      </div>
+
+      {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
+
+      <button
+        onClick={() => setStep("publish")}
+        className="w-full py-3.5 rounded-xl text-sm font-bold"
+        style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
+      >
+        Siguiente →
+      </button>
+    </div>
+  );
+
+  const renderPublish = () => (
+    <div className="p-5 space-y-4">
+      <p className="text-xs font-bold tracking-widest text-white/40">PASO 3 DE 3</p>
+
+      {/* Preview card */}
+      <div className="rounded-2xl overflow-hidden" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
+        {selectedThumb && (
+          <img src={selectedThumb} alt="" className="w-full object-cover" style={{ height: 160 }} />
+        )}
+        <div className="p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="px-2 py-0.5 rounded-full text-[9px] font-bold"
+              style={{ background: `${accessBadge.color}22`, color: accessBadge.color, border: `1px solid ${accessBadge.color}55` }}
+            >
+              {accessBadge.label}
+            </span>
+            <p className="text-sm font-semibold text-white truncate">{title || "Sin título"}</p>
+          </div>
+          {description && (
+            <p className="text-xs text-white/50 line-clamp-2">{description}</p>
+          )}
+          {tags.length > 0 && (
+            <div className="flex gap-1 flex-wrap pt-0.5">
+              {tags.slice(0, 4).map((t) => (
+                <span key={t} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "#111", color: "#A1A1A3" }}>{t}</span>
               ))}
             </div>
           )}
-          {taggedCreators.length < 5 && (
-            <div className="relative">
-              <input
-                type="text"
-                value={creatorTagSearch}
-                onChange={async (e) => {
-                  setCreatorTagSearch(e.target.value);
-                  if (e.target.value.trim().length < 2) { setCreatorTagResults([]); return; }
-                  setCreatorTagSearching(true);
-                  try {
-                    const res = await searchCreators(e.target.value.trim());
-                    setCreatorTagResults((res.users || []).filter((c) => !taggedCreators.some((t) => t.id === c.id)));
-                  } catch { /* ignore */ } finally { setCreatorTagSearching(false); }
-                }}
-                placeholder={creatorTagSearching ? "Searching…" : "Search creators to tag…"}
-                className="w-full px-3 py-2 rounded-xl text-xs text-white border focus:outline-none"
-                style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.10)" }}
-              />
-              {creatorTagResults.length > 0 && (
-                <div
-                  className="absolute top-full left-0 right-0 z-10 mt-1 rounded-xl overflow-hidden"
-                  style={{ background: "rgba(18,13,20,0.98)", border: "1px solid rgba(255,255,255,0.10)" }}
-                >
-                  {creatorTagResults.slice(0, 5).map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        setTaggedCreators((prev) => [...prev, c]);
-                        setCreatorTagSearch("");
-                        setCreatorTagResults([]);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
-                    >
-                      <span className="text-xs text-white/80">@{c.username}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {aiError && <p className="text-xs text-amber-300">{aiError}</p>}
-        {error && <p className="text-xs text-red-400">{error}</p>}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={() => setStep("preview")}
-            className="px-4 py-2.5 rounded-xl text-sm font-bold text-white"
-            style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
-          >
-            {s.nextBtn}
-          </button>
         </div>
       </div>
-    );
-  }
 
-  function renderPreview() {
-    return (
-      <div className="px-5 py-5">
-        <p className="text-[11px] uppercase tracking-wider text-white/55 font-semibold mb-3">{s.previewHeading}</p>
-        <div className="rounded-2xl overflow-hidden mb-4" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}>
-          {video?.thumbnail_url && (
-            <img src={video.thumbnail_url} alt={title} className="w-full aspect-video object-cover" />
-          )}
-          <div className="p-3">
-            <p className="text-[11px] text-white/55 mb-1">{s.previewByline.replace("{creator}", creatorUsername || channelName)}</p>
-            <p className="text-sm font-bold text-white mb-1">🎬 {title}</p>
-            {description && <p className="text-xs text-white/65 mb-2 line-clamp-3 whitespace-pre-line">{description}</p>}
-            <div className="mt-2">
-              <span
-                className="inline-block px-3 py-2 rounded-xl text-xs font-bold text-white"
-                style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
-              >
-                {ctaLabel}
-              </span>
-            </div>
-          </div>
+      {/* Announce toggle */}
+      <div className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
+        <div>
+          <p className="text-sm font-semibold text-white">Anunciar en el feed</p>
+          <p className="text-xs text-white/40 mt-0.5">Publica un teaser y notifica a tus seguidores</p>
         </div>
-        <p className="text-[11px] text-white/45 leading-relaxed mb-4">{s.previewNote}</p>
-        <label
-          className="flex items-start gap-2.5 p-3 mb-4 rounded-xl cursor-pointer transition-colors"
-          style={{
-            background: postToFeed ? "rgba(255,51,119,0.10)" : "rgba(255,255,255,0.04)",
-            border: postToFeed ? "1px solid rgba(255,51,119,0.35)" : "1px solid rgba(255,255,255,0.10)",
-          }}
+        <button
+          onClick={() => setAnnounce((v) => !v)}
+          className="relative w-11 h-6 rounded-full transition-colors flex-none"
+          style={{ background: announce ? "#D4007A" : "#2A2A2A" }}
+          role="switch"
+          aria-checked={announce}
         >
-          <input
-            type="checkbox"
-            checked={postToFeed}
-            onChange={(e) => setPostToFeed(e.target.checked)}
-            className="mt-0.5 w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
+          <span
+            className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform"
+            style={{ left: announce ? "calc(100% - 22px)" : "2px" }}
           />
-          <div className="flex-1">
-            <p className="text-xs font-semibold text-white">{s.announceLabel}</p>
-            <p className="text-[10px] text-white/55 leading-relaxed mt-0.5">{s.announceHint}</p>
-          </div>
-        </label>
-        {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-        <div className="flex justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setStep("edit")}
-            className="px-4 py-2.5 rounded-xl text-sm font-medium text-white/70"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
-          >
-            {s.backBtn}
-          </button>
-          <button
-            type="button"
-            onClick={onClickPublish}
-            className="px-4 py-2.5 rounded-xl text-sm font-bold text-white"
-            style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
-          >
-            {s.publishBtn}
-          </button>
-        </div>
+        </button>
       </div>
-    );
-  }
 
-  function renderPublishing() {
-    return (
-      <div className="px-5 py-10 text-center">
-        <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 border-t-transparent animate-spin"
-             style={{ borderColor: "#ff3377", borderTopColor: "transparent" }} />
-        <p className="text-sm text-white/70">{s.publishing}</p>
-      </div>
-    );
-  }
+      {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
 
-  function renderDone() {
-    return (
-      <div className="px-5 py-8 text-center">
-        <div className="text-5xl mb-3" aria-hidden>✅</div>
-        <h3 className="text-base font-bold text-white mb-1">{s.publishedTitle}</h3>
-        <p className="text-xs text-white/65 mb-5">{(postToFeed ? s.publishedBody : s.publishedBodySilent).replace("{channel}", channelName)}</p>
-        <div className="flex justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setVideo(null); setFile(null); setProgressPct(0);
-              setTitle(""); setDescription(""); setTags([]);
-              setPostToFeed(true);
-              setTaggedCreators([]); setCreatorTagSearch(""); setCreatorTagResults([]);
-              setStep("pick");
-            }}
-            className="px-4 py-2 rounded-xl text-xs font-medium text-white/70"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)" }}
-          >
-            {s.uploadAnother}
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-white"
-            style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
-          >
-            {s.closeBtn}
-          </button>
-        </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setStep("metadata")}
+          className="flex-1 py-3 rounded-xl text-sm font-semibold"
+          style={{ background: "#161616", border: "1px solid #2A2A2A", color: "#A1A1A3" }}
+        >
+          ← Atrás
+        </button>
+        <button
+          onClick={handlePublish}
+          disabled={publishing || !title.trim()}
+          className="flex-[2] py-3 rounded-xl text-sm font-bold transition-opacity disabled:opacity-40"
+          style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
+        >
+          {publishing ? "Publicando…" : "Publicar"}
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
+
+  const renderDone = () => (
+    <div className="p-8 flex flex-col items-center text-center gap-4">
+      <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(52,199,89,.12)", border: "1px solid rgba(52,199,89,.3)" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#34C759" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+      </div>
+      <div>
+        <p className="text-lg font-bold text-white">¡Video publicado!</p>
+        <p className="text-sm text-white/50 mt-1">
+          Mux lo está transcodeando — estará en HD adaptivo en unos minutos.
+        </p>
+      </div>
+      <div className="flex gap-2 w-full">
+        <a
+          href={`/channels?channel=${encodeURIComponent(channelSlug)}`}
+          className="flex-1 py-3 rounded-xl text-sm font-semibold text-center"
+          style={{ background: "#161616", border: "1px solid #2A2A2A", color: "#fff" }}
+        >
+          Ver canal →
+        </a>
+        <button
+          onClick={resetAll}
+          className="flex-1 py-3 rounded-xl text-sm font-bold"
+          style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
+        >
+          Subir otro
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Modal shell ──────────────────────────────────────────────────────────────
+  const stepLabel = { pick: "Sube tu video", uploading: "Subiendo…", metadata: "Pulido por IA", publish: "Publicar", done: "¡Listo!" }[step];
 
   return (
-    <>
-    {showTutorial && (
-      <TutorialOverlay
-        section="channelUpload"
-        onDismiss={dismissTutorial}
-        onDismissForever={dismissForever}
-      />
-    )}
     <div
-      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label={s.title}
+      aria-label="Subir video"
     >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={step === "uploading" ? undefined : onClose} aria-hidden="true" />
       <div
-        className="relative w-full sm:max-w-md max-h-[90dvh] overflow-hidden flex flex-col rounded-t-2xl sm:rounded-2xl"
+        className="relative w-full sm:max-w-md max-h-[92dvh] overflow-hidden flex flex-col rounded-t-2xl sm:rounded-2xl"
         style={{
-          background: "rgba(18,13,20,0.96)",
-          border: "1px solid rgba(255,255,255,0.10)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+          background: "#0D0D0D",
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
         }}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-          <h2 className="text-sm font-bold text-white">{s.title} · {channelName}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-white/55 hover:text-white">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b flex-none" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+          <div>
+            <p className="text-xs text-white/40 font-medium">{channelName}</p>
+            <h2 className="text-sm font-bold text-white leading-tight">{stepLabel}</h2>
+          </div>
+          {step !== "uploading" && (
+            <button onClick={onClose} aria-label="Cerrar" className="text-white/40 hover:text-white transition-colors">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
+
+        {/* Progress dots */}
+        {step !== "done" && (
+          <div className="flex gap-1.5 px-4 py-2 flex-none">
+            {(["pick", "metadata", "publish"] as const).map((s, i) => {
+              const stepOrder = { pick: 0, uploading: 0, metadata: 1, publish: 2, done: 3 };
+              const active = stepOrder[step] >= i;
+              return (
+                <div
+                  key={s}
+                  className="h-1 flex-1 rounded-full transition-all duration-300"
+                  style={{ background: active ? "linear-gradient(90deg,#D4007A,#7B61FF)" : "#1E1E1E" }}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* Content */}
         <div className="flex-1 overflow-y-auto">
           {step === "pick" && renderPick()}
           {step === "uploading" && renderUploading()}
-          {step === "edit" && renderEdit()}
-          {step === "preview" && renderPreview()}
-          {step === "publishing" && renderPublishing()}
+          {step === "metadata" && renderMetadata()}
+          {step === "publish" && renderPublish()}
           {step === "done" && renderDone()}
         </div>
       </div>
     </div>
-    </>
   );
 }

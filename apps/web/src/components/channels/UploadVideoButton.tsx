@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from "react";
-import { UploadVideoModal } from "./UploadVideoModal";
+import UploadVideoModal from "./UploadVideoModal";
 import type { ChannelVideo } from "@/lib/api";
 
 interface Props {

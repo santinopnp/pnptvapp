@@ -2271,9 +2271,12 @@ const activateCreator = async (req, res) => {
     const CreatorService = require('../../../services/creatorService');
     CreatorService.notifyCreatorActivated(userId, { actorId: String(admin?.id || 'admin'), source: 'admin' });
 
+    // Provision 2 default channels + private subscriber hangout (idempotent, non-fatal).
+    CreatorService.provisionDefaultChannels(String(userId)).catch((err) => {
+      logger.warn('activateCreator: provisionDefaultChannels failed (non-fatal)', { userId, err: err.message });
+    });
+
     // Run the onboarding unlock check now that creator_status = 'active'.
-    // If identity + payout + terms are all set, this clears creator_locked and
-    // provisions default channels. Non-fatal — activation already succeeded.
     logger.info('activateCreator: admin activated creator, unlock check running', { adminId: admin?.id, userId });
     try {
       await CreatorService.checkAndMaybeUnlockCreator(String(userId));

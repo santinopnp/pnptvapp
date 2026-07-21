@@ -466,6 +466,11 @@ export default function Profile() {
           !cursor && isAuthenticated ? getFollowStatus(targetUserId).catch(() => null) : Promise.resolve(null),
         ]);
         if (!cursor) {
+          // Active creators get their own dedicated profile page at /c/:username
+          if (res.profile.creatorStatus === "active" && res.profile.username) {
+            navigate(`/c/${res.profile.username}`, { replace: true });
+            return;
+          }
           setProfile(res.profile);
           setPosts(res.posts);
           if (followRes) {

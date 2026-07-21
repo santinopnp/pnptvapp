@@ -66,15 +66,10 @@ const navItems: Array<{
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
   {
-    // "Get set up to sell" wizard — OBS, featured pics/videos, channels, hangout.
+    // Wizard: OBS, photos, video, content distribution, hangout, documents.
     to: "/creators/setup",
-    label: "Get Set Up to Sell",
+    label: "Documentación",
     icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z",
-  },
-  {
-    to: "/creators/documents",
-    label: "My Documents",
-    icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
   },
   {
     // PNP Live streaming — only roles that include Performer can broadcast.
@@ -89,13 +84,6 @@ const navItems: Array<{
     label: "Availability",
     icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
     roles: ["performer", "both"],
-  },
-  {
-    // Exclusive paid content posts — only roles that include Creator can publish.
-    to: "/creators/content",
-    label: "Content",
-    icon: "M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z",
-    roles: ["creator", "both"],
   },
   {
     to: "/creators/channels-hub",

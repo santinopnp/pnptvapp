@@ -551,8 +551,11 @@ function ChannelDetailView({
     if (!Number.isFinite(vidId)) return;
     const v = videos.find((x) => x.id === vidId);
     if (!v || !channel) return;
+    const playUrl = v.mux_playback_id
+      ? `https://stream.mux.com/${v.mux_playback_id}.m3u8`
+      : v.video_url;
     setPlayingVideo({
-      url: v.video_url,
+      url: playUrl,
       title: v.title,
       videoId: v.id,
       channelId: channel.id,
@@ -1042,7 +1045,7 @@ function ChannelDetailView({
                 {/* Thumbnail row */}
                 <div
                   className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer"
-                  onClick={() => { setVideoPlayerError(false); setPlayingVideo({ url: v.video_url, title: v.title, videoId: v.id, channelId: channel.id, promoPostId: v.promo_post_id ?? null, taggedCreators: v.tagged_creators || [] }); }}
+                  onClick={() => { setVideoPlayerError(false); setPlayingVideo({ url: v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : v.video_url, title: v.title, videoId: v.id, channelId: channel.id, promoPostId: v.promo_post_id ?? null, taggedCreators: v.tagged_creators || [] }); }}
                 >
                   {previewSrc ? (
                     <img

@@ -53,7 +53,7 @@ function HangoutToChatRedirect() {
 
 function CreatorUsernameRedirect() {
   const { username } = useParams<{ username: string }>();
-  return <Navigate to={`/${username}`} replace />;
+  return <Navigate to={`/c/${username}`} replace />;
 }
 
 function MessagesToDmRedirect() {
@@ -141,6 +141,7 @@ const VideoramaPage = lazy(() => import("@/pages/Channels").then((m) => ({ defau
 const Chat = lazy(() => import("@/pages/Chat"));
 const Social = lazy(() => import("@/pages/Social"));
 const Profile = lazy(() => import("@/pages/Profile"));
+const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
 const MyAccess = lazy(() => import("@/pages/MyAccess"));
 const DirectMessages = lazy(() => import("@/pages/DirectMessages"));
@@ -648,6 +649,14 @@ export const router = createBrowserRouter([
       },
       { path: "creator", element: <Navigate to="/creators" replace /> },
       { path: "creator/:username", element: <CreatorUsernameRedirect /> },
+      {
+        path: "c/:username",
+        element: (
+          <ModuleLoader>
+            <CreatorProfilePage />
+          </ModuleLoader>
+        ),
+      },
       { path: "messages", element: <Navigate to="/dm" replace /> },
       { path: "messages/:userId", element: <MessagesToDmRedirect /> },
       { path: "hangouts", element: <Navigate to="/?view=hangouts" replace /> },
@@ -966,7 +975,7 @@ export const router = createBrowserRouter([
       { path: "subscribers", element: <ModuleLoader><CreatorSubscribers /></ModuleLoader> },
       { path: "consents", element: <ModuleLoader><CreatorConsents /></ModuleLoader> },
       { path: "x-campaigns", element: <ModuleLoader><CreatorXCampaignsPage /></ModuleLoader> },
-      { path: "documents", element: <ModuleLoader><CreatorMyDocuments /></ModuleLoader> },
+      { path: "documents", element: <Navigate to="/creators/setup" replace /> },
       { path: "channels-hub", element: <ModuleLoader><CreatorChannelsHub /></ModuleLoader> },
       { path: "benefits", element: <ModuleLoader><CreatorBenefits /></ModuleLoader> },
       { path: "guidelines", element: <ModuleLoader><CreatorGuidelines /></ModuleLoader> },

@@ -1940,6 +1940,19 @@ const getCreatorEarnings = async (req, res) => {
   }
 };
 
+const provisionDefaults = async (req, res) => {
+  const user = req.user;
+  if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  try {
+    const CreatorService = require('../../services/creatorService');
+    const result = await CreatorService.provisionDefaultChannels(String(user.id));
+    return res.json({ success: true, ...(result || {}) });
+  } catch (err) {
+    logger.error('provisionDefaults error', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   getEligibility,
   activateCreator,
@@ -1999,4 +2012,5 @@ module.exports = {
   adminActivateCreator,
   adminSetEligible,
   getCreatorEngagement,
+  provisionDefaults,
 };

@@ -3773,6 +3773,15 @@ export function getOwnChannels(): Promise<{ success: boolean; channels: CreatorC
   return request("/api/webapp/creator/channels");
 }
 
+export function provisionCreatorDefaults(): Promise<{
+  success: boolean;
+  freeChannelId?: number;
+  subChannelId?: number;
+  hangoutId?: number;
+}> {
+  return request("/api/webapp/creator/provision-defaults", { method: "POST" });
+}
+
 export interface OwnHangout {
   id: number;
   name: string;
@@ -8375,6 +8384,10 @@ export interface ChannelVideo {
   thumbnail_url: string | null;
   gif_url: string | null;
   video_url: string | null;
+  mux_upload_id: string | null;
+  mux_asset_id: string | null;
+  mux_playback_id: string | null;
+  mux_status: "waiting" | "preparing" | "ready" | "errored" | null;
   status: "processing" | "published" | "draft" | "failed" | "removed";
   is_featured: boolean;
   post_to_feed: boolean;
@@ -8594,6 +8607,31 @@ export async function getChannelTagTaxonomy(channelId: number) {
   return request<{ success: boolean; tags: string[] }>(
     `/api/webapp/channels/${channelId}/videos/tag-taxonomy`,
   );
+}
+
+export async function getMuxUploadUrl(channelId: number): Promise<{
+  success: boolean; videoId: number; uploadId: string; uploadUrl: string;
+}> {
+  return request(`/api/webapp/channels/${channelId}/videos/mux-upload-url`, { method: "POST" });
+}
+
+export async function aiAllChannelVideo(
+  channelId: number,
+  videoId: number,
+  oneLiner: string,
+): Promise<{ success: boolean; title: string; description: string; tags: string[] }> {
+  return request(`/api/webapp/channels/${channelId}/videos/${videoId}/ai/all`, {
+    method: "POST",
+    body: JSON.stringify({ oneLiner }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function getMuxThumbnails(
+  channelId: number,
+  videoId: number,
+): Promise<{ success: boolean; thumbnails: Array<{ label: string; url: string }> }> {
+  return request(`/api/webapp/channels/${channelId}/videos/${videoId}/mux-thumbnails`);
 }
 export async function recordChannelVideoView(channelId: number, videoId: number) {
   return request<{ success: boolean; view_count?: number; deduped?: boolean }>(
@@ -8827,6 +8865,8 @@ export interface CreatorRecentPost {
   media_url: string | null;
   media_type: string | null;
   likes_count: number;
+  replies_count: number;
+  liked_by_me: boolean;
   created_at: string;
 }
 
@@ -8874,6 +8914,7 @@ export interface PublicCreatorHangout {
   id: number;
   name: string;
   avatar_url: string | null;
+  member_count: number;
 }
 
 export interface CreatorPublicProfile {

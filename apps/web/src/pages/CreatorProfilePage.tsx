@@ -42,10 +42,12 @@ import {
   MoreVertical,
   Flag,
   Ban,
+  Flame,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   getPublicCreatorProfile,
+  togglePostLike,
   subscribeToCreator,
   unsubscribeFromCreator,
   prepareUsdcSubscription,
@@ -2337,6 +2339,34 @@ interface RecentPostCardProps {
 
 function RecentPostCard({ post, creator }: RecentPostCardProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [likedByMe, setLikedByMe] = useState(post.liked_by_me);
+  const [likesCount, setLikesCount] = useState(post.likes_count);
+  const likeInFlight = useRef(false);
+
+  const handleLike = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) { navigate("/login"); return; }
+    if (likeInFlight.current) return;
+    likeInFlight.current = true;
+    const wasLiked = likedByMe;
+    setLikedByMe(!wasLiked);
+    setLikesCount((n) => n + (wasLiked ? -1 : 1));
+    try {
+      await togglePostLike(Number(post.id));
+    } catch {
+      setLikedByMe(wasLiked);
+      setLikesCount((n) => n + (wasLiked ? 1 : -1));
+    } finally {
+      likeInFlight.current = false;
+    }
+  };
+
+  const goToPost = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate(`/social/post/${post.id}`);
+  };
+
   return (
     <article
       role="button"
@@ -2402,10 +2432,31 @@ function RecentPostCard({ post, creator }: RecentPostCardProps) {
         </div>
       )}
 
-      {/* Likes */}
-      <div className="flex items-center gap-1.5 text-xs text-pnp-textSecondary">
-        <Heart size={13} aria-hidden="true" />
-        <span>{post.likes_count.toLocaleString()}</span>
+      {/* Actions row */}
+      <div className="flex items-center gap-5 text-xs text-pnp-textSecondary" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={handleLike}
+          aria-label={likedByMe ? "Unlike" : "Like"}
+          className={`flex items-center gap-1.5 transition-colors ${likedByMe ? "text-red-500" : "hover:text-red-400"}`}
+        >
+          <Heart size={14} fill={likedByMe ? "currentColor" : "none"} aria-hidden="true" />
+          <span>{likesCount.toLocaleString()}</span>
+        </button>
+        <button
+          onClick={goToPost}
+          aria-label="Comentar"
+          className="flex items-center gap-1.5 hover:text-pnp-accent transition-colors"
+        >
+          <MessageCircle size={14} aria-hidden="true" />
+          <span>{(post.replies_count || 0).toLocaleString()}</span>
+        </button>
+        <button
+          onClick={goToPost}
+          aria-label="Hype"
+          className="flex items-center gap-1.5 hover:text-orange-400 transition-colors"
+        >
+          <Flame size={14} aria-hidden="true" />
+        </button>
       </div>
     </article>
   );
