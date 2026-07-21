@@ -240,7 +240,6 @@ const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"
 const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWizard"));
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
-const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
 const Models = lazy(() => import("@/pages/Models"));
 
 export const router = createBrowserRouter([

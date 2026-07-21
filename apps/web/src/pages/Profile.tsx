@@ -1169,14 +1169,14 @@ export default function Profile() {
                 {initial}
               </div>
             )}
-            {isPrime && (
+            {(isPrime || profile.creatorStatus === "active") && (
               <span
                 aria-hidden="true"
                 className="absolute -inset-0.5 rounded-full pointer-events-none"
                 style={{ boxShadow: "0 0 0 2px #FFB454, 0 0 16px rgba(255,180,84,0.45)" }}
               />
             )}
-            {!isPrime && groupBadge?.badge_color && (
+            {!isPrime && profile.creatorStatus !== "active" && groupBadge?.badge_color && (
               <span
                 aria-hidden="true"
                 className="absolute -inset-0.5 rounded-full pointer-events-none"
@@ -1359,7 +1359,7 @@ export default function Profile() {
             <div className="grid grid-cols-3 gap-2 mt-4">
               <div
                 className="flex flex-col items-center justify-center py-2 rounded-lg"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
+                style={{ background: "#161616", border: "1px solid #2A2A2A" }}
               >
                 <strong className="text-base font-bold text-white tabular-nums leading-none">{profile.postCount ?? posts.length}</strong>
                 <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: "var(--pnp-text-secondary)" }}>{p.posts}</span>
@@ -1367,7 +1367,7 @@ export default function Profile() {
               <button
                 onClick={() => setShowFollowModal("followers")}
                 className="flex flex-col items-center justify-center py-2 rounded-lg transition-colors hover:bg-white/5"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
+                style={{ background: "#161616", border: "1px solid #2A2A2A" }}
               >
                 <strong className="text-base font-bold text-white tabular-nums leading-none">{followersCount}</strong>
                 <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: "var(--pnp-text-secondary)" }}>{p.followers}</span>
@@ -1375,7 +1375,7 @@ export default function Profile() {
               <button
                 onClick={() => setShowFollowModal("following")}
                 className="flex flex-col items-center justify-center py-2 rounded-lg transition-colors hover:bg-white/5"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
+                style={{ background: "#161616", border: "1px solid #2A2A2A" }}
               >
                 <strong className="text-base font-bold text-white tabular-nums leading-none">{followingCount}</strong>
                 <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: "var(--pnp-text-secondary)" }}>{p.following}</span>
@@ -1856,13 +1856,18 @@ export default function Profile() {
                     <button
                       onClick={handleSubscribe}
                       disabled={subscribeLoading}
-                      className="w-full min-h-[40px] py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+                      className="w-full min-h-[44px] py-2.5 rounded-[10px] text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                       style={isSubscribed
                         ? { background: `rgba(${tc.rgb},0.12)`, color: tc.color, border: `1px solid rgba(${tc.rgb},0.35)` }
-                        : { background: tc.gradient, color: "#fff" }
+                        : { background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b" }
                       }
                     >
-                      {subscribeLoading ? "..." : isSubscribed ? `${tc.emoji} ${p.subscribed}` : `${tc.emoji} ${p.subscribe} $${profile.creatorPriceUsd ?? tc.price}/mo`}
+                      {!isSubscribed && !subscribeLoading && (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                        </svg>
+                      )}
+                      {subscribeLoading ? "..." : isSubscribed ? `${tc.emoji} ${p.subscribed}` : `${p.subscribe} $${profile.creatorPriceUsd ?? tc.price}/mo`}
                     </button>
                     {isSubscribed && subscriptionExpiresAt && (
                       <p className="text-[10px] text-center" style={{ color: expiringSoon ? "#FFB454" : "var(--pnp-text-secondary)" }}>
@@ -1896,8 +1901,8 @@ export default function Profile() {
               {isPerformer && creatorAcceptingCalls && (
                 <button
                   onClick={() => setShowBookCall(true)}
-                  className="w-full min-h-[44px] py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
-                  style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)", color: "#D4007A" }}
+                  className="w-full min-h-[44px] py-2.5 rounded-[10px] text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                  style={{ background: "rgba(212,0,122,.12)", border: "1px solid rgba(212,0,122,.5)", color: "#FF4DA6" }}
                 >
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
@@ -2215,10 +2220,10 @@ export default function Profile() {
           <div className="mb-4 space-y-4">
             {photos.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-white/60 mb-2 px-0.5 uppercase tracking-wide">Fotos</p>
-                <div className="grid grid-cols-3 gap-1 rounded-xl overflow-hidden">
-                  {photos.slice(0, 9).map((item) => (
-                    <div key={item.id} className="relative aspect-square bg-white/5">
+                <p className="text-[10px] font-bold mb-2 px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Fotos</p>
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  {photos.slice(0, 10).map((item) => (
+                    <div key={item.id} className="relative flex-none w-24 h-[120px] rounded-lg overflow-hidden bg-white/5">
                       <img
                         src={item.thumbUrl || item.url || ""}
                         alt={item.caption || ""}
@@ -2245,10 +2250,10 @@ export default function Profile() {
             )}
             {videos.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-white/60 mb-2 px-0.5 uppercase tracking-wide">Videos</p>
-                <div className="grid grid-cols-3 gap-1 rounded-xl overflow-hidden">
-                  {videos.slice(0, 9).map((item) => (
-                    <div key={item.id} className="relative aspect-square bg-white/5">
+                <p className="text-[10px] font-bold mb-2 px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Videos</p>
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  {videos.slice(0, 5).map((item) => (
+                    <div key={item.id} className="relative flex-none w-[140px] h-[88px] rounded-lg overflow-hidden bg-white/5">
                       <img
                         src={item.thumbUrl || ""}
                         alt={item.caption || ""}
@@ -2257,8 +2262,8 @@ export default function Profile() {
                       />
                       {item.canView && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.5)" }}>
-                            <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                          <div className="w-[30px] h-[30px] rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
+                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                               <path d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
                             </svg>
                           </div>
@@ -2376,7 +2381,7 @@ export default function Profile() {
           {activeTab === "posts" && (
             <span
               className="absolute left-4 right-4 bottom-0 h-0.5 rounded-full"
-              style={{ background: `linear-gradient(to right, ${accentColor}, ${isPerformer ? "#00D4E8" : "#E69138"})` }}
+              style={{ background: "#2DD4BF" }}
             />
           )}
         </button>
@@ -2397,7 +2402,7 @@ export default function Profile() {
             {activeTab === "exclusive" && (
               <span
                 className="absolute left-4 right-4 bottom-0 h-0.5 rounded-full"
-                style={{ background: "linear-gradient(to right, #D4007A, #E69138)" }}
+                style={{ background: "#2DD4BF" }}
               />
             )}
           </button>
