@@ -1673,6 +1673,12 @@ export function Layout() {
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (() => {
         const inVideoCall = location.pathname.startsWith("/chat/");
         const showCompact = isLandscape && isMobile && inVideoCall;
+        // The mobile live player (Stream.tsx) is a full-bleed overlay with its
+        // own top-right controls (LIVE badge, viewer count, close, tip alerts)
+        // occupying the same corner the widget FAB defaults to — hide it there,
+        // same as the existing /chat/ video-call carve-out above.
+        const inMobileLiveStream = isMobile && /^\/live\/[^/]+/.test(location.pathname);
+        if (inMobileLiveStream) return null;
         return (
           <FloatingWidgets showCompact={showCompact} />
         );

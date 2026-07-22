@@ -263,6 +263,9 @@ function StreamInner() {
   const shareCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
   const [streamError, setStreamError] = useState(false);
+  // Mobile-only bottom sheet: wallet, tip menu/amounts, dash tips, recent tips, book-a-call.
+  // Triggered by the floating Tip button in the full-bleed video overlay.
+  const [showTipSheet, setShowTipSheet] = useState(false);
 
   // Dash token wallet
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
@@ -1459,8 +1462,12 @@ function StreamInner() {
     );
   }
 
+  // h-full, not h-[100dvh] — this page is nested inside Layout's <main>
+  // (flex-1, already sized to the viewport minus header/bottom-nav), so
+  // 100dvh would re-claim the whole device height and overshoot main's
+  // actual box, pushing this page's own content off-screen.
   return (
-    <div className="h-[100dvh] flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       <Helmet>
         <title>{stream.name} — PNPtv Live</title>
         <meta name="description" content={stream.description || `Watch ${stream.name} live on PNPtv`} />
@@ -1624,10 +1631,9 @@ function StreamInner() {
         </div>
       )}
 
-      {/* ── Header bar — mobile: absolute scrim overlay per mockup; desktop: standard border ── */}
-      <div
-        className="stream-header-bar flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-pnp-border md:static absolute top-0 left-0 right-0 z-30"
-      >
+      {/* ── Header bar — desktop only (mobile uses the full-bleed video overlay below),
+           with the streamer identity block from the design pass ── */}
+      <div className="stream-header-bar hidden md:flex flex-shrink-0 items-center gap-3 px-4 py-2 border-b border-pnp-border">
         <button onClick={() => navigate("/live")} aria-label={t.live.backToLive} className="flex-shrink-0 text-pnp-textSecondary hover:text-pnp-accent transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -1762,9 +1768,8 @@ function StreamInner() {
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
         <div className="flex flex-col md:flex-1 overflow-hidden">
 
-          {/* Video Player — fixed/sticky, never scrolls. On mobile, the
-              video takes the majority of the viewport per the mockup. */}
-          <div ref={videoContainerRef} className="relative flex-shrink-0 md:h-auto h-[62vh] min-h-[280px] bg-black">
+          {/* Video Player — fixed/sticky, never scrolls. Full-bleed on mobile. */}
+          <div ref={videoContainerRef} className="relative flex-1 min-h-0 md:flex-shrink-0 bg-black">
         {/* ── Paywall overlay — shown when slot is ticketed and viewer has no ticket ── */}
         {ticketStatus?.isTicketed && !ticketStatus.hasTicket && !ticketLoading ? (
           <div className="relative aspect-video rounded-xl bg-pnp-surface border border-pnp-border overflow-hidden flex items-center justify-center">
@@ -1860,17 +1865,194 @@ function StreamInner() {
             </div>
           </div>
         ) : (
-          <div className="relative">
+          <div className="relative h-full">
             <LivePlayer
               src={stream.hlsUrl}
-              title={stream.name}
+              // No `title` — Stream.tsx already shows the name itself (the
+              // mobile top-scrim above, and the desktop bottom-overlay below);
+              // LivePlayer's own built-in title overlay would just duplicate
+              // it and, now that this fills the full height on mobile, collide
+              // with the floating chat/input UI anchored to the same edge.
               poster={stream.thumbnailUrl || undefined}
               overlay={overlay}
               onStats={isStreamOwner ? handlePlayerStats : undefined}
               viewerUsername={user?.username ?? user?.firstName ?? undefined}
+              className="!h-full !aspect-auto !rounded-none md:!aspect-video md:!h-auto md:!rounded-xl"
             />
           </div>
         )}
+
+        {/* ── MOBILE overlay chrome — full-bleed video UI (mockup: Live Stream Player) ── */}
+        <div className="md:hidden absolute inset-0 z-10 flex flex-col pointer-events-none">
+          {/* Top scrim header: avatar, name, viewer count, LIVE badge, close */}
+          <div className="pointer-events-auto flex items-center gap-2.5 px-3.5 pt-3.5 pb-7 bg-gradient-to-b from-black/70 via-black/25 to-transparent">
+            <img
+              src={stream.thumbnailUrl || "/default-performer.svg"}
+              alt=""
+              className="w-[34px] h-[34px] rounded-full object-cover flex-shrink-0"
+              style={{ boxShadow: "0 0 0 2px #000, 0 0 0 4px #D4007A" }}
+              onError={(e) => { (e.target as HTMLImageElement).src = "/default-performer.svg"; }}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white truncate drop-shadow-sm">{stream.name}</p>
+              {viewerCount > 0 && (
+                <p className="text-[11px] text-white/80 flex items-center gap-1">
+                  <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                  </svg>
+                  {viewerCount} watching
+                </p>
+              )}
+            </div>
+            {stream.isLive && (
+              <span className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
+                LIVE
+              </span>
+            )}
+            <button
+              onClick={() => navigate("/live")}
+              aria-label="Close"
+              className="flex-shrink-0 w-8 h-8 rounded-full bg-black/40 flex items-center justify-center text-white active:scale-95 transition-transform"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Billing status pill — compact mobile equivalent of the desktop banner below the video */}
+          {!isStreamOwner && entryAllowed && stream?.isLive && (
+            <div className="-mt-4 px-3.5 flex justify-center">
+              {freeMinutesLeft !== null && freeMinutesLeft > 0 ? (
+                <span className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-500/20 border border-green-500/40 text-green-300 backdrop-blur-sm">
+                  Gratis: {freeMinutesLeft} min restantes
+                </span>
+              ) : tokenBalance !== null && tokenBalance < 10 ? (
+                <span className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/20 border border-red-500/40 text-red-300 backdrop-blur-sm animate-pulse">
+                  Pocos tokens — recarga pronto
+                </span>
+              ) : (
+                <span className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 border border-amber-500/40 text-amber-300 backdrop-blur-sm">
+                  1 token/min{tokenBalance !== null ? ` · ${tokenBalance} tokens` : ""}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Tip goal bar — floats directly under the header, matches mockup's amber label + gradient fill */}
+          {tipGoal && tipGoal.goalAmount && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
+            <div className="px-3.5 mt-2">
+              <div className="flex items-center justify-between mb-1 text-[10px]">
+                <span className="font-bold flex items-center gap-1" style={{ color: "#E69138" }}>
+                  🎯 {tipGoal.goalLabel || "Tip goal"}
+                </span>
+                <span className="text-white/85">
+                  {Math.round(tipGoal.progress)} / {Math.round(tipGoal.goalAmount)}
+                </span>
+              </div>
+              <div className="h-[5px] rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.18)" }}>
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, Math.round((tipGoal.progress / tipGoal.goalAmount) * 100))}%`,
+                    background: tipGoal.completed ? "#22c55e" : "linear-gradient(135deg,#D4007A,#E69138)",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1" />
+
+          {/* Floating chat stack, bottom-left over the video */}
+          {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (chatMessages.length > 0 || tipAlert) && (
+            <div className="px-3 mb-2 flex flex-col gap-1.5 max-w-[78%]">
+              {chatMessages.slice(-6).map((msg) => (
+                <div
+                  key={msg.id}
+                  className="pointer-events-auto flex items-center gap-1 text-xs text-white rounded-lg px-2.5 py-1.5 w-fit max-w-full"
+                  style={{ background: "rgba(0,0,0,0.42)" }}
+                >
+                  <span className="min-w-0 break-words">
+                    <span className="font-semibold" style={{ color: "#E69138" }}>@{msg.username}: </span>
+                    {msg.content}
+                  </span>
+                  {isStreamOwner && msg.userId && (
+                    <button
+                      onClick={() => handleBanUser(msg.userId!)}
+                      className="flex-shrink-0 text-white/40 hover:text-red-400 transition-colors"
+                      title="Ban from chat"
+                      aria-label="Ban from chat"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+              {tipAlert && (
+                <div
+                  className="pointer-events-auto text-xs text-white rounded-lg px-2.5 py-1.5 w-fit max-w-full font-semibold"
+                  style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.6), rgba(230,145,56,0.5))", boxShadow: "0 0 0 1px rgba(230,145,56,0.55)" }}
+                >
+                  🎁 {tipAlert.username}: {tipAlert.amount} tokens
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Bottom row: message input + floating Tip button */}
+          {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
+            <div className="pointer-events-auto flex items-end gap-2 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)]">
+              <div className="flex-1 min-w-0">
+                {isAuthenticated ? (
+                  chatBanned ? (
+                    <p className="text-[11px] text-red-300 rounded-full px-3 py-2.5 text-center" style={{ background: "rgba(0,0,0,0.4)" }}>
+                      You are banned from this stream's chat.
+                    </p>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitChat(); } }}
+                        placeholder="Say something…"
+                        aria-label="Type a chat message"
+                        maxLength={500}
+                        className="flex-1 min-w-0 h-10 rounded-full px-3.5 text-xs text-white placeholder-white/60 focus:outline-none"
+                        style={{ background: "rgba(255,255,255,0.14)" }}
+                      />
+                      <button
+                        onClick={submitChat}
+                        disabled={!chatInput.trim()}
+                        className="flex-shrink-0 h-10 px-4 rounded-full text-xs font-bold text-white btn-gradient disabled:opacity-50"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <button
+                    onClick={login}
+                    className="w-full h-10 rounded-full text-xs font-semibold text-white flex items-center px-3.5"
+                    style={{ background: "rgba(255,255,255,0.14)" }}
+                  >
+                    {t.live.logInToChat}
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setShowTipSheet(true)}
+                aria-label="Tip and more"
+                className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-white text-lg shadow-lg active:scale-95 transition-transform"
+                style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#E69138)" }}
+              >
+                ✨
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* ── Stream health HUD — creator-only, desktop, top-left of video ─── */}
         {isStreamOwner && stream.isLive && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
@@ -1986,8 +2168,8 @@ function StreamInner() {
             </svg>
           )}
         </button>
-        {/* Overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pb-3 pt-10">
+        {/* Overlay — desktop only; mobile shows this info in the top scrim header instead */}
+        <div className="hidden md:block absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pb-3 pt-10">
           <div className="flex items-center gap-2 flex-wrap">
             {stream.isLive && (
               <span className="flex items-center gap-1.5">
@@ -2072,9 +2254,9 @@ function StreamInner() {
         )}
       </div>
 
-          {/* ── Billing status banner — non-owner viewers only ─────────────── */}
+          {/* ── Billing status banner — desktop; mobile shows a compact pill in the video overlay ── */}
           {!isStreamOwner && entryAllowed && stream?.isLive && (
-            <div className="flex-shrink-0 px-4 py-1.5 flex items-center justify-center">
+            <div className="hidden md:flex flex-shrink-0 px-4 py-1.5 items-center justify-center">
               {freeMinutesLeft !== null && freeMinutesLeft > 0 ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-green-500/15 border border-green-500/30 text-green-400">
                   Gratis: {freeMinutesLeft} min restantes
@@ -2091,9 +2273,10 @@ function StreamInner() {
             </div>
           )}
 
-          {/* ── Tip goal progress bar — design: amber label, brand-gradient fill ── */}
+          {/* ── Tip goal progress bar — desktop (amber label, brand-gradient fill);
+               mobile shows it floated over the video ── */}
           {tipGoal && tipGoal.goalAmount && (
-            <div className="flex-shrink-0 px-4 py-2 bg-pnp-surface border-b border-pnp-border">
+            <div className="hidden md:block flex-shrink-0 px-4 py-2 bg-pnp-surface border-b border-pnp-border">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-bold truncate flex items-center gap-1" style={{ color: "#E69138" }}>
                   <span aria-hidden="true">🎯</span> {tipGoal.goalLabel || "Goal"}
@@ -2117,8 +2300,12 @@ function StreamInner() {
             </div>
           )}
 
-          {/* ── Scrollable area below video (left column) ───────────────────── */}
-          <div className="flex-1 overflow-y-auto">
+          {/* ── Scrollable area below video (left column) ─────────────────────
+               md:flex-1, not flex-1 — on mobile the video wrapper above is the
+               only flex-1 sibling in this column (full-bleed); this area now
+               only holds owner-only panels / offline states and should size to
+               its own content, not compete with the video for equal flex space. */}
+          <div className="md:flex-1 overflow-y-auto">
 
             {/* ── VOD replay — shown when stream is offline and a recording exists ── */}
             {!stream.isLive && replayUrl && (
@@ -2241,9 +2428,39 @@ function StreamInner() {
                 </div>
               )}
 
-              {/* ── MOBILE-ONLY: full paywall gate (tips + chat + book call) ──── */}
-              <div className="md:hidden">
-                {ticketStatus?.isTicketed && !ticketStatus.hasTicket ? null : (<>
+              {/* ── MOBILE-ONLY: tip/wallet/book-call sheet, opened by the Tip button in the video overlay ── */}
+              {showTipSheet && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
+                <div className="md:hidden fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Tip and support this creator">
+                  <div className="absolute inset-0 bg-black/60" onClick={() => setShowTipSheet(false)} />
+                  <div className="absolute left-0 right-0 bottom-0 max-h-[80dvh] overflow-y-auto rounded-t-2xl bg-pnp-surface border-t border-pnp-border px-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] pt-1">
+                    <div className="sticky -mt-1 top-0 bg-pnp-surface flex items-center justify-center py-2" aria-hidden="true">
+                      <span className="w-10 h-1 rounded-full bg-pnp-border" />
+                    </div>
+                    <div className="flex items-center justify-between pb-2">
+                      <span className="text-sm font-bold text-pnp-textPrimary truncate">{stream.name}</span>
+                      <button
+                        onClick={() => setShowTipSheet(false)}
+                        aria-label="Close"
+                        className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-pnp-textSecondary hover:text-pnp-textPrimary"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {stream.description && (
+                      <p className="text-xs text-pnp-textSecondary pb-2">{stream.description}</p>
+                    )}
+                    {stream.tags && stream.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pb-3">
+                        {stream.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-1.5 py-0.5 rounded-full text-[9px] font-medium text-pnp-textSecondary border border-pnp-border"
+                          >
+                            {(t.live[tag as keyof typeof t.live] as string) || tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
                   {/* Wallet Balance */}
                   {isAuthenticated && (
@@ -2540,108 +2757,11 @@ function StreamInner() {
                     </div>
                   )}
 
-                  {/* Live Chat — collapsible on mobile */}
-                  <Card className="mt-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-xs font-medium text-pnp-textPrimary">{t.live.liveChatTitle}</h3>
-                        <span className={`flex items-center gap-1 text-[10px] ${chatConnected ? "text-pnp-textSecondary" : "text-pnp-textSecondary/50"}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${chatConnected ? "bg-green-500" : "bg-pnp-textSecondary/30"}`} />
-                          {chatConnected ? t.live.chatConnected : t.live.chatConnecting}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {socketError && <span className="text-[10px] text-pnp-error">{socketError}</span>}
-                        <button
-                          onClick={() => setIsChatCollapsed((v) => !v)}
-                          className="p-1 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
-                          aria-label={isChatCollapsed ? "Expand chat" : "Collapse chat"}
-                        >
-                          <svg
-                            className={`w-4 h-4 transition-transform duration-200 ${isChatCollapsed ? "rotate-180" : ""}`}
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                    {!isChatCollapsed && (
-                      <>
-                        <div className="relative">
-                          {hasNewMessages && (
-                            <button
-                              onClick={scrollToBottom}
-                              className="absolute -top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 rounded-full bg-pnp-accent text-white text-[10px] font-semibold shadow-lg"
-                            >
-                              New messages
-                            </button>
-                          )}
-                          {chatMessages.length === 0 ? (
-                            <div className="h-48 flex items-center justify-center mb-2">
-                              <p className="text-[10px] text-pnp-textSecondary text-center">
-                                {chatConnected ? t.live.beFirstToChat : t.live.connectingToChat}
-                              </p>
-                            </div>
-                          ) : (
-                            <ChatMessageList
-                              messages={chatMessages.slice(-50)}
-                              listRef={chatListRef}
-                              containerRef={chatContainerRef}
-                              isOwner={isStreamOwner}
-                              onBan={isStreamOwner ? handleBanUser : undefined}
-                            />
-                          )}
-                          <div ref={chatEndRef} />
-                        </div>
-                        {isAuthenticated ? (
-                          chatBanned ? (
-                            <p className="text-[10px] text-red-400 text-center py-1">
-                              You are banned from this stream's chat.
-                            </p>
-                          ) : (
-                            <div className="flex gap-2 items-center">
-                              <input
-                                type="text"
-                                placeholder="Say something…"
-                                aria-label="Type a chat message"
-                                value={chatInput}
-                                onChange={(e) => setChatInput(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    submitChat();
-                                  }
-                                }}
-                                maxLength={500}
-                                className="flex-1 h-10 rounded-full border border-white/10 px-4 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60"
-                                style={{ background: "rgba(255,255,255,0.06)" }}
-                              />
-                              <button
-                                onClick={submitChat}
-                                disabled={!chatInput.trim()}
-                                className="h-10 px-5 rounded-full text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-                                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-                              >
-                                Send
-                              </button>
-                            </div>
-                          )
-                        ) : (
-                          <button onClick={login} className="text-xs text-pnp-accent hover:underline">
-                            {t.live.logInToChat}
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </Card>
-
-                </>)}
-              </div>
-              {/* end md:hidden */}
+                  </div>
+                  {/* end sheet panel */}
+                </div>
+              )}
+              {/* end mobile tip sheet */}
 
             </div>
             {/* end scrollable left area */}
