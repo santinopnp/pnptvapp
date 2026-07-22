@@ -4,7 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { getAllPerformers, type FeaturedPerformer } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
-import { PayWithCryptoWizard } from "@/components/payments/PayWithCryptoWizard";
 
 const ALLOWED_IMAGE_HOSTS = ["cms.pnptv.app", "app.pnptv.app", "pnptv.app"];
 function isValidPhotoUrl(photo: string | null | undefined): photo is string {
@@ -31,7 +30,6 @@ export default function Models() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [drawerPerformer, setDrawerPerformer] = useState<FeaturedPerformer | null>(null);
-  const [showCryptoWizard, setShowCryptoWizard] = useState(false);
 
   useEffect(() => {
     getAllPerformers()
@@ -95,28 +93,74 @@ export default function Models() {
         />
       </div>
 
-      {/* Pay-with-crypto wizard entry point */}
-      <button
-        type="button"
-        onClick={() => setShowCryptoWizard(true)}
-        className="w-full flex items-center gap-3 px-4 py-3 mb-5 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95"
-        style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.14), rgba(6,182,212,0.10))", border: "1px solid rgba(16,185,129,0.28)" }}
+      {/* New-to-crypto onboarding card — links to /crypto-guide */}
+      <a
+        href="/crypto-guide"
+        className="group block w-full mb-5 rounded-2xl overflow-hidden transition-transform active:scale-[0.99] hover:-translate-y-0.5"
+        style={{
+          background: "linear-gradient(135deg, rgba(247,147,26,0.16) 0%, rgba(0,141,228,0.12) 55%, rgba(16,185,129,0.14) 100%)",
+          border: "1px solid rgba(247,147,26,0.35)",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.03) inset",
+        }}
       >
-        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "linear-gradient(135deg,#10B981,#06B6D4)" }}>
-          <span className="text-base">🪙</span>
+        <div className="p-4 flex items-center gap-3.5">
+          <div className="relative flex-shrink-0" style={{ width: 56, height: 44 }}>
+            {[
+              { bg: "#F7931A", letter: "₿", offset: 0,  z: 40, ring: "#F7931A" },
+              { bg: "#26A17B", letter: "₮", offset: 14, z: 30, ring: "#26A17B" },
+              { bg: "#008DE4", letter: "Đ", offset: 28, z: 20, ring: "#008DE4" },
+              { bg: "#5ED1C4", letter: "$", offset: 42, z: 10, ring: "#5ED1C4" },
+            ].map((c) => (
+              <div
+                key={c.letter}
+                className="absolute top-0 w-11 h-11 rounded-full flex items-center justify-center text-white font-black text-lg"
+                style={{
+                  left: c.offset,
+                  zIndex: c.z,
+                  background: c.bg,
+                  border: "2.5px solid #0D0D0D",
+                  boxShadow: `0 0 12px ${c.ring}55`,
+                }}
+                aria-hidden="true"
+              >
+                {c.letter}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex-1 min-w-0 ml-4">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span
+                className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md"
+                style={{ background: "rgba(247,147,26,0.2)", color: "#F7931A", border: "1px solid rgba(247,147,26,0.4)" }}
+              >
+                {es ? "Guía completa" : "Full guide"}
+              </span>
+              <span className="text-[10px] font-semibold text-pnp-textSecondary">
+                {es ? "3 min de lectura" : "3 min read"}
+              </span>
+            </div>
+            <p className="text-sm font-bold text-pnp-textPrimary leading-tight">
+              {es ? "¿Primera vez pagando con crypto?" : "First time paying with crypto?"}
+            </p>
+            <p className="text-xs text-pnp-textSecondary mt-1 leading-snug">
+              {es
+                ? "Desbloquea creadores con USDT, Bitcoin o Dash en 5 minutos."
+                : "Unlock creators with USDT, Bitcoin or Dash in 5 minutes."}
+            </p>
+          </div>
+
+          <div
+            className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-transform group-hover:translate-x-0.5"
+            style={{ background: "linear-gradient(135deg,#F7931A,#D4007A)", boxShadow: "0 4px 12px rgba(247,147,26,0.35)" }}
+            aria-hidden="true"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+            </svg>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-pnp-textPrimary">
-            {es ? "Asistente de pago con cripto" : "Pay-with-crypto wizard"}
-          </p>
-          <p className="text-xs text-pnp-textSecondary mt-0.5 truncate">
-            {es ? "Suscríbete o desbloquea acceso con USDT, BTC y más" : "Subscribe or unlock access with USDT, BTC, and more"}
-          </p>
-        </div>
-        <span className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap" style={{ background: "linear-gradient(90deg,#10B981,#06B6D4)" }}>
-          {es ? "Iniciar" : "Start"}
-        </span>
-      </button>
+      </a>
 
       {/* Results */}
       {loading ? (
@@ -207,8 +251,6 @@ export default function Models() {
         />
       )}
 
-      {/* Pay with Crypto Wizard */}
-      <PayWithCryptoWizard open={showCryptoWizard} onClose={() => setShowCryptoWizard(false)} />
     </div>
   );
 }
