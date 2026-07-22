@@ -11352,7 +11352,7 @@ app.get('/api/invoice/:paymentId', requireSessionAuth, asyncHandler(async (req, 
   }
 
   const r = row.rows[0];
-  const InvoiceService = require('../../../services/invoiceservice');
+  const InvoiceService = require('../../services/invoiceservice');
   const customerName = r.display_name || r.first_name || r.username || 'Member';
   const planName = r.plan_display_name || r.plan_name || 'Digital Purchase';
   const invoiceNumber = `INV-${r.id.slice(0, 8).toUpperCase()}`;
