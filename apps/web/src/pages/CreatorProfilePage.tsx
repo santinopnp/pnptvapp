@@ -1125,7 +1125,11 @@ export default function CreatorProfilePage() {
 
   const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, exclusivePosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
-  const hasCallPackages = activePackages.length > 0;
+  // Santino runs a bespoke booking + hangout flow off-platform, so his profile
+  // hides the standard "Santino's Subscribers" hangout CTA, the next-availability
+  // card, and the private-call packages section.
+  const isSantinoProfile = String(creator.id) === "8599671840";
+  const hasCallPackages = activePackages.length > 0 && !isSantinoProfile;
   const cheapestPackage = hasCallPackages
     ? activePackages.reduce((a, b) => (a.price_usd < b.price_usd ? a : b))
     : null;
@@ -1748,8 +1752,10 @@ export default function CreatorProfilePage() {
                   </div>
                 )}
 
-                {/* ── 3d. Hangout — teal-tinted CTA card, always shows PRIVADO ── */}
-                {hasHangout && hangout && (
+                {/* ── 3d. Hangout — teal-tinted CTA card, always shows PRIVADO.
+                       Hidden on Santino's profile (his subscribers-hangout entry
+                       lives elsewhere; the standalone card was noise). ── */}
+                {hasHangout && hangout && !isSantinoProfile && (
                   <div
                     className="rounded-[12px] p-3.5"
                     style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)", padding: 14 }}
