@@ -131,13 +131,49 @@ const identity2257Upload = multer({
       cb(null, `id2257-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  // 25 MB — modern phone-camera ID photos regularly hit 15-20 MB (HEIC/JPEG raw)
+  // and rejecting at 10 MB was causing silent 500s that surfaced to the user as
+  // "Identity submission failed" with no cause.
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    // Include HEIC/HEIF for iOS Safari uploads (default camera format on modern
+    // iPhones). We still store with the original extension; downstream review
+    // handles conversion if needed.
+    const allowed = ['image/jpeg', 'image/pjpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Only JPEG, PNG, or WebP images are allowed for ID document'));
+    else cb(new Error('Only JPEG, PNG, WebP, or HEIC images are allowed for ID document'));
   },
 });
+
+// Multer error mapper for the 2257 identity endpoint. Without this the raw
+// busboy "Unexpected end of form" bubbles up as a 500 with no useful cause,
+// which is exactly what @frankboxreal_x hit while trying to onboard.
+function identity2257ErrorHandler(err, _req, res, next) {
+  if (!err) return next();
+  const code = err.code || '';
+  if (code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      error: 'File too large. Each image must be under 25 MB.',
+    });
+  }
+  if (code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({
+      success: false,
+      error: 'Unexpected file field. Attach only idDocument and idSelfie.',
+    });
+  }
+  if (/Only JPEG, PNG, WebP, or HEIC/i.test(err.message || '')) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  if (/Unexpected end of form/i.test(err.message || '')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Upload was interrupted. Check your connection and try again.',
+    });
+  }
+  return next(err);
+}
 
 // ── User routes (auth required) ───────────────────────────────────────────────
 router.get('/eligibility', authGuard, creatorController.getEligibility);
@@ -241,7 +277,7 @@ router.post('/enrollments/:id/reject', authGuard, roleGuard('admin', 'superadmin
 
 // ── Identity verification (2257) — user-facing ───────────────────────────────
 // IMPORTANT: must come BEFORE /:creatorId/* param routes
-router.post('/identity/submit', authGuard, identitySubmitLimiter, identity2257Upload.fields([{ name: 'idDocument', maxCount: 1 }, { name: 'idSelfie', maxCount: 1 }]), creatorController.submit2257);
+router.post('/identity/submit', authGuard, identitySubmitLimiter, identity2257Upload.fields([{ name: 'idDocument', maxCount: 1 }, { name: 'idSelfie', maxCount: 1 }]), identity2257ErrorHandler, creatorController.submit2257);
 router.get('/identity/status', authGuard, creatorController.get2257Status);
 
 // Persona hosted-flow (automated government-ID verification)

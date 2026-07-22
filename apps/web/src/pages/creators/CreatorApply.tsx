@@ -414,8 +414,8 @@ export default function CreatorApply() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Photo of ID Document <span style={{ color: "#D4007A" }}>*</span></label>
-                  <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Clear photo of your government-issued ID. Max 10 MB. JPG, PNG, or WebP.</p>
-                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={e => setIdFile(e.target.files?.[0] || null)} className="hidden" />
+                  <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Clear photo of your government-issued ID. Max 25 MB. JPG, PNG, WebP, or HEIC.</p>
+                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdFile(e.target.files?.[0] || null)} className="hidden" />
                   <button type="button" onClick={() => fileInputRef.current?.click()}
                     className="w-full rounded-lg py-2.5 text-sm font-medium transition-colors"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px dashed rgba(255,255,255,0.2)", color: idFile ? "#5ED1C4" : "var(--pnp-text-secondary, #8E8E93)" }}>
@@ -425,7 +425,7 @@ export default function CreatorApply() {
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Selfie Holding Your ID <span style={{ color: "#D4007A" }}>*</span></label>
                   <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>A photo of you holding your ID document so your face and the ID are both visible. Needed to confirm authenticity.</p>
-                  <input ref={selfieInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={e => setIdSelfieFile(e.target.files?.[0] || null)} className="hidden" />
+                  <input ref={selfieInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdSelfieFile(e.target.files?.[0] || null)} className="hidden" />
                   <button type="button" onClick={() => selfieInputRef.current?.click()}
                     className="w-full rounded-lg py-2.5 text-sm font-medium transition-colors"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px dashed rgba(255,255,255,0.2)", color: idSelfieFile ? "#5ED1C4" : "var(--pnp-text-secondary, #8E8E93)" }}>
