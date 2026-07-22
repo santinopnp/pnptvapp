@@ -6,7 +6,7 @@ import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { useTutorial, resetAllTutorials } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, Navigate } from "react-router-dom";
 import { Button, Badge, Skeleton } from "@pnptv/ui-kit";
 import { PostComposer } from "@/components/PostComposer";
 import {
@@ -1027,7 +1027,10 @@ export default function Profile() {
     );
   }
 
-  // Blocked user state — show minimal profile with unblock option
+  // Blocked user state — show minimal profile with unblock option. Checked
+  // BEFORE the creator redirect below so a viewer who has blocked this
+  // creator still gets the block-gated screen instead of being sent to
+  // /c/:username, which doesn't hide content based on block status.
   if (!isOwnProfile && isBlocked) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-6">
@@ -1069,6 +1072,17 @@ export default function Profile() {
         </div>
       </div>
     );
+  }
+
+  // Creators have exactly one public profile design — the mockup page at
+  // /c/:username. Every other entry point (creator cards, avatars, post
+  // authors, /profile/:userId legacy links) still lands here first; bounce
+  // to the canonical page so visitors never see the old Profile.tsx layout
+  // for a creator. The creator's OWN view stays on this page — /c/ has no
+  // edit affordances (avatar upload, bio, settings), so redirecting them
+  // too would strand them with no way to manage their profile.
+  if (!isOwnProfile && profile.creatorStatus === "active" && profile.username) {
+    return <Navigate to={`/c/${profile.username}`} replace />;
   }
 
   const photoUrl = resolvePhotoUrl(profile.photoUrl);
