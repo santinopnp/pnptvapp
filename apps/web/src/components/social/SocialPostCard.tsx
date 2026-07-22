@@ -1420,9 +1420,12 @@ export default function SocialPostCard({
                             onError={() => setVideoError(true)}
                           />
                           {post.author_username && post.author_creator_status === "active" && (
-                            <div aria-hidden="true" style={{ position: "absolute", bottom: 10, right: 10, color: "#fff", fontSize: 11, fontWeight: 600, opacity: 0.13, pointerEvents: "none", userSelect: "none", letterSpacing: "0.4px", zIndex: 10, textShadow: "0 1px 3px rgba(0,0,0,0.95)", whiteSpace: "nowrap" }}>
-                              @{post.author_username} · pnptv.app
-                            </div>
+                            <img
+                              src="/logo-nav.png"
+                              alt=""
+                              aria-hidden="true"
+                              style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                            />
                           )}
                         </div>
                       )}
@@ -1440,9 +1443,12 @@ export default function SocialPostCard({
                         }}
                       />
                       {post.author_username && post.author_creator_status === "active" && (
-                        <div aria-hidden="true" style={{ position: "absolute", bottom: 10, right: 10, color: "#fff", fontSize: 11, fontWeight: 600, opacity: 0.13, pointerEvents: "none", userSelect: "none", letterSpacing: "0.4px", zIndex: 10, textShadow: "0 1px 3px rgba(0,0,0,0.95)", whiteSpace: "nowrap" }}>
-                          @{post.author_username} · pnptv.app
-                        </div>
+                        <img
+                          src="/logo-nav.png"
+                          alt=""
+                          aria-hidden="true"
+                          style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                        />
                       )}
                     </div>
                   )}
