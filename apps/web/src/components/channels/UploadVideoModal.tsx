@@ -275,9 +275,9 @@ export default function UploadVideoModal({
     try {
       // Save latest edits first
       await updateChannelVideo(channelId, videoIdRef.current, { title: title.trim(), description, tags, post_to_feed: announce });
-      const video = await publishChannelVideo(channelId, videoIdRef.current);
+      const res = await publishChannelVideo(channelId, videoIdRef.current);
       setStep("done");
-      onPublished?.(video);
+      onPublished?.(res.video);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error al publicar. Intenta de nuevo.");
     } finally {

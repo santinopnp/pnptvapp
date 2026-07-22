@@ -538,7 +538,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
             {/* Bitcoin / Lightning — only shown when BTCPay has BTC configured */}
             {/* Card / PSE via Meru (Colombia bank transfers + cards) */}
             <button
-              onClick={() => { setBuyMethod('meru'); setMeruStep('packages'); }}
+              onClick={() => setBuyMethod('meru')}
               className="w-full flex items-center gap-4 p-4 rounded-xl border border-pink-500/30 bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-pink-400/50 active:scale-[0.99] transition-all text-left min-h-[64px]"
             >
               <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(212,0,122,0.15)" }}>

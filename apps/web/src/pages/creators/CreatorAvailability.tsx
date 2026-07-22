@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import {
   getCreatorCallEarnings,
   getCreatorCallBookings,
+  getAcceptingCallsStatus,
+  setAcceptingCalls,
+  ApiError,
   type CreatorCallEarnings,
   type CreatorCallBooking,
 } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { CallPackageManager } from "@/pages/creator/CallPackageManager";
 
 // ─── Countdown timer ─────────────────────────────────────────────────────────
