@@ -2367,6 +2367,18 @@ const getStreamHealth = async (req, res) => {
   // Cache for 4 seconds
   try { await redis.set(cacheKey, JSON.stringify(body), 'EX', 4); } catch { /* ignore */ }
 
+  // Fire-and-forget: on first observed 'connected' state, announce go-live.
+  // Idempotent per channelRef via a 4h Redis marker inside announceStreamLive.
+  if (inputState === 'connected') {
+    try {
+      const PNPLiveNotificationService = require('../../../services/pnpLiveNotificationService');
+      PNPLiveNotificationService.announceStreamLive(channelRef)
+        .catch((err) => logger.warn('announceStreamLive: unexpected error', { channelRef, error: err.message }));
+    } catch (err) {
+      logger.warn('announceStreamLive: dispatch failed', { channelRef, error: err.message });
+    }
+  }
+
   return res.json(body);
 };
 

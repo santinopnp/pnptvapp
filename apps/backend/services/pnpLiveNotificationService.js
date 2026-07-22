@@ -12,6 +12,29 @@ const { CREATOR_REVENUE_RATE } = require('../config/monetizationConfig');
 // Store bot reference for sending messages
 let botInstance = null;
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Fire-and-forget analytics logger for the broadcast_events table.
+async function _logBroadcastEvent(fields) {
+  try {
+    await query(
+      `INSERT INTO broadcast_events
+         (creator_id, content_type, content_ref, promo_post_id, channel, target, status, reason, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        String(fields.creatorId || ''), fields.contentType || 'stream',
+        fields.contentRef ?? null, fields.promoPostId ?? null,
+        fields.channel, fields.target ?? null,
+        fields.status, fields.reason ?? null, fields.errorMessage ?? null,
+      ]
+    );
+  } catch (err) {
+    logger.warn('broadcast_events insert failed', { channel: fields.channel, error: err.message });
+  }
+}
+
 class PNPLiveNotificationService {
   /**
    * Initialize the notification service with bot instance
@@ -628,6 +651,174 @@ class PNPLiveNotificationService {
         error: err.message,
       });
       return 0;
+    }
+  }
+
+  /**
+   * Announce a go-live event across PNPtv's own channels (X @PNPTelevision,
+   * Telegram groups, opted-in DMs). Idempotent per stream session via Redis
+   * marker `stream:announced:<channelRef>` with 4-hour TTL — safe to call
+   * from a poll loop; only the first invocation per 4h window actually posts.
+   *
+   * Gates:
+   *  - Streamer must have pnptv_announce_consent = TRUE (opt-in in Documentation)
+   *  - Streamer must own the channelRef (via users.live_channel)
+   *  - Only posts when the marker key isn't already set
+   *
+   * @param {string} channelRef — Restreamer channel ref (e.g. 'pnptv-elevenminutos')
+   * @returns {Promise<{posted?: boolean, skipped?: string, error?: string}>}
+   */
+  static async announceStreamLive(channelRef) {
+    if (!channelRef || typeof channelRef !== 'string') {
+      return { skipped: 'bad-ref' };
+    }
+    try {
+      const { getRedis } = require('../config/redis');
+      const redis = getRedis();
+
+      // Idempotency marker — 4h TTL so restarting the stream soon re-fires only after cooldown.
+      const markerKey = `stream:announced:${channelRef}`;
+      const acquired = await redis.set(markerKey, '1', 'EX', 4 * 60 * 60, 'NX');
+      if (acquired === null) {
+        return { skipped: 'already-announced' };
+      }
+
+      // Look up the streamer via users.live_channel
+      const { rows: userRows } = await query(
+        `SELECT id, username, first_name, pnptv_announce_consent
+           FROM users
+          WHERE live_channel = $1
+          LIMIT 1`,
+        [channelRef]
+      );
+      if (!userRows[0]) {
+        await redis.del(markerKey); // let a future try work if user data resolves later
+        void _logBroadcastEvent({ contentType: 'stream', contentRef: channelRef, channel: 'x', target: '@PNPTelevision', status: 'skipped', reason: 'no-user' });
+        return { skipped: 'no-user' };
+      }
+      const streamer = userRows[0];
+      if (!streamer.pnptv_announce_consent) {
+        void _logBroadcastEvent({ creatorId: streamer.id, contentType: 'stream', contentRef: channelRef, channel: 'x', target: '@PNPTelevision', status: 'skipped', reason: 'no-consent' });
+        return { skipped: 'no-consent' };
+      }
+
+      const displayName = streamer.first_name || streamer.username || 'A creator';
+      const handle = streamer.username ? `@${streamer.username}` : displayName;
+      const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+      const shareUrl = `${appUrl}/live/${channelRef}`;
+
+      // Optional stream title from Redis meta
+      let streamTitle = null;
+      try {
+        const meta = await redis.get(`stream:meta:${channelRef}`);
+        if (meta) {
+          try { streamTitle = JSON.parse(meta)?.title || null; } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+
+      const eventBase = { creatorId: streamer.id, contentType: 'stream', contentRef: channelRef };
+
+      // ── X post to @PNPTelevision ─────────────────────────────────────────
+      try {
+        const XPostService = require('./xPostService');
+        const PNPTV_X_ACCOUNT_ID = process.env.PNPTV_X_ACCOUNT_ID || '450eba46-9a7f-46ca-a0dd-7e4ecd5ab1d4';
+        const cleanTitle = streamTitle ? String(streamTitle).slice(0, 120) : null;
+        const tweetText = cleanTitle
+          ? `🔴 LIVE — ${handle}: ${cleanTitle}\n🔴 EN VIVO — ${handle}\n\n${shareUrl}\n\n#PNPLive`
+          : `🔴 ${handle} is LIVE now on PNPtv!\n🔴 ${handle} está EN VIVO en PNPtv!\n\n${shareUrl}\n\n#PNPLive`;
+        const snapshotUrl = `${appUrl}/api/og/snapshot/${encodeURIComponent(channelRef)}.jpg`;
+        await XPostService.sendPostNow({
+          accountId: PNPTV_X_ACCOUNT_ID, adminId: null, adminUsername: 'pnptv-auto-announce',
+          text: tweetText, mediaUrl: snapshotUrl,
+        });
+        logger.info('announceStreamLive: X post sent', { channelRef, streamerId: streamer.id });
+        void _logBroadcastEvent({ ...eventBase, channel: 'x', target: '@PNPTelevision', status: 'sent' });
+      } catch (err) {
+        logger.warn('announceStreamLive: X post failed', { channelRef, error: err.message });
+        void _logBroadcastEvent({ ...eventBase, channel: 'x', target: '@PNPTelevision', status: 'failed', errorMessage: err.message });
+      }
+
+
+      // ── Telegram group broadcast ─────────────────────────────────────────
+      try {
+        const { rows: groups } = await query(
+          `SELECT telegram_group_id, name FROM community_groups
+            WHERE is_active = TRUE
+              AND telegram_group_id IS NOT NULL
+              AND telegram_group_id NOT LIKE '-100123456789%'`
+        );
+        if (groups.length && botInstance?.telegram) {
+          const captionEs = streamTitle
+            ? `🔴 <b>EN VIVO — ${escapeHtml(handle)}</b>\n${escapeHtml(String(streamTitle).slice(0, 160))}\n\n🔴 <i>LIVE — ${escapeHtml(handle)} is streaming</i>\n\n👇`
+            : `🔴 <b>${escapeHtml(handle)} está EN VIVO ahora</b>\n\n🔴 <i>${escapeHtml(handle)} is LIVE on PNPtv!</i>\n\n👇`;
+          const keyboard = { inline_keyboard: [[{ text: '▶️ Ver ahora / Watch now', url: shareUrl }]] };
+          for (const g of groups) {
+            try {
+              await botInstance.telegram.sendMessage(g.telegram_group_id, captionEs, {
+                parse_mode: 'HTML', reply_markup: keyboard,
+                link_preview_options: { prefer_large_media: true },
+              });
+              void _logBroadcastEvent({ ...eventBase, channel: 'telegram_group', target: g.telegram_group_id, status: 'sent' });
+            } catch (err) {
+              logger.warn('announceStreamLive: group send failed', {
+                channelRef, chatId: g.telegram_group_id, code: err.code, description: err.description || err.message,
+              });
+              void _logBroadcastEvent({
+                ...eventBase, channel: 'telegram_group', target: g.telegram_group_id,
+                status: 'failed', errorMessage: `${err.code || ''} ${err.description || err.message}`.trim(),
+              });
+            }
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          logger.info('announceStreamLive: telegram groups broadcast', { channelRef, groups: groups.length });
+        }
+      } catch (err) {
+        logger.warn('announceStreamLive: group broadcast error', { channelRef, error: err.message });
+      }
+
+      // ── DM opt-in broadcast to followers ─────────────────────────────────
+      try {
+        const { rows: followers } = await query(
+          `SELECT u.id, u.telegram, u.notification_preferences
+             FROM user_follows uf
+             JOIN users u ON u.id = uf.follower_id
+            WHERE uf.following_id = $1
+              AND u.tier NOT IN ('free', 'banned')
+              AND u.telegram IS NOT NULL
+            LIMIT 3000`,
+          [String(streamer.id)]
+        );
+        const optedIn = followers.filter((f) => f.notification_preferences?.going_live?.bot === true);
+        if (optedIn.length && botInstance?.telegram) {
+          const escapeMd = (s) => String(s).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+          const cleanTitle = streamTitle ? escapeMd(String(streamTitle).slice(0, 140)) : null;
+          const dmMessage = cleanTitle
+            ? `🔴 *${escapeMd(handle)} EN VIVO ahora\\!* ${cleanTitle}\n_${escapeMd(handle)} is LIVE now_\n\n👉 [Ver / Watch](${shareUrl})`
+            : `🔴 *${escapeMd(handle)} EN VIVO en PNPtv\\!*\n_${escapeMd(handle)} is LIVE on PNPtv_\n\n👉 [Ver / Watch](${shareUrl})`;
+          let sent = 0;
+          for (const f of optedIn) {
+            try {
+              await botInstance.telegram.sendMessage(f.telegram, dmMessage, { parse_mode: 'MarkdownV2' });
+              sent++;
+              void _logBroadcastEvent({ ...eventBase, channel: 'telegram_dm', target: String(f.id), status: 'sent' });
+            } catch (err) {
+              if (err.code !== 403 && err.code !== 400) {
+                logger.warn('announceStreamLive: DM failed', { telegram: f.telegram, code: err.code });
+              }
+              void _logBroadcastEvent({ ...eventBase, channel: 'telegram_dm', target: String(f.id), status: 'failed', errorMessage: `${err.code || ''}` });
+            }
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          logger.info('announceStreamLive: DMs sent', { channelRef, optedIn: optedIn.length, sent });
+        }
+      } catch (err) {
+        logger.warn('announceStreamLive: DM broadcast error', { channelRef, error: err.message });
+      }
+
+      return { posted: true };
+    } catch (err) {
+      logger.error('announceStreamLive: fatal', { channelRef, error: err.message });
+      return { error: err.message };
     }
   }
 

@@ -23,11 +23,16 @@ const meruPaymentService = require('./meruPaymentService');
 
 // Token packages — mirrors DashTokenService.TOKEN_PACKAGES but keyed by id for O(1) lookup.
 // Source of truth is DashTokenService; we derive the map from it rather than duplicating numbers.
+// Meru-only packages (tokens_250, tokens_500) are appended below — they use pre-provisioned
+// Meru payment links stored in meru_payment_links.product AS-IS (no "token_" prefix).
 const _pkgMap = (() => {
   const map = {};
   for (const p of DashTokenService.TOKEN_PACKAGES) {
     map[p.id] = { tokens: p.tokens, usd: p.usd, product: `token_${p.id}`, label: p.label };
   }
+  // Meru-only packages — product name in meru_payment_links matches the id verbatim
+  map.tokens_250 = { tokens: 250, usd: 5, product: 'tokens_250', label: '250 tokens' };
+  map.tokens_500 = { tokens: 500, usd: 9, product: 'tokens_500', label: '500 tokens' };
   return map;
 })();
 

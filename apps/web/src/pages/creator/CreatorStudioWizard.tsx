@@ -449,7 +449,7 @@ export default function CreatorStudioWizard() {
               <div className="flex items-center gap-2.5 px-3.5 py-3" style={{ background: "#111" }}>
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#FFB454" }}>Post exclusivo en tu muro</p>
-                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">Video ≥ 4 min con candado</p>
+                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">Video con candado (~4 min recomendado)</p>
                 </div>
                 <svg className="w-4 h-4 flex-shrink-0 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />

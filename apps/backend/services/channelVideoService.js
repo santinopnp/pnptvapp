@@ -417,6 +417,194 @@ async function updateVideo({ videoId, userId, isAdmin, fields }) {
 
 // ── Broadcast fan-out (fire-and-forget) ─────────────────────────────────────
 
+// ── Auto-announce to @PNPTelevision (X) — consented creators, free content only ─
+// Rate-limit: max 1 X post per creator per hour. Silently skipped if the creator
+// hasn't opted in via /creators/documentation → "Let PNPtv announce my new content".
+const PNPTV_X_ACCOUNT_ID = process.env.PNPTV_X_ACCOUNT_ID || '450eba46-9a7f-46ca-a0dd-7e4ecd5ab1d4';
+const PNPTV_X_RATE_LIMIT_TTL = 60 * 60; // 1 hour
+
+// Fire-and-forget analytics logger — never blocks a broadcast.
+async function logBroadcastEvent(fields) {
+  try {
+    await query(
+      `INSERT INTO broadcast_events
+         (creator_id, content_type, content_ref, promo_post_id, channel, target, status, reason, error_message)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        String(fields.creatorId || ''),
+        fields.contentType || 'video',
+        fields.contentRef != null ? String(fields.contentRef) : null,
+        fields.promoPostId ?? null,
+        fields.channel,
+        fields.target ?? null,
+        fields.status,
+        fields.reason ?? null,
+        fields.errorMessage ?? null,
+      ]
+    );
+  } catch (err) {
+    logger.warn('logBroadcastEvent: insert failed', { channel: fields.channel, error: err.message });
+  }
+}
+
+async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUsername, title, thumbnailUrl, gifUrl, accessType }) {
+  const eventBase = { creatorId, contentType: 'video', contentRef: videoId, promoPostId, channel: 'x', target: '@PNPTelevision' };
+  try {
+    if (accessType && accessType !== 'free') {
+      void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'not-free' });
+      return { skipped: true, reason: 'not-free' };
+    }
+
+    const { rows } = await query(
+      `SELECT pnptv_announce_consent FROM users WHERE id = $1`,
+      [String(creatorId)]
+    );
+    if (!rows[0]?.pnptv_announce_consent) {
+      void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'no-consent' });
+      return { skipped: true, reason: 'no-consent' };
+    }
+
+    const redis = getRedis();
+    const rlKey = `pnp:auto-announce:x:rl:creator:${creatorId}`;
+    const rlAcquired = await redis.set(rlKey, '1', 'EX', PNPTV_X_RATE_LIMIT_TTL, 'NX');
+    if (rlAcquired === null) {
+      logger.info('announceVideoOnX: rate-limited', { creatorId, videoId });
+      void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'rate-limited' });
+      return { skipped: true, reason: 'rate-limited' };
+    }
+
+    const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+    const shareUrl = promoPostId ? `${appUrl}/v/${promoPostId}` : `${appUrl}/channels`;
+    const handle = creatorUsername ? `@${creatorUsername}` : 'a PNPtv! creator';
+    const safeTitle = (title || '').toString().trim().slice(0, 140);
+
+    // Bilingual, brand-tight — EN line, ES line, hashtags. OG card carries the visuals.
+    const text = safeTitle
+      ? `🎬 New drop — ${handle}: ${safeTitle}\n🎬 Nuevo — ${handle} acaba de subir\n\n${shareUrl}\n\n#PNPtv #PNPLive`
+      : `🎬 ${handle} just dropped new content on PNPtv!\n🎬 ${handle} tiene contenido nuevo en PNPtv!\n\n${shareUrl}\n\n#PNPtv`;
+
+    const mediaUrl = gifUrl || thumbnailUrl || null;
+
+    const XPostService = require('./xPostService');
+    const result = await XPostService.sendPostNow({
+      accountId: PNPTV_X_ACCOUNT_ID,
+      adminId: null,
+      adminUsername: 'pnptv-auto-announce',
+      text,
+      mediaUrl,
+    });
+
+    logger.info('announceVideoOnX: posted', { videoId, creatorId, xPostId: result.postId, shareUrl });
+    void logBroadcastEvent({ ...eventBase, status: 'sent' });
+    return { posted: true, postId: result.postId };
+  } catch (err) {
+    try { await getRedis().del(`pnp:auto-announce:x:rl:creator:${creatorId}`); } catch { /* ignore */ }
+    logger.warn('announceVideoOnX: failed', { videoId, creatorId, error: err.message });
+    void logBroadcastEvent({ ...eventBase, status: 'failed', errorMessage: err.message });
+    return { error: err.message };
+  }
+}
+
+// Post the announcement to every active Telegram group the bot admins.
+// Skipped when creator has not consented. Uses inline "Watch" button linking
+// to /v/<promoPostId> so Telegram renders the OG preview card.
+async function announceVideoToTelegramGroups({ videoId, promoPostId, creatorId, creatorUsername, title, thumbnailUrl, gifUrl, accessType }) {
+  const eventBase = { creatorId, contentType: 'video', contentRef: videoId, promoPostId, channel: 'telegram_group' };
+  try {
+    if (accessType && accessType !== 'free') {
+      void logBroadcastEvent({ ...eventBase, target: '*', status: 'skipped', reason: 'not-free' });
+      return { skipped: true, reason: 'not-free' };
+    }
+    const { rows: consentRows } = await query(
+      `SELECT pnptv_announce_consent FROM users WHERE id = $1`,
+      [String(creatorId)]
+    );
+    if (!consentRows[0]?.pnptv_announce_consent) {
+      void logBroadcastEvent({ ...eventBase, target: '*', status: 'skipped', reason: 'no-consent' });
+      return { skipped: true, reason: 'no-consent' };
+    }
+
+    const { rows: groups } = await query(
+      `SELECT telegram_group_id, name FROM community_groups
+        WHERE is_active = TRUE
+          AND telegram_group_id IS NOT NULL
+          AND telegram_group_id NOT LIKE '-100123456789%'`
+    );
+    if (!groups.length) {
+      void logBroadcastEvent({ ...eventBase, target: '*', status: 'skipped', reason: 'no-groups' });
+      return { skipped: true, reason: 'no-groups' };
+    }
+
+    let botInstance;
+    try {
+      const { getBotInstance } = require('../bot/core/bot');
+      botInstance = getBotInstance();
+    } catch (err) {
+      logger.warn('announceVideoToTelegramGroups: cannot resolve bot instance', { videoId, error: err.message });
+      void logBroadcastEvent({ ...eventBase, target: '*', status: 'failed', errorMessage: err.message });
+      return { error: 'no-bot' };
+    }
+    if (!botInstance?.telegram) {
+      void logBroadcastEvent({ ...eventBase, target: '*', status: 'failed', errorMessage: 'no-bot' });
+      return { error: 'no-bot' };
+    }
+
+    const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+    const shareUrl = promoPostId ? `${appUrl}/v/${promoPostId}` : `${appUrl}/channels`;
+    const handle = creatorUsername ? `@${creatorUsername}` : 'un creador';
+    const safeTitle = (title || '').toString().trim().slice(0, 160);
+    // Bilingual — ES first (LatAm-heavy audience), EN below
+    const captionEs = safeTitle
+      ? `🎬 <b>Nuevo drop de ${escapeHtml(handle)}</b>\n${escapeHtml(safeTitle)}\n\n🎬 <i>New drop from ${escapeHtml(handle)}</i>\n\n👇`
+      : `🎬 <b>${escapeHtml(handle)} acaba de subir contenido nuevo</b>\n\n🎬 <i>${escapeHtml(handle)} just dropped new content on PNPtv!</i>\n\n👇`;
+
+    const keyboard = {
+      inline_keyboard: [[{ text: '▶️ Ver ahora / Watch now', url: shareUrl }]],
+    };
+
+    const photoUrl = thumbnailUrl || gifUrl || null;
+
+    let sent = 0;
+    for (const g of groups) {
+      try {
+        if (photoUrl) {
+          await botInstance.telegram.sendPhoto(g.telegram_group_id, photoUrl, {
+            caption: captionEs, parse_mode: 'HTML', reply_markup: keyboard,
+          });
+        } else {
+          await botInstance.telegram.sendMessage(g.telegram_group_id, captionEs, {
+            parse_mode: 'HTML', reply_markup: keyboard,
+            link_preview_options: { prefer_large_media: true },
+          });
+        }
+        sent++;
+        void logBroadcastEvent({ ...eventBase, target: g.telegram_group_id, status: 'sent' });
+      } catch (err) {
+        logger.warn('announceVideoToTelegramGroups: send failed', {
+          videoId, chatId: g.telegram_group_id, groupName: g.name, code: err.code, description: err.description || err.message,
+        });
+        void logBroadcastEvent({
+          ...eventBase, target: g.telegram_group_id, status: 'failed',
+          errorMessage: `${err.code || ''} ${err.description || err.message}`.trim(),
+        });
+      }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    logger.info('announceVideoToTelegramGroups: broadcast complete', { videoId, total: groups.length, sent });
+    return { posted: true, groupsAttempted: groups.length, sent };
+  } catch (err) {
+    logger.warn('announceVideoToTelegramGroups: failed', { videoId, error: err.message });
+    void logBroadcastEvent({ ...eventBase, target: '*', status: 'failed', errorMessage: err.message });
+    return { error: err.message };
+  }
+}
+
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function broadcastNewVideo({ videoId, channelId, creatorId, title, description, thumbnailUrl, gifUrl }) {
   const redis = getRedis();
   const dedupKey = `pnp:video:notified:${videoId}`;
@@ -432,7 +620,8 @@ async function broadcastNewVideo({ videoId, channelId, creatorId, title, descrip
   let followers = [];
   try {
     const { rows } = await query(
-      `SELECT u.id, u.telegram, u.email, u.first_name, u.username, u.language
+      `SELECT u.id, u.telegram, u.email, u.first_name, u.username, u.language,
+              u.notification_preferences
          FROM user_follows uf
          JOIN users u ON u.id = uf.follower_id
         WHERE uf.following_id = $1
@@ -446,29 +635,50 @@ async function broadcastNewVideo({ videoId, channelId, creatorId, title, descrip
     return;
   }
 
-  // ── Telegram DMs (disabled — notifications are in-app and push only) ─────
-  // Telegram notification mirroring disabled — notifications are in-app and push only
-  // try {
-  //   const { getBotInstance } = require('../bot/core/bot');
-  //   const bot = getBotInstance();
-  //   const telegramFollowers = followers.filter((f) => f.telegram);
-  //   const escapeMd = (s) => String(s).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
-  //   const safeTitle = escapeMd(title);
-  //   const tgMessage = `🎬 *Nuevo video\\!* ${safeTitle}\n\n${descSnippet ? escapeMd(descSnippet) + '\n\n' : ''}👉 [Ver ahora](${watchUrl})`;
-  //   for (const f of telegramFollowers) {
-  //     try {
-  //       if (bot) await bot.telegram.sendMessage(f.telegram, tgMessage, { parse_mode: 'MarkdownV2' });
-  //     } catch (err) {
-  //       if (err.code !== 403 && err.code !== 400) {
-  //         logger.warn('broadcastNewVideo: tg DM failed', { telegram: f.telegram, code: err.code });
-  //       }
-  //     }
-  //     await new Promise((r) => setTimeout(r, 60));
-  //   }
-  //   logger.info('broadcastNewVideo: telegram DMs sent', { videoId, count: telegramFollowers.length });
-  // } catch (err) {
-  //   logger.warn('broadcastNewVideo: telegram fan-out failed', { videoId, error: err.message });
-  // }
+  // ── Telegram DMs — opt-in only ────────────────────────────────────────────
+  // Followers who have BOTH linked Telegram AND ticked
+  // notification_preferences.creator_new_content.bot receive a DM.
+  // Users default to bot:false so nothing is sent until they opt in.
+  const shareUrl = watchUrl; // for promo linking use the /v/<promo_post_id> supplied by caller in future
+  const escapeMd = (s) => String(s).replace(/[_*[\]()~`>#+=|{}.!\\-]/g, '\\$&');
+  const dmOptedIn = followers.filter((f) => {
+    if (!f.telegram) return false;
+    const prefs = f.notification_preferences;
+    return prefs?.creator_new_content?.bot === true;
+  });
+
+  if (dmOptedIn.length > 0) {
+    try {
+      const { getBotInstance } = require('../bot/core/bot');
+      const bot = getBotInstance();
+      if (bot?.telegram) {
+        const safeTitle = escapeMd(title || '');
+        const safeSnippet = descSnippet ? escapeMd(descSnippet) + '\n\n' : '';
+        // Bilingual DM — ES top, EN bottom, watch button
+        const tgMessage =
+          `🎬 *Nuevo video de un creador que sigues\\!*\n${safeTitle}\n${safeSnippet}` +
+          `🎬 _New video from a creator you follow_\n\n` +
+          `👉 [Ver ahora / Watch now](${shareUrl})`;
+        let sentDm = 0;
+        for (const f of dmOptedIn) {
+          try {
+            await bot.telegram.sendMessage(f.telegram, tgMessage, { parse_mode: 'MarkdownV2' });
+            sentDm++;
+            void logBroadcastEvent({ creatorId, contentType: 'video', contentRef: videoId, channel: 'telegram_dm', target: String(f.id), status: 'sent' });
+          } catch (err) {
+            if (err.code !== 403 && err.code !== 400) {
+              logger.warn('broadcastNewVideo: tg DM failed', { telegram: f.telegram, code: err.code });
+            }
+            void logBroadcastEvent({ creatorId, contentType: 'video', contentRef: videoId, channel: 'telegram_dm', target: String(f.id), status: 'failed', errorMessage: `${err.code || ''}` });
+          }
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        logger.info('broadcastNewVideo: telegram DMs sent', { videoId, optedIn: dmOptedIn.length, sent: sentDm });
+      }
+    } catch (err) {
+      logger.warn('broadcastNewVideo: telegram fan-out failed', { videoId, error: err.message });
+    }
+  }
 
   // ── Push notifications ────────────────────────────────────────────────────
   try {
@@ -611,11 +821,21 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       // all logged-in users see the teaser in the feed. The CTA card gates the
       // actual video behind the channel's access_type. Marking the post exclusive
       // would prevent even creators (who hold pnp-member, not PRIME) from seeing it.
+      // Include video_title/video_description so the /v/<postId> OG preview
+      // renders the actual video title in social-share cards (X, Telegram).
       const promoInsert = await query(
-        `INSERT INTO social_posts (user_id, content, media_url, media_type, metadata, is_exclusive, content_tier, channel_id, created_at)
-         VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, NOW())
+        `INSERT INTO social_posts
+           (user_id, content, media_url, media_type, metadata, is_exclusive,
+            content_tier, channel_id, video_title, video_description, video_thumbnail_url, created_at)
+         VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, $6, $7, $8, NOW())
          RETURNING id`,
-        [OFFICIAL_USER_ID, promoContent, previewUrl, JSON.stringify(metadata), ch.id]
+        [
+          OFFICIAL_USER_ID, promoContent, previewUrl, JSON.stringify(metadata),
+          ch.id,
+          (final.title || '').toString().slice(0, 200) || null,
+          (final.description || '').toString().slice(0, 2000) || null,
+          final.thumbnail_url || null,
+        ]
       );
       const promoPostId = promoInsert.rows[0]?.id ?? null;
       if (promoPostId) {
@@ -720,6 +940,34 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       thumbnailUrl: final.thumbnail_url,
       gifUrl: final.gif_url,
     }).catch((err) => logger.warn('broadcastNewVideo: unexpected error', { videoId, error: err.message }));
+
+    // Auto-announce to @PNPTelevision on X — creator opt-in + free content + rate-limited.
+    // Fires only when the creator has enabled announcements in Documentation.
+    void announceVideoOnX({
+      videoId,
+      promoPostId: final.promo_post_id || null,
+      creatorId: ch.creator_id,
+      creatorUsername: ch.creator_username || null,
+      title: final.title,
+      thumbnailUrl: final.thumbnail_url,
+      gifUrl: final.gif_url,
+      accessType: ch.access_type || 'free',
+    }).catch((err) => logger.warn('announceVideoOnX: unexpected error', { videoId, error: err.message }));
+
+    // Auto-announce to PNPtv Telegram groups the bot admins.
+    // Same consent gate + free-content restriction. No X rate-limit here (small
+    // number of groups; Telegram's own per-chat cooldown is enough).
+    void announceVideoToTelegramGroups({
+      videoId,
+      promoPostId: final.promo_post_id || null,
+      creatorId: ch.creator_id,
+      creatorUsername: ch.creator_username || null,
+      title: final.title,
+      thumbnailUrl: final.thumbnail_url,
+      gifUrl: final.gif_url,
+      accessType: ch.access_type || 'free',
+    }).catch((err) => logger.warn('announceVideoToTelegramGroups: unexpected error', { videoId, error: err.message }));
+
   }
 
   return shapeForApi(final, ch);

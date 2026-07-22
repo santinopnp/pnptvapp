@@ -3,6 +3,7 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  ClipboardEvent,
   KeyboardEvent,
 } from "react";
 import { searchMentions, type MentionUser } from "@/lib/api";
@@ -27,6 +28,8 @@ interface MentionInputProps {
    * handling.
    */
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** Forwarded to the underlying textarea — use to intercept clipboard image pastes. */
+  onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   /** Exposes the underlying textarea DOM node, e.g. for auto-grow sizing. */
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
   style?: React.CSSProperties;
@@ -69,6 +72,7 @@ export function MentionInput({
   autoFocus = false,
   disabled = false,
   onKeyDown: onKeyDownProp,
+  onPaste,
   textareaRef: externalTextareaRef,
   style,
 }: MentionInputProps) {
@@ -294,6 +298,7 @@ export function MentionInput({
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         onSelect={handleSelect}
         placeholder={placeholder}
         rows={rows}

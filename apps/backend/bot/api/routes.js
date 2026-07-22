@@ -6425,6 +6425,57 @@ app.post('/api/webapp/admin/x-campaigns/:id/generate', adminGuard, asyncHandler(
 app.post('/api/webapp/admin/x-campaigns/:id/preview', adminGuard, asyncHandler(xAutoCampaignAdminController.previewCampaign));
 app.post('/api/webapp/admin/x-campaigns/:id/duplicate', adminGuard, asyncHandler(xAutoCampaignAdminController.duplicateCampaign));
 
+// PNPtv auto-amplification analytics — aggregate broadcast_events for admins.
+app.get('/api/webapp/admin/broadcast-events/summary', adminGuard, asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const sinceDays = Math.max(1, Math.min(90, parseInt(req.query.sinceDays || '30', 10) || 30));
+
+  const [byChannel, byStatus, byCreator, latest] = await Promise.all([
+    dbQuery(
+      `SELECT channel, status, COUNT(*)::int AS count
+         FROM broadcast_events
+        WHERE created_at > NOW() - ($1::int || ' days')::interval
+        GROUP BY channel, status ORDER BY channel, status`,
+      [sinceDays]
+    ),
+    dbQuery(
+      `SELECT status, COUNT(*)::int AS count
+         FROM broadcast_events
+        WHERE created_at > NOW() - ($1::int || ' days')::interval
+        GROUP BY status ORDER BY status`,
+      [sinceDays]
+    ),
+    dbQuery(
+      `SELECT be.creator_id, u.username, u.first_name,
+              COUNT(*) FILTER (WHERE be.status='sent')::int AS sent,
+              COUNT(*) FILTER (WHERE be.status='failed')::int AS failed,
+              COUNT(*) FILTER (WHERE be.status='skipped')::int AS skipped
+         FROM broadcast_events be
+         LEFT JOIN users u ON u.id = be.creator_id
+        WHERE be.created_at > NOW() - ($1::int || ' days')::interval
+        GROUP BY be.creator_id, u.username, u.first_name
+        ORDER BY sent DESC
+        LIMIT 20`,
+      [sinceDays]
+    ),
+    dbQuery(
+      `SELECT id, creator_id, content_type, content_ref, channel, target, status, reason, error_message, created_at
+         FROM broadcast_events
+        ORDER BY created_at DESC
+        LIMIT 50`
+    ),
+  ]);
+
+  return res.json({
+    success: true,
+    sinceDays,
+    byChannel: byChannel.rows,
+    byStatus: byStatus.rows,
+    topCreators: byCreator.rows,
+    recent: latest.rows,
+  });
+}));
+
 // Creator Subscription management
 // NOTE: static-path routes (/summary, /payouts/process-all) MUST be registered
 // before the /:creatorId param route to prevent Express matching them as a creatorId.
@@ -9654,12 +9705,51 @@ app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
       ),
     ]);
 
-    const directusPerformers = directusResult.status === 'fulfilled'
+    const rawDirectusPerformers = directusResult.status === 'fulfilled'
       ? (directusResult.value.data?.data || [])
       : [];
     const dbCreators = dbResult.status === 'fulfilled'
       ? (dbResult.value.rows || [])
       : [];
+
+    // Resolve each Directus performer's pnptv_id to the canonical users.id.
+    // Stale UUIDs (pre-2026-04-22 dedup migration) that no longer match a users
+    // row get remapped via lower(slug) → users.username. Rows that cannot be
+    // resolved to any live user are dropped as orphans (linking to their
+    // profile would 404). Then dedupe by canonical id + lower(slug) so a
+    // creator with two Directus rows (Santino, Lex, Avery) renders once.
+    const directusPerformers = [];
+    try {
+      const rawIds = [...new Set(rawDirectusPerformers.map(p => String(p.pnptv_id || '')).filter(Boolean))];
+      const rawSlugs = [...new Set(rawDirectusPerformers.map(p => String(p.slug || '').toLowerCase()).filter(Boolean))];
+      const resolveRows = (rawIds.length || rawSlugs.length)
+        ? (await getPool().query(
+            `SELECT id::text AS canonical_id, lower(username) AS slug_lower
+             FROM users
+             WHERE is_deleted = FALSE
+               AND (id = ANY($1::text[]) OR lower(username) = ANY($2::text[]))`,
+            [rawIds, rawSlugs]
+          )).rows
+        : [];
+      const canonicalById = new Map(resolveRows.map(r => [r.canonical_id, r.canonical_id]));
+      const canonicalBySlug = new Map(resolveRows.filter(r => r.slug_lower).map(r => [r.slug_lower, r.canonical_id]));
+      const seenCanonical = new Set();
+      const seenSlug = new Set();
+      for (const p of rawDirectusPerformers) {
+        const rawId = String(p.pnptv_id || '');
+        const slugKey = String(p.slug || '').toLowerCase();
+        const canonical = canonicalById.get(rawId) || (slugKey && canonicalBySlug.get(slugKey)) || null;
+        if (!canonical) continue; // orphan: no live user; skip
+        if (seenCanonical.has(canonical)) continue;
+        if (slugKey && seenSlug.has(slugKey)) continue;
+        seenCanonical.add(canonical);
+        if (slugKey) seenSlug.add(slugKey);
+        directusPerformers.push({ ...p, pnptv_id: canonical });
+      }
+    } catch (resolveErr) {
+      logger.warn(`performers: canonical resolve failed (non-fatal, using raw list): ${resolveErr.message}`);
+      directusPerformers.push(...rawDirectusPerformers);
+    }
 
     // Map Directus performers
     const photoMap = await fetchPerformerPhotos(directusPerformers);

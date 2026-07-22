@@ -1551,6 +1551,67 @@ const acceptPrivacyPolicy = async (req, res) => {
   }
 };
 
+// ── PNPtv Announcement Consent ──────────────────────────────────────────────
+// Creator opt-in: allow @pnptv to auto-announce their new videos/streams on
+// @PNPTelevision X account, PNPtv Telegram groups, and consented DM viewers.
+// See migration 323_pnptv_announce_consent.sql.
+const PNPTV_ANNOUNCE_TERMS_VERSION = process.env.PNPTV_ANNOUNCE_TERMS_VERSION || '2026-07-22';
+
+const getAnnounceConsent = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { rows } = await query(
+      `SELECT pnptv_announce_consent, pnptv_announce_consent_at, pnptv_announce_consent_version
+         FROM users WHERE id = $1`,
+      [userId]
+    );
+    const row = rows[0] || {};
+    return res.json({
+      success: true,
+      consented: !!row.pnptv_announce_consent,
+      consentedAt: row.pnptv_announce_consent_at,
+      version: row.pnptv_announce_consent_version,
+      currentVersion: PNPTV_ANNOUNCE_TERMS_VERSION,
+    });
+  } catch (err) {
+    logger.error('getAnnounceConsent error', err);
+    return res.status(500).json({ error: 'Failed to load announcement consent' });
+  }
+};
+
+const setAnnounceConsent = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const consent = req.body?.consent === true;
+    if (consent) {
+      await query(
+        `UPDATE users
+           SET pnptv_announce_consent = TRUE,
+               pnptv_announce_consent_at = NOW(),
+               pnptv_announce_consent_version = $2::varchar
+         WHERE id = $1`,
+        [userId, PNPTV_ANNOUNCE_TERMS_VERSION]
+      );
+      logger.info('pnptv_announce_consent granted', { userId, version: PNPTV_ANNOUNCE_TERMS_VERSION });
+    } else {
+      // Revocation — clears timestamp too so we can distinguish "never opted in"
+      // from "opted in then revoked" only via audit logs. The bool alone is what
+      // gates broadcasts.
+      await query(
+        `UPDATE users
+           SET pnptv_announce_consent = FALSE
+         WHERE id = $1`,
+        [userId]
+      );
+      logger.info('pnptv_announce_consent revoked', { userId });
+    }
+    return res.json({ success: true, consented: consent, currentVersion: PNPTV_ANNOUNCE_TERMS_VERSION });
+  } catch (err) {
+    logger.error('setAnnounceConsent error', err);
+    return res.status(500).json({ error: 'Failed to update announcement consent' });
+  }
+};
+
 const getSetupStatus = async (req, res) => {
   try {
     if (req.user.creator_status !== 'active') {
@@ -1989,6 +2050,8 @@ module.exports = {
   getMyConsents,
   acceptCreatorTerms,
   acceptPrivacyPolicy,
+  getAnnounceConsent,
+  setAnnounceConsent,
   getSetupStatus,
   getMyXAccount,
   getMyXCampaigns,

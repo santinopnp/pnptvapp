@@ -939,17 +939,16 @@ const createPostWithMedia = async (req, res) => {
       if (ok) videoThumbnailUrl = `/uploads/posts/${thumbFilename}`;
     }
 
-    // Exclusive gate: only videos ≥ 4 minutes (240s) qualify
+    // Exclusive gate: exclusive posts must contain a video (any duration).
+    // 4-minute rule is now a soft suggestion — enforced by the compliance cron, not by upload.
     if (isExclusive === 'true' || isExclusive === true) {
       if (mediaType !== 'video') {
         if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
-        return res.status(400).json({ error: 'Exclusive content must be a video of at least 4 minutes', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
+        return res.status(400).json({ error: 'Exclusive content must be a video', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
       }
       const durationSecs = await getVideoDurationSecs(finalFilePath);
       if (durationSecs < 240) {
-        if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
-        const m = Math.floor(durationSecs / 60), s = durationSecs % 60;
-        return res.status(400).json({ error: `Exclusive content requires a video of at least 4 minutes (this video is ${m}m ${s}s)`, code: 'EXCLUSIVE_VIDEO_TOO_SHORT' });
+        logger.info('Exclusive video shorter than 4-minute suggestion', { userId: user.id, durationSecs });
       }
     }
 
@@ -1316,19 +1315,18 @@ const createPostWithMultiMedia = async (req, res) => {
       return res.status(400).json({ error: 'No valid media files could be processed' });
     }
 
-    // Exclusive gate: must have at least one video of ≥ 4 minutes (240s)
+    // Exclusive gate: exclusive posts must contain at least one video (any duration).
+    // 4-minute rule is now a soft suggestion — enforced by the compliance cron, not by upload.
     if (isExclusive === 'true' || isExclusive === true) {
       const videoItems = mediaItems.filter(m => m.type === 'video');
       if (videoItems.length === 0) {
         await Promise.all(writtenFilePaths.map(p => fs.unlink(p).catch(() => {})));
-        return res.status(400).json({ error: 'Exclusive content must be a video of at least 4 minutes', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
+        return res.status(400).json({ error: 'Exclusive content must include a video', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
       }
       const durations = await Promise.all(videoItems.map(v => getVideoDurationSecs(v._localPath)));
       const maxDuration = Math.max(...durations);
       if (maxDuration < 240) {
-        await Promise.all(writtenFilePaths.map(p => fs.unlink(p).catch(() => {})));
-        const m = Math.floor(maxDuration / 60), s = maxDuration % 60;
-        return res.status(400).json({ error: `Exclusive content requires a video of at least 4 minutes (longest video is ${m}m ${s}s)`, code: 'EXCLUSIVE_VIDEO_TOO_SHORT' });
+        logger.info('Exclusive video shorter than 4-minute suggestion', { userId: user.id, maxDurationSecs: maxDuration });
       }
     }
 

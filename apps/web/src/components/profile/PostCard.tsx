@@ -1,6 +1,11 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
+
+// Creators whose free videos get a PRIME upsell banner below the player.
+// Add IDs here to promote additional creators.
+const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840"]); // Santino
 import {
   togglePostLike,
   getReplies,
@@ -145,6 +150,32 @@ export default function PostCard({
   const p = t.profile;
   const { feed: ft } = useI18n();
   const { user } = useAuth();
+  const { isPrime } = useTier();
+  const showPrimeUpsell = PRIME_UPSELL_CREATOR_IDS.has(post.author_id) && !isPrime;
+  const upsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
+  const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(upsellKey) === "1"; } catch { return false; }
+  });
+  const dismissPrimeUpsell = () => {
+    try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
+    setPrimeUpsellDismissed(true);
+  };
+  // Creator subscribe upsell — on FREE videos of active creators (not own, not PRIME-upsell creators)
+  const showCreatorSubscribeUpsell =
+    !showPrimeUpsell &&
+    !PRIME_UPSELL_CREATOR_IDS.has(post.author_id) &&
+    post.author_creator_status === "active" &&
+    (post.author_creator_price ?? 0) > 0 &&
+    !post.is_exclusive &&
+    String(user?.id ?? "") !== String(post.author_id);
+  const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
+  const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(subscribeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissCreatorUpsell = () => {
+    try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+    setCreatorUpsellDismissed(true);
+  };
   const [deleting, setDeleting] = useState(false);
   // Edit post state (owner only) — mirrors SocialPostCard
   const [isEditing, setIsEditing] = useState(false);
@@ -1065,6 +1096,43 @@ export default function PostCard({
                         </div>
                       )}
                     </div>
+                  )}
+                  {showPrimeUpsell && !primeUpsellDismissed && !videoError && (
+                    <a
+                      href="/subscribe"
+                      className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                      style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
+                    >
+                      <span className="flex-1">Unlock everything {post.author_first_name || post.author_username || "this creator"} makes — go PRIME</span>
+                      <span aria-hidden="true">→</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                        aria-label="Dismiss"
+                        className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1"
+                      >
+                        ×
+                      </button>
+                    </a>
+                  )}
+                  {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
+                    <a
+                      href={`/profile/${post.author_id}`}
+                      className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
+                      style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
+                    >
+                      <span className="flex-1">Subscribe to {post.author_first_name || post.author_username || "this creator"} for exclusive content</span>
+                      <span aria-hidden="true">→</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
+                        aria-label="Dismiss"
+                        className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1"
+                        style={{ color: "#04252b" }}
+                      >
+                        ×
+                      </button>
+                    </a>
                   )}
                 </>
               ) : (

@@ -25,6 +25,7 @@ export function MediaUploadButton({
   disabled,
 }: MediaUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // --- Voice recording state ---
   const [isRecording, setIsRecording] = useState(false);
@@ -160,6 +161,11 @@ export function MediaUploadButton({
     inputRef.current?.click();
   }
 
+  function handleImageClick() {
+    if (disabled || isRecording) return;
+    imageInputRef.current?.click();
+  }
+
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files || []);
     e.target.value = "";
@@ -246,6 +252,34 @@ export function MediaUploadButton({
         tabIndex={-1}
         multiple
       />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        className="hidden"
+        onChange={handleChange}
+        aria-hidden="true"
+        tabIndex={-1}
+        multiple
+      />
+
+      {/* Dedicated picture button */}
+      <button
+        type="button"
+        onClick={handleImageClick}
+        disabled={disabled || isRecording}
+        className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-all disabled:opacity-40 disabled:pointer-events-none text-pnp-textSecondary hover:text-pnp-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
+        aria-label="Send picture"
+        title="Send picture"
+      >
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+          />
+        </svg>
+      </button>
 
       {/* File upload button */}
       <button
@@ -253,8 +287,8 @@ export function MediaUploadButton({
         onClick={handleUploadClick}
         disabled={disabled || isRecording}
         className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-white/10 active:scale-90 transition-all disabled:opacity-40 disabled:pointer-events-none text-pnp-textSecondary hover:text-pnp-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
-        aria-label="Attach image or video"
-        title="Attach image or video"
+        aria-label="Attach video or file"
+        title="Attach video or file"
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
           <path

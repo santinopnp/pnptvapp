@@ -1337,7 +1337,7 @@ export default function CreatorProfilePage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <h1
                   className="text-pnp-textPrimary leading-tight"
-                  style={{ fontSize: 20, fontWeight: 400, fontFamily: "'Ethnocentric', sans-serif", letterSpacing: "0.02em", margin: 0 }}
+                  style={{ fontSize: 20, fontWeight: 400, fontFamily: "'Ethnocentric Rg', 'Roboto Mono', monospace", letterSpacing: "0.02em", margin: 0 }}
                 >
                   {creator.first_name}
                 </h1>

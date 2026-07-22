@@ -650,6 +650,31 @@ function HangoutChatPanel({
     setMediaPreviews((prev) => [...prev, ...previewUrls]);
   };
 
+  const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const images: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (file.size > 20 * 1_048_576) {
+        setChatError(`Pasted image is over 20 MB.`);
+        continue;
+      }
+      const ext = file.type.split("/")[1] || "png";
+      const named = file.name && file.name !== "image.png"
+        ? file
+        : new File([file], `pasted-${Date.now()}.${ext}`, { type: file.type });
+      images.push(named);
+    }
+    if (images.length === 0) return;
+    e.preventDefault();
+    const previews = images.map((f) => URL.createObjectURL(f));
+    handleMediaFilesPicked(images, previews);
+  };
+
   const handleVoiceRecorded = async (blob: Blob, durationSeconds: number) => {
     if (!durationSeconds) return;
     const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
@@ -1578,6 +1603,7 @@ function HangoutChatPanel({
               if (e.key === "Escape" && editingMsg) cancelEdit();
               if (e.key === "Escape" && replyTo) setReplyTo(null);
             }}
+            onPaste={handlePasteImage}
             placeholder={editingMsg ? "Edit message..." : "Type a message..."}
             className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary/50 rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/40 transition-shadow leading-snug"
             rows={1}

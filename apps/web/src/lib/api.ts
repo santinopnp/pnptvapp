@@ -4538,6 +4538,26 @@ export function acceptCreatorTerms(): Promise<{ success: boolean }> {
   return request("/api/webapp/creator/terms/accept", { method: "POST" });
 }
 
+// PNPtv announcement consent — creator opt-in for @pnptv to auto-announce their
+// new videos/streams on X (@PNPTelevision), Telegram groups, and consented DMs.
+export function getCreatorAnnounceConsent(): Promise<{
+  success: boolean;
+  consented: boolean;
+  consentedAt: string | null;
+  version: string | null;
+  currentVersion: string;
+}> {
+  return request("/api/webapp/creator/announce-consent");
+}
+
+export function setCreatorAnnounceConsent(consent: boolean): Promise<{
+  success: boolean;
+  consented: boolean;
+  currentVersion: string;
+}> {
+  return request("/api/webapp/creator/announce-consent", { method: "POST", body: { consent } });
+}
+
 // ── Creator Panel: X Account & Campaigns ─────────────────────────────────────
 
 export function getCreatorXAccount(): Promise<{

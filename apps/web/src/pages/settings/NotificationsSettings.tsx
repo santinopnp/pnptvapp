@@ -204,6 +204,7 @@ export default function NotificationsSettings() {
               ["announcements", p.notifAnnouncements],
               ["hangout_calls", p.notifHangoutCalls],
               ["going_live", "Notify me when creators I follow go live"],
+              ["creator_new_content", "New content from creators I follow"],
             ] as const).map(([key, label]) => {
               const pref = notifPrefs[key] as ChannelPrefs | undefined;
               if (!pref) return null;

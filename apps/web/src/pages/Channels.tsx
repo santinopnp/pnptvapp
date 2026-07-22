@@ -3,7 +3,12 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@pnptv/ui-kit";
 import { useAuth } from "@/hooks/useAuth";
+import { useTier } from "@/hooks/useTier";
 import { useTutorial } from "@/hooks/useTutorial";
+
+// Creators whose free channel videos get a PRIME upsell banner below the player.
+// Add IDs here to promote additional creators.
+const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840"]); // Santino
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import {
   getChannels,
@@ -204,6 +209,7 @@ function ChannelDetailView({
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const { isPrime } = useTier();
   const [loading, setLoading] = useState(true);
   const [channel, setChannel] = useState<CreatorChannel | null>(null);
   const [videos, setVideos] = useState<ChannelVideo[]>([]);
@@ -211,6 +217,35 @@ function ChannelDetailView({
   const [locked, setLocked] = useState(false);
   const [lockReason, setLockReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const showPrimeUpsell = !!channel?.creatorId && PRIME_UPSELL_CREATOR_IDS.has(String(channel.creatorId)) && !isPrime;
+  const upsellKey = channel?.creatorId ? `pnp_prime_upsell_dismissed_${channel.creatorId}` : "";
+  const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(false);
+  useEffect(() => {
+    if (!upsellKey) { setPrimeUpsellDismissed(false); return; }
+    try { setPrimeUpsellDismissed(sessionStorage.getItem(upsellKey) === "1"); } catch { setPrimeUpsellDismissed(false); }
+  }, [upsellKey]);
+  const dismissPrimeUpsell = () => {
+    if (!upsellKey) return;
+    try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
+    setPrimeUpsellDismissed(true);
+  };
+  // Creator subscribe upsell — inside FREE channel modal, not the channel owner, not a PRIME-upsell creator
+  const showCreatorSubscribeUpsell =
+    !!channel?.creatorId &&
+    !PRIME_UPSELL_CREATOR_IDS.has(String(channel.creatorId)) &&
+    (channel.accessType ?? "free") === "free" &&
+    String(user?.id ?? "") !== String(channel.creatorId);
+  const subscribeUpsellKey = channel?.creatorId ? `pnp_creator_subscribe_dismissed_${channel.creatorId}` : "";
+  const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(false);
+  useEffect(() => {
+    if (!subscribeUpsellKey) { setCreatorUpsellDismissed(false); return; }
+    try { setCreatorUpsellDismissed(sessionStorage.getItem(subscribeUpsellKey) === "1"); } catch { setCreatorUpsellDismissed(false); }
+  }, [subscribeUpsellKey]);
+  const dismissCreatorUpsell = () => {
+    if (!subscribeUpsellKey) return;
+    try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+    setCreatorUpsellDismissed(true);
+  };
 
   const [playingVideo, setPlayingVideo] = useState<{ url: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[] } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
@@ -1478,6 +1513,45 @@ function ChannelDetailView({
                 style={{ maxHeight: "50vh" }}
                 preload="metadata"
               />
+            )}
+            {showPrimeUpsell && !primeUpsellDismissed && playingVideo.url && !videoPlayerError && (
+              <a
+                href="/subscribe"
+                onClick={() => setPlayingVideo(null)}
+                className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white flex-shrink-0 transition-opacity hover:opacity-90"
+                style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
+              >
+                <span className="flex-1">Unlock everything {channel?.creatorName || channel?.creatorUsername || "this creator"} makes — go PRIME</span>
+                <span aria-hidden="true">→</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                  aria-label="Dismiss"
+                  className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1"
+                >
+                  ×
+                </button>
+              </a>
+            )}
+            {showCreatorSubscribeUpsell && !creatorUpsellDismissed && playingVideo.url && !videoPlayerError && (
+              <a
+                href={`/profile/${channel?.creatorId}`}
+                onClick={() => setPlayingVideo(null)}
+                className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold flex-shrink-0 transition-opacity hover:opacity-90"
+                style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
+              >
+                <span className="flex-1">Subscribe to {channel?.creatorName || channel?.creatorUsername || "this creator"} for exclusive content</span>
+                <span aria-hidden="true">→</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
+                  aria-label="Dismiss"
+                  className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1"
+                  style={{ color: "#04252b" }}
+                >
+                  ×
+                </button>
+              </a>
             )}
             {/* Tagged creators */}
             {playingVideo.taggedCreators.length > 0 && (

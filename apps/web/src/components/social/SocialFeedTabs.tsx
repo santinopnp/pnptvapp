@@ -12,8 +12,10 @@ import {
   deleteSocialPost,
   updateProfile,
   getLiveStreams,
+  getAllPerformers,
   type SocialPostItem,
   type LiveStream,
+  type FeaturedPerformer,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNearbyDistances } from "@/components/NearbyBadge";
@@ -163,17 +165,38 @@ export default function SocialFeedTabs({
   // Content disclaimer local mirror
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(contentDisclaimerAccepted);
 
-  // Story rail + Spotlight — live streams shown at the top of the "all" feed
-  // (skipped for hashtag/hangout-filtered feeds since they're topic-specific)
+  // Spotlight — live streams AND online (heartbeat-active) performers at the
+  // top of the "all" feed. Skipped for hashtag/hangout-filtered feeds.
   const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
+  const [onlinePerformers, setOnlinePerformers] = useState<FeaturedPerformer[]>([]);
   const showRails = !hashtagFilter && !hangoutGroupId && feedMode === "all";
   useEffect(() => {
     if (!showRails) return;
     let cancelled = false;
     const load = () => {
-      getLiveStreams()
-        .then((r) => { if (!cancelled && r.success) setLiveStreams(r.streams.filter((s) => s.isLive)); })
-        .catch(() => {});
+      Promise.all([
+        getLiveStreams().catch(() => null),
+        getAllPerformers().catch(() => null),
+      ]).then(([liveRes, allRes]) => {
+        if (cancelled) return;
+        const streams = liveRes?.success ? liveRes.streams.filter((s) => s.isLive) : [];
+        setLiveStreams(streams);
+        // Online performers: heartbeat active AND not currently live (dedupe by
+        // matching hlsUrl / userId / pnptvId against the live-streams list).
+        if (allRes?.success) {
+          const liveIds = new Set(streams.map((s) => String(s.userId || "")).filter(Boolean));
+          const livePnptvIds = new Set(streams.map((s) => String(s.pnptvId || "")).filter(Boolean));
+          const online = allRes.performers.filter((p) => {
+            if (!p.isOnline) return false;
+            const uid = String(p.userId || p.id || "");
+            if (liveIds.has(uid) || livePnptvIds.has(uid)) return false;
+            return true;
+          });
+          setOnlinePerformers(online);
+        } else {
+          setOnlinePerformers([]);
+        }
+      });
     };
     load();
     const iv = setInterval(load, 30_000);
@@ -322,8 +345,10 @@ export default function SocialFeedTabs({
         </div>
       </div>
 
-      {/* Spotlight — 132×176 cards for currently-live streams */}
-      {showRails && liveStreams.length > 0 && (
+      {/* Spotlight — 132×176 cards: live streams first, then online performers.
+          Live cards autoplay the muted HLS preview; online cards show a static
+          avatar with a green Online badge. */}
+      {showRails && (liveStreams.length > 0 || onlinePerformers.length > 0) && (
         <div className="mb-4">
           <div
             className="mb-2"
@@ -338,13 +363,12 @@ export default function SocialFeedTabs({
                 const thumb = s.thumbnailUrl || null;
                 return (
                   <button
-                    key={s.id}
+                    key={`live-${s.id}`}
                     onClick={() => navigate(`/live/${s.id}`)}
                     className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
                     style={{ width: 132, height: 176, borderRadius: 14, background: "linear-gradient(135deg,rgba(212,0,122,0.7),rgba(230,145,56,0.7))" }}
                     aria-label={`Watch ${s.name} live`}
                   >
-                    {/* Gradient with initial acts as base; poster + muted video paint over it */}
                     <span
                       className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold pointer-events-none"
                       aria-hidden="true"
@@ -369,6 +393,48 @@ export default function SocialFeedTabs({
                       style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}
                     >
                       {s.performerName || s.name}
+                    </span>
+                  </button>
+                );
+              })}
+              {onlinePerformers.slice(0, 8).map((p) => {
+                const initial = (p.displayName || p.name || "?").charAt(0).toUpperCase();
+                const photo = p.photoUrl && (p.photoUrl.startsWith("/") || p.photoUrl.startsWith("http")) ? p.photoUrl : null;
+                const uidForRoute = p.slug || p.userId || p.id;
+                return (
+                  <button
+                    key={`online-${p.id}`}
+                    onClick={() => navigate(`/profile/${uidForRoute}`)}
+                    className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
+                    style={{ width: 132, height: 176, borderRadius: 14, background: "linear-gradient(135deg,rgba(52,199,89,0.5),rgba(45,212,191,0.35))" }}
+                    aria-label={`Open ${p.displayName} profile`}
+                  >
+                    <span
+                      className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold pointer-events-none"
+                      aria-hidden="true"
+                    >
+                      {initial}
+                    </span>
+                    {photo && (
+                      <img
+                        src={photo}
+                        alt={p.displayName}
+                        loading="lazy"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    )}
+                    <span
+                      className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
+                      style={{ background: "#34C759" }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white" aria-hidden="true" />
+                      Online
+                    </span>
+                    <span
+                      className="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-6 text-white text-xs font-semibold truncate"
+                      style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}
+                    >
+                      {p.displayName}
                     </span>
                   </button>
                 );

@@ -40,7 +40,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
   const [buyMethod, setBuyMethod] = useState<'select' | 'dash' | 'btc' | 'np' | 'np_usdc' | 'meru'>('select');
 
   // Meru card/bank payment state (new activation-code flow)
-  const [meruProduct, setMeruProduct] = useState<'tokens_250' | 'tokens_500' | null>(null);
+  // packageKey values come from DashTokenService.TOKEN_PACKAGES (pkg_10 / pkg_25 / pkg_50 / pkg_100 / pkg_500)
+  const [meruProduct, setMeruProduct] = useState<string | null>(null);
   const [meruEmail, setMeruEmail] = useState('');
   const [meruReserving, setMeruReserving] = useState(false);
   const [meruError, setMeruError] = useState<string | null>(null);
@@ -818,11 +819,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                     : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your tokens."}
                 </p>
 
-                {/* Package cards */}
+                {/* Package cards — Meru-only packages (250 / 500 tokens). packageKey values
+                    must match TokenActivationService.TOKEN_PACKAGES + meru_payment_links.product. */}
                 <div className="grid grid-cols-2 gap-3">
                   {([
-                    { product: 'tokens_250' as const, tokens: 250, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 5 },
-                    { product: 'tokens_500' as const, tokens: 500, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 9 },
+                    { product: 'tokens_250', tokens: 250, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 5 },
+                    { product: 'tokens_500', tokens: 500, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 9 },
                   ]).map((pkg) => (
                     <button
                       key={pkg.product}
@@ -833,6 +835,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                       <p className="text-2xl font-extrabold leading-none mb-1" style={{ color: "#D4007A" }}>{pkg.tokens}</p>
                       <p className="text-xs text-pnp-textSecondary font-medium mb-0.5">tokens</p>
                       <p className="text-[10px] text-pnp-textSecondary">{pkg.sub}</p>
+                      <p className="text-xs font-bold text-pnp-textPrimary mt-1.5">${pkg.priceUsd}</p>
                       {meruProduct === pkg.product && (
                         <div className="mt-2 flex items-center gap-1">
                           <div className="w-3.5 h-3.5 rounded-full bg-pink-500 flex items-center justify-center flex-shrink-0">

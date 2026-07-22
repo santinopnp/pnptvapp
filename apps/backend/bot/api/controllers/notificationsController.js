@@ -16,6 +16,7 @@ const ALLOWED_PREF_KEYS = new Set([
   'group_messages', 'group_joins', 'wof',
   'payments', 'announcements', 'hangout_calls',
   'going_live',
+  'creator_new_content',
   'quiet_hours',
 ]);
 
@@ -40,6 +41,7 @@ const DEFAULT_PREFS = {
   announcements:  { inApp: true,  bot: false, email: true,  push: true  },
   hangout_calls:  { inApp: true,  bot: false, email: false, push: true  },
   going_live:     { inApp: true,  bot: false, email: false, push: true  },
+  creator_new_content: { inApp: true, bot: false, email: false, push: true },
   quiet_hours:    { enabled: false, start: '23:00', end: '08:00' },
 };
 

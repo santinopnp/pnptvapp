@@ -1,415 +1,419 @@
 import React, { useState } from "react";
-import { StepDots } from "@pnptv/ui-kit";
 import { WALLETS, type WalletKey } from "@/lib/cryptoWallets";
 
-const WALLET_TAGS: Record<WalletKey, { en: string; es: string }> = {
-  trust: { en: "Easiest on phone", es: "Más fácil en celular" },
-  metamask: { en: "Easiest on computer", es: "Más fácil en computadora" },
+type Lang = "en" | "es";
+const WALLET_KEYS: WalletKey[] = ["trust", "metamask"];
+
+// ── Static copy tables ──────────────────────────────────────────────────────
+
+const T = {
+  eyebrow:   { en: "GETTING STARTED", es: "PARA EMPEZAR" },
+  title:     { en: "Paying with crypto, made simple", es: "Paga con cripto, sin complicaciones" },
+
+  // Screen 0 — intro + pick wallet
+  cryptoIn3: { en: "Crypto in 3 lines", es: "Cripto en 3 líneas" },
+  line1:     { en: "It's digital money you keep in a free 'wallet' app.", es: "Es dinero digital que guardas en una app 'wallet' gratuita." },
+  line2:     { en: "Load it once, like a gift card — no bank, no card details shared.", es: "Cárgala una vez, como una tarjeta de regalo — sin banco, sin dar datos de tarjeta." },
+  line3:     { en: "Setup takes ~2 minutes. After that, every payment is instant.", es: "La configuración toma ~2 minutos. Después, cada pago es instantáneo." },
+  pick:      { en: "Pick a wallet", es: "Elige una wallet" },
+  bothFree:  { en: "Both are free — you can't pick wrong.", es: "Las dos son gratis — no puedes equivocarte." },
+
+  // Screen 1 — install
+  installIt: { en: "Install it on your device:", es: "Instálala en tu dispositivo:" },
+  iosTitle:  { en: "Download for iOS", es: "Descargar para iOS" },
+  iosSub:    { en: "App Store", es: "App Store" },
+  andTitle:  { en: "Download for Android", es: "Descargar para Android" },
+  andSub:    { en: "Google Play", es: "Google Play" },
+  chrTitle:  { en: "Add the Chrome extension", es: "Extensión para Chrome" },
+  chrSub:    { en: "Chrome Web Store", es: "Chrome Web Store" },
+  gtkLabel:  { en: "GOOD TO KNOW", es: "IMPORTANTE" },
+  gtkBody:   { en: "Only use these links. Download links sent in chat are scams.", es: "Solo usa estos enlaces. Los links que te llegan por chat son estafas." },
+
+  // Screens 2–5 — setup
+  setupOf:   { en: "SETUP {n} OF 4", es: "CONFIGURACIÓN {n} DE 4" },
+  keepSafe:  { en: "KEEP THIS SAFE", es: "GUÁRDALO BIEN" },
+  keepSafeBody: { en: "Write the 12 words on paper. Never share them — PNPtv will never ask.", es: "Escribe las 12 palabras en papel. Nunca las compartas — PNPtv nunca las pedirá." },
+
+  // Screen 6 — fund
+  addMoney:  { en: "Add money", es: "Ponle dinero" },
+  addMoneySub: { en: "Tap 'Buy' in your wallet and pay by card.", es: "Toca 'Comprar' en tu wallet y paga con tarjeta." },
+  addMoneyBody: {
+    en: "Choose ",
+    es: "Elige ",
+  },
+  addMoneyBodyRest: {
+    en: " — they're locked to the dollar, so your balance never moves on its own.",
+    es: " — están atados al dólar, así tu saldo no se mueve solo.",
+  },
+  tipLabel:  { en: "TIP", es: "TIP" },
+  tipBody:   { en: "Start with $20–30. You can always add more later.", es: "Empieza con $20–30. Siempre puedes agregar más después." },
+
+  // Screen 7 — done
+  ready:     { en: "You're ready", es: "¡Estás listo!" },
+  readyBody: { en: "Spend it anywhere on PNPtv — no extra linking step.", es: "Úsalo en cualquier parte de PNPtv — sin paso extra." },
+  linkSub:   { en: "Subscribe to a creator", es: "Suscríbete a un creador" },
+  linkBuy:   { en: "Buy more tokens", es: "Compra más tokens" },
+  linkBrowse:{ en: "Browse all creators", es: "Ver todos los creadores" },
+
+  // Nav
+  back:      { en: "← Back", es: "← Atrás" },
+  next:      { en: "Next →", es: "Siguiente →" },
+  doneApp:   { en: "Done — take me to the app", es: "Listo — llévame a la app" },
+  finish:    { en: "Finish", es: "Finalizar" },
+
+  // Step labels
+  labels: {
+    en: [
+      "Step 1 of 7 — Pick a wallet",
+      "Step 2 of 7 — Install",
+      "Step 3 of 7 — Create wallet",
+      "Step 4 of 7 — Lock it",
+      "Step 5 of 7 — Back it up",
+      "Step 6 of 7 — Confirm",
+      "Step 7 of 7 — Add money",
+      "All done",
+    ],
+    es: [
+      "Paso 1 de 7 — Elige una wallet",
+      "Paso 2 de 7 — Instalar",
+      "Paso 3 de 7 — Crear la wallet",
+      "Paso 4 de 7 — Bloquéala",
+      "Paso 5 de 7 — Respáldala",
+      "Paso 6 de 7 — Confirma",
+      "Paso 7 de 7 — Ponle dinero",
+      "Todo listo",
+    ],
+  },
 };
 
-const WALLET_DESC: Record<WalletKey, { en: string; es: string }> = {
-  trust: {
-    en: "A free app that acts like your digital money pouch. Best if you'll mostly use PNPtv from your phone.",
-    es: "Una app gratuita que funciona como tu bolsa de dinero digital. Ideal si usarás PNPtv principalmente desde tu celular.",
-  },
-  metamask: {
-    en: "A free browser add-on that works like a digital money pouch for your computer. Best if you'll use PNPtv from a laptop or desktop.",
-    es: "Un complemento gratuito del navegador para tu computadora. Ideal si usarás PNPtv desde laptop o escritorio.",
-  },
+const WALLET_TAG: Record<WalletKey, { en: string; es: string }> = {
+  trust: { en: "PHONE", es: "TELÉFONO" },
+  metamask: { en: "COMPUTER", es: "COMPUTADORA" },
+};
+const WALLET_ONELINE: Record<WalletKey, { en: string; es: string }> = {
+  trust: { en: "Best if you use PNPtv on your phone.", es: "Mejor si usas PNPtv desde tu celular." },
+  metamask: { en: "Best if you use PNPtv on a laptop.", es: "Mejor si usas PNPtv desde una laptop." },
 };
 
 interface SetupStep { title: string; body: string; }
-
-const SETUP_STEPS: Record<WalletKey, { en: SetupStep[]; es: SetupStep[] }> = {
+const SETUP_STEPS: Record<WalletKey, Record<Lang, SetupStep[]>> = {
   trust: {
     en: [
-      { title: 'Open the app and tap "Create a new wallet"', body: "No email, no ID, no waiting — it's ready in under a minute." },
-      { title: "Choose a passcode", body: "Like a lock-screen code — it keeps the app private on your phone." },
-      { title: "Write down your 12 secret words", body: "This is your one-and-only backup — like the master key to a safe. Write it on paper and keep it somewhere safe. Never send it to anyone or type it into a website." },
-      { title: "Confirm the words", body: "Tap them back in order just to make sure you copied them right. Done — your wallet is ready to use." },
+      { title: 'Tap "Create a new wallet"', body: "No email, no ID — ready in under a minute." },
+      { title: "Choose a passcode", body: "Like a lock-screen code. Keeps the app private on your phone." },
+      { title: "Write down your 12 secret words", body: "Your only backup — write them on paper, keep them safe." },
+      { title: "Confirm the words", body: "Tap them back in order. Done — your wallet is ready." },
     ],
     es: [
-      { title: 'Abre la app y toca "Crear una nueva wallet"', body: "Sin correo, sin ID, sin esperas — lista en menos de un minuto." },
-      { title: "Elige un código de acceso", body: "Como el código de pantalla — mantiene la app privada en tu celular." },
-      { title: "Escribe tus 12 palabras secretas", body: "Este es tu único respaldo — como la llave maestra de una caja fuerte. Escríbelas en papel y guárdalas en un lugar seguro. Nunca se las envíes a nadie ni las escribas en un sitio web." },
-      { title: "Confirma las palabras", body: "Tócalas en orden para verificar que las copiaste bien. Listo — tu wallet está lista para usar." },
+      { title: 'Toca "Crear una nueva wallet"', body: "Sin correo ni ID — lista en menos de un minuto." },
+      { title: "Elige un código de acceso", body: "Como el código de pantalla. Mantiene la app privada en tu celular." },
+      { title: "Escribe tus 12 palabras secretas", body: "Tu único respaldo — escríbelas en papel y guárdalas seguras." },
+      { title: "Confirma las palabras", body: "Tócalas en orden. Listo — tu wallet está lista." },
     ],
   },
   metamask: {
     en: [
-      { title: 'Open it and click "Create a new wallet"', body: "No email, no ID, no waiting — it's ready in under a minute." },
+      { title: 'Click "Create a new wallet"', body: "No email, no ID — ready in under a minute." },
       { title: "Create a password", body: "Unlocks it on this computer only." },
-      { title: "Write down your 12 secret words", body: "This is your one-and-only backup — like the master key to a safe. Write it on paper and keep it somewhere safe. No one legit will ever ask you for it." },
-      { title: "Confirm the words", body: "Fill in a couple of the missing words to prove you copied them right. Then pin the icon to your browser toolbar so it's easy to find." },
+      { title: "Write down your 12 secret words", body: "Your only backup — write them on paper, keep them safe." },
+      { title: "Confirm the words", body: "Fill in the missing words, then pin the icon to your toolbar." },
     ],
     es: [
-      { title: 'Ábrelo y haz clic en "Crear una nueva wallet"', body: "Sin correo, sin ID, sin esperas — lista en menos de un minuto." },
-      { title: "Crea una contraseña", body: "Solo desbloquea MetaMask en esta computadora." },
-      { title: "Escribe tus 12 palabras secretas", body: "Este es tu único respaldo — como la llave maestra de una caja fuerte. Escríbelas en papel y guárdalas en un lugar seguro. Nadie legítimo te las pedirá jamás." },
-      { title: "Confirma las palabras", body: "Completa algunas palabras faltantes para verificar que las copiaste bien. Luego fija el ícono en tu barra del navegador para tenerlo siempre a mano." },
+      { title: 'Haz clic en "Crear una nueva wallet"', body: "Sin correo ni ID — lista en menos de un minuto." },
+      { title: "Crea una contraseña", body: "Solo desbloquea la app en esta computadora." },
+      { title: "Escribe tus 12 palabras secretas", body: "Tu único respaldo — escríbelas en papel y guárdalas seguras." },
+      { title: "Confirma las palabras", body: "Completa las palabras faltantes y fija el ícono en tu barra de herramientas." },
     ],
   },
 };
 
-const WalletIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3" />
-  </svg>
-);
+// Screenshot slots — real images live at /crypto-guide/<slug>.png (add later).
+const SCREENSHOT_HINTS: Record<string, { en: string; es: string; src: string }> = {
+  "trust-1":  { en: "Trust Wallet — create wallet", es: "Trust Wallet — crear wallet", src: "/crypto-guide/tw-1.png" },
+  "trust-2":  { en: "Trust Wallet — passcode",     es: "Trust Wallet — código de acceso", src: "/crypto-guide/tw-2.png" },
+  "trust-3":  { en: "Trust Wallet — secret words", es: "Trust Wallet — palabras secretas", src: "/crypto-guide/tw-3.png" },
+  "trust-4":  { en: "Trust Wallet — confirm words",es: "Trust Wallet — confirmar palabras", src: "/crypto-guide/tw-4.png" },
+  "metamask-1": { en: "MetaMask — create wallet",   es: "MetaMask — crear wallet", src: "/crypto-guide/mm-1.png" },
+  "metamask-2": { en: "MetaMask — password",        es: "MetaMask — contraseña", src: "/crypto-guide/mm-2.png" },
+  "metamask-3": { en: "MetaMask — secret phrase",   es: "MetaMask — frase secreta", src: "/crypto-guide/mm-3.png" },
+  "metamask-4": { en: "MetaMask — confirm phrase",  es: "MetaMask — confirmar frase", src: "/crypto-guide/mm-4.png" },
+  "buy":      { en: "Wallet 'Buy' screen", es: "Pantalla 'Comprar' de la wallet", src: "/crypto-guide/buy.png" },
+};
 
-export function CryptoOnboardingWizard({ lang }: { lang: "en" | "es" }) {
+// ── Small building blocks (inline — no new files per project rule) ──────────
+
+function ScreenshotSlot({ slotId, height, lang }: { slotId: string; height: number; lang: Lang }) {
+  const hint = SCREENSHOT_HINTS[slotId];
+  return (
+    <div
+      style={{
+        marginTop: 14,
+        height,
+        borderRadius: 14,
+        overflow: "hidden",
+        border: "1px solid #2A2A2A",
+        background: "#111",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+      }}
+    >
+      <img
+        src={hint.src}
+        alt={hint[lang]}
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+      />
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#6b6b70", pointerEvents: "none" }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+        </svg>
+        <span style={{ fontSize: 10, letterSpacing: ".05em", textAlign: "center", padding: "0 12px" }}>{hint[lang]}</span>
+      </div>
+    </div>
+  );
+}
+
+function Callout({ variant, label, body }: { variant: "gold" | "red"; label: string; body: string }) {
+  const color = variant === "gold" ? "#FFB454" : "#EF4444";
+  const bg = variant === "gold" ? "rgba(255,180,84,.07)" : "rgba(239,68,68,.07)";
+  return (
+    <div style={{ marginTop: 12, borderLeft: `2px solid ${color}`, background: bg, borderRadius: "0 8px 8px 0", padding: "10px 12px" }}>
+      <p style={{ margin: 0, fontSize: 11, color, fontWeight: 700 }}>{label}</p>
+      <p style={{ margin: "4px 0 0", fontSize: 11, color: "#c9c9cc", lineHeight: 1.6 }}>{body}</p>
+    </div>
+  );
+}
+
+function AppleGlyph() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8.79-.16 2.31-.9 3.66-.77 1.61.13 2.8.76 3.59 1.9-3.28 1.98-2.5 6.06.5 7.28-.61 1.58-1.39 3.14-2.83 3.76zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>; }
+function AndroidGlyph() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="#22C55E"><path d="M3.6 1.8l10.9 10.2L3.6 22.2c-.37-.22-.6-.62-.6-1.1V2.9c0-.48.23-.88.6-1.1zm12.3 8.9l2.6 2.43-2.6 2.44-2.4-2.44 2.4-2.43zm1.4-1.3L6.1 1.5l8.5 7.95-1.4 1.35 4.1-1.4zm-9.2 13l11.2-7.9c.47.28.7.7.7 1.13 0 .43-.23.85-.7 1.12L8.1 22.4z"/></svg>; }
+function ChromeGlyph() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" strokeWidth={2}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path strokeLinecap="round" d="M12 8.5h8.2M8.9 13.8L4.8 6.9m5.2 12.9l4.1-7"/></svg>; }
+
+function StoreButton({ href, glyph, title, sub }: { href: string; glyph: React.ReactNode; title: string; sub: string }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      style={{ display: "flex", alignItems: "center", gap: 12, border: "1px solid #2A2A2A", background: "#161616", borderRadius: 12, padding: 14, textDecoration: "none" }}
+    >
+      <span style={{ flexShrink: 0 }}>{glyph}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#fff" }}>{title}</span>
+        <span style={{ display: "block", fontSize: 10, color: "#A1A1A3", marginTop: 2 }}>{sub}</span>
+      </span>
+      <span style={{ fontSize: 11, color: "#6b6b70" }}>↗</span>
+    </a>
+  );
+}
+
+// ── Main component ───────────────────────────────────────────────────────────
+
+export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
   const es = lang === "es";
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [walletKey, setWalletKey] = useState<WalletKey | null>(null);
+  // screen: 0 intro, 1 install, 2-5 setup (1..4), 6 fund, 7 done
+  const [screen, setScreen] = useState(0);
+  const [walletKey, setWalletKey] = useState<WalletKey>("trust");
 
-  const wallet = walletKey ? WALLETS[walletKey] : null;
+  const wallet = WALLETS[walletKey];
+  const setupIdx = screen - 2; // 0..3 during setup screens
+  const label = T.labels[lang][screen];
+  const progress = Math.round(((screen + 1) / 8) * 100);
+  const showNav = screen >= 1;
+  const isFund = screen === 6;
+  const isDone = screen === 7;
+
+  const goBack = () => setScreen((s) => Math.max(0, s - 1));
+  const goNext = () => setScreen((s) => Math.min(7, s + 1));
+  const pickWallet = (key: WalletKey) => { setWalletKey(key); setScreen(1); };
+
+  const nextBg = isFund || isDone
+    ? "linear-gradient(90deg, #2DD4BF, #22D3EE)"
+    : "linear-gradient(135deg, #D4007A, #7B61FF)";
+  const nextColor = isFund || isDone ? "#04252b" : "#fff";
+  const nextLabel = isFund ? T.doneApp[lang] : isDone ? T.finish[lang] : T.next[lang];
+  const nextHref = isDone ? "/subscribe" : isFund ? "/subscribe" : undefined;
 
   return (
-    <div className="rounded-2xl p-5" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
-      <p className="text-[10px] font-bold tracking-[.12em]" style={{ color: "#D4007A" }}>
-        {es ? "CONFIGURACIÓN CRIPTO" : "CRYPTO SETUP"}
-      </p>
-      <h2 className="text-xl font-bold text-white mt-1">
-        {es ? "Paga con cripto, sin complicaciones" : "Paying with crypto, made simple"}
-      </h2>
-      <p className="text-xs text-pnp-textSecondary mt-1">
-        {es ? `Paso ${step} de 3` : `Step ${step} of 3`}
-      </p>
-
-      <div className="h-[5px] rounded-full overflow-hidden mt-3" style={{ background: "#1E1E1E" }}>
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${(step / 3) * 100}%`, background: "linear-gradient(90deg,#D4007A,#7B61FF)" }}
-        />
-      </div>
-      <div className="mt-2.5">
-        <StepDots total={3} current={step} onStepClick={(n) => { if (n === 1 || wallet) setStep(n as 1 | 2 | 3); }} />
+    <div
+      style={{
+        background: "#161616",
+        border: "1px solid #2A2A2A",
+        borderRadius: 20,
+        padding: 20,
+        fontFamily: "'Roboto Mono', monospace",
+      }}
+    >
+      {/* Header — eyebrow + title + step label + progress */}
+      <p style={{ margin: 0, fontSize: 10, fontWeight: 700, letterSpacing: ".12em", color: "#D4007A" }}>{T.eyebrow[lang]}</p>
+      <h1 style={{ margin: "4px 0 0", fontSize: 18, fontWeight: 700, color: "#fff", lineHeight: 1.3 }}>{T.title[lang]}</h1>
+      <p style={{ margin: "4px 0 0", fontSize: 12, color: "#A1A1A3" }}>{label}</p>
+      <div style={{ height: 5, borderRadius: 99, background: "#1E1E1E", marginTop: 12, overflow: "hidden" }}>
+        <div style={{ height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #D4007A, #7B61FF)", transition: "width .3s", width: `${progress}%` }} />
       </div>
 
-      {/* Step 1: how it works + pick a wallet */}
-      {step === 1 && (
-        <div className="mt-5">
-          <div className="rounded-[14px] p-4" style={{ border: "1px solid #2A2A2A", background: "#161616" }}>
-            <p className="text-[13px] font-bold text-white">
-              {es ? "Cómo funciona, en palabras simples" : "How this works, in plain English"}
-            </p>
-            <p className="text-[11px] mt-2 leading-relaxed text-pnp-textSecondary">
-              {es
-                ? 'La cripto es dinero digital. En vez de una cuenta bancaria, lo guardas en una app llamada "wallet" en tu celular o computadora. La cargas una vez (como una tarjeta de regalo) y desde entonces puedes pagar en PNPtv al instante, sin dar tu tarjeta ni datos bancarios.'
-                : 'Crypto is just digital money. Instead of a bank account, you keep it in an app called a "wallet" on your phone or computer. You add money to it once (like loading a gift card), and from then on you can pay for anything on PNPtv instantly, without giving out your card or bank details.'}
-            </p>
-            <p className="text-[11px] mt-2.5 leading-relaxed text-pnp-textSecondary">
-              {es
-                ? "Por qué lo usamos: los pagos llegan directo, no se pueden revertir ni bloquear como a veces pasa con tarjetas, y no hay banco en el medio que ralentice o rechace el cobro."
-                : "Why we use it: payments go through directly, they can't be reversed or frozen the way card payments sometimes are, and there's no bank in the middle slowing things down or blocking the charge."}
-            </p>
-            <p className="text-[11px] mt-2.5 leading-relaxed text-pnp-textSecondary">
-              <span className="text-white font-bold">{es ? "Cuánto tarda: " : "How long it takes: "}</span>
-              {es
-                ? "configurar tu wallet toma unos 2 minutos. Agregar dinero suele tardar algunos minutos, a veces hasta una hora si pagas con transferencia bancaria. Después de eso, cada pago en PNPtv es instantáneo."
-                : "setting up your wallet takes about 2 minutes. Adding money to it usually takes a few minutes, sometimes up to an hour if you pay by bank transfer. After that, every payment on PNPtv is instant."}
-            </p>
+      {/* Screen 0 — intro + pick a wallet */}
+      {screen === 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ border: "1px solid #2A2A2A", background: "#161616", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#fff" }}>{T.cryptoIn3[lang]}</p>
+            {[T.line1[lang], T.line2[lang], T.line3[lang]].map((line, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ color: "#5ED1C4", fontSize: 12 }}>✓</span>
+                <p style={{ margin: 0, fontSize: 11, color: "#A1A1A3", lineHeight: 1.6 }}>{line}</p>
+              </div>
+            ))}
           </div>
 
-          <h2 className="text-base font-bold text-white mt-5">
-            {es ? "Paso 1: Consigue una app de wallet" : "Step 1: Get a wallet app"}
-          </h2>
-          <p className="text-xs text-pnp-textSecondary mt-1.5 leading-relaxed">
-            {es
-              ? "Es como instalar una app de banco — sin cuenta bancaria ni papeleo. Elige una para continuar:"
-              : "Think of this like installing a banking app — except no bank account or paperwork needed. Pick one below to continue:"}
-          </p>
-          <div className="flex flex-col gap-2 mt-3.5">
-            {(Object.keys(WALLETS) as WalletKey[]).map((key) => {
+          <h2 style={{ margin: "20px 0 0", fontSize: 16, fontWeight: 700, color: "#fff" }}>{T.pick[lang]}</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+            {WALLET_KEYS.map((key) => {
               const w = WALLETS[key];
               return (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => { setWalletKey(key); setStep(2); }}
-                  className="flex items-start gap-3 text-left rounded-[14px] p-3.5 transition-colors"
-                  style={{ border: "1px solid #2A2A2A", background: "#161616" }}
+                  onClick={() => pickWallet(key)}
+                  style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", border: "1px solid #2A2A2A", background: "#161616", borderRadius: 14, padding: 14, cursor: "pointer", fontFamily: "inherit", color: "#fff" }}
                 >
-                  <div
-                    className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ background: w.grad }}
-                  >
-                    <WalletIcon />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-bold text-white">{w.name}</span>
-                      <span
-                        className="px-2 py-0.5 rounded-full text-[8px] font-bold tracking-[.06em]"
-                        style={{ background: "rgba(94,209,196,.14)", border: "1px solid rgba(94,209,196,.45)", color: "#5ED1C4" }}
-                      >
-                        {es ? WALLET_TAGS[key].es : WALLET_TAGS[key].en}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-pnp-textSecondary mt-1 leading-relaxed">
-                      {es ? WALLET_DESC[key].es : WALLET_DESC[key].en}
-                    </p>
-                  </div>
-                  <span className="text-pnp-textSecondary mt-3 flex-shrink-0">→</span>
+                  <div style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 12, background: w.grad, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#fff" }}>{w.letter}</div>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{w.name}</span>
+                    <span style={{ display: "block", fontSize: 11, color: "#A1A1A3", marginTop: 3, lineHeight: 1.5 }}>{WALLET_ONELINE[key][lang]}</span>
+                  </span>
+                  <span style={{ flexShrink: 0, padding: "2px 9px", borderRadius: 999, fontSize: 8, fontWeight: 700, letterSpacing: ".06em", background: "rgba(94,209,196,.14)", border: "1px solid rgba(94,209,196,.45)", color: "#5ED1C4" }}>{WALLET_TAG[key][lang]}</span>
                 </button>
               );
             })}
           </div>
-
-          <div className="mt-3.5 rounded-r-lg px-3 py-2.5" style={{ borderLeft: "2px solid #FFB454", background: "rgba(255,180,84,.07)" }}>
-            <p className="text-[11px] font-bold" style={{ color: "#FFB454" }}>TIP</p>
-            <p className="text-[11px] mt-1 leading-relaxed text-pnp-textSecondary">
-              {es
-                ? "Las dos son gratuitas. Siempre puedes agregar otra wallet después — tu cripto no queda atada a una sola app."
-                : "Both are free. You can always add another wallet later — your crypto isn't locked to one app."}
-            </p>
-          </div>
+          <p style={{ margin: "12px 0 0", fontSize: 11, color: "#6b6b70", lineHeight: 1.6 }}>{T.bothFree[lang]}</p>
         </div>
       )}
 
-      {/* Step 2: install + set up */}
-      {step === 2 && wallet && walletKey && (
-        <div className="mt-5">
-          <div className="flex items-center gap-3 rounded-[14px] p-3.5" style={{ border: "1px solid #2A2A2A", background: "#161616" }}>
-            <div
-              className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-base font-bold text-white"
-              style={{ background: wallet.grad }}
-            >
-              {wallet.letter}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-white">{wallet.name}</p>
-              <p className="text-[11px] text-pnp-textSecondary mt-0.5">
-                {es ? "Buena elección — instalémosla en tu dispositivo:" : "Good pick — let's install it on your device:"}
-              </p>
+      {/* Screen 1 — install */}
+      {screen === 1 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, border: "1px solid #2A2A2A", background: "#161616", borderRadius: 14, padding: 14 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: wallet.grad, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#fff" }}>{wallet.letter}</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#fff" }}>{wallet.name}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 11, color: "#A1A1A3" }}>{T.installIt[lang]}</p>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 mt-3.5">
-            <a
-              href={wallet.ios}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 rounded-xl p-3.5"
-              style={{ border: "1px solid #2A2A2A", background: "#161616" }}
-            >
-              <span className="flex-1 min-w-0">
-                <span className="block text-[13px] font-bold text-white">
-                  {es ? "Descargar para iOS" : "Download for iOS"}
-                </span>
-                <span className="block text-[10px] text-pnp-textSecondary mt-0.5">App Store</span>
-              </span>
-              <span className="text-[11px] text-pnp-textSecondary">↗</span>
-            </a>
-            <a
-              href={wallet.android}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 rounded-xl p-3.5"
-              style={{ border: "1px solid #2A2A2A", background: "#161616" }}
-            >
-              <span className="flex-1 min-w-0">
-                <span className="block text-[13px] font-bold text-white">
-                  {es ? "Descargar para Android" : "Download for Android"}
-                </span>
-                <span className="block text-[10px] text-pnp-textSecondary mt-0.5">Google Play</span>
-              </span>
-              <span className="text-[11px] text-pnp-textSecondary">↗</span>
-            </a>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+            <StoreButton href={wallet.ios}     glyph={<AppleGlyph />}   title={T.iosTitle[lang]} sub={T.iosSub[lang]} />
+            <StoreButton href={wallet.android} glyph={<AndroidGlyph />} title={T.andTitle[lang]} sub={T.andSub[lang]} />
             {"chrome" in wallet && (
-              <a
-                href={(wallet as typeof WALLETS.metamask).chrome}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 rounded-xl p-3.5"
-                style={{ border: "1px solid #2A2A2A", background: "#161616" }}
-              >
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[13px] font-bold text-white">
-                    {es ? "Extensión para Chrome" : "Chrome Extension"}
-                  </span>
-                  <span className="block text-[10px] text-pnp-textSecondary mt-0.5">Chrome Web Store</span>
-                </span>
-                <span className="text-[11px] text-pnp-textSecondary">↗</span>
-              </a>
+              <StoreButton href={(wallet as typeof WALLETS.metamask).chrome} glyph={<ChromeGlyph />} title={T.chrTitle[lang]} sub={T.chrSub[lang]} />
             )}
           </div>
 
-          <h2 className="text-[15px] font-bold text-white mt-5">
-            {es ? "Paso 2: Configura tu wallet" : "Step 2: Set up your wallet"}
-          </h2>
-          <p className="text-xs text-pnp-textSecondary mt-1.5 leading-relaxed">
-            {es
-              ? "Toma unos 2 minutos y no necesitas ID ni papeleo — solo sigue estos pasos después de instalarla:"
-              : "This takes about 2 minutes and there's no ID or paperwork — just follow these steps once it's installed:"}
-          </p>
-          <div className="flex flex-col gap-2 mt-3">
-            {(es ? SETUP_STEPS[walletKey].es : SETUP_STEPS[walletKey].en).map((s, i) => (
-              <div key={i} className="flex gap-3 rounded-xl p-3.5" style={{ border: "1px solid #2A2A2A", background: "#161616" }}>
-                <div
-                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
-                >
-                  {i + 1}
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold text-white leading-tight">{s.title}</p>
-                  <p className="text-[11px] text-pnp-textSecondary mt-1 leading-relaxed">{s.body}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3.5 rounded-r-lg px-3 py-2.5" style={{ borderLeft: "2px solid #EF4444", background: "rgba(239,68,68,.07)" }}>
-            <p className="text-[11px] font-bold" style={{ color: "#EF4444" }}>
-              {es ? "IMPORTANTE" : "IMPORTANT"}
-            </p>
-            <p className="text-[11px] mt-1 leading-relaxed text-pnp-textSecondary">
-              {es
-                ? "Tu Frase Secreta = tu dinero. El equipo de PNPtv NUNCA te la pedirá. Quien lo haga es un estafador."
-                : "Your Secret Phrase = your money. PNPtv staff will NEVER ask for it. Anyone who does is a scammer."}
-            </p>
-          </div>
-
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              onClick={() => { setWalletKey(null); setStep(1); }}
-              className="flex-1 py-3 rounded-lg text-sm font-semibold text-white"
-              style={{ border: "1px solid rgba(255,255,255,.15)", background: "#161616" }}
-            >
-              {es ? "← Otra wallet" : "← Other wallet"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              className="flex-[2] py-3 rounded-lg text-sm font-bold text-white"
-              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
-            >
-              {es ? "Listo — Siguiente →" : "Done — Next →"}
-            </button>
-          </div>
+          <Callout variant="gold" label={T.gtkLabel[lang]} body={T.gtkBody[lang]} />
         </div>
       )}
 
-      {/* Step 3: fund + spend */}
-      {step === 3 && (
-        <div className="mt-5">
-          <div className="rounded-[14px] p-4" style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)" }}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(94,209,196,.15)" }}>
+      {/* Screens 2–5 — setup */}
+      {screen >= 2 && screen <= 5 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 99, background: "linear-gradient(135deg, #D4007A, #7B61FF)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#fff" }}>{setupIdx + 1}</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "#A1A1A3" }}>
+                {wallet.name.toUpperCase()} — {T.setupOf[lang].replace("{n}", String(setupIdx + 1))}
+              </p>
+              <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 700, color: "#fff", lineHeight: 1.4 }}>{SETUP_STEPS[walletKey][lang][setupIdx].title}</p>
+            </div>
+          </div>
+          <p style={{ margin: "10px 0 0", fontSize: 11, color: "#A1A1A3", lineHeight: 1.7 }}>{SETUP_STEPS[walletKey][lang][setupIdx].body}</p>
+
+          <ScreenshotSlot slotId={`${walletKey}-${setupIdx + 1}`} height={320} lang={lang} />
+
+          {(setupIdx === 2 || setupIdx === 3) && (
+            <Callout variant="red" label={T.keepSafe[lang]} body={T.keepSafeBody[lang]} />
+          )}
+        </div>
+      )}
+
+      {/* Screen 6 — fund */}
+      {isFund && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)", borderRadius: 14, padding: 18, display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 12, background: "rgba(94,209,196,.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#5ED1C4" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-base font-bold text-white mt-3.5">
-              {es ? "¡Listo! Ahora ponle dinero a tu wallet" : "You're set up! Now fund your wallet"}
-            </h3>
-            <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-              {es
-                ? "Tu wallet es como un sobre vacío ahora mismo. Ponle un poco de dinero y estarás listo para pagar a los creadores en PNPtv."
-                : "Your wallet is like an empty envelope right now. Put a little money in it and you're ready to pay creators on PNPtv."}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 mt-3.5">
-            <div className="flex gap-3 rounded-xl p-3.5" style={{ border: "1px solid #2A2A2A", background: "#161616" }}>
-              <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>1</div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-white leading-tight">
-                  {es ? 'Toca "Comprar" en tu wallet' : 'Tap "Buy" in your wallet app'}
-                </p>
-                <p className="text-[11px] text-pnp-textSecondary mt-1 leading-relaxed">
-                  {es
-                    ? "Paga con tarjeta débito, crédito o transferencia bancaria. Hay cientos de tokens y redes — lo simplificamos para ti. Estos son los que recomendamos porque son los que PNPtv muestra como preferidos en el checkout:"
-                    : "Pay with debit card, credit card, or bank transfer. There are hundreds of tokens and networks out there — we've narrowed it down for you. These are the ones we recommend because PNPtv shows them as preferred at checkout:"}
-                </p>
-
-                {/* Token recommendation table */}
-                <div className="mt-2.5 rounded-lg overflow-hidden" style={{ border: "1px solid #2A2A2A" }}>
-                  {[
-                    { token: "USDT", chain: "BSC (BEP-20)", why: es ? "El stablecoin más usado en LatAm, comisiones casi cero" : "Most held stablecoin in LatAm, almost zero fees", star: true },
-                    { token: "USDC", chain: "Polygon",      why: es ? "El más confiable, ~$0.001 de comisión en Polygon"   : "Most trusted stablecoin, ~$0.001 gas on Polygon",  star: true },
-                    { token: "ETH",  chain: "Ethereum",     why: es ? "El más reconocido, pero comisiones de $5–15"         : "Most recognized, but gas fees can be $5–15",       star: false },
-                    { token: "BNB",  chain: "BSC",          why: es ? "Muy popular en LatAm, comisiones casi gratuitas"    : "Very popular in LatAm, nearly free fees",          star: false },
-                    { token: "MATIC/POL", chain: "Polygon", why: es ? "Comisiones súper baratas, adopción creciente"       : "Super cheap fees, growing adoption",               star: false },
-                  ].map(({ token, chain, why, star }) => (
-                    <div key={token} className="flex items-start gap-2 px-3 py-2" style={{ borderBottom: "1px solid #1c1c1c" }}>
-                      <span className="flex-shrink-0 font-bold text-[11px] w-16" style={{ color: star ? "#5ED1C4" : "#fff" }}>{token}</span>
-                      <span className="flex-shrink-0 text-[10px] w-20" style={{ color: "#A1A1A3" }}>{chain}</span>
-                      <span className="text-[10px] leading-relaxed" style={{ color: "#6b6b70" }}>{why}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-[11px] text-pnp-textSecondary mt-2 leading-relaxed">
-                  {es
-                    ? "Para montos pequeños (menos de ~$150), la mayoría de los proveedores no piden ID. Si uno te lo pide, prueba con otro de la lista."
-                    : "For small amounts (under ~$150), most providers don't ask for ID. If one does, just pick another from the list."}
-                </p>
-                <p className="text-[11px] text-pnp-textSecondary mt-1.5 leading-relaxed">
-                  <span className="text-white font-bold">{es ? "Tiempo: " : "Timing: "}</span>
-                  {es
-                    ? "los pagos con tarjeta llegan en minutos. Las transferencias bancarias pueden tardar hasta una hora."
-                    : "card payments land in minutes. Bank transfers can take up to an hour."}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3 rounded-xl p-3.5" style={{ border: "1px solid #2A2A2A", background: "#161616" }}>
-              <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>2</div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-white leading-tight">
-                  {es ? "Ya estás listo para pagar en PNPtv" : "You're ready to pay on PNPtv"}
-                </p>
-                <p className="text-[11px] text-pnp-textSecondary mt-1 leading-relaxed">
-                  {es
-                    ? "Ya está — no hay paso extra de vinculación. Una vez que los tokens están en tu wallet, paga directamente desde la página donde estés, en cualquier parte de la app:"
-                    : "That's it — no extra linking step. Once the tokens are in your wallet, just pay right from the page you're on, anywhere in the app:"}
-                </p>
-                <div className="flex flex-col gap-1.5 mt-2.5">
-                  <a href="/subscribe" className="flex items-center justify-between px-3 py-2.5 rounded-[10px] text-xs font-semibold" style={{ background: "#111", border: "1px solid #2A2A2A", color: "#FF4DA6", textDecoration: "none" }}>
-                    <span>{es ? "Suscribirse a un creador" : "Subscribe to a creator"}</span>
-                    <span>→</span>
-                  </a>
-                  <a href="/buy-tokens" className="flex items-center justify-between px-3 py-2.5 rounded-[10px] text-xs font-semibold" style={{ background: "#111", border: "1px solid #2A2A2A", color: "#FF4DA6", textDecoration: "none" }}>
-                    <span>{es ? "Comprar más tokens" : "Buy more tokens"}</span>
-                    <span>→</span>
-                  </a>
-                  <a href="/creators" className="flex items-center justify-between px-3 py-2.5 rounded-[10px] text-xs font-semibold" style={{ background: "#111", border: "1px solid #2A2A2A", color: "#FF4DA6", textDecoration: "none" }}>
-                    <span>{es ? "Ver todos los creadores" : "Browse all creators"}</span>
-                    <span>→</span>
-                  </a>
-                </div>
-              </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>{T.addMoney[lang]}</h2>
+              <p style={{ margin: "4px 0 0", fontSize: 11, color: "#A1A1A3", lineHeight: 1.5 }}>{T.addMoneySub[lang]}</p>
             </div>
           </div>
+          <p style={{ margin: "14px 0 0", fontSize: 11, color: "#A1A1A3", lineHeight: 1.7 }}>
+            {T.addMoneyBody[lang]}
+            <b style={{ color: "#fff" }}>USDT</b>
+            {es ? " o " : " or "}
+            <b style={{ color: "#fff" }}>USDC</b>
+            {T.addMoneyBodyRest[lang]}
+          </p>
 
-          <div className="mt-3.5 rounded-r-lg px-3 py-2.5" style={{ borderLeft: "2px solid #FFB454", background: "rgba(255,180,84,.07)" }}>
-            <p className="text-[11px] font-bold" style={{ color: "#FFB454" }}>TIP</p>
-            <p className="text-[11px] mt-1 leading-relaxed text-pnp-textSecondary">
-              {es
-                ? "Empieza con poco — $20–30 son suficientes para probar. Puedes recargar cuando quieras."
-                : "Start small — $20–30 is plenty to try things out. You can top up anytime."}
-            </p>
+          <ScreenshotSlot slotId="buy" height={280} lang={lang} />
+
+          <Callout variant="gold" label={T.tipLabel[lang]} body={T.tipBody[lang]} />
+        </div>
+      )}
+
+      {/* Screen 7 — done */}
+      {isDone && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 14, padding: "44px 8px 0" }}>
+          <div style={{ width: 64, height: 64, borderRadius: 99, background: "linear-gradient(90deg, #2DD4BF, #22D3EE)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#04252b" strokeWidth={2.4}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
           </div>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#fff" }}>{T.ready[lang]}</h2>
+          <p style={{ margin: 0, fontSize: 12, color: "#A1A1A3", lineHeight: 1.7, maxWidth: 280 }}>{T.readyBody[lang]}</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", marginTop: 6 }}>
+            {[
+              { href: "/subscribe",   label: T.linkSub[lang] },
+              { href: "/buy-tokens",  label: T.linkBuy[lang] },
+              { href: "/creators",    label: T.linkBrowse[lang] },
+            ].map((a) => (
+              <a key={a.href} href={a.href}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 10, background: "#161616", border: "1px solid #2A2A2A", fontSize: 12, fontWeight: 600, color: "#FF4DA6", textDecoration: "none" }}
+              >
+                <span>{a.label}</span>
+                <span>→</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
-          <div className="flex gap-2 mt-4">
+      {/* Footer nav — screens 1–7 */}
+      {showNav && (
+        <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+          <button
+            type="button"
+            onClick={goBack}
+            style={{ flex: 1, padding: 13, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "#161616", fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "inherit", cursor: "pointer" }}
+          >
+            {T.back[lang]}
+          </button>
+          {nextHref ? (
+            <a
+              href={nextHref}
+              style={{ flex: 2, padding: 13, borderRadius: 10, background: nextBg, fontSize: 13, fontWeight: 700, color: nextColor, fontFamily: "inherit", textAlign: "center", textDecoration: "none" }}
+            >
+              {nextLabel}
+            </a>
+          ) : (
             <button
               type="button"
-              onClick={() => setStep(2)}
-              className="flex-1 py-3 rounded-lg text-sm font-semibold text-white"
-              style={{ border: "1px solid rgba(255,255,255,.15)", background: "#161616" }}
+              onClick={goNext}
+              style={{ flex: 2, padding: 13, borderRadius: 10, border: "none", background: nextBg, fontSize: 13, fontWeight: 700, color: nextColor, fontFamily: "inherit", cursor: "pointer" }}
             >
-              {es ? "← Atrás" : "← Back"}
+              {nextLabel}
             </button>
-            <a
-              href="/subscribe"
-              className="flex-[2] py-3 rounded-lg text-sm font-bold text-center"
-              style={{ background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b" }}
-            >
-              {es ? "Listo — llévame a la app" : "Done — take me to the app"}
-            </a>
-          </div>
+          )}
         </div>
       )}
     </div>

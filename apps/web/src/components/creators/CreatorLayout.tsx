@@ -16,6 +16,8 @@ import {
   getCreatorConsents,
   acceptCreatorPrivacyPolicy,
   acceptCreatorTerms,
+  getCreatorAnnounceConsent,
+  setCreatorAnnounceConsent,
   acceptTerms,
   updateProfile,
   getCreatorXAccount,
@@ -1014,6 +1016,30 @@ export function CreatorConsents() {
   const [acceptError, setAcceptError] = React.useState<string | null>(null);
   const [wofBusy, setWofBusy] = React.useState(false);
 
+  // PNPtv announcement consent — creator opt-in for @pnptv to auto-broadcast
+  // new videos/streams on X, Telegram groups, and consented DMs.
+  const [announceConsent, setAnnounceConsent] = React.useState<{ consented: boolean; consentedAt: string | null } | null>(null);
+  const [announceBusy, setAnnounceBusy] = React.useState(false);
+  const [announceExpanded, setAnnounceExpanded] = React.useState(false);
+  const [announceError, setAnnounceError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    getCreatorAnnounceConsent()
+      .then((res) => { if (res.success) setAnnounceConsent({ consented: res.consented, consentedAt: res.consentedAt }); })
+      .catch(() => { /* silent — section shows a retry if it stays null */ });
+  }, []);
+  const toggleAnnounceConsent = async (next: boolean) => {
+    setAnnounceBusy(true);
+    setAnnounceError(null);
+    try {
+      const res = await setCreatorAnnounceConsent(next);
+      if (res.success) setAnnounceConsent({ consented: res.consented, consentedAt: next ? new Date().toISOString() : null });
+    } catch (err) {
+      setAnnounceError(err instanceof Error ? err.message : "Failed to update — try again.");
+    } finally {
+      setAnnounceBusy(false);
+    }
+  };
+
   React.useEffect(() => {
     let cancelled = false;
     getCreatorConsents().then(res => {
@@ -1301,6 +1327,146 @@ export function CreatorConsents() {
               </div>
             )}
 
+            {/* First-visit banner — shown once (localStorage-flagged) to explain the new opt-in */}
+            {announceConsent && !announceConsent.consented && (() => {
+              const SEEN_KEY = "pnp_amp_banner_seen_v1";
+              let seen = false;
+              try { seen = localStorage.getItem(SEEN_KEY) === "1"; } catch { /* ignore */ }
+              if (seen) return null;
+              return (
+                <div
+                  className="rounded-2xl p-4 flex items-start gap-3"
+                  style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.35)" }}
+                >
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-lg" style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>📣</div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white">New: PNPtv can now amplify your drops</p>
+                    <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed">
+                      We can post to @PNPTelevision on X and PNPtv Telegram groups every time you publish or go live.
+                      It's optional and you keep full control — expand the section below to read what we share and turn it on if you want the boost.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* ignore */ } setAnnounceExpanded(true); }}
+                    className="text-white/60 hover:text-white text-xl leading-none flex-shrink-0"
+                    aria-label="Dismiss"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* PNPtv announcement amplification — creator opt-in */}
+            <section>
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">PNPtv amplification (optional)</h2>
+              <div
+                className="rounded-2xl p-4"
+                style={{
+                  background: announceConsent?.consented ? "rgba(52,199,89,0.06)" : "rgba(94,209,196,0.06)",
+                  border: `1px solid ${announceConsent?.consented ? "rgba(52,199,89,0.25)" : "rgba(94,209,196,0.25)"}`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-white">Let PNPtv announce my new content</p>
+                      {announceConsent?.consented && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase" style={{ background: "rgba(52,199,89,0.15)", border: "1px solid rgba(52,199,89,0.3)", color: "#34C759" }}>
+                          Enabled
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed">
+                      When you publish a new channel video or go live, PNPtv can amplify it across our own social channels — no work from you.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAnnounceExpanded((v) => !v)}
+                    className="text-[11px] font-semibold text-white/70 hover:text-white transition-colors underline"
+                  >
+                    {announceExpanded ? "Hide details" : "Read the terms"}
+                  </button>
+                </div>
+
+                {announceExpanded && (
+                  <div className="mt-4 rounded-xl p-3.5 text-[11px] leading-relaxed space-y-3" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)", color: "#c9c9cc" }}>
+                    <div>
+                      <p className="text-white font-semibold mb-1">Where we announce</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>The <span className="text-white font-semibold">@PNPTelevision</span> account on X (Twitter)</li>
+                        <li>PNPtv Telegram groups where our bot is an admin</li>
+                        <li>Telegram DMs to users who explicitly opted in to receive creator updates</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold mb-1">What we share</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>Your video / stream title and description</li>
+                        <li>Your public creator handle</li>
+                        <li>A preview image (GIF or thumbnail)</li>
+                        <li>A link back to view it on pnptv.app</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold mb-1">What we never share</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>Exclusive or paid-subscription content — we only announce free posts</li>
+                        <li>Anything you flagged as private or unlisted</li>
+                        <li>Personal info beyond your public creator profile</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold mb-1">Your controls</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>Per-video you can still untick "Announce on feed" when publishing</li>
+                        <li>You can revoke this consent below at any time — it only affects future announcements</li>
+                        <li>We rate-limit to at most one X post per creator per hour to avoid spam</li>
+                      </ul>
+                    </div>
+                    <p className="pt-1 text-[10px] text-pnp-textSecondary">
+                      By enabling this, you confirm you have the right to distribute the content you publish and agree that PNPtv may amplify it across the channels above.
+                    </p>
+                  </div>
+                )}
+
+                {announceError && (
+                  <p className="mt-3 text-[11px]" style={{ color: "#FF6B6B" }}>{announceError}</p>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {!announceConsent?.consented ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleAnnounceConsent(true)}
+                      disabled={announceBusy}
+                      className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                      style={{ background: "linear-gradient(135deg,#5ED1C4,#2DD4BF)", color: "#04252b" }}
+                    >
+                      {announceBusy ? "Saving…" : "Enable announcements"}
+                    </button>
+                  ) : (
+                    <>
+                      <span className="text-[11px] text-pnp-textSecondary self-center">
+                        Enabled {announceConsent.consentedAt ? new Date(announceConsent.consentedAt).toLocaleDateString() : ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleAnnounceConsent(false)}
+                        disabled={announceBusy}
+                        className="px-3 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50"
+                        style={{ background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.3)", color: "#FF6B6B" }}
+                      >
+                        {announceBusy ? "Saving…" : "Revoke consent"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+
             {/* Platform consents */}
             <section>
               <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Platform consents</h2>
@@ -1535,24 +1701,271 @@ export function CreatorConsents() {
   );
 }
 
-// ── My AI Tools Page (X Campaigns agent — coming soon) ───────────────────────
+// ── My AI Tools Page (X Campaigns agent) ─────────────────────────────────────
+
+type XAccount = { account_id: string; handle: string; display_name: string } | null;
+
+const GROK_MODE_OPTIONS: Array<{ value: string; label: string; desc: string }> = [
+  { value: "xPost", label: "Regular posts", desc: "General posts about your content and niche." },
+  { value: "broadcast", label: "Broadcast announcements", desc: "Announce when you go live or drop new content." },
+  { value: "salesPost", label: "Sales posts", desc: "Drive traffic directly to your PNPtv channels." },
+];
+
+const LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "en", label: "English" },
+  { value: "es", label: "Español" },
+  { value: "bilingual", label: "Bilingual (EN + ES)" },
+];
+
+function formatHourWindow(start: number, end: number): string {
+  const fmt = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  return `${fmt(start)}–${fmt(end)}`;
+}
+
+function formatInterval(mins: number): string {
+  if (mins < 60) return `every ${mins} min`;
+  const hours = mins / 60;
+  if (Number.isInteger(hours)) return `every ${hours}h`;
+  return `every ${hours.toFixed(1)}h`;
+}
 
 export function CreatorMyAITools() {
+  const [xAccount, setXAccount] = React.useState<XAccount>(null);
+  const [campaigns, setCampaigns] = React.useState<XAutoCampaign[]>([]);
+  const [campaignLimit, setCampaignLimit] = React.useState(2);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [status, setStatus] = React.useState<string | null>(null);
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [linkingOAuth, setLinkingOAuth] = React.useState(false);
+
+  const [showEditor, setShowEditor] = React.useState(false);
+  const [editing, setEditing] = React.useState<XAutoCampaign | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const [formName, setFormName] = React.useState("");
+  const [formTopic, setFormTopic] = React.useState("");
+  const [formGrokMode, setFormGrokMode] = React.useState("xPost");
+  const [formLanguage, setFormLanguage] = React.useState("bilingual");
+  const [formInterval, setFormInterval] = React.useState(60);
+  const [formHoursStart, setFormHoursStart] = React.useState(9);
+  const [formHoursEnd, setFormHoursEnd] = React.useState(22);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  const [historyFor, setHistoryFor] = React.useState<XAutoCampaign | null>(null);
+  const [historyPosts, setHistoryPosts] = React.useState<XAutoCampaignPost[]>([]);
+  const [historyLoading, setHistoryLoading] = React.useState(false);
+
+  const [confirmDelete, setConfirmDelete] = React.useState<XAutoCampaign | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [acctRes, campsRes] = await Promise.all([
+        getCreatorXAccount(),
+        getCreatorXCampaigns(),
+      ]);
+      setXAccount(acctRes.account);
+      setCampaigns(campsRes.campaigns || []);
+      setCampaignLimit(campsRes.campaignLimit ?? 2);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load campaigns.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  // Refresh when returning from OAuth (the callback redirects here)
+  React.useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [load]);
+
+  React.useEffect(() => {
+    if (!status) return;
+    const t = setTimeout(() => setStatus(null), 3000);
+    return () => clearTimeout(t);
+  }, [status]);
+
+  const activeCount = campaigns.filter(c => c.status !== "completed").length;
+  const atLimit = activeCount >= campaignLimit;
+
+  const openCreate = () => {
+    setEditing(null);
+    setFormName("");
+    setFormTopic("");
+    setFormGrokMode("xPost");
+    setFormLanguage("bilingual");
+    setFormInterval(60);
+    setFormHoursStart(9);
+    setFormHoursEnd(22);
+    setFormError(null);
+    setShowEditor(true);
+  };
+
+  const openEdit = (c: XAutoCampaign) => {
+    setEditing(c);
+    setFormName(c.name);
+    setFormTopic(c.topic);
+    setFormGrokMode(c.grok_mode || "xPost");
+    setFormLanguage(c.language || "bilingual");
+    setFormInterval(c.interval_minutes || 60);
+    setFormHoursStart(c.active_hours_start ?? 9);
+    setFormHoursEnd(c.active_hours_end ?? 22);
+    setFormError(null);
+    setShowEditor(true);
+  };
+
+  const submitForm = async () => {
+    setFormError(null);
+    const name = formName.trim();
+    const topic = formTopic.trim();
+    if (!name) { setFormError("Name is required."); return; }
+    if (!topic) { setFormError("Topic is required."); return; }
+    if (name.length > 200) { setFormError("Name too long (max 200)."); return; }
+    if (topic.length > 2000) { setFormError("Topic too long (max 2000)."); return; }
+    if (formInterval < 30) { setFormError("Interval must be at least 30 minutes."); return; }
+    if (formHoursStart < 0 || formHoursStart > 23 || formHoursEnd < 0 || formHoursEnd > 23) {
+      setFormError("Active hours must be between 0 and 23."); return;
+    }
+
+    setSaving(true);
+    try {
+      if (editing) {
+        await updateCreatorXCampaign(editing.campaign_id, {
+          name,
+          topic,
+          grokMode: formGrokMode,
+          language: formLanguage,
+          intervalMinutes: formInterval,
+          activeHoursStart: formHoursStart,
+          activeHoursEnd: formHoursEnd,
+        });
+        setStatus("Campaign updated.");
+      } else {
+        if (!xAccount) { setFormError("No X account linked."); setSaving(false); return; }
+        await createCreatorXCampaign({
+          name,
+          accountId: xAccount.account_id,
+          topic,
+          grokMode: formGrokMode,
+          language: formLanguage,
+          intervalMinutes: formInterval,
+          activeHoursStart: formHoursStart,
+          activeHoursEnd: formHoursEnd,
+        });
+        setStatus("Campaign created.");
+      }
+      setShowEditor(false);
+      await load();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save campaign.";
+      setFormError(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const togglePauseResume = async (c: XAutoCampaign) => {
+    setBusyId(c.campaign_id);
+    try {
+      if (c.status === "paused") {
+        await resumeCreatorXCampaign(c.campaign_id);
+        setStatus("Campaign resumed.");
+      } else {
+        await pauseCreatorXCampaign(c.campaign_id);
+        setStatus("Campaign paused.");
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    setBusyId(target.campaign_id);
+    setConfirmDelete(null);
+    try {
+      await deleteCreatorXCampaign(target.campaign_id);
+      setStatus("Campaign deleted.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openHistory = async (c: XAutoCampaign) => {
+    setHistoryFor(c);
+    setHistoryLoading(true);
+    setHistoryPosts([]);
+    try {
+      const res = await getCreatorXCampaignHistory(c.campaign_id, 1);
+      if (res.success) setHistoryPosts(res.posts || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const connectX = async () => {
+    setLinkingOAuth(true);
+    try {
+      const res = await startCreatorXOAuth();
+      if (res.success && res.url) {
+        window.location.href = res.url;
+      } else {
+        setError("Could not start X authentication.");
+        setLinkingOAuth(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start X authentication.");
+      setLinkingOAuth(false);
+    }
+  };
+
   return (
     <>
       <Helmet><title>My AI Tools — Creator Studio — PNPtv!</title></Helmet>
       <div className="p-4 lg:p-6 space-y-6">
-        <div>
-          <h1 className="text-xl font-bold text-white">My AI Tools</h1>
-          <p className="text-sm text-pnp-textSecondary mt-1">Automate your content strategy with AI-powered tools.</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-xl font-bold text-white">My AI Tools</h1>
+            <p className="text-sm text-pnp-textSecondary mt-1">Automate your content strategy with AI-powered tools.</p>
+          </div>
+          {xAccount && (
+            <div className="text-xs text-pnp-textSecondary">
+              <span className="text-white font-semibold">{activeCount}</span> / {campaignLimit} campaigns
+            </div>
+          )}
         </div>
 
-        {/* X Campaigns Agent — Coming Soon */}
+        {status && (
+          <div className="rounded-xl px-4 py-2.5 text-sm text-white" style={{ background: "rgba(52,199,89,0.12)", border: "1px solid rgba(52,199,89,0.3)" }}>
+            {status}
+          </div>
+        )}
+        {error && (
+          <div className="rounded-xl px-4 py-2.5 text-sm text-white flex items-start justify-between gap-3" style={{ background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.3)" }}>
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-xs opacity-70 hover:opacity-100">Dismiss</button>
+          </div>
+        )}
+
+        {/* X Campaigns Agent card */}
         <div className="rounded-2xl p-6 relative overflow-hidden" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
           <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(135deg, rgba(29,161,242,0.06) 0%, rgba(212,0,122,0.04) 100%)" }} />
-          <div className="absolute top-4 right-4">
-            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold" style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B" }}>Coming Soon</span>
-          </div>
           <div className="relative flex items-start gap-4">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 text-2xl" style={{ background: "rgba(29,161,242,0.12)", border: "1px solid rgba(29,161,242,0.2)" }}>
               𝕏
@@ -1562,19 +1975,122 @@ export function CreatorMyAITools() {
               <p className="text-sm text-pnp-textSecondary mt-1.5 leading-relaxed">
                 An AI agent that runs your X (Twitter) presence on autopilot — writing posts, scheduling them, and driving traffic to your PNPtv content.
               </p>
-              <ul className="mt-4 space-y-2">
-                {[
-                  "Scheduled posts written in EN, ES, or bilingual",
-                  "Sales posts that link directly to your channels",
-                  "Broadcast announcements when you go live",
-                  "Post history and performance analytics",
-                ].map(feat => (
-                  <li key={feat} className="flex items-center gap-2 text-xs text-pnp-textSecondary">
-                    <span className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold" style={{ background: "rgba(29,161,242,0.15)", color: "#1DA1F2" }}>✓</span>
-                    {feat}
-                  </li>
-                ))}
-              </ul>
+
+              {loading ? (
+                <div className="mt-5 text-xs text-pnp-textSecondary">Loading…</div>
+              ) : !xAccount ? (
+                <div className="mt-5 rounded-xl p-4" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <p className="text-sm text-white font-semibold">Connect your X account</p>
+                  <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed">
+                    Link your X (Twitter) account so the agent can post on your behalf. You can disconnect at any time.
+                  </p>
+                  <button
+                    onClick={connectX}
+                    disabled={linkingOAuth}
+                    className="mt-3 px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                    style={{ background: "linear-gradient(135deg, #1DA1F2, #0d8bd9)" }}
+                  >
+                    {linkingOAuth ? "Redirecting…" : "Connect X"}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-pnp-textSecondary">Linked as</span>
+                      <span className="text-white font-semibold">@{xAccount.handle}</span>
+                    </div>
+                    <button
+                      onClick={openCreate}
+                      disabled={atLimit}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #8B0050)" }}
+                    >
+                      {atLimit ? `Limit reached (${campaignLimit})` : "New Campaign"}
+                    </button>
+                  </div>
+
+                  {campaigns.length === 0 ? (
+                    <div className="mt-5 text-center py-8 rounded-xl" style={{ background: "rgba(0,0,0,0.2)", border: "1px dashed rgba(255,255,255,0.08)" }}>
+                      <p className="text-sm text-white font-semibold">No campaigns yet</p>
+                      <p className="text-xs text-pnp-textSecondary mt-1">Create your first campaign to have the agent start posting.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-5 space-y-3">
+                      {campaigns.map(c => {
+                        const isPaused = c.status === "paused";
+                        const isCompleted = c.status === "completed";
+                        const statusColor = isPaused
+                          ? { bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.3)", text: "#F59E0B" }
+                          : isCompleted
+                            ? { bg: "rgba(148,163,184,0.15)", border: "rgba(148,163,184,0.3)", text: "#94A3B8" }
+                            : { bg: "rgba(52,199,89,0.15)", border: "rgba(52,199,89,0.3)", text: "#34C759" };
+                        return (
+                          <div key={c.campaign_id} className="rounded-xl p-4" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-sm font-bold text-white truncate">{c.name}</p>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase" style={{ background: statusColor.bg, border: `1px solid ${statusColor.border}`, color: statusColor.text }}>
+                                    {c.status}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-pnp-textSecondary mt-1 line-clamp-2 leading-relaxed">{c.topic}</p>
+                                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-pnp-textSecondary">
+                                  <span>{formatInterval(c.interval_minutes)}</span>
+                                  <span>hours {formatHourWindow(c.active_hours_start, c.active_hours_end)}</span>
+                                  <span>{GROK_MODE_OPTIONS.find(o => o.value === c.grok_mode)?.label || c.grok_mode}</span>
+                                  <span>{LANGUAGE_OPTIONS.find(o => o.value === c.language)?.label || c.language}</span>
+                                </div>
+                                <div className="mt-2 flex gap-4 text-[11px]">
+                                  <span className="text-white"><span className="opacity-60">Posted:</span> {c.total_posted ?? 0}</span>
+                                  {(c.total_failed ?? 0) > 0 && (
+                                    <span className="text-white"><span className="opacity-60">Failed:</span> {c.total_failed}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {!isCompleted && (
+                                  <button
+                                    onClick={() => togglePauseResume(c)}
+                                    disabled={busyId === c.campaign_id}
+                                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white disabled:opacity-50"
+                                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                                  >
+                                    {isPaused ? "Resume" : "Pause"}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => openEdit(c)}
+                                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white"
+                                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => openHistory(c)}
+                                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white"
+                                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                                >
+                                  History
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDelete(c)}
+                                  disabled={busyId === c.campaign_id}
+                                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold disabled:opacity-50"
+                                  style={{ background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.3)", color: "#FF6B6B" }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1599,6 +2115,227 @@ export function CreatorMyAITools() {
           </div>
         </div>
       </div>
+
+      {/* Create / Edit modal */}
+      {showEditor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => !saving && setShowEditor(false)}>
+          <div
+            className="w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
+            style={{ background: "#0F1116", border: "1px solid rgba(255,255,255,0.12)" }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-white">{editing ? "Edit Campaign" : "New Campaign"}</h3>
+            <p className="text-xs text-pnp-textSecondary mt-1">The AI agent will follow these instructions to post on your behalf.</p>
+
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-white/80">Name</label>
+                <input
+                  value={formName}
+                  onChange={e => setFormName(e.target.value)}
+                  maxLength={200}
+                  placeholder="e.g. Daily promo posts"
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg text-sm text-white bg-transparent"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-white/80">Topic / Instructions</label>
+                <textarea
+                  value={formTopic}
+                  onChange={e => setFormTopic(e.target.value)}
+                  maxLength={2000}
+                  rows={4}
+                  placeholder="Describe what the agent should post about, tone, style, links to include, etc."
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg text-sm text-white bg-transparent resize-y"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                />
+                <p className="text-[10px] text-pnp-textSecondary mt-1">{formTopic.length}/2000</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-white/80">Mode</label>
+                <div className="mt-1.5 space-y-2">
+                  {GROK_MODE_OPTIONS.map(opt => (
+                    <label
+                      key={opt.value}
+                      className="flex items-start gap-3 p-3 rounded-lg cursor-pointer"
+                      style={{
+                        background: formGrokMode === opt.value ? "rgba(29,161,242,0.10)" : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${formGrokMode === opt.value ? "rgba(29,161,242,0.4)" : "rgba(255,255,255,0.08)"}`,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="grokMode"
+                        value={opt.value}
+                        checked={formGrokMode === opt.value}
+                        onChange={() => setFormGrokMode(opt.value)}
+                        className="mt-0.5"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-white">{opt.label}</p>
+                        <p className="text-[11px] text-pnp-textSecondary mt-0.5">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-white/80">Language</label>
+                <select
+                  value={formLanguage}
+                  onChange={e => setFormLanguage(e.target.value)}
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg text-sm text-white"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                >
+                  {LANGUAGE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value} style={{ background: "#0F1116" }}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-white/80">Interval (minutes)</label>
+                  <input
+                    type="number"
+                    min={30}
+                    max={1440}
+                    value={formInterval}
+                    onChange={e => setFormInterval(Math.max(30, Number(e.target.value) || 60))}
+                    className="mt-1.5 w-full px-3 py-2 rounded-lg text-sm text-white"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  />
+                  <p className="text-[10px] text-pnp-textSecondary mt-1">Min 30 minutes between posts.</p>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-white/80">Active hours</label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={formHoursStart}
+                      onChange={e => setFormHoursStart(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                      className="w-full px-3 py-2 rounded-lg text-sm text-white"
+                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    />
+                    <span className="text-xs text-pnp-textSecondary">to</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={formHoursEnd}
+                      onChange={e => setFormHoursEnd(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                      className="w-full px-3 py-2 rounded-lg text-sm text-white"
+                      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-pnp-textSecondary mt-1">24-hour local time (0–23).</p>
+                </div>
+              </div>
+
+              {formError && (
+                <div className="rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(255,69,58,0.12)", border: "1px solid rgba(255,69,58,0.3)", color: "#FF6B6B" }}>
+                  {formError}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                onClick={() => setShowEditor(false)}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-white/70 disabled:opacity-50"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitForm}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg, #D4007A, #8B0050)" }}
+              >
+                {saving ? "Saving…" : editing ? "Save Changes" : "Create Campaign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History drawer */}
+      {historyFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={() => setHistoryFor(null)}>
+          <div
+            className="w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
+            style={{ background: "#0F1116", border: "1px solid rgba(255,255,255,0.12)" }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">Post History</h3>
+                <p className="text-xs text-pnp-textSecondary mt-0.5">{historyFor.name}</p>
+              </div>
+              <button
+                onClick={() => setHistoryFor(null)}
+                className="text-white/60 hover:text-white text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5">
+              {historyLoading ? (
+                <p className="text-sm text-pnp-textSecondary py-6 text-center">Loading…</p>
+              ) : historyPosts.length === 0 ? (
+                <p className="text-sm text-pnp-textSecondary py-6 text-center">No posts yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {historyPosts.map(p => {
+                    const isSent = p.status === "sent";
+                    const isFailed = p.status === "failed";
+                    const pillColor = isSent
+                      ? { bg: "rgba(52,199,89,0.15)", border: "rgba(52,199,89,0.3)", text: "#34C759" }
+                      : isFailed
+                        ? { bg: "rgba(255,69,58,0.15)", border: "rgba(255,69,58,0.3)", text: "#FF6B6B" }
+                        : { bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.3)", text: "#F59E0B" };
+                    return (
+                      <div key={p.post_id} className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase" style={{ background: pillColor.bg, border: `1px solid ${pillColor.border}`, color: pillColor.text }}>
+                            {p.status}
+                          </span>
+                          <span className="text-[10px] text-pnp-textSecondary">
+                            {p.sent_at ? new Date(p.sent_at).toLocaleString() : p.scheduled_at ? `Scheduled ${new Date(p.scheduled_at).toLocaleString()}` : new Date(p.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm text-white whitespace-pre-wrap leading-relaxed">{p.text}</p>
+                        {p.error_message && (
+                          <p className="mt-2 text-[11px]" style={{ color: "#FF6B6B" }}>{p.error_message}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title="Delete campaign?"
+        message={confirmDelete ? `"${confirmDelete.name}" will be deleted permanently. Scheduled posts will not be sent.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={doDelete}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </>
   );
 }

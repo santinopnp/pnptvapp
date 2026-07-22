@@ -215,6 +215,8 @@ router.get('/channel-subscribers', authGuard, creatorGuard, creatorController.ge
 router.get('/consents', authGuard, creatorGuard, creatorController.getMyConsents);
 router.post('/privacy/accept', authGuard, creatorGuard, creatorController.acceptPrivacyPolicy);
 router.post('/terms/accept', authGuard, creatorGuard, creatorController.acceptCreatorTerms);
+router.get('/announce-consent', authGuard, creatorGuard, creatorController.getAnnounceConsent);
+router.post('/announce-consent', authGuard, creatorGuard, creatorController.setAnnounceConsent);
 router.get('/setup/status', authGuard, creatorGuard, creatorController.getSetupStatus);
 router.get('/x-account', authGuard, creatorGuard, creatorController.getMyXAccount);
 router.get('/x-campaigns', authGuard, creatorGuard, creatorController.getMyXCampaigns);
