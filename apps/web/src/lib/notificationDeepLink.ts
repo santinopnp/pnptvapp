@@ -20,7 +20,22 @@ export function getNotificationDeepLink(notif: {
     case "like":
     case "reply":
     case "reaction_post":
-    case "mention_post": {
+    case "mention_post":
+    case "tag_post": {
+      // If the mention is on a reply / repost / hype, the entityId points at
+      // that derived post — which shows the comment "in a vacuum". Prefer the
+      // original post so the user sees the full parent context, and pass the
+      // derived post id via ?highlight= so PostDetail can scroll to it.
+      const originalPostId = metadata?.original_post_id as number | string | undefined;
+      const originalKind = metadata?.original_kind as string | undefined;
+      const rewriteToOriginal =
+        originalPostId != null &&
+        (originalKind === "reply_to" || originalKind === "repost_of" || originalKind === "community_hype");
+      if (rewriteToOriginal) {
+        const highlightId = entityId || (metadata?.post_id as string | number | undefined);
+        const base = `/social/post/${originalPostId}`;
+        return highlightId != null ? `${base}?highlight=${highlightId}` : base;
+      }
       const postId = entityId || (metadata?.postId as string);
       return postId ? `/social/post/${postId}` : "/social";
     }
@@ -75,6 +90,16 @@ export function getNotificationDeepLink(notif: {
   // Fallback: route by entity type
   switch (entityType) {
     case "post": {
+      const originalPostId = metadata?.original_post_id as number | string | undefined;
+      const originalKind = metadata?.original_kind as string | undefined;
+      const rewriteToOriginal =
+        originalPostId != null &&
+        (originalKind === "reply_to" || originalKind === "repost_of" || originalKind === "community_hype");
+      if (rewriteToOriginal) {
+        const highlightId = entityId || (metadata?.post_id as string | number | undefined);
+        const base = `/social/post/${originalPostId}`;
+        return highlightId != null ? `${base}?highlight=${highlightId}` : base;
+      }
       const postId = entityId || (metadata?.postId as string);
       return postId ? `/social/post/${postId}` : "/social";
     }

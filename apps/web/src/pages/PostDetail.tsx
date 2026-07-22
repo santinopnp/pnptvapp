@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Helmet } from "react-helmet-async";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { ApiError, getSocialPost, togglePostLike, updateProfile, type SocialPostItem } from "@/lib/api";
 import SocialPostCard from "@/components/social/SocialPostCard";
@@ -28,8 +28,13 @@ function PostSkeleton() {
 
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
+  // ?highlight=<replyId> — set by notificationDeepLink when a mention notif
+  // pointed at a comment on this post. Passed down so SocialPostCard opens
+  // the replies drawer and scrolls to that specific reply.
+  const highlightReplyId = searchParams.get("highlight");
 
   const [post, setPost] = useState<SocialPostItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -191,6 +196,7 @@ export default function PostDetail() {
             viewerCity={user?.city ?? null}
             viewerCountry={user?.country ?? null}
             initialShowReplies
+            highlightReplyId={highlightReplyId}
           />
 
           {/* CTA to view full feed */}

@@ -171,6 +171,12 @@ export interface SocialPostCardProps {
   viewerCountry?: string | null;
   distanceKm?: number | null;
   initialShowReplies?: boolean;
+  /**
+   * Reply id to scroll to and highlight after replies load. Used when the user
+   * arrives via a mention/tag notification whose real target was a comment on
+   * this post — so they see the parent context AND their specific comment.
+   */
+  highlightReplyId?: number | string | null;
 }
 
 function timeAgo(dateStr: string, nowLabel: string): string {
@@ -205,12 +211,16 @@ export default function SocialPostCard({
   viewerCountry,
   distanceKm,
   initialShowReplies,
+  highlightReplyId,
 }: SocialPostCardProps) {
   const { feed: t, lang } = useI18n();
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [showReplies, setShowReplies] = useState(initialShowReplies ?? false);
+  // Open the replies drawer when the parent explicitly requests it, or when
+  // arriving via a highlight deep-link (mention on a comment) so the reply
+  // can be scrolled to on load.
+  const [showReplies, setShowReplies] = useState((initialShowReplies ?? false) || highlightReplyId != null);
   const [replies, setReplies] = useState<SocialPostItem[]>([]);
   const [loadingReplies, setLoadingReplies] = useState(false);
   const [replyText, setReplyText] = useState("");
@@ -334,10 +344,17 @@ export default function SocialPostCard({
 
   // When opened in expanded mode (deep-link from a reply notification), load
   // the replies on mount and focus the composer so the mobile keyboard opens
-  // ready for the user to respond.
+  // ready for the user to respond. When a specific reply id is passed
+  // (highlightReplyId — from ?highlight= on a mention deep-link), skip the
+  // composer focus and scroll to that reply instead so the user lands on
+  // their comment rather than on a keyboard prompt.
   useEffect(() => {
-    if (!initialShowReplies) return;
+    if (!initialShowReplies && highlightReplyId == null) return;
     void loadReplies();
+    if (highlightReplyId != null) {
+      // Scroll handled by the highlightReplyId effect once replies render.
+      return;
+    }
     const focusTimer = setTimeout(() => {
       composerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       composerRef.current?.querySelector("textarea")?.focus();
@@ -347,6 +364,26 @@ export default function SocialPostCard({
     // and would re-fire mid-load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Scroll to and briefly ring the specific reply the user was tagged in.
+  // Runs whenever replies finish loading with a highlight target present.
+  const [highlightedReplyId, setHighlightedReplyId] = useState<number | string | null>(null);
+  useEffect(() => {
+    if (highlightReplyId == null || replies.length === 0) return;
+    const target = replies.find((r) => String(r.id) === String(highlightReplyId));
+    if (!target) return;
+    setHighlightedReplyId(highlightReplyId);
+    const scrollTimer = setTimeout(() => {
+      const el = document.querySelector(`[data-reply-id="${highlightReplyId}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    // Clear the ring after 3s so the visual doesn't linger forever
+    const clearTimer = setTimeout(() => setHighlightedReplyId(null), 3000);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [replies, highlightReplyId]);
 
   const toggleReplies = useCallback(() => {
     const next = !showReplies;
@@ -1767,8 +1804,14 @@ export default function SocialPostCard({
                     const replyIsOwn = String(reply.author_id) === currentUserId;
                     const replyPhoto = replyIsOwn && user?.photoUrl ? user.photoUrl : reply.author_photo;
                     const likeState = replyLikes[reply.id] ?? { liked: !!reply.liked_by_me, count: reply.likes_count || 0 };
+                    const isHighlighted = highlightedReplyId != null && String(highlightedReplyId) === String(reply.id);
                     return (
-                    <div key={reply.id} className={`flex gap-2 transition-opacity ${pending ? "opacity-60" : ""}`}>
+                    <div
+                      key={reply.id}
+                      data-reply-id={reply.id}
+                      className={`flex gap-2 transition-all rounded-lg ${pending ? "opacity-60" : ""} ${isHighlighted ? "-mx-2 px-2 py-2 ring-2 ring-pnp-accent/70" : ""}`}
+                      style={isHighlighted ? { background: "rgba(212,0,122,0.08)" } : undefined}
+                    >
                       <UserAvatar
                         userId={reply.author_id}
                         photoUrl={replyPhoto}
