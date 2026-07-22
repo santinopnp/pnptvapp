@@ -1416,6 +1416,17 @@ export default function CreatorProfilePage() {
               </div>
             )}
 
+            {/* Private hangout access — subscribed members (and the creator) only */}
+            {!creator.creator_subscription_paused && isSubscribed && hasHangout && hangout && (
+              <button
+                onClick={() => navigate(`/hangouts/${hangout.id}`)}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[48px]"
+                style={{ color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
+              >
+                Entrar al hangout privado →
+              </button>
+            )}
+
             {/* Subscribe — primary CTA, brand gradient, mockup pattern:
                 "Subscribe · $X · [tier emoji]" */}
             {!creator.creator_subscription_paused && !isSubscribed && creator.creator_price_usd > 0 && (
@@ -1435,8 +1446,9 @@ export default function CreatorProfilePage() {
             )}
 
             {/* Book 30 min / 60 min — two half-width secondary buttons
-                (falls back to top-2 packages if creator doesn't offer exactly 30/60). */}
-            {hasCallPackages && (() => {
+                (falls back to top-2 packages if creator doesn't offer exactly 30/60).
+                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
+            {isSubscribed && hasCallPackages && (() => {
               const pkg30 = activePackages.find((p) => p.duration_minutes === 30);
               const pkg60 = activePackages.find((p) => p.duration_minutes === 60);
               // If exact matches missing, show the 2 cheapest packages instead
@@ -1460,8 +1472,9 @@ export default function CreatorProfilePage() {
               );
             })()}
 
-            {/* Channels — ghost, full-width, scrolls to Canales section */}
-            {hasChannels && (
+            {/* Channels — ghost, full-width, scrolls to Canales section.
+                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
+            {isSubscribed && hasChannels && (
               <button
                 onClick={() => {
                   const el = document.getElementById("creator-channels");
