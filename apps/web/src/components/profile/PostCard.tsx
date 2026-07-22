@@ -1120,7 +1120,7 @@ export default function PostCard({
                   )}
                   {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
                     <a
-                      href={`/profile/${post.author_id}`}
+                      href={`/profile/${post.author_id}?action=subscribe&open=1`}
                       className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
                       style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
                     >

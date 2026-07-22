@@ -860,7 +860,16 @@ export default function CreatorProfilePage() {
       const next = new URLSearchParams(searchParams);
       next.delete("action");
       setSearchParams(next, { replace: true });
+    } else if (action === "subscribe") {
+      // Deep-link from the "Subscribe" CTA on video posts in the feed.
+      // Kick off the same confirmation → checkout flow the on-page CTA does.
+      handleSubscribeCta();
+      const next = new URLSearchParams(searchParams);
+      next.delete("action");
+      next.delete("open");
+      setSearchParams(next, { replace: true });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, searchParams, setSearchParams]);
 
   function handleSubscribeCta() {

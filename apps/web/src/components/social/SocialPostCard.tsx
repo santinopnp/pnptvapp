@@ -1526,10 +1526,12 @@ export default function SocialPostCard({
                 </a>
               )}
 
-              {/* Creator subscribe upsell — other creators' free videos push their own subscription */}
+              {/* Creator subscribe upsell — other creators' free videos push their own subscription.
+                  Deep-links to /profile/<id>?action=subscribe&open=1 so CreatorProfilePage auto-kicks
+                  the confirmation → checkout flow instead of just landing on the profile. */}
               {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
                 <a
-                  href={`/profile/${post.author_id}`}
+                  href={`/profile/${post.author_id}?action=subscribe&open=1`}
                   className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
                   style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
                 >
