@@ -122,7 +122,10 @@ export default function Profile() {
 
   const t = useI18n();
   const p = t.profile;
-  const isOwnProfile = !effectiveParamId || effectiveParamId === String(user?.id) || effectiveParamId === String(user?.dbId);
+  const isOwnProfile = !effectiveParamId
+    || effectiveParamId === String(user?.id)
+    || effectiveParamId === String(user?.dbId)
+    || (!!user?.username && effectiveParamId.toLowerCase() === user.username.toLowerCase());
   const targetUserId = effectiveParamId || String(user?.dbId || user?.id || "");
 
   // Real-time accepting-calls state for the viewed profile. Hoisted to top so it
@@ -467,7 +470,17 @@ export default function Profile() {
         ]);
         if (!cursor) {
           // Active creators get their own dedicated profile page at /c/:username
+          // — UNLESS the loaded profile is the viewer's own account, in which
+          // case send them back to /profile so they see the private self-view
+          // (edit controls, own settings, etc.). Prevents inconsistency where
+          // clicking your own @mention landed you on your public creator page.
           if (res.profile.creatorStatus === "active" && res.profile.username) {
+            const isSelfByUsername = !!user?.username
+              && res.profile.username.toLowerCase() === user.username.toLowerCase();
+            if (isSelfByUsername) {
+              navigate("/profile", { replace: true });
+              return;
+            }
             navigate(`/c/${res.profile.username}`, { replace: true });
             return;
           }
@@ -1341,6 +1354,20 @@ export default function Profile() {
             </div>
             {profile.username && (
               <p className="text-sm" style={{ color: "var(--pnp-text-secondary)" }}>@{profile.username}</p>
+            )}
+            {isOwnProfile && profile.creatorStatus === "active" && profile.username && (
+              <button
+                type="button"
+                onClick={() => navigate(`/c/${profile.username}`)}
+                className="mt-1 inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full transition-colors hover:opacity-80"
+                style={{ background: "rgba(255,180,84,0.12)", color: "#FFB454", border: "1px solid rgba(255,180,84,0.35)" }}
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                {lang === "es" ? "Ver como visitante" : "View as visitor"}
+              </button>
             )}
             {isOwnProfile && dpnsHandle && (
               <span

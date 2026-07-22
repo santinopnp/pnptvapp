@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
@@ -27,29 +27,61 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
   const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
-  const studioWizardDone = (() => {
-    try { return localStorage.getItem("pnptv_studio_wizard_v1") === "done"; } catch { return false; }
-  })();
 
   return (
     <>
       <button
         onClick={() => navigate("/creators/setup")}
-        className="glass-card-sm w-full p-4 mb-4 flex items-center justify-between gap-3 text-left"
-        style={{ border: `1px solid ${studioWizardDone ? "rgba(94,209,196,.3)" : "rgba(212,0,122,.35)"}` }}
+        className="glass-card-sm w-full p-4 mb-3 flex items-center justify-between gap-3 text-left"
+        style={{ border: "1px solid rgba(212,0,122,.35)" }}
       >
         <div>
-          <p className="text-sm font-semibold text-white">
-            {studioWizardDone ? "Studio Setup & Documentación" : "Empieza a monetizar →"}
-          </p>
+          <p className="text-sm font-semibold text-white">Get set up to sell</p>
           <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {studioWizardDone
-              ? "Wizard, canales, hangout, consents y documentos"
-              : "OBS, contenido, canales, hangout y documentos — 6 pasos."}
+            OBS, contenido, canales, hangout — 5 pasos.
           </p>
         </div>
-        <span className="text-sm font-bold flex-shrink-0" style={{ color: studioWizardDone ? "#5ED1C4" : "#FF4DA6" }}>→</span>
+        <span className="text-sm font-bold flex-shrink-0" style={{ color: "#FF4DA6" }}>→</span>
       </button>
+
+      <button
+        onClick={() => navigate("/creators/documentation")}
+        className="glass-card-sm w-full p-4 mb-3 flex items-center justify-between gap-3 text-left"
+        style={{ border: "1px solid rgba(94,209,196,.3)" }}
+      >
+        <div>
+          <p className="text-sm font-semibold text-white">Documentation</p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            Consents, legal agreements, 2257, ID uploads y payout config.
+          </p>
+        </div>
+        <span className="text-sm font-bold flex-shrink-0" style={{ color: "#5ED1C4" }}>→</span>
+      </button>
+
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <button
+          onClick={() => navigate("/profile")}
+          className="glass-card-sm p-3 flex items-center justify-center gap-2 text-xs font-semibold text-white/85"
+          style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+          </svg>
+          My profile
+        </button>
+        <button
+          onClick={() => user?.username && navigate(`/c/${user.username}`)}
+          disabled={!user?.username}
+          className="glass-card-sm p-3 flex items-center justify-center gap-2 text-xs font-semibold disabled:opacity-40"
+          style={{ border: "1px solid rgba(255,180,84,0.35)", color: "#FFB454" }}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Public preview
+        </button>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="glass-card-sm p-4 text-center">
