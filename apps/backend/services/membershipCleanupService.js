@@ -368,6 +368,30 @@ class MembershipCleanupService {
         }
       } catch (_) {}
 
+      // Reverse drift: users with tier=PRIME (or other paid tier) but NO active
+      // entitlement. Happens when a trial expires but the tier downgrade path
+      // didn't fire. Recompute picks up the actual entitlement state and
+      // downgrades to the base tier the user is truly entitled to.
+      try {
+        const reverseDriftResult = await query(`
+          SELECT DISTINCT u.id FROM users u
+          WHERE u.tier IN ('PRIME','prime','pnp-member')
+            AND NOT EXISTS (
+              SELECT 1 FROM user_entitlements ue
+              WHERE ue.user_id = u.id::text
+                AND ue.is_consumed = false
+                AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+            )
+        `);
+        if (reverseDriftResult.rowCount > 0) {
+          const EntitlementAccessService = require('./entitlementAccessService');
+          for (const row of reverseDriftResult.rows) {
+            try { await EntitlementAccessService.recomputeUserTier(String(row.id)); } catch (_) {}
+          }
+          logger.info(`updateAllSubscriptionStatuses: recomputed tier for ${reverseDriftResult.rowCount} orphaned-tier users`);
+        }
+      } catch (_) {}
+
       logger.info('Subscription status updates completed', results);
       return results;
     } catch (error) {
