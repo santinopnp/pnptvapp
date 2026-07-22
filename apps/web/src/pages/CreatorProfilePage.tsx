@@ -1401,30 +1401,36 @@ export default function CreatorProfilePage() {
               </div>
             )}
             {!creator.creator_subscription_paused && isSubscribed && (
-              <div className="flex items-center justify-center gap-3 pb-1">
-                <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25">
-                  <CheckCircle2 size={14} aria-hidden="true" />
-                  Suscrito
-                </span>
-                <button
-                  onClick={handleUnsubscribe}
-                  disabled={unsubscribeLoading}
-                  className="text-xs text-pnp-textSecondary underline decoration-dotted hover:text-pnp-textPrimary transition-colors disabled:opacity-50 min-h-[44px] px-1"
-                >
-                  {unsubscribeLoading ? "Cancelando…" : "Gestionar"}
-                </button>
-              </div>
-            )}
-
-            {/* Private hangout access — subscribed members (and the creator) only */}
-            {!creator.creator_subscription_paused && isSubscribed && hasHangout && hangout && (
-              <button
-                onClick={() => navigate(`/hangouts/${hangout.id}`)}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[48px]"
-                style={{ color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
-              >
-                Entrar al hangout privado →
-              </button>
+              <>
+                {/* Two-per-row: Suscrito status (left) + Entrar al hangout (right).
+                    When there's no hangout to enter, Suscrito spans full width. */}
+                <div className={`grid gap-2 ${hasHangout && hangout ? "grid-cols-2" : "grid-cols-1"}`}>
+                  <div
+                    className="flex items-center justify-center gap-1.5 px-3 py-3 rounded-[10px] text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25 min-h-[48px]"
+                  >
+                    <CheckCircle2 size={14} aria-hidden="true" />
+                    Suscrito
+                  </div>
+                  {hasHangout && hangout && (
+                    <button
+                      onClick={() => navigate(`/hangouts/${hangout.id}`)}
+                      className="flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[48px]"
+                      style={{ color: "#5ED1C4", border: "1px solid rgba(94,209,196,.5)", background: "rgba(94,209,196,.12)" }}
+                    >
+                      Entrar al hangout →
+                    </button>
+                  )}
+                </div>
+                <div className="flex justify-center pt-0.5">
+                  <button
+                    onClick={handleUnsubscribe}
+                    disabled={unsubscribeLoading}
+                    className="text-xs text-pnp-textSecondary underline decoration-dotted hover:text-pnp-textPrimary transition-colors disabled:opacity-50 px-1"
+                  >
+                    {unsubscribeLoading ? "Cancelando…" : "Gestionar suscripción"}
+                  </button>
+                </div>
+              </>
             )}
 
             {/* Subscribe — primary CTA, brand gradient, mockup pattern:
