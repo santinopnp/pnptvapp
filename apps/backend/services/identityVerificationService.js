@@ -127,6 +127,20 @@ class IdentityVerificationService {
 
     logger.info(`2257: record approved for user ${userId} by admin ${adminId}`);
 
+    // Identity was the last gate that could have been holding the creator's
+    // onboarding lock. Try to unlock. checkAndMaybeUnlockCreator is idempotent
+    // and no-ops if payout or terms are still missing; safe to fire and forget.
+    // Required late so we don't create a circular require at module load.
+    try {
+      const CreatorService = require('./creatorService');
+      await CreatorService.checkAndMaybeUnlockCreator(userId);
+    } catch (unlockErr) {
+      logger.warn('2257 approve → auto-unlock check failed (non-fatal)', {
+        userId,
+        error: unlockErr.message,
+      });
+    }
+
     // Notify via all available channels — non-fatal if any fail.
     setImmediate(async () => {
       try {
