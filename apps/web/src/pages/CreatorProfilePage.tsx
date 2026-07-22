@@ -71,6 +71,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
+import { VideoPlayer } from "@/components/VideoPlayer";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -2454,7 +2455,7 @@ function RecentPostCard({ post, creator }: RecentPostCardProps) {
       {post.media_url && (
         <div className="aspect-video rounded-xl overflow-hidden">
           {post.media_type === "video" ? (
-            <video
+            <VideoPlayer
               src={post.media_url}
               className="w-full h-full object-cover"
               muted
@@ -2547,7 +2548,7 @@ function ExclusiveTeaserCard({ post, creator, isSubscribed, onUnlock }: Exclusiv
         {post.media_url && (
           <div className="aspect-video rounded-xl overflow-hidden">
             {post.media_type === "video" ? (
-              <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              <VideoPlayer src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
             ) : (
               <img src={post.media_url} alt="Post media" loading="lazy" className="w-full h-full object-cover" />
             )}

@@ -5,6 +5,7 @@ import { SharePostModal } from "@/components/SharePostModal";
 import { NearbyBadge } from "@/components/NearbyBadge";
 import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
+import { VideoPlayer } from "@/components/VideoPlayer";
 import {
   getReplies,
   createReply,
@@ -1304,7 +1305,7 @@ export default function SocialPostCard({
                   <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
                     {mediaUrl && (
                       mediaType === 'video' ? (
-                        <video
+                        <VideoPlayer
                           src={mediaUrl}
                           controls
                           controlsList="nodownload"
@@ -1375,7 +1376,7 @@ export default function SocialPostCard({
                         </div>
                       ) : (
                         <div style={{ position: "relative" }}>
-                          <video
+                          <VideoPlayer
                             src={post.media_url}
                             controls
                             controlsList="nodownload"
@@ -1852,7 +1853,7 @@ export default function SocialPostCard({
                 <p className="text-xs text-white/40">{lang === "es" ? "Video no disponible" : "Video unavailable"}</p>
               </div>
             ) : (
-              <video
+              <VideoPlayer
                 key={channelPromoCta.videoUrl ?? "promo"}
                 src={channelPromoCta.videoUrl ?? undefined}
                 controls

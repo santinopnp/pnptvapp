@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { togglePostLike, type PostCardSnapshot } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { MentionText } from "@/components/MentionText";
+import { VideoPlayer } from "@/components/VideoPlayer";
 
 // Shared rendering for `message_type === "post_card"` messages used in both
 // hangout chat and DMs. Goal: card with rich preview that gives visibility to
@@ -221,7 +222,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                       onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                     />
                   ) : (
-                    <video
+                    <VideoPlayer
                       src={snapshot.mediaUrl}
                       className="w-full h-full object-cover"
                       muted

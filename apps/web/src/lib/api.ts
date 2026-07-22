@@ -1136,6 +1136,12 @@ export interface SocialPostItem {
   x_embed_url?: string | null;
   // Channel assignment
   channel_id?: number | null;
+  // Mux direct-upload columns — populated when video was uploaded via the
+  // browser→Mux path (creators only, up to 50 GB). If mux_playback_id is set,
+  // the renderer should play the HLS stream from stream.mux.com/{id}.m3u8
+  // instead of media_url.
+  mux_playback_id?: string | null;
+  mux_status?: string | null;
 }
 
 export interface PostCardSnapshot {
@@ -7675,6 +7681,22 @@ export function createAdminInviteLink(data: {
   return request("/api/admin/invite-links", { method: "POST", body: data });
 }
 
+export function updateAdminInviteLink(code: string, patch: {
+  note?: string | null;
+  maxUses?: number | null;
+  expiresAt?: string | null;
+  isLifetime?: boolean;
+  primeHours?: number;
+  coOnly?: boolean;
+  color?: string | null;
+}): Promise<{ success: boolean; link: InviteLink; error?: string }> {
+  return request(`/api/admin/invite-links/${encodeURIComponent(code)}`, { method: "PATCH", body: patch });
+}
+
+export function deleteAdminInviteLink(code: string): Promise<{ success: boolean; error?: string }> {
+  return request(`/api/admin/invite-links/${encodeURIComponent(code)}`, { method: "DELETE" });
+}
+
 // ── Stream Analytics ──────────────────────────────────────────────────────────
 
 export interface StreamSession {
@@ -8621,6 +8643,30 @@ export async function getMuxUploadUrl(channelId: number): Promise<{
   success: boolean; videoId: number; uploadId: string; uploadUrl: string;
 }> {
   return request(`/api/webapp/channels/${channelId}/videos/mux-upload-url`, { method: "POST" });
+}
+
+// Social feed Mux upload — creator-only, direct browser→Mux.
+export async function getSocialMuxUploadUrl(): Promise<{
+  success: boolean; uploadId: string; uploadUrl: string;
+}> {
+  return request(`/api/webapp/social/mux-upload-url`, { method: "POST" });
+}
+
+export async function finalizeSocialMuxPost(params: {
+  uploadId: string;
+  content: string;
+  isExclusive?: boolean;
+  isShareable?: boolean;
+  hangoutGroupId?: number | null;
+  category?: string | null;
+  channelId?: number | null;
+  taggedPerformerIds?: string[] | null;
+}): Promise<{ success: boolean; post: SocialPostItem }> {
+  return request(`/api/webapp/social/posts/mux-finalize`, {
+    method: "POST",
+    body: JSON.stringify(params),
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export async function aiAllChannelVideo(

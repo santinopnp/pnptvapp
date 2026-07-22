@@ -21,6 +21,7 @@ import { SharePostModal } from "@/components/SharePostModal";
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { UserAvatar } from "@/components/UserAvatar";
+import { VideoPlayer } from "@/components/VideoPlayer";
 
 // ── Helpers (duplicated here to keep the component self-contained) ────────────
 
@@ -982,7 +983,7 @@ export default function PostCard({
               <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
                 {mediaUrl && (
                   mediaType === 'video' ? (
-                    <video
+                    <VideoPlayer
                       src={mediaUrl}
                       controls
                       controlsList="nodownload"
@@ -1046,7 +1047,7 @@ export default function PostCard({
                     </div>
                   ) : (
                     <div style={{ position: "relative" }}>
-                      <video
+                      <VideoPlayer
                         src={post.media_url}
                         controls
                         controlsList="nodownload"

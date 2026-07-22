@@ -40,9 +40,9 @@ const IMAGE_QUALITY = 80;
 const THUMB_QUALITY = 72;
 
 // Max file sizes enforced at the multer level, but we double-check here
-const IMAGE_MAX_BYTES = 10 * 1024 * 1024;  // 10 MB
-const VIDEO_MAX_BYTES = 50 * 1024 * 1024;  // 50 MB
-const AUDIO_MAX_BYTES = 10 * 1024 * 1024;  // 10 MB
+const IMAGE_MAX_BYTES = 20 * 1024 * 1024;   // 20 MB
+const VIDEO_MAX_BYTES = 200 * 1024 * 1024;  // 200 MB
+const AUDIO_MAX_BYTES = 100 * 1024 * 1024;  // 100 MB
 
 // Base uploads directory relative to monorepo root
 // __dirname = /app/apps/backend/services  =>  ../../../public

@@ -24,7 +24,6 @@ const webhookController = require('./controllers/webhookController');
 const subscriptionController = require('./controllers/subscriptionController');
 const paymentController = require('./controllers/paymentController');
 const invitationController = require('./controllers/invitationController');
-const playlistController = require('./controllers/playlistController');
 const podcastController = require('./controllers/podcastController');
 const ageVerificationController = require('./controllers/ageVerificationController');
 const healthController = require('./controllers/healthController');
@@ -1772,11 +1771,12 @@ const uploadChatMedia = (req, res, next) => {
 };
 
 // Hangout media upload:
-//   Images up to 10 MB — processed by sharp (WebP + thumbnail, per-hangout dirs)
-//   Videos up to 50 MB — stored as-is, poster frame via ffmpeg
+//   Images up to 20 MB — processed by sharp (WebP + thumbnail, per-hangout dirs)
+//   Videos up to 200 MB — stored as-is, poster frame via ffmpeg
+//   Audio up to 100 MB — voice notes / short clips
 const hangoutMediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const isAllowed = /^(image\/(jpeg|jpg|png|webp|gif)|video\/(mp4|webm)|audio\/(webm|ogg|mp4|mpeg))$/i.test(file.mimetype || '');
     if (isAllowed) return cb(null, true);
@@ -1789,7 +1789,7 @@ const uploadHangoutMedia = (req, res, next) => {
     if (!err) return next();
     let message = 'Invalid file. Please try a different image or video.';
     if (err.code === 'LIMIT_FILE_SIZE') {
-      message = 'File is too large. Images must be under 10 MB and videos under 50 MB.';
+      message = 'File is too large. Images up to 20 MB, video up to 200 MB, audio up to 100 MB.';
     } else if (err.message) {
       message = err.message;
     }
@@ -2341,14 +2341,8 @@ app.post('/api/webapp/analytics/visibility-hide',
   })
 );
 
-// Playlist API routes (PROTECTED: require authentication)
-app.get('/api/playlists/user', requireSessionAuth, asyncHandler(playlistController.getUserPlaylists));
-app.get('/api/playlists/public', asyncHandler(playlistController.getPublicPlaylists));
-app.post('/api/playlists', requireSessionAuth, asyncHandler(playlistController.createPlaylist));
-app.post('/api/playlists/:playlistId/videos', requireSessionAuth, asyncHandler(playlistController.addToPlaylist));
-app.delete('/api/playlists/:playlistId/videos/:videoId', requireSessionAuth, asyncHandler(playlistController.removeFromPlaylist));
-app.patch('/api/playlists/:playlistId', requireSessionAuth, asyncHandler(playlistController.updatePlaylist));
-app.delete('/api/playlists/:playlistId', requireSessionAuth, asyncHandler(playlistController.deletePlaylist));
+// /api/playlists/* — user_playlists table never shipped; controller was orphaned
+// and returned 500 for every call. Endpoints removed 2026-07-21 during E2E audit.
 
 
 
@@ -7657,6 +7651,34 @@ app.post('/api/webapp/creator/posts/x-embed', requireSessionAuth, roleGuard('mod
 app.post('/api/webapp/social/posts/with-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMedia));
 app.post('/api/webapp/social/posts/with-multi-media', requireSessionAuth, uploadLimiter, attachCreatorStatus, postMultiMediaUploadMiddleware, verifyDiskFileType, require2257ForCreators, asyncHandler(socialController.createPostWithMultiMedia));
 app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLimiter, uploadPerformerVideos, asyncHandler(socialController.bulkCreateVideos));
+
+// ── Creator Mux upload path for social feed videos ──────────────────────────
+// Direct browser→Mux upload — offloads storage/transcoding/CDN from the VPS
+// and lets creators post video posts up to 50 GB. Active creators only.
+app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, require2257ForCreators, asyncHandler(async (req, res) => {
+  const socialPostMuxService = require('../../services/socialPostMuxService');
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ success: false, error: 'unauthorized' });
+  try {
+    const result = await socialPostMuxService.createMuxUpload(userId);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+}));
+
+app.post('/api/webapp/social/posts/mux-finalize', requireSessionAuth, require2257ForCreators, asyncHandler(async (req, res) => {
+  const socialPostMuxService = require('../../services/socialPostMuxService');
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ success: false, error: 'unauthorized' });
+  try {
+    const post = await socialPostMuxService.finalizeMuxPost(userId, req.body || {});
+    return res.json({ success: true, post });
+  } catch (err) {
+    return res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+}));
+
 app.post('/api/webapp/social/posts/:postId/like', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.toggleLike));
 
 // ── Helper: extract N evenly-spaced still frames + duration from a video file. ──
@@ -13456,7 +13478,12 @@ app.post('/api/webhooks/mux',
     }
     try {
       const event = JSON.parse(req.body.toString());
+      // Fan out to both handlers — each UPDATEs scoped by mux_upload_id /
+      // mux_asset_id so only the owning table (channel_videos or
+      // social_posts) reacts to the event.
       await channelVideoService.handleMuxWebhook(event);
+      const socialPostMuxService = require('../../services/socialPostMuxService');
+      await socialPostMuxService.handleMuxWebhook(event);
     } catch (err) {
       logger.warn('mux webhook: handler error', { err: err.message });
     }

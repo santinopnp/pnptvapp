@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/webm", "video/quicktime", "video/3gpp", "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg"];
-const MAX_IMAGE_BYTES = 10 * 1_048_576;  // 10 MB
-const MAX_VIDEO_BYTES = 50 * 1_048_576;  // 50 MB
+const MAX_IMAGE_BYTES = 20 * 1_048_576;  // 20 MB
+const MAX_VIDEO_BYTES = 200 * 1_048_576; // 200 MB (video + audio)
 const MAX_RECORDING_SECONDS = 60;
 
 interface MediaUploadButtonProps {
@@ -175,11 +175,11 @@ export function MediaUploadButton({
       }
       const isAudio = file.type.startsWith("audio/");
       if (isImage && file.size > MAX_IMAGE_BYTES) {
-        onError(`"${file.name}" is over 10 MB. Images must be under 10 MB.`);
+        onError(`"${file.name}" is over 20 MB. Images must be under 20 MB.`);
         return;
       }
       if ((isVideo || isAudio) && file.size > MAX_VIDEO_BYTES) {
-        onError(`"${file.name}" is over 50 MB. Files must be under 50 MB.`);
+        onError(`"${file.name}" is over 200 MB. Files must be under 200 MB.`);
         return;
       }
       validFiles.push(file);

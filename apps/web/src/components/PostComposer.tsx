@@ -23,7 +23,7 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
+import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -40,8 +40,8 @@ const POST_CATEGORIES = [
 
 type PostCategory = (typeof POST_CATEGORIES)[number]["value"];
 const MAX_IMAGES = 4;
-const MAX_FILE_SIZE_REGULAR = 512 * 1024 * 1024;   // 512 MB
-const MAX_FILE_SIZE_CREATOR = 3 * 1024 * 1024 * 1024; // 3 GB
+const MAX_FILE_SIZE_REGULAR = 512 * 1024 * 1024;    // 512 MB
+const MAX_FILE_SIZE_CREATOR = 50 * 1024 * 1024 * 1024; // 50 GB (Mux direct upload)
 const MAX_CHARS = 5000;
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
 const ACCEPTED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
@@ -409,7 +409,7 @@ export function PostComposer({
         // Only 1 video allowed per post
         const video = incoming.find((f) => isVideoType(f))!;
         if (video.size > MAX_FILE_SIZE_BYTES) {
-          setError(isActiveCreator ? "Video too large (max 3 GB)" : tProfile.fileTooLarge);
+          setError(isActiveCreator ? "Video too large (max 50 GB)" : tProfile.fileTooLarge);
           return;
         }
         // Replace any existing selection with this single video
@@ -596,53 +596,91 @@ export function PostComposer({
           }
         );
       } else if (files.length === 1) {
-        // Single file: use XHR for progress tracking too
-        result = await new Promise<{ success: boolean; post: SocialPostItem }>(
-          (resolve, reject) => {
-            const formData = new FormData();
-            formData.append("content", trimmed);
-            formData.append("media", files[0].file);
-            if (isExclusive) formData.append("isExclusive", "true");
-            if (!isShareable) formData.append("isShareable", "false");
-            if (videoTitle.trim()) formData.append("videoTitle", videoTitle.trim());
-            if (videoDescription.trim()) formData.append("videoDescription", videoDescription.trim());
-            if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
-            if (hangoutGroupId) formData.append("hangoutGroupId", String(hangoutGroupId));
-            if (category) formData.append("category", category);
-            if (taggedPerformers.length) formData.append("taggedPerformerIds", JSON.stringify(taggedPerformers.map(p => p.id)));
+        const singleFile = files[0].file;
+        const isCreatorVideo = isActiveCreator && isVideoType(singleFile);
 
+        if (isCreatorVideo) {
+          // Creator video → direct browser→Mux upload (no size cap from VPS).
+          // Step 1: mint a Mux upload URL
+          const { uploadId, uploadUrl } = await getSocialMuxUploadUrl();
+
+          // Step 2: PUT the file directly to Mux
+          await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open("POST", `${API_BASE}/api/webapp/social/posts/with-media`);
-            xhr.withCredentials = true;
-
             xhr.upload.addEventListener("progress", (e) => {
-              if (e.lengthComputable) {
-                setUploadProgress(Math.round((e.loaded / e.total) * 100));
-              }
+              if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
             });
-
             xhr.addEventListener("load", () => {
-              if (xhr.status >= 200 && xhr.status < 300) {
-                try {
-                  resolve(JSON.parse(xhr.responseText));
-                } catch {
-                  reject(new Error("Invalid server response"));
-                }
-              } else {
-                try {
-                  const err = JSON.parse(xhr.responseText);
-                  reject(new Error(err.error || `Upload failed (${xhr.status})`));
-                } catch {
-                  reject(new Error(`Upload failed (${xhr.status})`));
-                }
-              }
+              if (xhr.status >= 200 && xhr.status < 300) resolve();
+              else reject(new Error(`Mux upload failed (${xhr.status})`));
             });
-
             xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
             xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
-            xhr.send(formData);
-          }
-        );
+            xhr.open("PUT", uploadUrl);
+            xhr.setRequestHeader("Content-Type", singleFile.type && singleFile.type.startsWith("video/") ? singleFile.type : "video/mp4");
+            xhr.send(singleFile);
+          });
+
+          // Step 3: finalize the post server-side (creates social_posts row)
+          result = await finalizeSocialMuxPost({
+            uploadId,
+            content: trimmed,
+            isExclusive,
+            isShareable,
+            hangoutGroupId: hangoutGroupId ?? null,
+            category: category ?? null,
+            channelId: selectedChannelId ?? null,
+            taggedPerformerIds: taggedPerformers.length ? taggedPerformers.map((p) => p.id) : null,
+          });
+        } else {
+          // Regular users (any file) + creators uploading images → legacy multer path
+          result = await new Promise<{ success: boolean; post: SocialPostItem }>(
+            (resolve, reject) => {
+              const formData = new FormData();
+              formData.append("content", trimmed);
+              formData.append("media", singleFile);
+              if (isExclusive) formData.append("isExclusive", "true");
+              if (!isShareable) formData.append("isShareable", "false");
+              if (videoTitle.trim()) formData.append("videoTitle", videoTitle.trim());
+              if (videoDescription.trim()) formData.append("videoDescription", videoDescription.trim());
+              if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
+              if (hangoutGroupId) formData.append("hangoutGroupId", String(hangoutGroupId));
+              if (category) formData.append("category", category);
+              if (taggedPerformers.length) formData.append("taggedPerformerIds", JSON.stringify(taggedPerformers.map((p) => p.id)));
+
+              const xhr = new XMLHttpRequest();
+              xhr.open("POST", `${API_BASE}/api/webapp/social/posts/with-media`);
+              xhr.withCredentials = true;
+
+              xhr.upload.addEventListener("progress", (e) => {
+                if (e.lengthComputable) {
+                  setUploadProgress(Math.round((e.loaded / e.total) * 100));
+                }
+              });
+
+              xhr.addEventListener("load", () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  try {
+                    resolve(JSON.parse(xhr.responseText));
+                  } catch {
+                    reject(new Error("Invalid server response"));
+                  }
+                } else {
+                  try {
+                    const err = JSON.parse(xhr.responseText);
+                    reject(new Error(err.error || `Upload failed (${xhr.status})`));
+                  } catch {
+                    reject(new Error(`Upload failed (${xhr.status})`));
+                  }
+                }
+              });
+
+              xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+              xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+              xhr.send(formData);
+            }
+          );
+        }
       } else {
         // Text-only post
         const res = await fetch(`${API_BASE}/api/webapp/social/posts`, {
@@ -682,7 +720,7 @@ export function PostComposer({
     } finally {
       setIsPosting(false);
     }
-  }, [text, files, isPosting, isExclusive, isShareable, crossPostX, videoTitle, videoDescription, selectedChannelId, hangoutGroupId, taggedPerformers, onPostCreated, clearForm]);
+  }, [text, files, isPosting, isExclusive, isShareable, crossPostX, videoTitle, videoDescription, selectedChannelId, hangoutGroupId, category, taggedPerformers, isActiveCreator, onPostCreated, clearForm]);
 
   // ── Keyboard submit (Ctrl/Cmd + Enter) ────────────────────────────────────
   const handleKeyDown = useCallback(
