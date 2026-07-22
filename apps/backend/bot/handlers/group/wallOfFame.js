@@ -289,7 +289,7 @@ async function runDailyWofFeature(telegram) {
 
   // 3. Create promoted social post
   try {
-    const SocialPostService = require('../../services/socialPostService');
+    const SocialPostService = require('../../../services/socialPostService');
     await SocialPostService.createPost(
       winner.user_id,
       `🔥 Featured on Wall of Fame — Community Hangout`,
@@ -345,7 +345,7 @@ async function runDailyWofFeature(telegram) {
       );
       // Emit via Socket.IO
       try {
-        const { get: getIo } = require('../../services/socketSingleton');
+        const { get: getIo } = require('../../../services/socketSingleton');
         const io = getIo();
         if (io && msg) io.to(`hangout:${roomId}`).emit('chat:message', msg);
       } catch (_) {}

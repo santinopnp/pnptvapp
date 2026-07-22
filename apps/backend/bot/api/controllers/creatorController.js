@@ -2006,7 +2006,10 @@ const provisionDefaults = async (req, res) => {
   const user = req.user;
   if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
   try {
-    const CreatorService = require('../../services/creatorService');
+    // CreatorService is already imported at module scope (line 2). The local
+    // re-require with '../../services/…' broke this endpoint since Node
+    // resolved it as MODULE_NOT_FOUND — POST /api/webapp/creator/provision-defaults
+    // was 500ing and creators' Studio wizard couldn't create their hangout.
     const result = await CreatorService.provisionDefaultChannels(String(user.id));
     return res.json({ success: true, ...(result || {}) });
   } catch (err) {

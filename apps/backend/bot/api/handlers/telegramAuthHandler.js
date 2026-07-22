@@ -250,7 +250,7 @@ const handleTelegramAuth = async (req, res) => {
     // only for users still on the legacy free/null tier.
     if (user.tier === 'free' || !user.tier) {
       try {
-        const EntitlementAccessService = require('../../services/entitlementAccessService');
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
         const computedTier = await EntitlementAccessService.recomputeUserTier(user.id);
         if (computedTier && computedTier !== 'free') {
           user.tier = computedTier;
