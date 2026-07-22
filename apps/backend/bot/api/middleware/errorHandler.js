@@ -37,6 +37,14 @@ function errorHandler(err, req, res, _next) {
     return res.headersSent ? undefined : res.status(499).end();
   }
 
+  // express.json() malformed-body error: Express sets statusCode=400 but the
+  // SyntaxError has no `code`, so we'd otherwise return {error: 'INTERNAL_ERROR'}
+  // with the raw parse message. Convert to a clean 400.
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    logger.warn('Malformed JSON body:', { url: req.url, ip: req.ip });
+    return res.status(400).json({ error: 'INVALID_JSON', message: 'Malformed JSON body' });
+  }
+
   // Determine status code (also accept legacy `err.status` from older throw sites)
   const statusCode = err.statusCode || err.status || 500;
   const isClientError = statusCode >= 400 && statusCode < 500;

@@ -1458,7 +1458,8 @@ const getMyConsents = async (req, res) => {
     // is NEVER returned — only "submitted" booleans + non-secret summaries.
     const result = await query(`
       SELECT
-        u.terms_accepted, u.privacy_accepted,
+        u.terms_accepted, u.terms_accepted_at,
+        u.privacy_accepted,
         u.privacy_accepted_at,
         u.age_verified, u.age_verified_at,
         u.wof_photo_consent,

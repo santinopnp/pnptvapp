@@ -1,35 +1,16 @@
 import React from "react";
 import { Helmet } from "react-helmet-async";
-import { useI18n } from "@/lib/i18n";
-import { ContentTab } from "@/pages/creator/ContentTab";
 import { useAuth } from "@/hooks/useAuth";
 import {
   getOwnChannels,
   createCreatorChannel,
   listChannelVideos,
   deleteChannelVideo,
-  publishChannelVideo,
   type CreatorChannel,
   type ChannelVideo,
 } from "@/lib/api";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
 
-export default function CreatorContent() {
-  const { creator: t } = useI18n();
-
-  return (
-    <>
-      <Helmet>
-        <title>Content — Creator Studio — PNPtv!</title>
-      </Helmet>
-      <div className="p-4 lg:p-6">
-        <ContentTab t={t} />
-      </div>
-    </>
-  );
-}
-
-// ── PNP Channels Hub ──────────────────────────────────────────────────────────
 
 const ACCESS_LABELS: Record<string, { label: string; color: string }> = {
   free:         { label: "Free",         color: "#34A853" },

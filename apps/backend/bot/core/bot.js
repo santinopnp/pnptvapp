@@ -2188,6 +2188,20 @@ const startBot = async () => {
       logger.warn(`Channel video stuck scheduler initialization failed: ${error.message}`);
     }
 
+    // Auto-expire pending dash_subscription_orders older than 48h (1h interval).
+    // BTCPay invoices expire well before 48h; anything still pending is an
+    // abandoned checkout. If a late-payment webhook arrives, the settle script
+    // can still flip 'expired' back to 'pending' and process the settlement.
+    try {
+      const DashOrderExpiryScheduler = require('./schedulers/dashOrderExpiryScheduler');
+      const dashOrderExpiryScheduler = new DashOrderExpiryScheduler();
+      dashOrderExpiryScheduler.start();
+      global.dashOrderExpiryScheduler = dashOrderExpiryScheduler;
+      logger.info('✓ Dash order expiry scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Dash order expiry scheduler initialization failed: ${error.message}`);
+    }
+
     // Initialize proactive reminder service
     try {
       const ProactiveReminderService = require('../../services/proactiveReminderService');

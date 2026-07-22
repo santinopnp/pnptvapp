@@ -77,6 +77,84 @@ async function deactivateLink(code, createdBy) {
 }
 
 /**
+ * Admin: partial update of an invite link.
+ * Only the fields present in `patch` are updated. Unknown fields are ignored.
+ * @param {string} code
+ * @param {object} patch — { note?, maxUses?, expiresAt?, isLifetime?, primeHours?, coOnly?, color? }
+ * @returns {Promise<object|null>} updated row or null if not found
+ */
+async function updateLink(code, patch = {}) {
+  const normalCode = String(code || '').toUpperCase();
+  if (!normalCode) throw new Error('code is required');
+
+  const sets = [];
+  const values = [];
+  let i = 1;
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'note')) {
+    sets.push(`note = $${i++}`);
+    values.push(patch.note === '' ? null : (patch.note ?? null));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'maxUses')) {
+    const v = patch.maxUses;
+    sets.push(`max_uses = $${i++}`);
+    values.push(v === null || v === undefined || v === '' ? null : Math.max(1, Math.floor(Number(v))));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'expiresAt')) {
+    sets.push(`expires_at = $${i++}::timestamptz`);
+    values.push(patch.expiresAt || null);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'isLifetime')) {
+    sets.push(`is_lifetime = $${i++}`);
+    values.push(!!patch.isLifetime);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'primeHours')) {
+    sets.push(`prime_hours = $${i++}`);
+    values.push(Math.max(0, Math.floor(Number(patch.primeHours) || 0)));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'coOnly')) {
+    sets.push(`co_only = $${i++}`);
+    values.push(!!patch.coOnly);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'color')) {
+    const c = patch.color;
+    if (c !== null && c !== undefined && c !== '' && !/^#[0-9a-fA-F]{6}$/.test(c)) {
+      throw new Error('color must be a 6-digit hex string (e.g. #D4007A)');
+    }
+    sets.push(`color = $${i++}`);
+    values.push(c || null);
+  }
+
+  if (sets.length === 0) return getLink(normalCode);
+
+  values.push(normalCode);
+  const { rows } = await query(
+    `UPDATE invite_links SET ${sets.join(', ')} WHERE code = $${i} RETURNING *`,
+    values,
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Admin: hard-delete an invite link. Refuses if the link has been redeemed
+ * (use_count > 0) to preserve audit history — use deactivateLink instead.
+ * @param {string} code
+ * @returns {Promise<{ deleted: boolean, reason?: string }>}
+ */
+async function deleteLink(code) {
+  const normalCode = String(code || '').toUpperCase();
+  if (!normalCode) throw new Error('code is required');
+
+  const link = await getLink(normalCode);
+  if (!link) return { deleted: false, reason: 'not_found' };
+  if ((link.use_count || 0) > 0) return { deleted: false, reason: 'has_redemptions' };
+
+  await query(`DELETE FROM invite_link_uses WHERE code = $1`, [normalCode]);
+  const { rowCount } = await query(`DELETE FROM invite_links WHERE code = $1`, [normalCode]);
+  return { deleted: rowCount > 0 };
+}
+
+/**
  * Fetch a single invite link by code.
  */
 async function getLink(code) {
@@ -441,4 +519,4 @@ async function redeemLink(code, userId, { ip = null } = {}) {
   }
 }
 
-module.exports = { generateCode, createLink, listLinks, listLinksByCreator, deactivateLink, getLink, trackClick, redeemLink, checkColombiaRequirements, claimPendingPrime };
+module.exports = { generateCode, createLink, listLinks, listLinksByCreator, deactivateLink, updateLink, deleteLink, getLink, trackClick, redeemLink, checkColombiaRequirements, claimPendingPrime };

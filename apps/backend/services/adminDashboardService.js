@@ -680,7 +680,6 @@ const FEATURE_MAP = [
   { prefix: '/api/calls',                label: 'Video Calls' },
   { prefix: '/api/tips',                 label: 'Tips' },
   { prefix: '/api/tokens',               label: 'Tokens' },
-  { prefix: '/api/playlists',            label: 'Playlists' },
   { prefix: '/api/channel',              label: 'Channels' },
   { prefix: '/api/events',               label: 'Events' },
   { prefix: '/api/support',              label: 'Support' },

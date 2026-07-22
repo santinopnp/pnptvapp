@@ -67,7 +67,7 @@ export default function CreatorOverview() {
               onTabChange={(tab) => {
                 if (tab === "payouts") navigate("/creators/payouts");
                 else if (tab === "earnings") navigate("/creators/earnings");
-                else if (tab === "content") navigate("/creators/content");
+                else if (tab === "content") navigate("/creators/channels-hub");
                 else if (tab === "settings") navigate("/creators/settings");
               }}
             />

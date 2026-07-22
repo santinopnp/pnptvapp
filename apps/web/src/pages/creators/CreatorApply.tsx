@@ -96,7 +96,7 @@ const SETUP_META: Record<string, { description: string; actionLabel?: string; hr
   first_post: {
     description: "Publish your first exclusive post so new subscribers see content right away.",
     actionLabel: "Create Post",
-    href: "/creators/content",
+    href: "/creators/channels-hub",
   },
 };
 

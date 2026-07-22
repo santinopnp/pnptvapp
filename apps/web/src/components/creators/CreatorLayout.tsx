@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Outlet, NavLink, Navigate, useNavigate, useLocation } from "react-router-dom";
-import CreatorEnrollmentWizard, {
+import {
   TIER_UPGRADE_THRESHOLDS,
   TIER_CONFIG,
   type TierId,
@@ -62,7 +62,12 @@ const navItems: Array<{
   },
   {
     to: "/creators/setup",
-    label: "Setup & Docs",
+    label: "Studio Setup",
+    icon: "M13 10V3L4 14h7v7l9-11h-7z",
+  },
+  {
+    to: "/creators/documentation",
+    label: "Documentation",
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
   {
@@ -224,7 +229,7 @@ export default function CreatorLayout() {
               <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
             </svg>
             <span className="flex-1">{item.label}</span>
-            {item.to === "/creators/apply" && pendingRequiredCount > 0 && (
+            {item.to === "/creators/documentation" && pendingRequiredCount > 0 && (
               <span
                 className="min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold text-white flex items-center justify-center shrink-0"
                 style={{ background: "#D4007A" }}
@@ -982,14 +987,21 @@ function ConsentRowList({ rows }: { rows: ConsentRow[] }) {
   );
 }
 
+// Date-only strings like "1990-07-15" parse as UTC midnight → they roll back a
+// day in western timezones. Anchor at UTC noon so any tz shift stays same-day.
+function formatDobSafe(dob: string): string {
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(dob) ? `${dob}T12:00:00Z` : dob;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? dob : d.toLocaleDateString();
+}
+
 export function CreatorConsents() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [consents, setConsents] = React.useState<any>(null);
   const [userId, setUserId] = React.useState<string | number | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const [showWizard, setShowWizard] = React.useState(false);
-  const [wizardTier] = React.useState<TierId>("ice");
   const [privacyModalOpen, setPrivacyModalOpen] = React.useState(false);
   const [privacyAccepting, setPrivacyAccepting] = React.useState(false);
   const [privacyError, setPrivacyError] = React.useState<string | null>(null);
@@ -1003,7 +1015,9 @@ export function CreatorConsents() {
   const [wofBusy, setWofBusy] = React.useState(false);
 
   React.useEffect(() => {
+    let cancelled = false;
     getCreatorConsents().then(res => {
+      if (cancelled) return;
       if (res.success) {
         setConsents(res.consents);
         if (res.userId !== undefined && res.userId !== null) setUserId(res.userId);
@@ -1012,9 +1026,11 @@ export function CreatorConsents() {
       }
       setLoading(false);
     }).catch((err) => {
+      if (cancelled) return;
       setLoadError(err instanceof Error ? err.message : "Failed to load your consent records.");
       setLoading(false);
     });
+    return () => { cancelled = true; };
   }, []);
 
   const acceptWofPhotoConsent = async () => {
@@ -1030,7 +1046,8 @@ export function CreatorConsents() {
     {
       label: "Terms of Service",
       status: consents.terms_accepted ? "accepted" : "pending",
-      date: (consents as any).terms_accepted_at || consents.created_at,
+      detail: consents.terms_accepted ? null : "Required to keep your creator profile active.",
+      date: consents.terms_accepted_at || null,
       href: "/terms",
       ...(!consents.terms_accepted
         ? { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("terms"); } }
@@ -1039,6 +1056,7 @@ export function CreatorConsents() {
     {
       label: "Privacy Policy",
       status: consents.privacy_accepted ? "accepted" : "pending",
+      detail: consents.privacy_accepted ? null : "Required to keep your creator profile active.",
       date: consents.privacy_accepted_at || null,
       href: "/privacy",
       ...(!consents.privacy_accepted ? { actionLabel: "Review & Accept", onAction: () => setPrivacyModalOpen(true) } : {}),
@@ -1046,11 +1064,10 @@ export function CreatorConsents() {
     {
       label: "Age Verification",
       status: consents.age_verified ? "accepted" : "pending",
+      detail: consents.age_verified ? null : "Required before you can publish or stream.",
       date: consents.age_verified_at,
-      // Age verification happens in the onboarding wizard. If a user landed
-      // here without it, send them back through onboarding.
       ...(!consents.age_verified
-        ? { actionLabel: "Verify Age", onAction: () => navigate("/onboarding") }
+        ? { actionLabel: "Verify Age", onAction: () => navigate("/2257") }
         : {}),
     },
     {
@@ -1068,6 +1085,7 @@ export function CreatorConsents() {
     {
       label: "Content Disclaimer",
       status: consents.content_disclaimer ? "accepted" : "pending",
+      detail: consents.content_disclaimer ? null : "Required before you can publish any video.",
       date: consents.content_disclaimer_accepted_at,
       expandContent: (
         <p className="pt-2">I confirm that all objects, substances, or materials appearing in my videos are props, simulated, or used solely for entertainment purposes. All content must comply with PNPtv! community standards. No illegal content. Explicit content requires age verification to be active on your account.</p>
@@ -1075,6 +1093,13 @@ export function CreatorConsents() {
       ...(!consents.content_disclaimer
         ? { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("disclaimer"); } }
         : {}),
+    },
+    {
+      label: "Community Guidelines",
+      status: "info",
+      detail: "Content standards, access types, strike system, and dispute rules. Review before you post.",
+      actionLabel: "Read Guidelines",
+      onAction: () => navigate("/creators/guidelines"),
     },
   ] : [];
 
@@ -1088,68 +1113,55 @@ export function CreatorConsents() {
     }
   })();
 
-  const creatorRows: ConsentRow[] = consents ? [
+  // Gov ID front + back share the same source (creator_2257_records or model_app),
+  // so consolidate into a single row keyed off "both fields submitted".
+  const govIdSubmitted = !!(consents?.id_front_submitted && consents?.id_back_submitted);
+
+  const complianceRows: ConsentRow[] = consents ? [
     {
-      label: "Model / Creator Application",
+      label: "Creator Application",
       status: hasApplication
         ? (consents.application_status === "approved" ? "accepted"
           : consents.application_status === "rejected" ? "missing"
           : "pending")
         : "missing",
       detail: hasApplication
-        ? `${applicationTypeLabel ?? "Application"} — ${consents.application_status ?? "pending"}`
-        : "Not submitted",
+        ? `${applicationTypeLabel ?? "Application"} — ${
+            consents.application_status === "approved" ? "Approved"
+            : consents.application_status === "rejected" ? "Rejected"
+            : consents.application_status === "under_review" ? "Under review"
+            : "Pending review"
+          }`
+        : "Required to receive tips, tokens, or subscriptions.",
       date: consents.application_created_at,
       ...(!hasApplication ? { actionLabel: "Start Application", onAction: () => navigate("/creators/apply") } : {}),
-    },
-    {
-      label: "Stage Name",
-      status: consents.stage_name ? "submitted" : "missing",
-      detail: consents.stage_name || "Not submitted",
-      ...(!consents.stage_name
-        ? { actionLabel: "Set Stage Name", onAction: () => navigate("/creators/settings") }
-        : {}),
     },
     {
       label: "Legal Identity (2257)",
       status: (consents.legal_full_name && consents.date_of_birth) ? "submitted" : "missing",
       detail: consents.legal_full_name
-        ? `${consents.legal_full_name}${consents.date_of_birth ? ` — DOB ${new Date(consents.date_of_birth).toLocaleDateString()}` : ""}`
-        : "Legal name + DOB required for 2257 compliance",
-      // /2257 collects legal name, DOB, and uploads gov ID — single page for the
-      // whole 2257 packet. Routes here so the user doesn't have to hunt.
+        ? `${consents.legal_full_name}${consents.date_of_birth ? ` — DOB ${formatDobSafe(consents.date_of_birth)}` : ""}`
+        : "Legal name + DOB — federally required (18 U.S.C. § 2257). Without it your content cannot stay public.",
       ...(!(consents.legal_full_name && consents.date_of_birth)
         ? { actionLabel: "Complete 2257 Form", onAction: () => navigate("/2257") }
         : {}),
     },
     {
-      label: "Location Declaration",
-      status: consents.country ? "submitted" : "missing",
-      detail: consents.country ?? "Country required",
-      ...(!consents.country
-        ? { actionLabel: "Update Location", onAction: () => navigate("/creators/settings") }
-        : {}),
-    },
-    {
-      label: "Government ID — Front",
-      status: consents.id_front_submitted ? "submitted" : "missing",
-      detail: consents.id_front_submitted ? "Image on file (admin-only)" : "Upload required",
-      ...(!consents.id_front_submitted
-        ? { actionLabel: "Upload ID", onAction: () => navigate("/2257") }
-        : {}),
-    },
-    {
-      label: "Government ID — Back",
-      status: consents.id_back_submitted ? "submitted" : "missing",
-      detail: consents.id_back_submitted ? "Image on file (admin-only)" : "Upload required",
-      ...(!consents.id_back_submitted
+      label: "Government ID Upload",
+      status: govIdSubmitted ? "submitted" : "missing",
+      detail: govIdSubmitted
+        ? "Front + back on file (admin-only, encrypted)."
+        : "Upload both front and back of a government-issued ID. Required for 2257.",
+      ...(!govIdSubmitted
         ? { actionLabel: "Upload ID", onAction: () => navigate("/2257") }
         : {}),
     },
     {
       label: "Creator Terms Agreement",
       status: consents.creator_terms_agreed ? "accepted" : "pending",
-      detail: consents.creator_terms_version ? `Version ${consents.creator_terms_version}` : null,
+      detail: consents.creator_terms_agreed
+        ? (consents.creator_terms_version ? `Version ${consents.creator_terms_version}` : null)
+        : "70/30 revenue split, payout schedule, deactivation policy. Required.",
       date: consents.creator_terms_agreed_at,
       ...(consents.creator_terms_agreed
         ? {
@@ -1164,11 +1176,30 @@ export function CreatorConsents() {
         : { actionLabel: "Review & Accept", onAction: () => { setAcceptError(null); setAcceptKind("creator_terms"); } }),
     },
     {
+      label: "Stage Name",
+      status: consents.stage_name ? "submitted" : "missing",
+      detail: consents.stage_name || "The name shown on your public profile. Editable anytime in Settings.",
+      ...(!consents.stage_name
+        ? { actionLabel: "Set Stage Name", onAction: () => navigate("/creators/settings") }
+        : {}),
+    },
+    {
+      label: "Location Declaration",
+      status: consents.country ? "submitted" : "missing",
+      detail: consents.country ?? "Country of residence — required for tax and geo-compliance.",
+      ...(!consents.country
+        ? { actionLabel: "Update Location", onAction: () => navigate("/creators/settings") }
+        : {}),
+    },
+  ] : [];
+
+  const payoutRows: ConsentRow[] = consents ? [
+    {
       label: "Fiat Payout Method",
       status: consents.fiat_payout_method ? "info" : "missing",
       detail: consents.fiat_payout_method
         ? `Configured (${String(consents.fiat_payout_method).toUpperCase()})`
-        : "Not configured",
+        : "Configure at least one payout method (fiat OR crypto) to receive earnings.",
       ...(!consents.fiat_payout_method ? { actionLabel: "Configure Payouts", onAction: () => navigate("/creators/settings") } : {}),
     },
     {
@@ -1178,21 +1209,35 @@ export function CreatorConsents() {
         : "missing",
       detail: consents.wallet_address_set
         ? (consents.creator_wallet_verified ? "Connected & verified" : "Connected — pending verification")
-        : "Not connected",
+        : "Configure at least one payout method (fiat OR crypto) to receive earnings.",
       ...(!consents.wallet_address_set ? { actionLabel: "Configure Payouts", onAction: () => navigate("/creators/settings") } : {}),
     },
   ] : [];
 
+  // Pending-count summary — counts rows that block go-live. Payout rows are OR
+  // (fiat OR crypto is enough) so we count them as one pending item if neither
+  // is set.
+  const allRows = [...genericRows, ...complianceRows];
+  const payoutConfigured = !!(consents?.fiat_payout_method || consents?.wallet_address_set);
+  const pendingCount = allRows.filter(r => r.status === "pending" || r.status === "missing").length
+    + (consents && !payoutConfigured ? 1 : 0);
+  const totalActionable = allRows.filter(r => r.status !== "info").length + 1; // +1 for the payout OR-group
+  const completedCount = totalActionable - pendingCount;
+  const isAdminViewingWithoutApp = !!(consents && !hasApplication && (user?.role === "admin" || user?.role === "superadmin"));
+
   return (
     <>
-      <Helmet><title>Consents — Creator Studio — PNPtv!</title></Helmet>
+      <Helmet><title>Documentation — Creator Studio — PNPtv!</title></Helmet>
       <div className="p-4 lg:p-6">
-        <h1 className="text-xl font-bold text-pnp-textPrimary mb-2">Consents &amp; Agreements</h1>
-        <p className="text-sm text-pnp-textSecondary mb-6">A record of every consent, form, and document you've submitted as a creator/performer on PNPtv. Tap any row to read the document or take action.</p>
+        <h1 className="text-xl font-bold text-pnp-textPrimary mb-2">Documentation & Compliance</h1>
+        <p className="text-sm text-pnp-textSecondary mb-5">
+          Every legal agreement, ID form, and payout config you need to keep your creator profile in good standing.
+          Rows marked <span className="text-amber-400 font-semibold">Pending</span> or <span className="text-red-400 font-semibold">Missing</span> need your action.
+        </p>
 
         {loading ? (
-          <div className="animate-pulse space-y-3">
-            {[1,2,3,4,5].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl" />)}
+          <div className="motion-safe:animate-pulse space-y-3">
+            {[1,2,3,4,5,6,7,8].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl" />)}
           </div>
         ) : loadError ? (
           <div className="text-center py-8 rounded-xl" style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)" }}>
@@ -1202,56 +1247,105 @@ export function CreatorConsents() {
         ) : !consents ? (
           <p className="text-sm text-pnp-textSecondary">Could not load your consents.</p>
         ) : (
-          <div className="space-y-8">
-            {/* Identifiers */}
-            <section>
-              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Identifiers</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div className="px-4 py-3 rounded-xl bg-white/5">
-                  <p className="text-[10px] text-pnp-textSecondary uppercase tracking-wider mb-1">User ID</p>
-                  <p className="text-sm font-mono text-white break-all">{userId ?? "—"}</p>
+          <div className="space-y-6">
+            {/* Progress summary */}
+            <div
+              className="rounded-2xl p-4"
+              style={{
+                background: pendingCount === 0 ? "rgba(52,199,89,0.08)" : "rgba(212,0,122,0.08)",
+                border: `1px solid ${pendingCount === 0 ? "rgba(52,199,89,0.25)" : "rgba(212,0,122,0.3)"}`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white">
+                    {pendingCount === 0
+                      ? "All set — everything's in order."
+                      : `${pendingCount} item${pendingCount === 1 ? "" : "s"} still need your attention`}
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    {completedCount} of {totalActionable} required steps completed.
+                  </p>
                 </div>
-                <div className="px-4 py-3 rounded-xl bg-white/5">
-                  <p className="text-[10px] text-pnp-textSecondary uppercase tracking-wider mb-1">Application ID</p>
-                  <p className="text-sm font-mono text-white break-all">{consents.application_id ?? "—"}</p>
+                <div className="flex-shrink-0" aria-hidden="true">
+                  <span
+                    className="text-lg font-bold tabular-nums"
+                    style={{ color: pendingCount === 0 ? "#34C759" : "#FF4DA6" }}
+                  >
+                    {completedCount}/{totalActionable}
+                  </span>
                 </div>
               </div>
-            </section>
+              <div className="h-1.5 mt-3 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+                <div
+                  className="h-full rounded-full motion-safe:transition-all motion-safe:duration-700"
+                  style={{
+                    width: `${Math.round((completedCount / Math.max(totalActionable, 1)) * 100)}%`,
+                    background: pendingCount === 0
+                      ? "#34C759"
+                      : "linear-gradient(to right, #D4007A, #E69138)",
+                  }}
+                />
+              </div>
+            </div>
 
-            {/* Generic platform consents */}
+            {isAdminViewingWithoutApp && (
+              <div
+                className="rounded-xl p-3"
+                style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.25)" }}
+              >
+                <p className="text-xs text-white">
+                  <span className="font-bold" style={{ color: "#5ED1C4" }}>Admin view.</span>{" "}
+                  You don't have a creator application on file, so most rows below are informational only.
+                </p>
+              </div>
+            )}
+
+            {/* Platform consents */}
             <section>
               <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Platform consents</h2>
               <ConsentRowList rows={genericRows} />
             </section>
 
-            {/* Creator/performer-specific forms */}
+            {/* Creator compliance */}
             <section>
-              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Creator / Performer forms</h2>
-              <ConsentRowList rows={creatorRows} />
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Creator compliance (required)</h2>
+              <ConsentRowList rows={complianceRows} />
               <p className="text-[10px] text-pnp-textSecondary/60 mt-3 px-1">
-                Government ID images and full payout account handles are stored encrypted and only visible to platform admins for compliance review.
+                Government ID images are stored encrypted and only visible to platform admins for 2257 compliance review.
               </p>
             </section>
 
-            {consents.content_disclaimer && consents.content_disclaimer_accepted_at && (
-              <p className="text-[10px] text-pnp-textSecondary/50 px-1">
-                Content disclaimer accepted on {new Date(consents.content_disclaimer_accepted_at).toLocaleDateString()}
+            {/* Payout config */}
+            <section>
+              <h2 className="text-xs font-bold text-white/60 uppercase tracking-wider mb-3">Payout configuration</h2>
+              <p className="text-[11px] mb-3 px-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Configure at least one method — fiat OR crypto — to receive your earnings. Payouts run every Tuesday.
               </p>
-            )}
+              <ConsentRowList rows={payoutRows} />
+            </section>
+
+            {/* Identifiers footer — small, at the bottom */}
+            <section className="pt-2">
+              <details>
+                <summary className="text-[11px] text-pnp-textSecondary/60 cursor-pointer hover:text-pnp-textSecondary transition-colors">
+                  Support IDs (for when you contact support)
+                </summary>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div className="px-3 py-2 rounded-lg bg-white/5">
+                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">User ID</p>
+                    <p className="text-xs font-mono text-white/80 break-all">{userId ?? "—"}</p>
+                  </div>
+                  <div className="px-3 py-2 rounded-lg bg-white/5">
+                    <p className="text-[9px] text-pnp-textSecondary uppercase tracking-wider mb-0.5">Application ID</p>
+                    <p className="text-xs font-mono text-white/80 break-all">{consents.application_id ?? "—"}</p>
+                  </div>
+                </div>
+              </details>
+            </section>
           </div>
         )}
       </div>
-
-      {showWizard && (
-        <CreatorEnrollmentWizard
-          tier={wizardTier}
-          onClose={() => setShowWizard(false)}
-          onSubmitted={() => {
-            setShowWizard(false);
-            setConsents((c: any) => c ? { ...c, creator_terms_agreed: true } : c);
-          }}
-        />
-      )}
 
       {privacyModalOpen && (
         <div
@@ -1268,7 +1362,7 @@ export function CreatorConsents() {
                 <p className="text-sm font-bold text-white">Privacy Policy</p>
                 <p className="text-xs mt-0.5" style={{ color: "#8E8E93" }}>pnptv.app/privacy</p>
               </div>
-              <button onClick={() => setPrivacyModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
+              <button onClick={() => setPrivacyModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full" style={{ background: "rgba(255,255,255,0.08)" }} aria-label="Close">
                 <svg className="w-4 h-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -1350,10 +1444,14 @@ export function CreatorConsents() {
             <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
               <div>
                 <p className="text-sm font-bold text-white">
-                  {acceptKind === "terms" ? "Terms of Service" : "Content Disclaimer"}
+                  {acceptKind === "terms" ? "Terms of Service"
+                    : acceptKind === "creator_terms" ? "Creator Program Terms"
+                    : "Content Disclaimer"}
                 </p>
                 <p className="text-xs mt-0.5" style={{ color: "#8E8E93" }}>
-                  {acceptKind === "terms" ? "pnptv.app/terms" : "Required for creators"}
+                  {acceptKind === "terms" ? "pnptv.app/terms"
+                    : acceptKind === "creator_terms" ? "70/30 revenue split · payouts every Tuesday"
+                    : "Required for creators"}
                 </p>
               </div>
               <button
@@ -1401,7 +1499,7 @@ export function CreatorConsents() {
                   try {
                     if (acceptKind === "terms") {
                       await acceptTerms();
-                      setConsents((c: any) => c ? { ...c, terms_accepted: true } : c);
+                      setConsents((c: any) => c ? { ...c, terms_accepted: true, terms_accepted_at: new Date().toISOString() } : c);
                     } else if (acceptKind === "creator_terms") {
                       await acceptCreatorTerms();
                       setConsents((c: any) => c ? { ...c, creator_terms_agreed: true, creator_terms_agreed_at: new Date().toISOString() } : c);

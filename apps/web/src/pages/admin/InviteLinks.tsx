@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   listAdminInviteLinks,
   createAdminInviteLink,
+  updateAdminInviteLink,
+  deleteAdminInviteLink,
   type InviteLink,
   type InviteLinkStats,
 } from "@/lib/api";
@@ -249,6 +251,233 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
   );
 }
 
+// ── Edit Link Modal ───────────────────────────────────────────────────────────
+
+interface EditModalProps {
+  link: InviteLink;
+  onClose: () => void;
+  onSaved: (link: InviteLink) => void;
+}
+
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function EditModal({ link, onClose, onSaved }: EditModalProps) {
+  const [note, setNote]         = useState(link.note ?? "");
+  const [maxUses, setMaxUses]   = useState<string>(link.max_uses != null ? String(link.max_uses) : "");
+  const [expiresAt, setExpiresAt] = useState<string>(isoToLocalInput(link.expires_at));
+  const [isLifetime, setIsLifetime] = useState(!!link.is_lifetime);
+  const [primeHours, setPrimeHours] = useState<string>(String(link.prime_hours || 0));
+  const [coOnly, setCoOnly]     = useState(!!link.co_only);
+  const [colorEnabled, setColorEnabled] = useState(!!link.color);
+  const [color, setColor]       = useState(link.color || "#D4007A");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const result = await updateAdminInviteLink(link.code, {
+        note:       note.trim() === "" ? null : note.trim(),
+        maxUses:    maxUses ? parseInt(maxUses, 10) : null,
+        expiresAt:  expiresAt || null,
+        isLifetime: coOnly ? true : isLifetime,
+        primeHours: coOnly ? 0 : parseInt(primeHours || "0", 10),
+        coOnly,
+        color: colorEnabled ? color : null,
+      });
+      if (result.success) {
+        onSaved(result.link);
+      } else {
+        setError(result.error || "No se pudo actualizar el enlace.");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error inesperado.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const ph = parseInt(primeHours || "0", 10);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
+      <div
+        className="w-full max-w-md rounded-2xl p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+        style={{ background: "#111117", border: "1px solid rgba(255,255,255,0.10)" }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-bold text-white">Editar enlace</h2>
+            <p className="text-xs text-white/40 font-mono mt-0.5">{link.code}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-white/40 hover:text-white/70 text-xl leading-none" aria-label="Cerrar">×</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Nota</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="p.ej. Anuncio Nicegram junio 2025"
+              maxLength={200}
+              className="w-full rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:ring-1 focus:ring-[#D4007A]"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Máximo de usos (vacío = ilimitado)</label>
+            <input
+              type="number"
+              value={maxUses}
+              onChange={(e) => setMaxUses(e.target.value)}
+              placeholder="500"
+              min={1}
+              className="w-full rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}
+            />
+            <p className="text-xs text-white/30">Usos actuales: {link.use_count}</p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Expira el (vacío = nunca)</label>
+            <input
+              type="datetime-local"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              className="w-full rounded-xl px-3 py-2.5 text-sm text-white outline-none"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", colorScheme: "dark" }}
+            />
+          </div>
+
+          <label
+            className="flex items-center gap-3 cursor-pointer select-none"
+            style={{ padding: "10px 14px", borderRadius: 12, background: isLifetime ? "rgba(255,180,84,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${isLifetime ? "rgba(255,180,84,0.25)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
+          >
+            <input type="checkbox" checked={isLifetime} onChange={(e) => setIsLifetime(e.target.checked)} className="sr-only" />
+            <span
+              className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
+              style={{ background: isLifetime ? "linear-gradient(135deg,#FFB454,#FF9933)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${isLifetime ? "#FFB454" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
+            >
+              {isLifetime && <span className="text-white text-xs font-bold">✓</span>}
+            </span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: isLifetime ? "#FFB454" : "rgba(255,255,255,0.6)" }}>💎 Acceso de por vida + badge Parche</p>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>Otorga pnp-member vitalicio y el badge Parche 💎 al canjear</p>
+            </div>
+          </label>
+
+          <label
+            className="flex items-center gap-3 cursor-pointer select-none"
+            style={{ padding: "10px 14px", borderRadius: 12, background: coOnly ? "rgba(255,200,50,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${coOnly ? "rgba(255,200,50,0.30)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
+          >
+            <input type="checkbox" checked={coOnly} onChange={(e) => setCoOnly(e.target.checked)} className="sr-only" />
+            <span
+              className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
+              style={{ background: coOnly ? "linear-gradient(135deg,#FFE04B,#FFC107)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${coOnly ? "#FFD700" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
+            >
+              {coOnly && <span className="text-black text-xs font-bold">✓</span>}
+            </span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: coOnly ? "#FFD700" : "rgba(255,255,255,0.6)" }}>🇨🇴 Socio Colombia (solo CO)</p>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>Requiere IP colombiana · da pnp-member + acceso · sin PRIME</p>
+            </div>
+          </label>
+
+          {!coOnly && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Horas de PRIME gratis (0 = ninguna)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={primeHours}
+                  onChange={(e) => setPrimeHours(e.target.value)}
+                  placeholder="0"
+                  min={0}
+                  max={720}
+                  className="w-28 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:ring-1 focus:ring-[#7B61FF]"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}
+                />
+                {ph > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full"
+                    style={{ background: "rgba(123,97,255,0.15)", color: "#A78BFA", border: "1px solid rgba(123,97,255,0.3)" }}
+                  >
+                    ⚡ {ph}h PRIME gratis
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div
+            className="flex items-center gap-3"
+            style={{ padding: "10px 14px", borderRadius: 12, background: colorEnabled ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${colorEnabled ? color : "rgba(255,255,255,0.08)"}40`, transition: "all 0.15s" }}
+          >
+            <button
+              type="button"
+              onClick={() => setColorEnabled((v) => !v)}
+              className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer select-none"
+            >
+              <span
+                className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
+                style={{ background: colorEnabled ? color : "rgba(255,255,255,0.08)", border: `1.5px solid ${colorEnabled ? color : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
+              >
+                {colorEnabled && <span className="text-white text-xs font-bold">✓</span>}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold" style={{ color: colorEnabled ? color : "rgba(255,255,255,0.6)" }}>🎨 Color de perfil al canjear</p>
+                <p className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>Aplica este color de fondo al perfil del usuario que use el enlace</p>
+              </div>
+            </button>
+            {colorEnabled && (
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-9 h-9 rounded-lg cursor-pointer flex-shrink-0"
+                style={{ border: "1px solid rgba(255,255,255,0.18)", background: "transparent" }}
+                aria-label="Elegir color"
+              />
+            )}
+          </div>
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 min-h-[42px] rounded-xl text-sm font-semibold text-white/60"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 min-h-[42px] rounded-xl text-sm font-bold text-white disabled:opacity-60 transition-opacity"
+              style={{ background: "linear-gradient(135deg,#D4007A,#9B00B0)" }}
+            >
+              {loading ? "Guardando…" : "Guardar cambios"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Copy button ───────────────────────────────────────────────────────────────
 
 function CopyButton({ text }: { text: string }) {
@@ -297,6 +526,9 @@ export default function InviteLinks() {
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editingLink, setEditingLink] = useState<InviteLink | null>(null);
+  const [deletingCode, setDeletingCode] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
   const [newLinkInfo, setNewLinkInfo] = useState<{ code: string; url: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -324,6 +556,30 @@ export default function InviteLinks() {
     setNewLinkInfo({ code: link.code, url });
     setLinks((prev) => [link, ...prev]);
     setStats((prev) => prev ? { ...prev, totalLinks: prev.totalLinks + 1 } : prev);
+  };
+
+  const handleSaved = (updated: InviteLink) => {
+    setEditingLink(null);
+    setLinks((prev) => prev.map((l) => (l.code === updated.code ? updated : l)));
+  };
+
+  const handleDelete = async (code: string) => {
+    if (!window.confirm(`¿Eliminar el enlace ${code}? Esta acción no se puede deshacer.`)) return;
+    setDeletingCode(code);
+    setRowError(null);
+    try {
+      const res = await deleteAdminInviteLink(code);
+      if (res.success) {
+        setLinks((prev) => prev.filter((l) => l.code !== code));
+        setStats((prev) => prev ? { ...prev, totalLinks: Math.max(0, prev.totalLinks - 1) } : prev);
+      } else {
+        setRowError(res.error || "No se pudo eliminar el enlace.");
+      }
+    } catch (err: unknown) {
+      setRowError(err instanceof Error ? err.message : "Error eliminando el enlace.");
+    } finally {
+      setDeletingCode(null);
+    }
   };
 
   const isExpired   = (l: InviteLink) => !!l.expires_at && new Date(l.expires_at) < new Date();
@@ -399,7 +655,7 @@ export default function InviteLinks() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-                  {["Código", "Tipo", "Nota", "Clicks", "Canjes", "Conv.", "Expira", "Estado", ""].map((h) => (
+                  {["Código", "Tipo", "Nota", "Clicks", "Canjes", "Conv.", "Expira", "Estado", "", ""].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-white/50 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -490,8 +746,32 @@ export default function InviteLinks() {
                         ) : null}
                       </td>
 
-                      {/* Action */}
+                      {/* Copy */}
                       <td className="px-4 py-3"><CopyButton text={inviteUrl(link.code)} /></td>
+
+                      {/* Edit / Delete */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingLink(link)}
+                            className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-all hover:opacity-80"
+                            style={{ background: "rgba(123,97,255,0.12)", color: "#A78BFA", border: "1px solid rgba(123,97,255,0.25)" }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(link.code)}
+                            disabled={signups > 0 || deletingCode === link.code}
+                            title={signups > 0 ? "No se puede eliminar: el enlace tiene canjes" : "Eliminar enlace"}
+                            className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-all hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
+                            style={{ background: "rgba(239,68,68,0.10)", color: "#F87171", border: "1px solid rgba(239,68,68,0.25)" }}
+                          >
+                            {deletingCode === link.code ? "…" : "Eliminar"}
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -501,7 +781,15 @@ export default function InviteLinks() {
         </div>
       )}
 
+      {rowError && (
+        <div className="fixed bottom-6 right-6 z-40 max-w-sm p-4 rounded-xl text-sm text-red-400 shadow-xl" style={{ background: "rgba(30,10,10,0.95)", border: "1px solid rgba(239,68,68,0.35)" }}>
+          {rowError}
+          <button type="button" onClick={() => setRowError(null)} className="ml-3 text-red-400/70 hover:text-red-400">×</button>
+        </div>
+      )}
+
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
+      {editingLink && <EditModal link={editingLink} onClose={() => setEditingLink(null)} onSaved={handleSaved} />}
     </div>
   );
 }

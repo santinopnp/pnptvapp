@@ -164,4 +164,38 @@ router.post('/admin/invite-links', adminGuard, asyncHandler(async (req, res) => 
   });
 }));
 
+/**
+ * PATCH /api/admin/invite-links/:code
+ * Body: { note?, maxUses?, expiresAt?, isLifetime?, primeHours?, coOnly?, color? }
+ */
+router.patch('/admin/invite-links/:code', adminGuard, asyncHandler(async (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().trim();
+  if (!code) return res.status(400).json({ success: false, error: 'Missing code' });
+
+  try {
+    const link = await inviteLinkService.updateLink(code, req.body || {});
+    if (!link) return res.status(404).json({ success: false, error: 'Link not found' });
+    return res.json({ success: true, link });
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+}));
+
+/**
+ * DELETE /api/admin/invite-links/:code
+ * Only allowed when the link has never been redeemed (use_count = 0).
+ */
+router.delete('/admin/invite-links/:code', adminGuard, asyncHandler(async (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().trim();
+  if (!code) return res.status(400).json({ success: false, error: 'Missing code' });
+
+  const result = await inviteLinkService.deleteLink(code);
+  if (result.deleted) return res.json({ success: true });
+  if (result.reason === 'not_found') return res.status(404).json({ success: false, error: 'Link not found' });
+  if (result.reason === 'has_redemptions') {
+    return res.status(409).json({ success: false, error: 'Cannot delete a link that has been redeemed. Deactivate it instead.' });
+  }
+  return res.status(500).json({ success: false, error: 'Delete failed' });
+}));
+
 module.exports = router;
