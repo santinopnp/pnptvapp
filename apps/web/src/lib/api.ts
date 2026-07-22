@@ -9147,9 +9147,12 @@ export async function getPublicCreatorProfile(
     { credentials: "include" }
   );
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+    const err = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+    // Backend error bodies use `error` (e.g. the geo-block 451), not `message`.
+    // Only a real 404 means the creator doesn't exist — every other status
+    // must surface its own message or the page shows a false "not found".
     throw new ApiError(
-      (err as { message?: string }).message ?? "Creator not found",
+      err.message ?? err.error ?? (res.status === 404 ? "Creator not found" : `Request failed (${res.status})`),
       res.status
     );
   }
