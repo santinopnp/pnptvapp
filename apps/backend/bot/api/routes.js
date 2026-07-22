@@ -443,6 +443,27 @@ const BLOCKED_US_REGIONS = new Set();
 const BLOCKED_COUNTRIES = new Set(['CO']);
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
 const GEO_BLOCK_USER_WHITELIST = new Set(['7246621722', '8599671840']); // PNPLatinoBoy, SantinoFurioso
+
+// Auto-populated whitelist of active Colombian creators. They live in CO and
+// need to post/stream/receive tips to do their job, so the hard geo-block
+// would freeze the platform's own revenue producers. Refreshed every 5 min
+// from the DB so the operator can promote a user to creator_status=active
+// and have them unblocked without a redeploy.
+let CO_CREATOR_WHITELIST = new Set();
+async function refreshCoCreatorWhitelist() {
+  try {
+    const { rows } = await query(
+      "SELECT id::text AS id FROM users WHERE country ILIKE 'colomb%' AND creator_status = 'active'"
+    );
+    CO_CREATOR_WHITELIST = new Set(rows.map((r) => r.id));
+    logger.info('[geo-block] refreshed CO creator whitelist', { count: CO_CREATOR_WHITELIST.size });
+  } catch (err) {
+    logger.warn('[geo-block] CO creator whitelist refresh failed', { err: err.message });
+  }
+}
+refreshCoCreatorWhitelist();
+setInterval(refreshCoCreatorWhitelist, 5 * 60 * 1000).unref();
+
 const GEO_BLOCK_BYPASS_PATHS = [
   /^\/blocked-jurisdiction$/,
   /^\/health$/,
@@ -475,6 +496,12 @@ const GEO_BLOCK_BYPASS_PATHS = [
   /^\/api\/public\/geo-invite\//,
   // lifetime100 purchase flow is exempt by operator policy
   /^\/api\/public\/lifetime100\b/,
+  // Socios program invite links (frontend page + backend API). Colombian
+  // socios need to click their /invite/CODE link and complete redemption
+  // from a CO IP; without this bypass they hit an infinite redirect loop
+  // (blocked page ↔ /invite).
+  /^\/invite\//,
+  /^\/api\/invite\//,
 ];
 function classifyGeo(ip) {
   if (!ip) return null;
@@ -612,11 +639,13 @@ app.use(async (req, res, next) => {
   // Valid for the lifetime of the session (no expiry — user redeemed a real invite).
   if (req.session?.geoInviteBypass === true) return next();
 
-  // NOTE: paying users are NOT grandfathered. Per platform policy, the
-  // geo-block applies uniformly to everyone in blocked jurisdictions —
-  // including existing PRIME members. The block page explains the situation
-  // and offers the self-certification bypass for carrier-misidentified users.
-  // Refunds for genuinely blocked users are handled at support@pnptv.app.
+  // Grandfather clause: authenticated users who ALREADY paid for an active
+  // membership (prime, pnp-member, pnp-col) keep access even from a blocked
+  // region. Refunding 25+ existing CO members every time the operator toggles
+  // a country would generate more support work than the block itself saves.
+  // 5-minute Redis cache keeps per-request cost negligible.
+  // Also honours the auto-refreshed CO_CREATOR_WHITELIST so active Colombian
+  // creators can keep posting/streaming/receiving tips.
 
   try {
     const ip = req.ip;
@@ -630,6 +659,31 @@ app.use(async (req, res, next) => {
       if (result) await geoCache.set(cacheKey, JSON.stringify(result), 3600);
     }
     if (result?.blocked) {
+      // Paying-member + creator exemptions only run when the IP would
+      // otherwise block, keeping the fast path on unblocked traffic clean.
+      const userId = req.session?.user?.id ? String(req.session.user.id) : null;
+      if (userId) {
+        if (CO_CREATOR_WHITELIST.has(userId)) {
+          logger.info('Geo-block bypassed (CO creator)', { ip, userId, country: result.country });
+          return next();
+        }
+        const grandfatherKey = `geoblock:grandfather:${userId}`;
+        let grandfathered = await geoCache.get(grandfatherKey);
+        if (grandfathered === null || grandfathered === undefined) {
+          const [hasCol, hasMember, hasPrime] = await Promise.all([
+            EntitlementAccessService.hasEntitlement(userId, 'pnp-col').catch(() => false),
+            EntitlementAccessService.hasEntitlement(userId, 'pnp-member').catch(() => false),
+            EntitlementAccessService.hasEntitlement(userId, 'prime').catch(() => false),
+          ]);
+          grandfathered = (hasCol || hasMember || hasPrime) ? '1' : '0';
+          await geoCache.set(grandfatherKey, grandfathered, 300);
+        }
+        if (grandfathered === '1') {
+          logger.info('Geo-block bypassed (grandfathered paying member)', { ip, userId, country: result.country });
+          return next();
+        }
+      }
+
       logger.info('Geo-block triggered', { ip, country: result.country, region: result.region, path: req.path });
       if (req.path.startsWith('/api/')) {
         return res.status(451).json({
@@ -640,7 +694,10 @@ app.use(async (req, res, next) => {
         });
       }
       const jParam = encodeURIComponent(result.region || result.country);
-      return res.redirect(302, `/blocked-jurisdiction?j=${jParam}`);
+      // Colombia socios flow needs the Spanish invite-card variant of the
+      // blocked page (branches on reason=colombia in blocked-jurisdiction.html).
+      const reasonParam = result.country === 'CO' ? '&reason=colombia' : '';
+      return res.redirect(302, `/blocked-jurisdiction?j=${jParam}${reasonParam}`);
     }
   } catch (err) {
     logger.warn('Geo-block check failed open', { error: err.message });
