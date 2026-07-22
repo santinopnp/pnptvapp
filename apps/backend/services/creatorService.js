@@ -586,12 +586,15 @@ class CreatorService {
         client.release();
       }
 
-      // Link hangout ↔ subscription channel (both FKs, outside the transaction)
+      // Link hangout ↔ subscription channel (both FKs, outside the transaction).
+      // Sequential, not Promise.all: this function has no lock guarding it from
+      // running twice concurrently for the same user (double-click, two tabs,
+      // a client retry after a transient error). Two overlapping calls each
+      // firing both UPDATEs at once can interleave in opposite table order —
+      // classic deadlock. Fixed relative order removes that possibility.
       if (subChannelId && hangoutId) {
-        await Promise.all([
-          query(`UPDATE hangout_groups SET channel_id = $1 WHERE id = $2`, [subChannelId, hangoutId]),
-          query(`UPDATE creator_channels SET hangout_group_id = $1 WHERE id = $2`, [hangoutId, subChannelId]),
-        ]);
+        await query(`UPDATE hangout_groups SET channel_id = $1 WHERE id = $2`, [subChannelId, hangoutId]);
+        await query(`UPDATE creator_channels SET hangout_group_id = $1 WHERE id = $2`, [hangoutId, subChannelId]);
       }
 
       logger.info('provisionDefaultChannels: done', { userId, freeChannelId, subChannelId, hangoutId });
