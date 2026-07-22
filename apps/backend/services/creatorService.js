@@ -525,10 +525,16 @@ class CreatorService {
       try {
         await client.query('BEGIN');
 
+        // NOTE: do NOT set is_system on these rows. The is_system flag (added
+        // 2026-06-28 for the platform-wide PRIME channel, id=5) makes rows
+        // invisible to /creator/channels and 403s on updateChannel /
+        // deleteChannel / addCollaborator. Wizard-provisioned defaults are
+        // owned by the creator and must be visible + editable — they aren't
+        // admin-managed. Default value (FALSE) is correct.
         if (!freeChannelId) {
           const { rows } = await client.query(
-            `INSERT INTO creator_channels (creator_id, name, slug, access_type, is_active, is_system)
-             VALUES ($1, $2, $3, 'free', true, true)
+            `INSERT INTO creator_channels (creator_id, name, slug, access_type, is_active)
+             VALUES ($1, $2, $3, 'free', true)
              ON CONFLICT (slug) DO NOTHING RETURNING id`,
             [userId, `${firstName} Free`, `${slug}-free-${suffix}`]
           );
@@ -538,8 +544,8 @@ class CreatorService {
         if (!subChannelId) {
           const priceUsd = user.creator_price_usd ? parseFloat(user.creator_price_usd) : 15;
           const { rows } = await client.query(
-            `INSERT INTO creator_channels (creator_id, name, slug, access_type, price_usd, is_active, is_system)
-             VALUES ($1, $2, $3, 'subscription', $4, true, true)
+            `INSERT INTO creator_channels (creator_id, name, slug, access_type, price_usd, is_active)
+             VALUES ($1, $2, $3, 'subscription', $4, true)
              ON CONFLICT (slug) DO NOTHING RETURNING id`,
             [userId, `${firstName} Exclusive`, `${slug}-exclusive-${suffix}`, priceUsd]
           );
