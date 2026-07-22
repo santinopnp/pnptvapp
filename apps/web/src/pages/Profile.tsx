@@ -15,6 +15,8 @@ import {
   getPublicProfile,
   updateProfile,
   uploadAvatar,
+  uploadCoverPhoto,
+  deleteCoverPhoto,
   togglePostLike,
   deleteSocialPost,
   updateLanguage,
@@ -327,6 +329,8 @@ export default function Profile() {
   }, [viewerMenuOpen]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
   const subscribeButtonRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -584,6 +588,35 @@ export default function Profile() {
     } finally {
       setAvatarUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoverUploading(true);
+    try {
+      const res = await uploadCoverPhoto(file);
+      setProfile((prev) => (prev ? { ...prev, coverUrl: res.coverUrl } : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload cover");
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setCoverUploading(false);
+      if (coverInputRef.current) coverInputRef.current.value = "";
+    }
+  };
+
+  const handleCoverDelete = async () => {
+    setCoverUploading(true);
+    try {
+      await deleteCoverPhoto();
+      setProfile((prev) => (prev ? { ...prev, coverUrl: null } : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove cover");
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setCoverUploading(false);
     }
   };
 
@@ -1156,12 +1189,63 @@ export default function Profile() {
             borderTopRightRadius: 16,
           }}
         >
+          {profile.coverUrl && (profile.coverUrl.startsWith("/") || profile.coverUrl.startsWith("http")) && (
+            <img
+              src={profile.coverUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              aria-hidden="true"
+            />
+          )}
           <div
             className="absolute inset-0"
             style={{
               background: "radial-gradient(120% 100% at 0% 0%, rgba(255,255,255,0.15), transparent 60%), radial-gradient(100% 120% at 100% 100%, rgba(0,0,0,0.35), transparent 55%)",
             }}
           />
+          {isOwnProfile && (
+            <>
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={handleCoverUpload}
+              />
+              <button
+                onClick={() => coverInputRef.current?.click()}
+                disabled={coverUploading}
+                className="absolute top-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-white text-[11px] font-semibold transition-opacity active:scale-95 disabled:opacity-60"
+                style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+                aria-label={profile.coverUrl ? "Change cover" : "Add cover"}
+              >
+                {coverUploading ? (
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                )}
+                {profile.coverUrl ? "Change cover" : "Add cover"}
+              </button>
+              {profile.coverUrl && !coverUploading && (
+                <button
+                  onClick={handleCoverDelete}
+                  className="absolute top-2 right-[calc(6.5rem+0.75rem)] flex items-center justify-center w-7 h-7 rounded-full text-white transition-opacity active:scale-95"
+                  style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  aria-label="Remove cover"
+                  title="Remove cover"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         <div className="px-5 pb-5 relative">

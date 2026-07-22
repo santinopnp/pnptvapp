@@ -10,7 +10,9 @@ import {
   togglePostLike,
   deleteSocialPost,
   updateProfile,
+  getLiveStreams,
   type SocialPostItem,
+  type LiveStream,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNearbyDistances } from "@/components/NearbyBadge";
@@ -82,6 +84,23 @@ export default function SocialFeedTabs({
 
   // Content disclaimer local mirror
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(contentDisclaimerAccepted);
+
+  // Story rail + Spotlight — live streams shown at the top of the "all" feed
+  // (skipped for hashtag/hangout-filtered feeds since they're topic-specific)
+  const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
+  const showRails = !hashtagFilter && !hangoutGroupId && feedMode === "all";
+  useEffect(() => {
+    if (!showRails) return;
+    let cancelled = false;
+    const load = () => {
+      getLiveStreams()
+        .then((r) => { if (!cancelled && r.success) setLiveStreams(r.streams.filter((s) => s.isLive)); })
+        .catch(() => {});
+    };
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [showRails]);
 
   // Nearby distance lookup
   const allAuthorIds = useMemo(() => {
@@ -217,13 +236,113 @@ export default function SocialFeedTabs({
 
   return (
     <div>
-      {/* Section header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Feed</h1>
-          <p className="text-sm mt-1 text-pnp-textSecondary">Share posts, reactions & updates with the community</p>
-        </div>
+      {/* Section header — design: PNPTV+ wordmark (Ethnocentric, magenta +) */}
+      <div className="flex items-center justify-between mb-4">
+        <h1
+          className="text-white leading-none"
+          style={{ fontFamily: "'Ethnocentric', 'Roboto Mono', monospace", fontSize: 22, letterSpacing: "0.05em" }}
+        >
+          PNPTV<span style={{ color: "#D4007A" }}>+</span>
+        </h1>
       </div>
+
+      {/* Story rail — 58px circular avatars, magenta ring = currently live.
+          Sourced from live streams; tap navigates to the stream. */}
+      {showRails && liveStreams.length > 0 && (
+        <div className="-mx-4 px-4 mb-4">
+          <div className="flex gap-3.5 overflow-x-auto no-scrollbar">
+            {liveStreams.slice(0, 12).map((s) => {
+              const initial = (s.name || "?").charAt(0).toUpperCase();
+              const thumb = s.thumbnailUrl || null;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => navigate(`/live/${s.id}`)}
+                  className="flex flex-col items-center gap-1.5 flex-shrink-0 focus:outline-none"
+                  aria-label={`Watch ${s.name} live`}
+                >
+                  <span
+                    className="relative block rounded-full"
+                    style={{
+                      width: 58,
+                      height: 58,
+                      padding: 2,
+                      background: "linear-gradient(135deg,#D4007A,#E69138)",
+                    }}
+                  >
+                    <span className="block w-full h-full rounded-full overflow-hidden" style={{ background: "#1e1e1e", boxShadow: "inset 0 0 0 2px #121212" }}>
+                      {thumb ? (
+                        <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
+                      ) : (
+                        <span className="w-full h-full flex items-center justify-center text-white text-sm font-bold">{initial}</span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-pnp-textSecondary max-w-[62px] truncate">{s.performerName || s.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Spotlight — 132×176 cards for currently-live streams */}
+      {showRails && liveStreams.length > 0 && (
+        <div className="mb-4">
+          <div
+            className="mb-2"
+            style={{ fontSize: 11, letterSpacing: "0.08em", color: "#a1a1a3", textTransform: "uppercase", fontWeight: 700 }}
+          >
+            Spotlight
+          </div>
+          <div className="-mx-4 px-4">
+            <div className="flex gap-2.5 overflow-x-auto no-scrollbar">
+              {liveStreams.slice(0, 8).map((s) => {
+                const initial = (s.name || "?").charAt(0).toUpperCase();
+                const thumb = s.thumbnailUrl || null;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => navigate(`/live/${s.id}`)}
+                    className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
+                    style={{ width: 132, height: 176, borderRadius: 14 }}
+                    aria-label={`Watch ${s.name} live`}
+                  >
+                    {thumb ? (
+                      <img src={thumb} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+                    ) : (
+                      <span
+                        className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold"
+                        style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.7),rgba(230,145,56,0.7))" }}
+                      >
+                        {initial}
+                      </span>
+                    )}
+                    <span
+                      className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
+                      style={{ background: "#D4007A" }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
+                      LIVE
+                    </span>
+                    {typeof s.viewerCount === "number" && s.viewerCount > 0 && (
+                      <span className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-md text-white text-[10px] font-semibold" style={{ background: "rgba(0,0,0,0.55)" }}>
+                        👁 {s.viewerCount}
+                      </span>
+                    )}
+                    <span
+                      className="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-6 text-white text-xs font-semibold truncate"
+                      style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}
+                    >
+                      {s.performerName || s.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* All / Following tabs */}
       {canShowTabs && (

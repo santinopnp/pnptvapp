@@ -1433,7 +1433,7 @@ export default function SocialPostCard({
           {/* Actions bar — hidden on synthetic carousel posts (no real post to like) */}
           {!post.is_carousel && (
           <div
-            className="flex items-center gap-3 mt-3 flex-wrap"
+            className="flex items-center gap-3 mt-3 pt-2.5 flex-wrap border-t border-white/5"
             style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
             onClick={(e) => e.stopPropagation()}
           >

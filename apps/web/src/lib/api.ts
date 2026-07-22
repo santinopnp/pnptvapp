@@ -1032,6 +1032,7 @@ export interface UserProfile {
   email?: string;
   bio: string | null;
   photoUrl: string | null;
+  coverUrl?: string | null;
   subscriptionStatus: string;
   tier: string;
   label?: 'PRIME' | 'BASIC' | 'FREE';
@@ -1365,6 +1366,33 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
     throw new Error(error.error || `API error ${res.status}`);
   }
 
+  return res.json();
+}
+
+export async function uploadCoverPhoto(file: File): Promise<{ success: boolean; coverUrl: string }> {
+  const formData = new FormData();
+  formData.append("cover", file);
+  const res = await fetch(`${API_BASE}/api/webapp/profile/cover`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteCoverPhoto(): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/webapp/profile/cover`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
   return res.json();
 }
 
@@ -9038,6 +9066,7 @@ export interface CreatorPublicProfile {
     username: string;
     first_name: string;
     photo_url: string | null;
+    cover_url: string | null;
     bio: string | null;
     creator_type: "creator" | "crystal" | "ice" | "diamond" | "full_time";
     creator_role: "live" | "content_creator" | "both" | null;

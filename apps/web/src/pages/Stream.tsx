@@ -82,7 +82,8 @@ function ChatRow(props: any) {
   return (
     <div style={style} className="py-0.5">
       <div className="text-xs flex items-center gap-1">
-        <span className="font-medium text-gradient">@{msg.username}</span>
+        {/* design: amber usernames in live chat */}
+        <span className="font-semibold" style={{ color: "#E69138" }}>@{msg.username}</span>
         <span className="text-pnp-textSecondary mx-0.5">·</span>
         <span className="text-pnp-textPrimary flex-1">{msg.content}</span>
         {isOwner && msg.userId && onBan && (
@@ -1623,12 +1624,57 @@ function StreamInner() {
         </div>
       )}
 
-      {/* ── Header bar ──────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-pnp-border">
-        <button onClick={() => navigate("/live")} className="text-xs text-pnp-textSecondary hover:text-pnp-accent transition-colors">
-          {String.fromCharCode(8592)} {t.live.backToLive}
+      {/* ── Header bar ─ design: back + [avatar · name · viewer count · LIVE] + actions ── */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-pnp-border">
+        <button onClick={() => navigate("/live")} aria-label={t.live.backToLive} className="flex-shrink-0 text-pnp-textSecondary hover:text-pnp-accent transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
         </button>
-        <div className="flex items-center gap-1.5">
+        {/* Streamer identity block */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span
+            className="relative flex-shrink-0 rounded-full overflow-hidden"
+            style={{
+              width: 34,
+              height: 34,
+              boxShadow: "0 0 0 2px #121212, 0 0 0 3px #D4007A",
+              background: "#1e1e1e",
+            }}
+          >
+            {stream.thumbnailUrl ? (
+              <img src={stream.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="w-full h-full flex items-center justify-center text-white text-sm font-bold" style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}>
+                {(stream.name || "?").charAt(0).toUpperCase()}
+              </span>
+            )}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-white truncate leading-tight">{stream.name}</p>
+            <p className="text-[10px] text-pnp-textSecondary leading-tight mt-0.5 flex items-center gap-2">
+              {stream.isLive && (
+                <span className="flex items-center gap-1">
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  {(stream.viewerCount ?? 0).toLocaleString()} watching
+                </span>
+              )}
+              {stream.isLive && (
+                <span
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-white text-[9px] font-bold"
+                  style={{ background: "#D4007A" }}
+                >
+                  <span className="w-1 h-1 rounded-full bg-white animate-pulse" aria-hidden="true" />
+                  LIVE
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Clipboard copy confirmation toast */}
           {shareCopied && (
             <span
@@ -2042,23 +2088,24 @@ function StreamInner() {
             </div>
           )}
 
-          {/* ── Tip goal progress bar — flex-shrink-0 so video+bar are always visible ── */}
+          {/* ── Tip goal progress bar — design: amber label, brand-gradient fill ── */}
           {tipGoal && tipGoal.goalAmount && (
             <div className="flex-shrink-0 px-4 py-2 bg-pnp-surface border-b border-pnp-border">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold text-pnp-textPrimary truncate">
-                  {tipGoal.goalLabel || "Goal"}
+                <span className="text-xs font-bold truncate flex items-center gap-1" style={{ color: "#E69138" }}>
+                  <span aria-hidden="true">🎯</span> {tipGoal.goalLabel || "Goal"}
                 </span>
-                <span className="text-xs text-pnp-textSecondary flex-shrink-0 ml-2">
-                  {Math.round(tipGoal.progress)}/{Math.round(tipGoal.goalAmount)} {t.live.tokens}
+                <span className="text-xs text-pnp-textSecondary flex-shrink-0 ml-2 tabular-nums">
+                  {Math.round(tipGoal.progress).toLocaleString()} / {Math.round(tipGoal.goalAmount).toLocaleString()} {t.live.tokens}
                 </span>
               </div>
-              <div className="h-2 rounded-full bg-pnp-border overflow-hidden">
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.14)" }}>
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    tipGoal.completed ? "bg-green-500" : "bg-pnp-accent"
-                  }`}
-                  style={{ width: `${Math.min(100, Math.round((tipGoal.progress / tipGoal.goalAmount) * 100))}%` }}
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, Math.round((tipGoal.progress / tipGoal.goalAmount) * 100))}%`,
+                    background: tipGoal.completed ? "#34C759" : "linear-gradient(135deg,#D4007A,#E69138)",
+                  }}
                 />
               </div>
               {tipGoal.completed && (
@@ -2553,10 +2600,10 @@ function StreamInner() {
                               You are banned from this stream's chat.
                             </p>
                           ) : (
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 items-center">
                               <input
                                 type="text"
-                                placeholder="Type a message..."
+                                placeholder="Say something…"
                                 aria-label="Type a chat message"
                                 value={chatInput}
                                 onChange={(e) => setChatInput(e.target.value)}
@@ -2567,12 +2614,14 @@ function StreamInner() {
                                   }
                                 }}
                                 maxLength={500}
-                                className="flex-1 rounded-lg bg-pnp-surface border border-pnp-border px-3 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-2 focus:ring-pnp-accent"
+                                className="flex-1 h-10 rounded-full border border-white/10 px-4 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60"
+                                style={{ background: "rgba(255,255,255,0.06)" }}
                               />
                               <button
                                 onClick={submitChat}
                                 disabled={!chatInput.trim()}
-                                className="px-3 py-1.5 rounded-lg btn-gradient text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="h-10 px-5 rounded-full text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
                               >
                                 Send
                               </button>
@@ -2736,10 +2785,10 @@ function StreamInner() {
                         You are banned from this stream's chat.
                       </p>
                     ) : (
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 items-center">
                         <input
                           type="text"
-                          placeholder="Type a message..."
+                          placeholder="Say something…"
                           aria-label="Type a chat message"
                           value={chatInput}
                           onChange={(e) => setChatInput(e.target.value)}
@@ -2750,12 +2799,14 @@ function StreamInner() {
                             }
                           }}
                           maxLength={500}
-                          className="flex-1 rounded-lg bg-pnp-surface border border-pnp-border px-3 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-2 focus:ring-pnp-accent"
+                          className="flex-1 h-10 rounded-full border border-white/10 px-4 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60"
+                          style={{ background: "rgba(255,255,255,0.06)" }}
                         />
                         <button
                           onClick={submitChat}
                           disabled={!chatInput.trim()}
-                          className="px-3 py-1.5 rounded-lg btn-gradient text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="h-10 px-5 rounded-full text-white text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
                         >
                           Send
                         </button>

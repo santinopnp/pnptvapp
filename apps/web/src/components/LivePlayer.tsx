@@ -430,7 +430,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
       )}
       {status === "live" && (
         <div className="absolute top-3 left-3 z-10">
-          <Badge variant="error">LIVE</Badge>
+          <Badge variant="accent">LIVE</Badge>
         </div>
       )}
       {title && (

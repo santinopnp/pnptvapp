@@ -1195,293 +1195,289 @@ export default function CreatorProfilePage() {
       </Helmet>
 
       <div className="min-h-dvh" style={{ background: "var(--pnp-background)" }}>
-        {/* ── Volver header — black bar, design spec item 1 ─────────────────────── */}
-        <div
-          className="flex items-center px-4 py-3"
-          style={{ background: "#000", borderBottom: "1px solid #1c1c1c" }}
-        >
+        {/* ── Cover band ── */}
+        <div className="relative" style={{ height: 140, background: "#1e1e1e", overflow: "hidden" }}>
+          {creator.cover_url && (creator.cover_url.startsWith("/") || creator.cover_url.startsWith("http")) ? (
+            <>
+              <img
+                src={creator.cover_url}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover"
+                aria-hidden="true"
+              />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(180deg,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.35) 100%)" }} />
+            </>
+          ) : creator.photo_url && (creator.photo_url.startsWith("/") || creator.photo_url.startsWith("http")) ? (
+            <>
+              <img
+                src={creator.photo_url}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover"
+                style={{ filter: "blur(28px) saturate(1.2)", transform: "scale(1.15)" }}
+                aria-hidden="true"
+              />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(180deg,rgba(0,0,0,0.15) 0%,rgba(0,0,0,0.55) 100%)" }} />
+            </>
+          ) : (
+            <div className="absolute inset-0" style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.35),rgba(230,145,56,0.25))" }} />
+          )}
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="flex items-center gap-2 text-white"
-            style={{ fontSize: 13, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+            className="absolute top-3 left-3 flex items-center justify-center rounded-full text-white transition-colors"
+            style={{ width: 34, height: 34, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.12)" }}
             aria-label="Volver"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
-            Volver
           </button>
+          {/* Kebab menu — cover overlay (moved from wide action row to match mockup) */}
+          {!isOwnProfile && (
+            <div className="absolute top-3 right-3">
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="Más opciones"
+                aria-expanded={menuOpen}
+                className="flex items-center justify-center rounded-full text-white"
+                style={{ width: 34, height: 34, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.12)" }}
+              >
+                <MoreVertical size={16} aria-hidden="true" />
+              </button>
+              {menuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-[calc(100%+6px)] z-20 w-44 rounded-xl overflow-hidden border border-white/10 shadow-xl"
+                    style={{ background: "#1e1e1e" }}
+                  >
+                    <button
+                      role="menuitem"
+                      onClick={handleMessageClick}
+                      className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-white/85 hover:bg-white/5 transition-colors"
+                    >
+                      <MessageCircle size={14} aria-hidden="true" /> Mensaje
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => { setMenuOpen(false); setShowReportModal(true); }}
+                      className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-white/85 hover:bg-white/5 transition-colors"
+                    >
+                      <Flag size={14} aria-hidden="true" /> Reportar
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => { setMenuOpen(false); setShowBlockConfirm(true); }}
+                      className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-red-400 hover:bg-white/5 transition-colors"
+                    >
+                      <Ban size={14} aria-hidden="true" /> {isBlocked ? "Desbloquear" : "Bloquear"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
+        <div className="max-w-lg mx-auto px-4 pt-0 pb-5 space-y-5">
 
-          {/* ── 1. HEADER CARD ──────────────────────────────────────────────── */}
+          {/* ── 1. HEADER — avatar overlaps cover on the left, right col has Hang CTA ── */}
           <section
-            className="rounded-2xl p-5 flex flex-col items-center text-center gap-3"
-            style={{ background: "var(--pnp-surface)" }}
+            className="relative -mt-[34px] mb-0"
             aria-label="Perfil del creador"
           >
-            {/* Avatar — 84px circle, 3px #FFB454 ring + 3px black gap */}
-            <div
-              className="relative rounded-full flex-none"
-              style={{
-                width: 84,
-                height: 84,
-                border: "3px solid #FFB454",
-                boxShadow: "0 0 0 3px #000",
-                borderRadius: "50%",
-                overflow: "hidden",
-              }}
-            >
-              <UserAvatar
-                userId={creator.id}
-                photoUrl={creator.photo_url}
-                displayName={creator.first_name}
-                size="xl"
-                linkToProfile={false}
-                showOnline={false}
-              />
+            <div className="flex items-end justify-between gap-3">
+              {/* Avatar — 78px, magenta ring, overlaps cover */}
+              <div
+                className="relative rounded-full flex-none"
+                style={{
+                  width: 78,
+                  height: 78,
+                  border: "3px solid #D4007A",
+                  boxShadow: "0 0 0 3px #121212",
+                  borderRadius: "50%",
+                  overflow: "hidden",
+                  background: "#1e1e1e",
+                }}
+              >
+                <UserAvatar
+                  userId={creator.id}
+                  photoUrl={creator.photo_url}
+                  displayName={creator.first_name}
+                  size="xl"
+                  linkToProfile={false}
+                  showOnline={false}
+                />
+              </div>
+
+              {/* Right col — Hang with X + lock caption (only for other profiles, when a hangout exists) */}
+              {!isOwnProfile && hangouts && hangouts.length > 0 && (
+                <div className="flex flex-col items-end gap-1 mb-1">
+                  <button
+                    onClick={() =>
+                      isSubscribed || isOwnProfile ? navigate(`/hangouts/${hangouts[0].id}`) : handleSubscribeCta()
+                    }
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-[10px] text-xs font-semibold transition-colors"
+                    style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.15)", color: "#fff" }}
+                  >
+                    Hang with {creator.first_name}
+                  </button>
+                  {!isSubscribed && (
+                    <span className="flex items-center gap-1" style={{ fontSize: 9, color: "#A1A1A3" }}>
+                      <Lock size={9} aria-hidden="true" /> Paid members only
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Identity row: name (Ethnocentric) + badges + price + shield, then @handle below */}
-            <div className="space-y-1 min-w-0 w-full">
-              <div className="flex items-center justify-center gap-2 flex-wrap">
+            {/* Identity — name + verify badge, then @handle · city on one line */}
+            <div className="mt-3 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1
                   className="text-pnp-textPrimary leading-tight"
                   style={{ fontSize: 20, fontWeight: 400, fontFamily: "'Ethnocentric', sans-serif", letterSpacing: "0.02em", margin: 0 }}
                 >
                   {creator.first_name}
                 </h1>
-                <CreatorBadgeRow
-                  isPrime={creator.isPrime}
-                  creatorRole={creator.creator_role}
-                  priceUsd={creator.creator_price_usd}
-                />
                 {creator.creator_verified && (
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="#5ED1C4" aria-label="Creador verificado">
                     <path d="M12 2l8 3.5v5.1c0 5-3.4 9.7-8 11.4-4.6-1.7-8-6.4-8-11.4V5.5L12 2z" />
                   </svg>
                 )}
+                <CreatorBadgeRow
+                  isPrime={creator.isPrime}
+                  creatorRole={creator.creator_role}
+                  priceUsd={creator.creator_price_usd}
+                />
               </div>
-              <p className="text-pnp-textSecondary" style={{ fontSize: 12 }}>@{creator.username}</p>
+              <p className="text-pnp-textSecondary mt-1" style={{ fontSize: 12 }}>
+                @{creator.username}
+              </p>
             </div>
 
-            {/* Bio */}
-            {creator.bio && (
-              <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 max-w-xs">
-                {creator.bio}
-              </p>
-            )}
-
-            {/* ── Stats grid: Publicaciones / Seguidores / Siguiendo ─────────── */}
-            <div className="grid grid-cols-3 gap-2 w-full mt-1" role="group" aria-label="Estadísticas del creador">
+            {/* ── Stats row — flat 3-col (Posts / Fans / Exclusive) — mockup ─── */}
+            <div className="flex gap-8 pt-4 pb-1" role="group" aria-label="Estadísticas del creador">
               {[
-                { label: "PUBLICACIONES", value: creator.postCount },
-                { label: "SEGUIDORES", value: followerCount },
-                { label: "SIGUIENDO", value: followingCount },
+                { label: "Posts", value: creator.postCount },
+                { label: "Fans", value: followerCount },
+                { label: "Exclusive", value: creator.exclusiveCount },
               ].map((stat) => (
-                <div
-                  key={stat.label}
-                  className="rounded-lg py-3 px-1.5 text-center"
-                  style={{ background: "#161616", border: "1px solid #2A2A2A", borderRadius: 8 }}
-                >
+                <div key={stat.label}>
                   <p className="font-bold text-white leading-none" style={{ fontSize: 16 }}>{stat.value.toLocaleString()}</p>
-                  <p className="mt-1 font-semibold" style={{ fontSize: 8, letterSpacing: "0.08em", color: "#A1A1A3" }}>{stat.label}</p>
+                  <p className="mt-1" style={{ fontSize: 11, color: "#A1A1A3" }}>{stat.label}</p>
                 </div>
               ))}
             </div>
 
-            {/* ── Meta row: Exclusivo / Llamadas / Miembro desde ──────────────── */}
-            <div className="flex items-center justify-center gap-3.5 flex-wrap" style={{ fontSize: 11, color: "#A1A1A3" }}>
-              <span className="flex items-center gap-1">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#D4007A" strokeWidth="2.2" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                </svg>
-                <b style={{ color: "#fff" }}>{creator.exclusiveCount}</b> Exclusivo
-              </span>
-              <span>
-                <b style={{ color: "#fff" }}>{creator.completedCallsCount}</b> Llamadas
-              </span>
-              {creator.memberSince && (
-                <span className="flex items-center gap-1">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#A1A1A3" strokeWidth="2" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
-                  </svg>
-                  Miembro desde {new Date(creator.memberSince).toLocaleDateString("es-ES", { month: "long", year: "numeric" })}
-                </span>
-              )}
-            </div>
-
-            {/* ── Action row: Siguiendo / Mensaje / ⋮ — only for other profiles ── */}
-            {!isOwnProfile && (
-              <div className="flex items-center gap-2 w-full">
-                <button
-                  onClick={handleToggleFollow}
-                  disabled={followLoading}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] border text-sm font-semibold transition-colors disabled:opacity-50 min-h-[44px]"
-                  style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
-                >
-                  {isFollowing ? <UserCheck size={14} aria-hidden="true" /> : <UserPlus size={14} aria-hidden="true" />}
-                  {isFollowing ? "Siguiendo" : "Seguir"}
-                </button>
-                <button
-                  onClick={handleMessageClick}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] border text-sm font-semibold transition-colors min-h-[44px]"
-                  style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
-                >
-                  <MessageCircle size={14} aria-hidden="true" />
-                  Mensaje
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setMenuOpen((v) => !v)}
-                    aria-label="Más opciones"
-                    aria-expanded={menuOpen}
-                    className="w-[46px] h-[44px] flex items-center justify-center rounded-[10px] border transition-colors"
-                    style={{ borderColor: "rgba(255,255,255,.15)", background: "#161616", color: "#fff" }}
-                  >
-                    <MoreVertical size={16} aria-hidden="true" />
-                  </button>
-                  {menuOpen && (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />
-                      <div
-                        role="menu"
-                        className="absolute right-0 top-[calc(100%+6px)] z-20 w-44 rounded-xl overflow-hidden border border-white/10 shadow-xl"
-                        style={{ background: "#1e1e1e" }}
-                      >
-                        <button
-                          role="menuitem"
-                          onClick={() => { setMenuOpen(false); setShowReportModal(true); }}
-                          className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-white/85 hover:bg-white/5 transition-colors"
-                        >
-                          <Flag size={14} aria-hidden="true" /> Reportar
-                        </button>
-                        <button
-                          role="menuitem"
-                          onClick={() => { setMenuOpen(false); setShowBlockConfirm(true); }}
-                          className="w-full flex items-center gap-2 px-3.5 py-3 text-sm text-red-400 hover:bg-white/5 transition-colors"
-                        >
-                          <Ban size={14} aria-hidden="true" /> {isBlocked ? "Desbloquear" : "Bloquear"}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
+            {/* Bio */}
+            {creator.bio && (
+              <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 mt-3">
+                {creator.bio}
+              </p>
             )}
+
           </section>
 
-          {/* ── 2. HERO CTA STRIP ───────────────────────────────────────────── */}
+          {/* ── 2. HERO CTA STACK — mockup: Subscribe / Book 30 / Book 60 / Channels ── */}
           <div ref={subscribePanelRef} className="space-y-2">
-            {creator.creator_subscription_paused ? (
-              /* Paused state */
-              <div className="flex flex-col gap-2">
-                <div
-                  className="flex items-center justify-center gap-2 py-3 rounded-[10px] border border-white/10 text-sm font-medium text-pnp-textSecondary min-h-[52px]"
-                  style={{ background: "var(--pnp-surface)" }}
+            {/* State-specific status pill above the actions */}
+            {creator.creator_subscription_paused && (
+              <div
+                className="flex items-center justify-center gap-2 py-3 rounded-[10px] border border-white/10 text-sm font-medium text-pnp-textSecondary min-h-[52px]"
+                style={{ background: "var(--pnp-surface)" }}
+              >
+                Suscripciones pausadas
+              </div>
+            )}
+            {!creator.creator_subscription_paused && isSubscribed && (
+              <div className="flex items-center justify-center gap-3 pb-1">
+                <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25">
+                  <CheckCircle2 size={14} aria-hidden="true" />
+                  Suscrito
+                </span>
+                <button
+                  onClick={handleUnsubscribe}
+                  disabled={unsubscribeLoading}
+                  className="text-xs text-pnp-textSecondary underline decoration-dotted hover:text-pnp-textPrimary transition-colors disabled:opacity-50 min-h-[44px] px-1"
                 >
-                  Suscripciones pausadas
+                  {unsubscribeLoading ? "Cancelando…" : "Gestionar"}
+                </button>
+              </div>
+            )}
+
+            {/* Subscribe — primary CTA, brand gradient, mockup pattern:
+                "Subscribe · $X · [tier emoji]" */}
+            {!creator.creator_subscription_paused && !isSubscribed && creator.creator_price_usd > 0 && (
+              <button
+                onClick={handleSubscribeCta}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
+                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)", color: "#fff", fontSize: 14 }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                </svg>
+                Subscribe · ${creator.creator_price_usd.toFixed(0)}
+                {(creator.creator_type === "diamond" || creator.creator_type === "full_time") && " 💎"}
+                {creator.creator_type === "ice" && " 🧊"}
+                {creator.creator_type === "crystal" && " ✨"}
+              </button>
+            )}
+
+            {/* Book 30 min / 60 min — two half-width secondary buttons
+                (falls back to top-2 packages if creator doesn't offer exactly 30/60). */}
+            {hasCallPackages && (() => {
+              const pkg30 = activePackages.find((p) => p.duration_minutes === 30);
+              const pkg60 = activePackages.find((p) => p.duration_minutes === 60);
+              // If exact matches missing, show the 2 cheapest packages instead
+              const fallback = [...activePackages].sort((a, b) => a.duration_minutes - b.duration_minutes).slice(0, 2);
+              const pair: PublicCallPackage[] = pkg30 && pkg60 ? [pkg30, pkg60] : fallback;
+              if (pair.length === 0) return null;
+              return (
+                <div className="flex gap-2">
+                  {pair.map((pkg) => (
+                    <button
+                      key={pkg.id}
+                      onClick={() => { setBookCallDuration(pkg.duration_minutes as 30 | 60); setShowBookCall(true); }}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[44px]"
+                      style={{ border: "1px solid rgba(255,255,255,0.15)", background: "#161616", color: "#fff" }}
+                    >
+                      <PhoneCall size={13} aria-hidden="true" />
+                      Book {pkg.duration_minutes} min call
+                    </button>
+                  ))}
                 </div>
-                {hasCallPackages && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
-                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
-                    >
-                      <PhoneCall size={14} aria-hidden="true" />
-                      Reservar llamada
-                    </button>
-                    <button
-                      onClick={() => setShowCalendarPopover((v) => !v)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all active:scale-[0.98] min-h-[52px]"
-                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                      aria-label="Ver calendario"
-                    >
-                      <Calendar size={14} aria-hidden="true" />
-                      Ver calendario
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : isSubscribed ? (
-              /* Subscribed state */
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-center gap-3">
-                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25">
-                    <CheckCircle2 size={14} aria-hidden="true" />
-                    Suscrito
-                  </span>
-                  <button
-                    onClick={handleUnsubscribe}
-                    disabled={unsubscribeLoading}
-                    className="text-xs text-pnp-textSecondary underline decoration-dotted hover:text-pnp-textPrimary transition-colors disabled:opacity-50 min-h-[44px] px-1"
-                  >
-                    {unsubscribeLoading ? "Cancelando…" : "Gestionar"}
-                  </button>
-                </div>
-                {hasCallPackages && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
-                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
-                    >
-                      <PhoneCall size={14} aria-hidden="true" />
-                      Reservar llamada
-                    </button>
-                    <button
-                      onClick={() => setShowCalendarPopover((v) => !v)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-bold transition-all active:scale-[0.98] min-h-[52px]"
-                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                    >
-                      <Calendar size={14} aria-hidden="true" />
-                      Ver calendario
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Default CTA: full-width subscribe, then secondary CTAs row below */
-              <div className="flex flex-col gap-2">
-                {/* Subscribe — full-width, teal gradient, sparkle icon */}
-                {!creator.creator_subscription_paused && creator.creator_price_usd > 0 && (
-                  <button
-                    onClick={handleSubscribeCta}
-                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-[10px] text-sm font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[52px]"
-                    style={{ background: "linear-gradient(90deg,#2DD4BF,#22D3EE)", color: "#04252b", fontSize: 14 }}
-                  >
-                    {/* Sparkle icon matching design spec */}
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                    </svg>
-                    Suscribirse ${creator.creator_price_usd.toFixed(0)}/mo
-                  </button>
-                )}
-                {/* Secondary CTAs — Reservar llamada + Ver calendario */}
-                {hasCallPackages && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowBookCall(true)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[44px]"
-                      style={{ border: "1px solid rgba(212,0,122,.5)", background: "rgba(212,0,122,.12)", color: "#FF4DA6" }}
-                    >
-                      <PhoneCall size={14} aria-hidden="true" />
-                      Reservar llamada
-                    </button>
-                    <button
-                      onClick={() => setShowCalendarPopover((v) => !v)}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 rounded-[10px] text-xs font-bold transition-all active:scale-[0.98] min-h-[44px]"
-                      style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
-                    >
-                      <Calendar size={14} aria-hidden="true" />
-                      Ver calendario
-                    </button>
-                  </div>
-                )}
-              </div>
+              );
+            })()}
+
+            {/* Channels — ghost, full-width, scrolls to Canales section */}
+            {hasChannels && (
+              <button
+                onClick={() => {
+                  const el = document.getElementById("creator-channels");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-semibold transition-colors min-h-[44px]"
+                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "transparent", color: "rgba(255,255,255,0.75)" }}
+              >
+                Channels
+              </button>
+            )}
+
+            {/* Compact Follow chip (only if not own profile) — mockup omits
+                it, but we surface as a small pill below to keep the follow
+                relationship discoverable. */}
+            {!isOwnProfile && (
+              <button
+                onClick={handleToggleFollow}
+                disabled={followLoading}
+                className="mx-auto flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-colors disabled:opacity-50"
+                style={{ border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.8)" }}
+              >
+                {isFollowing ? <UserCheck size={12} aria-hidden="true" /> : <UserPlus size={12} aria-hidden="true" />}
+                {isFollowing ? "Siguiendo" : "Seguir"}
+              </button>
             )}
 
             {/* Ver calendario popover — reuses the already-fetched nextAvailability slot */}
@@ -1644,6 +1640,7 @@ export default function CreatorProfilePage() {
                 {/* ── 3c. Canales — collapsible accordion ─────────────────────── */}
                 {hasChannels && (
                   <div
+                    id="creator-channels"
                     className="rounded-[12px] overflow-hidden"
                     style={{ border: "1px solid #2A2A2A", background: "#161616" }}
                   >
@@ -2011,7 +2008,7 @@ export default function CreatorProfilePage() {
                   className="flex-1 py-3 text-sm font-semibold transition-colors"
                   style={
                     profileTab === "pubs"
-                      ? { color: "#fff", borderBottom: "2px solid #2DD4BF" }
+                      ? { color: "#fff", borderBottom: "2px solid #D4007A" }
                       : { color: "var(--pnp-text-secondary, #8E8E93)", borderBottom: "2px solid transparent" }
                   }
                 >
@@ -2022,7 +2019,7 @@ export default function CreatorProfilePage() {
                   className="flex-1 py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5"
                   style={
                     profileTab === "excl"
-                      ? { color: "#fff", borderBottom: "2px solid #2DD4BF" }
+                      ? { color: "#fff", borderBottom: "2px solid #D4007A" }
                       : { color: "var(--pnp-text-secondary, #8E8E93)", borderBottom: "2px solid transparent" }
                   }
                 >

@@ -1343,7 +1343,8 @@ export function Layout() {
               <img
                 src={user.photoUrl}
                 alt={user.displayName || "Profile"}
-                className="w-9 h-9 rounded-full object-cover ring-2 ring-white/10"
+                className="w-9 h-9 rounded-full object-cover"
+                style={{ boxShadow: "0 0 0 2px #121212, 0 0 0 4px #D4007A" }}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                   (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.removeProperty("display");
@@ -1351,10 +1352,11 @@ export function Layout() {
               />
             ) : null}
             <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold ring-2 ring-white/10"
+              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
               style={{
                 background: "linear-gradient(135deg, #D4007A, #E69138)",
                 color: "#fff",
+                boxShadow: "0 0 0 2px #121212, 0 0 0 4px #D4007A",
                 display: user?.photoUrl && (user.photoUrl.startsWith("/") || user.photoUrl.startsWith("http")) ? "none" : undefined,
               }}
             >
