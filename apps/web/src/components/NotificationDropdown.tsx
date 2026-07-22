@@ -20,6 +20,31 @@ function timeAgo(date: string): string {
   return `${days}d`;
 }
 
+// For mention_post / tag_post — surface the "origin" that spawned the post
+// (a reply parent, repost source, hyped-share origin, or channel video).
+// Backend enriches notification.metadata with original_kind + related ids;
+// see mentionService._resolvePostOrigin.
+function mentionOriginChip(notif: Notification): { label: string; href?: string } | null {
+  if (notif.type !== "mention_post" && notif.type !== "tag_post") return null;
+  const meta = notif.metadata as Record<string, unknown> | undefined;
+  if (!meta) return null;
+  const kind = typeof meta.original_kind === "string" ? meta.original_kind : null;
+  const originalPostId = meta.original_post_id != null ? String(meta.original_post_id) : null;
+  const channelVideoId = meta.channel_video_id != null ? String(meta.channel_video_id) : null;
+  switch (kind) {
+    case "reply_to":
+      return { label: "↩ in a reply to a post", href: originalPostId ? `/social/post/${originalPostId}` : undefined };
+    case "repost_of":
+      return { label: "🔁 in a repost", href: originalPostId ? `/social/post/${originalPostId}` : undefined };
+    case "community_hype":
+      return { label: "🔥 in a hyped share", href: originalPostId ? `/social/post/${originalPostId}` : undefined };
+    case "channel_promo":
+      return { label: `🎬 on your channel video${channelVideoId ? ` #${channelVideoId}` : ""}` };
+    default:
+      return null;
+  }
+}
+
 function CategoryIcon({ id }: { id: Category }) {
   const cls = "w-5 h-5";
   if (id === "all") return (
@@ -342,6 +367,24 @@ export function NotificationDropdown({ onClose, isMobile = false }: Props) {
                     <p className={`text-[13px] leading-snug ${!notif.isRead ? "text-pnp-textPrimary font-medium" : "text-pnp-textSecondary"}`}>
                       {notif.message}
                     </p>
+                    {(() => {
+                      const chip = mentionOriginChip(notif);
+                      if (!chip) return null;
+                      const content = (
+                        <span className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/5 text-pnp-textSecondary">
+                          {chip.label}
+                        </span>
+                      );
+                      return chip.href ? (
+                        <span
+                          role="link"
+                          onClick={(e) => { e.stopPropagation(); onClose(); navigate(chip.href!); }}
+                          className="cursor-pointer hover:opacity-80"
+                        >
+                          {content}
+                        </span>
+                      ) : content;
+                    })()}
                     {notif.type === "availability_expiring" && (
                       <span
                         role="button"

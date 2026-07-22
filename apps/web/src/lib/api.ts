@@ -5051,6 +5051,28 @@ export function previewAdminXCampaign(id: string): Promise<{ success: boolean; o
   return request(`/api/webapp/admin/x-campaigns/${id}/preview`, { method: "POST" });
 }
 
+// PNPtv auto-amplification analytics — reads broadcast_events aggregates.
+export interface BroadcastEventsByChannel { channel: string; status: string; count: number }
+export interface BroadcastEventsTopCreator {
+  creator_id: string; username: string | null; first_name: string | null;
+  sent: number; failed: number; skipped: number;
+}
+export interface BroadcastEventRow {
+  id: string; creator_id: string; content_type: string; content_ref: string | null;
+  channel: string; target: string | null; status: string;
+  reason: string | null; error_message: string | null; created_at: string;
+}
+export function getBroadcastEventsSummary(sinceDays = 30): Promise<{
+  success: boolean;
+  sinceDays: number;
+  byChannel: BroadcastEventsByChannel[];
+  byStatus: { status: string; count: number }[];
+  topCreators: BroadcastEventsTopCreator[];
+  recent: BroadcastEventRow[];
+}> {
+  return request(`/api/webapp/admin/broadcast-events/summary?sinceDays=${sinceDays}`);
+}
+
 export function duplicateAdminXCampaign(id: string): Promise<{ success: boolean; campaignId: string }> {
   return request(`/api/webapp/admin/x-campaigns/${id}/duplicate`, { method: "POST" });
 }

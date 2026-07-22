@@ -5,6 +5,7 @@ import { StatCard } from "@/components/admin/StatCard";
 import { ConfirmModal } from "@/components/admin/ConfirmModal";
 import { Badge } from "@pnptv/ui-kit";
 import {
+  getBroadcastEventsSummary,
   getAdminXCampaignStats,
   getAdminXCampaigns,
   createAdminXCampaign,
@@ -337,6 +338,219 @@ const defaultForm = {
   attachVideos: false,
   personaType: "generic" as "santino" | "lex" | "generic",
 };
+
+// PNPtv auto-amplification analytics — reads /api/webapp/admin/broadcast-events/summary.
+// Renders inline on the XAutoCampaigns admin page so admins can see how the pipeline
+// (X, Telegram groups, DMs) is performing without leaving X campaigns.
+function PnptvAmplificationPanel() {
+  const [sinceDays, setSinceDays] = React.useState(30);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [byChannel, setByChannel] = React.useState<{ channel: string; status: string; count: number }[]>([]);
+  const [byStatus, setByStatus] = React.useState<{ status: string; count: number }[]>([]);
+  const [topCreators, setTopCreators] = React.useState<Array<{ creator_id: string; username: string | null; first_name: string | null; sent: number; failed: number; skipped: number }>>([]);
+  const [recent, setRecent] = React.useState<Array<{ id: string; creator_id: string; channel: string; target: string | null; status: string; reason: string | null; error_message: string | null; created_at: string; content_type: string; content_ref: string | null }>>([]);
+
+  const load = React.useCallback(() => {
+    setLoading(true); setError(null);
+    getBroadcastEventsSummary(sinceDays)
+      .then((r) => {
+        if (r.success) {
+          setByChannel(r.byChannel || []);
+          setByStatus(r.byStatus || []);
+          setTopCreators(r.topCreators || []);
+          setRecent(r.recent || []);
+        } else {
+          setError("Failed to load amplification analytics.");
+        }
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load."))
+      .finally(() => setLoading(false));
+  }, [sinceDays]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  // Pivot byChannel into { channel: { sent, failed, skipped, total } }
+  const channelPivot: Record<string, { sent: number; failed: number; skipped: number; total: number }> = {};
+  for (const row of byChannel) {
+    if (!channelPivot[row.channel]) channelPivot[row.channel] = { sent: 0, failed: 0, skipped: 0, total: 0 };
+    if (row.status === "sent") channelPivot[row.channel].sent += row.count;
+    else if (row.status === "failed") channelPivot[row.channel].failed += row.count;
+    else if (row.status === "skipped") channelPivot[row.channel].skipped += row.count;
+    channelPivot[row.channel].total += row.count;
+  }
+
+  const totalByStatus = byStatus.reduce((acc, r) => { acc[r.status] = r.count; return acc; }, {} as Record<string, number>);
+  const grandTotal = (totalByStatus.sent || 0) + (totalByStatus.failed || 0) + (totalByStatus.skipped || 0);
+  const successRate = (totalByStatus.sent || 0) + (totalByStatus.failed || 0) > 0
+    ? Math.round(((totalByStatus.sent || 0) / ((totalByStatus.sent || 0) + (totalByStatus.failed || 0))) * 100)
+    : null;
+
+  const statusColor = (s: string) => s === "sent" ? "#34C759" : s === "failed" ? "#FF6B6B" : "#A1A1A3";
+  const channelLabel = (c: string) => ({ x: "X (@PNPTelevision)", telegram_group: "Telegram groups", telegram_dm: "Telegram DMs" } as Record<string, string>)[c] || c;
+
+  return (
+    <div className="mb-6 rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <h2 className="text-sm font-bold text-white">PNPtv amplification pipeline</h2>
+          <p className="text-xs text-pnp-textSecondary mt-0.5">
+            Auto-announces from consented creators — X @PNPTelevision, Telegram groups, opt-in DMs.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={sinceDays}
+            onChange={(e) => setSinceDays(parseInt(e.target.value, 10))}
+            className="px-2 py-1 rounded-lg text-xs text-white"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            <option value={1} style={{ background: "#0F1116" }}>Last 24h</option>
+            <option value={7} style={{ background: "#0F1116" }}>Last 7 days</option>
+            <option value={30} style={{ background: "#0F1116" }}>Last 30 days</option>
+            <option value={90} style={{ background: "#0F1116" }}>Last 90 days</option>
+          </select>
+          <button
+            type="button"
+            onClick={load}
+            disabled={loading}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            {loading ? "…" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-xs mb-3" style={{ color: "#FF6B6B" }}>{error}</p>
+      )}
+
+      {loading && !recent.length ? (
+        <p className="text-xs text-pnp-textSecondary py-4 text-center">Loading…</p>
+      ) : grandTotal === 0 ? (
+        <p className="text-xs text-pnp-textSecondary py-4 text-center">
+          No amplification events in this window. Fires when a consented creator publishes a free video or goes live.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {/* Top-line stats */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-xl p-3" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary">Total events</p>
+              <p className="text-lg font-bold text-white mt-1">{grandTotal.toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(52,199,89,0.25)" }}>
+              <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary">Sent</p>
+              <p className="text-lg font-bold mt-1" style={{ color: "#34C759" }}>{(totalByStatus.sent || 0).toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,69,58,0.25)" }}>
+              <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary">Failed</p>
+              <p className="text-lg font-bold mt-1" style={{ color: "#FF6B6B" }}>{(totalByStatus.failed || 0).toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary">Success rate</p>
+              <p className="text-lg font-bold text-white mt-1">{successRate == null ? "—" : `${successRate}%`}</p>
+            </div>
+          </div>
+
+          {/* By channel */}
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary mb-2">By channel</p>
+            <div className="rounded-xl overflow-hidden" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                    <th className="text-left px-3 py-2 text-pnp-textSecondary font-normal">Channel</th>
+                    <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Sent</th>
+                    <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Failed</th>
+                    <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Skipped</th>
+                    <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(channelPivot).map(([ch, v]) => (
+                    <tr key={ch} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                      <td className="px-3 py-2 text-white">{channelLabel(ch)}</td>
+                      <td className="px-3 py-2 text-right" style={{ color: "#34C759" }}>{v.sent.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right" style={{ color: "#FF6B6B" }}>{v.failed.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right text-pnp-textSecondary">{v.skipped.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right text-white font-semibold">{v.total.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Top creators */}
+          {topCreators.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-pnp-textSecondary mb-2">Top creators by sent</p>
+              <div className="rounded-xl overflow-hidden" style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                      <th className="text-left px-3 py-2 text-pnp-textSecondary font-normal">Creator</th>
+                      <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Sent</th>
+                      <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Failed</th>
+                      <th className="text-right px-3 py-2 text-pnp-textSecondary font-normal">Skipped</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topCreators.map((c) => (
+                      <tr key={c.creator_id} style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td className="px-3 py-2 text-white">
+                          {c.first_name || c.username || "—"}{c.username ? <span className="text-pnp-textSecondary"> · @{c.username}</span> : null}
+                        </td>
+                        <td className="px-3 py-2 text-right" style={{ color: "#34C759" }}>{c.sent.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right" style={{ color: "#FF6B6B" }}>{c.failed.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right text-pnp-textSecondary">{c.skipped.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Recent events */}
+          <details className="rounded-xl" style={{ background: "rgba(0,0,0,0.15)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <summary className="cursor-pointer px-3 py-2 text-[11px] text-pnp-textSecondary hover:text-white">
+              Recent events ({recent.length})
+            </summary>
+            <div className="px-3 pb-3 pt-1 max-h-72 overflow-y-auto">
+              <table className="w-full text-[10px]">
+                <thead>
+                  <tr className="text-pnp-textSecondary">
+                    <th className="text-left py-1 pr-2 font-normal">Time</th>
+                    <th className="text-left py-1 pr-2 font-normal">Type</th>
+                    <th className="text-left py-1 pr-2 font-normal">Channel</th>
+                    <th className="text-left py-1 pr-2 font-normal">Target</th>
+                    <th className="text-left py-1 pr-2 font-normal">Status</th>
+                    <th className="text-left py-1 font-normal">Reason / error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((r) => (
+                    <tr key={r.id} className="border-t border-white/5">
+                      <td className="py-1 pr-2 text-pnp-textSecondary whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
+                      <td className="py-1 pr-2 text-white/80">{r.content_type}{r.content_ref ? ` · ${r.content_ref}` : ""}</td>
+                      <td className="py-1 pr-2 text-white/80">{r.channel}</td>
+                      <td className="py-1 pr-2 text-white/60 truncate max-w-[140px]" title={r.target || ""}>{r.target || "—"}</td>
+                      <td className="py-1 pr-2 font-semibold" style={{ color: statusColor(r.status) }}>{r.status}</td>
+                      <td className="py-1 text-pnp-textSecondary truncate max-w-[240px]" title={r.error_message || r.reason || ""}>{r.error_message || r.reason || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function XAutoCampaigns() {
   const t = useI18n();
@@ -862,6 +1076,9 @@ export default function XAutoCampaigns() {
       <p className="text-sm text-pnp-textSecondary mb-6">
         {t.admin.xCampaigns.subtitle}
       </p>
+
+      {/* PNPtv Amplification Analytics — broadcast_events summary */}
+      <PnptvAmplificationPanel />
 
       {/* Feedback */}
       {success && (

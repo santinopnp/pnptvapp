@@ -9,6 +9,48 @@ function parseMentions(content) {
   return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
 }
 
+/**
+ * Resolve the "origin" of a post — the piece of content that spawned it.
+ * Cheap SELECT that lets mention notifications carry a link back to the
+ * source when the mentioned-in post is a reply, repost, hype, or promo.
+ *
+ * Returns { originalPostId, originalKind, channelVideoId, channelId } — any
+ * field may be null. `originalKind` is one of:
+ *   'reply_to'       — this is a reply; originalPostId is the parent
+ *   'repost_of'      — this is a repost/quote; originalPostId is the origin
+ *   'community_hype' — this is a hype re-share; originalPostId from metadata
+ *   'channel_promo'  — system-generated video promo; channelVideoId set
+ *   null             — top-level standalone post; no origin
+ */
+async function _resolvePostOrigin(postId) {
+  try {
+    const { rows } = await query(
+      `SELECT reply_to_id, repost_of_id, channel_id, metadata
+         FROM social_posts WHERE id = $1`,
+      [postId]
+    );
+    const row = rows[0];
+    if (!row) return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: null };
+    const meta = (row.metadata && typeof row.metadata === 'object') ? row.metadata : {};
+    if (row.repost_of_id) {
+      return { originalPostId: Number(row.repost_of_id), originalKind: 'repost_of', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (row.reply_to_id) {
+      return { originalPostId: Number(row.reply_to_id), originalKind: 'reply_to', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (meta.kind === 'community_hype' && meta.original_post_id) {
+      return { originalPostId: Number(meta.original_post_id), originalKind: 'community_hype', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (meta.kind === 'channel_promo' && meta.video_id) {
+      return { originalPostId: null, originalKind: 'channel_promo', channelVideoId: Number(meta.video_id) || null, channelId: Number(meta.channel_id) || row.channel_id || null };
+    }
+    return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: row.channel_id ?? null };
+  } catch (err) {
+    logger.warn('_resolvePostOrigin failed', { postId, error: err.message });
+    return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: null };
+  }
+}
+
 /** Resolve usernames to user rows. Returns only matched active users. */
 async function resolveUsernames(usernames) {
   if (!usernames.length) return [];
@@ -36,6 +78,11 @@ async function createPostMentions(postId, mentionerId, content) {
   const actorRow = await query('SELECT username FROM users WHERE id=$1', [mentionerId]);
   const actorName = actorRow.rows[0]?.username || 'Someone';
 
+  // Resolve the "origin" of the post once (reply parent, repost source, hype
+  // origin, channel-promo video). Attached to every notification so the UI
+  // can link back to the real content, not just the derived mention wrapper.
+  const origin = await _resolvePostOrigin(postId);
+
   for (const user of users) {
     if (String(user.id) === String(mentionerId)) continue; // skip self-mention
     try {
@@ -52,7 +99,13 @@ async function createPostMentions(postId, mentionerId, content) {
         entityType: 'post',
         entityId: String(postId),
         message: `@${actorName} mentioned you in a post`,
-        metadata: { post_id: postId },
+        metadata: {
+          post_id: postId,
+          original_post_id: origin.originalPostId,
+          original_kind: origin.originalKind,
+          ...(origin.channelVideoId ? { channel_video_id: origin.channelVideoId } : {}),
+          ...(origin.channelId ? { channel_id: origin.channelId } : {}),
+        },
       });
     } catch (err) {
       logger.warn('mentionService: post mention failed', { err: err.message, user: user.id });
@@ -133,6 +186,8 @@ async function createPostTags(postId, taggerId, performerIds) {
   const actorRow = await query('SELECT username FROM users WHERE id=$1', [taggerId]);
   const actorName = actorRow.rows[0]?.username || 'Someone';
 
+  const origin = await _resolvePostOrigin(postId);
+
   for (const performer of performers) {
     if (String(performer.id) === String(taggerId)) continue;
     try {
@@ -149,7 +204,13 @@ async function createPostTags(postId, taggerId, performerIds) {
         entityType: 'post',
         entityId: String(postId),
         message: `@${actorName} tagged you in a post`,
-        metadata: { post_id: postId },
+        metadata: {
+          post_id: postId,
+          original_post_id: origin.originalPostId,
+          original_kind: origin.originalKind,
+          ...(origin.channelVideoId ? { channel_video_id: origin.channelVideoId } : {}),
+          ...(origin.channelId ? { channel_id: origin.channelId } : {}),
+        },
       });
     } catch (err) {
       logger.warn('mentionService: post tag failed', { err: err.message, performer: performer.id });

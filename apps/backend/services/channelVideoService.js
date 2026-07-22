@@ -846,14 +846,41 @@ async function publishVideo({ videoId, userId, isAdmin }) {
           `UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1`,
           [ch.id]
         ).catch(() => {});
-        // Tag channel creator + any tagged_creator_ids in post_mentions
+        // Tag channel creator + any tagged_creator_ids in post_mentions.
+        // Also fire tag_post notifications so tagged creators know their video
+        // was promoted — with channel_video_id in metadata so the UI can link
+        // back to the actual video, not just the promo post wrapper.
         const taggedIds = [ch.creator_id, ...(final.tagged_creator_ids || [])].filter(Boolean);
         const uniqueTagged = [...new Set(taggedIds)];
+        let NotificationEmitter = null;
+        try { NotificationEmitter = require('./notificationEmitter'); } catch { /* ignore */ }
         for (const uid of uniqueTagged) {
           await query(
             `INSERT INTO post_mentions (post_id, mentioned_user_id, mentioner_id, mention_type) VALUES ($1, $2, $3, 'tag') ON CONFLICT DO NOTHING`,
             [promoPostId, uid, OFFICIAL_USER_ID]
           ).catch(() => {});
+          if (NotificationEmitter && String(uid) !== String(OFFICIAL_USER_ID)) {
+            try {
+              await NotificationEmitter.emit({
+                type: 'tag_post',
+                category: 'social',
+                priority: 'normal',
+                actorId: OFFICIAL_USER_ID,
+                targetUserId: uid,
+                entityType: 'post',
+                entityId: String(promoPostId),
+                message: `@pnptv tagged you in a channel promo`,
+                metadata: {
+                  post_id: promoPostId,
+                  original_kind: 'channel_promo',
+                  channel_video_id: videoId,
+                  channel_id: ch.id,
+                },
+              });
+            } catch (emitErr) {
+              logger.warn('channel_videos: tag notification emit failed (non-fatal)', { videoId, uid, error: emitErr.message });
+            }
+          }
         }
       }
     }
