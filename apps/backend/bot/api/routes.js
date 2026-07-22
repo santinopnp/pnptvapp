@@ -8668,24 +8668,50 @@ async function fetchRunningLiveChannels() {
   }
 }
 
-// Fetch profile pics from users table for performers missing Directus photos
+// Fetch profile pics from users table for performers missing Directus photos.
+// Migration 219 renamed 348 users' UUID ids to Telegram numeric ids, so many
+// Directus performers now carry a stale pnptv_id that no longer joins to
+// users.id. Fall back to matching the Directus slug against users.username so
+// those creators still surface an avatar on /models.
 async function fetchPerformerPhotos(performers) {
-  const idsWithoutPhoto = performers
-    .filter(p => !p.photo && p.pnptv_id)
-    .map(p => String(p.pnptv_id));
-  if (!idsWithoutPhoto.length) return new Map();
+  const needy = performers.filter(p => !p.photo && (p.pnptv_id || p.slug));
+  if (!needy.length) return new Map();
+  const ids = [...new Set(needy.filter(p => p.pnptv_id).map(p => String(p.pnptv_id)))];
+  const slugs = [...new Set(needy.filter(p => p.slug).map(p => String(p.slug).toLowerCase()))];
+  if (!ids.length && !slugs.length) return new Map();
   try {
-    const placeholders = idsWithoutPhoto.map((_, i) => `$${i + 1}`).join(',');
+    const params = [...ids, ...slugs];
+    const idPlaceholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    const slugPlaceholders = slugs.map((_, i) => `$${ids.length + i + 1}`).join(',');
+    const idClause = ids.length ? `id::text IN (${idPlaceholders})` : 'FALSE';
+    const slugClause = slugs.length ? `LOWER(username) IN (${slugPlaceholders})` : 'FALSE';
     const { rows } = await getPool().query(
-      `SELECT id::text, photo_file_id FROM users WHERE id::text IN (${placeholders}) AND photo_file_id IS NOT NULL`,
-      idsWithoutPhoto
+      `SELECT id::text AS id, LOWER(username) AS username, photo_file_id
+       FROM users
+       WHERE photo_file_id IS NOT NULL AND (${idClause} OR ${slugClause})`,
+      params
     );
-    const map = new Map();
+    const byId = new Map();
+    const byUsername = new Map();
     for (const r of rows) {
       const photo = r.photo_file_id;
-      if (photo) map.set(r.id, (photo.startsWith('/') || photo.startsWith('http')) ? photo : `/${photo}`);
+      if (!photo) continue;
+      const url = (photo.startsWith('/') || photo.startsWith('http')) ? photo : `/${photo}`;
+      if (r.id) byId.set(r.id, url);
+      if (r.username) byUsername.set(r.username, url);
     }
-    return map;
+    // Emit a map keyed by pnptv_id (as mapDirectusPerformer expects). When the
+    // pnptv_id doesn't resolve, try the slug→username fallback for the same
+    // performer so the key still points at the recovered avatar.
+    const out = new Map();
+    for (const p of needy) {
+      if (!p.pnptv_id) continue;
+      const key = String(p.pnptv_id);
+      let url = byId.get(key);
+      if (!url && p.slug) url = byUsername.get(String(p.slug).toLowerCase());
+      if (url) out.set(key, url);
+    }
+    return out;
   } catch (err) {
     logger.warn(`fetchPerformerPhotos failed: ${err.message}`);
     return new Map();
