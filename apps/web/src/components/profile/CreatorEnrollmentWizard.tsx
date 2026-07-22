@@ -27,6 +27,40 @@ export const TIER_UPGRADE_THRESHOLDS: Record<TierId, { nextTier: TierId | null; 
   diamond: { nextTier: null,      subscribersNeeded: null },
 };
 
+// ── Client-side image compression ─────────────────────────────────────────────
+// Downscales the ID photo in the browser so the multipart POST stays small.
+// Returns null when the browser can't decode the file (e.g. HEIC on Chrome
+// Android) — caller falls back to uploading the original bytes.
+async function compressImageForUpload(file: File, maxDim: number, quality: number): Promise<File | null> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('decode failed'));
+      el.src = objectUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return null;
+    // Only use the compressed version if it actually shrank the payload.
+    if (blob.size >= file.size) return null;
+    return new File([blob], 'id-comp.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface CreatorEnrollmentWizardProps {
@@ -204,18 +238,23 @@ export default function CreatorEnrollmentWizard({
 
   // Submit state
   const [submitting, setSubmitting] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-      setSubmitError('Only JPEG, PNG, or WebP images are accepted for ID.');
+    // Accept HEIC/HEIF (iOS default) alongside JPEG/PNG/WebP — backend allows the same set.
+    const allowed = ['image/jpeg', 'image/pjpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    if (file.type && !allowed.includes(file.type)) {
+      setSubmitError('Only JPEG, PNG, WebP, or HEIC images are accepted for ID.');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setSubmitError('ID photo must be under 10 MB.');
+    // Match the backend limit (25 MB). The frontend re-encodes the image before
+    // upload so the actual POST is almost always <1 MB — this ceiling only
+    // rejects clearly-corrupt or non-photo files.
+    if (file.size > 25 * 1024 * 1024) {
+      setSubmitError('ID photo must be under 25 MB.');
       return;
     }
     setSubmitError(null);
@@ -232,16 +271,30 @@ export default function CreatorEnrollmentWizard({
     if (!idType) { setSubmitError(pr.idTypeRequired); return; }
     if (!signatureData) { setSubmitError(pr.signatureRequired); return; }
     if (!paymentAddress.trim()) { setSubmitError(pr.paymentAddressRequired); return; }
-    setSubmitting(true);
     setSubmitError(null);
     try {
+      // Re-encode the ID photo to a compact JPEG before uploading. A raw
+      // phone-camera capture can be 15–24 MB; on unstable mobile networks
+      // that request routinely gets cut mid-multipart (busboy: "Unexpected
+      // end of form"). Downscaling to 1600 px + JPEG q=0.82 keeps the ID
+      // fully legible for review while dropping the payload to <1 MB.
+      let idForUpload = idFile;
+      if (idFile.size > 1_500_000) {
+        setOptimizing(true);
+        try {
+          const compressed = await compressImageForUpload(idFile, 1600, 0.82);
+          if (compressed) idForUpload = compressed;
+        } catch { /* fall through with original — backend still accepts 25 MB */ }
+        setOptimizing(false);
+      }
+      setSubmitting(true);
       await submitCreatorEnrollment({
         tier: selectedTier,
         paymentMethod,
         paymentAddress,
         paymentNetwork,
         signatureData,
-        idDocument: idFile,
+        idDocument: idForUpload,
         legalName: idLegalName.trim(),
         dateOfBirth: idDob,
         idType,
@@ -251,6 +304,7 @@ export default function CreatorEnrollmentWizard({
       setSubmitError(err instanceof Error ? err.message : pr.submissionFailed);
     } finally {
       setSubmitting(false);
+      setOptimizing(false);
     }
   };
 
@@ -829,11 +883,11 @@ export default function CreatorEnrollmentWizard({
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || optimizing}
               className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
               style={{ background: t.gradient }}
             >
-              {submitting ? pr.submitting : pr.submitEnrollment}
+              {optimizing ? 'Optimizing photo…' : submitting ? pr.submitting : pr.submitEnrollment}
             </button>
           )}
           {step > 0 && (

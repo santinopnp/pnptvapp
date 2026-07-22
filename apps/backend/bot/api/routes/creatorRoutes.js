@@ -98,7 +98,7 @@ const enrollmentUploadDir = path.join(__dirname, '../../../../../public/uploads/
 if (!fs.existsSync(enrollmentUploadDir)) {
   fs.mkdirSync(enrollmentUploadDir, { recursive: true });
 }
-const ALLOWED_ENROLL_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const ALLOWED_ENROLL_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
 const enrollmentUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, enrollmentUploadDir),
@@ -109,13 +109,50 @@ const enrollmentUpload = multer({
       cb(null, `id-${uid}-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024, fieldSize: 250 * 1024 }, // 10 MB file, 250 KB fields
+  // 25 MB matches the /identity/submit route — raw phone-camera IDs regularly
+  // hit 15–20 MB, and rejecting at 10 MB surfaced as a silent 500 (busboy
+  // "Unexpected end of form") on the wizard. The wizard now client-compresses
+  // to <1 MB before POSTing; this ceiling is the fallback for when in-browser
+  // decoding fails (e.g. HEIC on Chrome Android).
+  limits: { fileSize: 25 * 1024 * 1024, fieldSize: 250 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    // Include HEIC/HEIF for iOS Safari uploads (default camera format on
+    // modern iPhones), matching the /identity/submit allowlist.
+    const allowed = ['image/jpeg', 'image/pjpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Only JPEG, PNG, or WebP images are allowed for ID document'));
+    else cb(new Error('Only JPEG, PNG, WebP, or HEIC images are allowed for ID document'));
   },
 });
+
+// Parallel to identity2257ErrorHandler — maps multer errors on /enroll to
+// concrete 4xx responses. Without this, LIMIT_FILE_SIZE and filter rejects
+// bubble up as a bare 500 with no useful message.
+function enrollmentErrorHandler(err, _req, res, next) {
+  if (!err) return next();
+  const code = err.code || '';
+  if (code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      error: 'File too large. ID photo must be under 25 MB.',
+    });
+  }
+  if (code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({
+      success: false,
+      error: 'Unexpected file field. Attach only idDocument.',
+    });
+  }
+  if (/Only JPEG, PNG, WebP, or HEIC/i.test(err.message || '')) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  if (/Unexpected end of form/i.test(err.message || '')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Upload was interrupted. Check your connection and try again.',
+    });
+  }
+  return next(err);
+}
 
 // ── ID document upload for 2257 identity verification ────────────────────────
 const identity2257UploadDir = path.join(__dirname, '../../../../../public/uploads/creator-2257');
@@ -179,7 +216,7 @@ function identity2257ErrorHandler(err, _req, res, next) {
 router.get('/eligibility', authGuard, creatorController.getEligibility);
 
 // Enrollment flow (replaces old /activate for new users)
-router.post('/enroll', authGuard, identitySubmitLimiter, enrollmentUpload.single('idDocument'), creatorController.submitEnrollment);
+router.post('/enroll', authGuard, identitySubmitLimiter, enrollmentUpload.single('idDocument'), enrollmentErrorHandler, creatorController.submitEnrollment);
 router.get('/enrollment', authGuard, creatorController.getEnrollment);
 
 // Legacy direct activation — admin-only; bypasses KYC enrollment flow
