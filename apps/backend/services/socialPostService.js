@@ -115,12 +115,14 @@ class SocialPostService {
   }
 
   /**
-   * Stable re-sort by discovery score: online beats offline, PRIME gets a bump
-   * within each online/offline group. Score = (online ? 2 : 0) + (prime ? 1 : 0).
-   * Presence read in one Redis pipeline against `presence:online:<id>` keys
-   * (60s TTL, written by socketHandlers). PRIME read from each post's
-   * author_tier column (no extra query needed — added to the SELECT).
-   * Returns the original array unchanged on any failure.
+   * Stable re-sort by discovery score, combining author state + post engagement
+   * so popular content bubbles up over cold posts without wholly abandoning
+   * chronology. Score composition per post:
+   *   + 2  author is online (Redis presence)
+   *   + 1  author is PRIME tier
+   *   + 0.5 author is an active creator
+   *   + 3 * log1p(likes + reposts*2 + replies*3) / (ageHours + 2)^0.6
+   * Cursor pagination is unaffected — we only re-order the fetched window.
    */
   static async _applyDiscoveryBoost(posts) {
     if (!Array.isArray(posts) || posts.length <= 1) return posts;
@@ -136,11 +138,25 @@ class SocialPostService {
       replies.forEach(([err, val], idx) => {
         if (!err && val) onlineIds.add(distinctIds[idx]);
       });
-      // Stable sort by descending score, preserving original order within ties.
+      const now = Date.now();
       const decorated = posts.map((p, idx) => {
         const isOnline = p.author_id && onlineIds.has(String(p.author_id));
         const isPrime = String(p.author_tier || '').toUpperCase() === 'PRIME';
-        return { p, idx, score: (isOnline ? 2 : 0) + (isPrime ? 1 : 0) };
+        const isCreator = p.author_creator_status === 'active';
+        const likes = Number(p.likes_count) || 0;
+        const reposts = Number(p.reposts_count) || 0;
+        const replies_ct = Number(p.replies_count) || 0;
+        const engage = Math.log1p(likes + reposts * 2 + replies_ct * 3);
+        const ageHours = p.created_at
+          ? Math.max(0, (now - new Date(p.created_at).getTime()) / 3600000)
+          : 24;
+        const popularity = (engage / Math.pow(ageHours + 2, 0.6)) * 3;
+        const score =
+          (isOnline ? 2 : 0) +
+          (isPrime ? 1 : 0) +
+          (isCreator ? 0.5 : 0) +
+          popularity;
+        return { p, idx, score };
       });
       decorated.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
       return decorated.map(d => d.p);

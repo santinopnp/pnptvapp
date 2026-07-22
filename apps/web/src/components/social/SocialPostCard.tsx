@@ -274,6 +274,37 @@ export default function SocialPostCard({
   // updates cascade instantly without a full feed refetch.
   const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
 
+  // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
+  // Santino's videos push PRIME; every other active creator pushes their own
+  // subscription page. Non-video posts and own posts stay clean.
+  const isSantinoAuthor = String(post.author_id) === "8599671840";
+  const isVideoPost = post.media_type === "video" && !!post.media_url;
+  const showPrimeUpsell = isSantinoAuthor && !isPrime && isVideoPost && !isOwn;
+  const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
+  const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissPrimeUpsell = () => {
+    try { sessionStorage.setItem(primeUpsellKey, "1"); } catch { /* ignore */ }
+    setPrimeUpsellDismissed(true);
+  };
+  const showCreatorSubscribeUpsell =
+    !showPrimeUpsell &&
+    !isSantinoAuthor &&
+    isVideoPost &&
+    post.author_creator_status === "active" &&
+    ((post.author_creator_price as number | undefined) ?? 0) > 0 &&
+    !post.is_exclusive &&
+    !isOwn;
+  const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
+  const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(subscribeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissCreatorUpsell = () => {
+    try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+    setCreatorUpsellDismissed(true);
+  };
+
   const handleWofToggle = useCallback(async () => {
     if (wofToggling) return;
     setWofToggling(true);
@@ -1426,6 +1457,55 @@ export default function SocialPostCard({
                 >
                   Subscribe to see all exclusive content from this creator
                 </div>
+              )}
+
+              {/* PRIME upsell strip — Santino's free videos push PRIME subscription */}
+              {showPrimeUpsell && !primeUpsellDismissed && !videoError && (
+                <a
+                  href="/subscribe"
+                  className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                  style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
+                >
+                  <span className="flex-1">
+                    {lang === "es"
+                      ? `Desbloquea todo lo que ${post.author_first_name || post.author_username || "este creador"} publica — hazte PRIME`
+                      : `Unlock everything ${post.author_first_name || post.author_username || "this creator"} makes — go PRIME`}
+                  </span>
+                  <span aria-hidden="true">→</span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                    aria-label="Dismiss"
+                    className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1"
+                  >
+                    ×
+                  </button>
+                </a>
+              )}
+
+              {/* Creator subscribe upsell — other creators' free videos push their own subscription */}
+              {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
+                <a
+                  href={`/profile/${post.author_id}`}
+                  className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
+                  style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
+                >
+                  <span className="flex-1">
+                    {lang === "es"
+                      ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} para ver contenido exclusivo`
+                      : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} for exclusive content`}
+                  </span>
+                  <span aria-hidden="true">→</span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
+                    aria-label="Dismiss"
+                    className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1"
+                    style={{ color: "#04252b" }}
+                  >
+                    ×
+                  </button>
+                </a>
               )}
             </>
           )}
