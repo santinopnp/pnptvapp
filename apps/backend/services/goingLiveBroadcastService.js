@@ -331,6 +331,51 @@ async function sendMemberEmailBlast(creatorId, creatorName, channelRef, customMe
 }
 
 /**
+ * Announce a live creator to the Main Stage room and record them as
+ * currently-live so any client (existing or joining later) can render a
+ * "creators live now" surface. Non-blocking; silently no-ops if socket.io
+ * is not initialized (e.g. bootstrap path). Redis entry TTL is 4h — a
+ * typical stream is well under this, and the poller re-records on every
+ * offline→running transition anyway.
+ *
+ * @param {string|number} creatorId
+ * @param {string} creatorName
+ * @param {string} channelRef
+ */
+async function notifyMainStage(creatorId, creatorName, channelRef) {
+  try {
+    const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+    const watchUrl = channelRef ? `${appUrl}/live/${encodeURIComponent(channelRef)}` : appUrl;
+    const payload = {
+      creatorId: String(creatorId),
+      creatorName,
+      channelRef,
+      watchUrl,
+      startedAt: Date.now(),
+    };
+
+    // Persist so late-joining clients can fetch via GET /api/mainstage/live-creators (future).
+    const redis = getRedis();
+    if (redis) {
+      await redis.set(
+        `mainstage:live:${creatorId}`,
+        JSON.stringify(payload),
+        'EX',
+        4 * 60 * 60,
+      ).catch(() => {});
+    }
+
+    // Fire the socket event to everyone currently connected to Main Stage.
+    let socketSingleton;
+    try { socketSingleton = require('./socketSingleton'); } catch { return; }
+    const io = socketSingleton.getIO?.() || socketSingleton.get?.();
+    if (io) io.to('mainstage').emit('mainstage:creator-live', payload);
+  } catch (err) {
+    logger.warn('goingLiveBroadcast: notifyMainStage error', { creatorId, error: err.message });
+  }
+}
+
+/**
  * Fan-out web-push notifications to opted-in followers.
  * Silently no-ops if PushNotificationService is unavailable.
  *
@@ -414,6 +459,13 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
       });
     });
 
+    // 4. Main Stage announcement — socket event + Redis-recorded live entry
+    setImmediate(() => {
+      notifyMainStage(creatorId, creatorName, channelRef).catch((err) => {
+        logger.warn('goingLiveBroadcast: notifyMainStage error', { creatorId, error: err.message });
+      });
+    });
+
     // ── Follower-targeted channels ────────────────────────────────────────────
 
     if (dmFollowers.length === 0 && pushFollowers.length === 0) {
@@ -444,4 +496,142 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
   }
 }
 
-module.exports = { broadcastGoingLive, notifyLinkedGroups };
+// ── Auto go-live detection poller ────────────────────────────────────────────
+//
+// Every 30s we ask Restreamer for its process list and diff each channel's
+// `state.exec === 'running'` against the previous value cached in Redis. On
+// any offline → running transition we resolve the creator via
+// users.live_channel and fire broadcastGoingLive() — same code path as the
+// manual "Broadcast Now" button, so the 6h dedup + opt-out preferences +
+// Main Stage fanout all apply identically.
+//
+// Restreamer outage: listProcesses() throws a restreamerUnavailable error —
+// we log at debug and no-op. No state churn (last-state keys aren't touched)
+// so the next successful tick will still see the correct transition.
+//
+// Env kill-switch: PNP_DISABLE_GOLIVE_POLLER=1 keeps the poller from starting.
+
+const POLLER_INTERVAL_MS = 30 * 1000;
+const LAST_STATE_TTL_S = 24 * 60 * 60;
+const LAST_STATE_KEY = (ref) => `live:last-state:${ref}`;
+
+let pollerHandle = null;
+let pollerBusy = false;
+
+function sanitizeChannelRef(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^[a-z0-9._-]{1,64}$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
+async function pollTick(bot) {
+  if (pollerBusy) return;
+  pollerBusy = true;
+  try {
+    const restreamerService = require('./restreamerService');
+    let processes;
+    try {
+      processes = await restreamerService.listProcesses();
+    } catch (err) {
+      // Transient — Restreamer offline or reloading. Do not touch last-state.
+      logger.debug('goLivePoller: Restreamer unavailable', { error: err.message });
+      return;
+    }
+    if (!Array.isArray(processes) || processes.length === 0) return;
+
+    const redis = getRedis();
+    if (!redis) return;
+
+    for (const p of processes) {
+      const refId = sanitizeChannelRef(p.reference || p.id);
+      if (!refId) continue;
+      const isLive = p.state?.exec === 'running';
+      const lastRaw = await redis.get(LAST_STATE_KEY(refId)).catch(() => null);
+      const wasLive = lastRaw === '1';
+
+      if (isLive && !wasLive) {
+        try {
+          const { rows } = await query(
+            `SELECT id
+               FROM users
+              WHERE live_channel = $1
+                AND is_deleted = FALSE
+                AND creator_status = 'active'
+                AND creator_locked = FALSE
+                AND (
+                  identity_verified = TRUE
+                  OR (identity_verification_required_by IS NOT NULL
+                      AND identity_verification_required_by > NOW())
+                )
+              LIMIT 1`,
+            [refId]
+          );
+          if (rows[0]?.id) {
+            const streamId = `auto-${Date.now()}`;
+            // Fire and forget — the internal dedup key still guards against
+            // duplicate broadcasts if a manual trigger happened in the same 6h.
+            broadcastGoingLive(bot, rows[0].id, refId, {}, streamId).catch((err) => {
+              logger.warn('goLivePoller: broadcastGoingLive threw', { refId, error: err.message });
+            });
+            logger.info('goLivePoller: transition detected', { channelRef: refId, creatorId: rows[0].id });
+          }
+        } catch (dbErr) {
+          logger.warn('goLivePoller: creator lookup failed', { refId, error: dbErr.message });
+        }
+      }
+
+      await redis.set(LAST_STATE_KEY(refId), isLive ? '1' : '0', 'EX', LAST_STATE_TTL_S).catch(() => {});
+    }
+  } catch (err) {
+    logger.error('goLivePoller: tick error', { error: err.message });
+  } finally {
+    pollerBusy = false;
+  }
+}
+
+/**
+ * Start the auto go-live poller. Idempotent — repeat calls are ignored.
+ * Called once from bot.js during scheduler bootstrap.
+ *
+ * @param {import('telegraf').Telegraf} bot
+ */
+function startGoLivePoller(bot) {
+  if (process.env.PNP_DISABLE_GOLIVE_POLLER === '1') {
+    logger.info('goLivePoller: disabled via PNP_DISABLE_GOLIVE_POLLER=1');
+    return;
+  }
+  if (pollerHandle) return;
+  // First tick seeds the last-state cache; second tick onward detects transitions.
+  // We intentionally skip broadcasting on the very first tick after startup so
+  // a service restart doesn't re-fire every currently-running stream.
+  (async () => {
+    try {
+      const restreamerService = require('./restreamerService');
+      const processes = await restreamerService.listProcesses();
+      const redis = getRedis();
+      if (redis && Array.isArray(processes)) {
+        for (const p of processes) {
+          const refId = sanitizeChannelRef(p.reference || p.id);
+          if (!refId) continue;
+          const isLive = p.state?.exec === 'running';
+          await redis.set(LAST_STATE_KEY(refId), isLive ? '1' : '0', 'EX', LAST_STATE_TTL_S).catch(() => {});
+        }
+      }
+    } catch (err) {
+      logger.debug('goLivePoller: seed skipped', { error: err.message });
+    }
+    pollerHandle = setInterval(() => pollTick(bot), POLLER_INTERVAL_MS);
+    logger.info('goLivePoller: started (30s interval)');
+  })();
+}
+
+function stopGoLivePoller() {
+  if (pollerHandle) {
+    clearInterval(pollerHandle);
+    pollerHandle = null;
+    logger.info('goLivePoller: stopped');
+  }
+}
+
+module.exports = { broadcastGoingLive, notifyLinkedGroups, startGoLivePoller, stopGoLivePoller };
