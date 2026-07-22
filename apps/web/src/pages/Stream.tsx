@@ -1624,8 +1624,10 @@ function StreamInner() {
         </div>
       )}
 
-      {/* ── Header bar ─ design: back + [avatar · name · viewer count · LIVE] + actions ── */}
-      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-pnp-border">
+      {/* ── Header bar — mobile: absolute scrim overlay per mockup; desktop: standard border ── */}
+      <div
+        className="stream-header-bar flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-pnp-border md:static absolute top-0 left-0 right-0 z-30"
+      >
         <button onClick={() => navigate("/live")} aria-label={t.live.backToLive} className="flex-shrink-0 text-pnp-textSecondary hover:text-pnp-accent transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -1760,8 +1762,9 @@ function StreamInner() {
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
         <div className="flex flex-col md:flex-1 overflow-hidden">
 
-          {/* Video Player — fixed/sticky, never scrolls */}
-          <div ref={videoContainerRef} className="relative flex-shrink-0">
+          {/* Video Player — fixed/sticky, never scrolls. On mobile, the
+              video takes the majority of the viewport per the mockup. */}
+          <div ref={videoContainerRef} className="relative flex-shrink-0 md:h-auto h-[62vh] min-h-[280px] bg-black">
         {/* ── Paywall overlay — shown when slot is ticketed and viewer has no ticket ── */}
         {ticketStatus?.isTicketed && !ticketStatus.hasTicket && !ticketLoading ? (
           <div className="relative aspect-video rounded-xl bg-pnp-surface border border-pnp-border overflow-hidden flex items-center justify-center">

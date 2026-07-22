@@ -312,6 +312,16 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Stream player header — mobile-only translucent scrim so the header
+     visually floats over the full-bleed video per the design mockup.
+     Desktop keeps the default surface (no scrim, standard border). */
+  @media (max-width: 767px) {
+    .stream-header-bar {
+      background: linear-gradient(180deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 60%, transparent 100%);
+      border-bottom-color: transparent !important;
+    }
+  }
 }
 
 @keyframes fadeInUp {

@@ -10,12 +10,11 @@ import { useI18n } from "@/lib/i18n";
 import { EventDetailModal } from "@/components/events";
 import type { EventItem } from "@/components/events/EventCard";
 import { CallPackageCards } from "@/components/creators/CallPackageCards";
-import { SpotlightStrip, type SpotlightItem } from "@/components/SpotlightStrip";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { loadPersistedActivation } from "@/components/TokenActivationForm";
 import { getUpcomingEvents, getCastingStatus, submitCastingApplication, type CastingStatus, getTokenActivationStatus } from "@/lib/api";
 import {
-  getFeaturedPerformers,
+  getAllPerformers,
   getLiveStreams,
   getWalletBalance,
   getTokenPackages,
@@ -240,7 +239,7 @@ export default function Live() {
     setPerformersLoading(true);
     setLoadError(false);
     Promise.all([
-      getFeaturedPerformers(),
+      getAllPerformers(),
       fetchStreams(),
     ]).then(([perfData, mergedStreams]) => {
       const perf = perfData.performers || [];
@@ -264,7 +263,7 @@ export default function Live() {
     // paused when tab is hidden. Featured must be re-polled or the isOnline dot
     // and late-connect isLive fallback would go stale until the next page load.
     const refresh = () => {
-      Promise.all([fetchStreams(), getFeaturedPerformers().catch(() => null)])
+      Promise.all([fetchStreams(), getAllPerformers().catch(() => null)])
         .then(([merged, perfData]) => {
           setLiveStreams(merged as LiveStream[]);
           if (perfData?.performers) setPerformers(perfData.performers);
@@ -505,12 +504,17 @@ export default function Live() {
   // they choose. Login is still required upstream to bind sessions to
   // wallets/entitlements; the previous isFree upsell block lived here.
 
+  // Sort: live > online > offline. Within each state, featured (curated) first.
+  // isLive is derived from liveStreams (polled), isOnline from presence heartbeat
+  // — both authoritative per feedback_presence_state_hierarchy.md.
   const sortedPerformers = [...performers].sort((a, b) => {
     const aLive = !!findLiveStream(a);
     const bLive = !!findLiveStream(b);
-    if (sortBy === "featured" && a.isFeatured !== b.isFeatured) return a.isFeatured ? -1 : 1;
     if (aLive !== bLive) return aLive ? -1 : 1;
-    if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+    const aOnline = !!a.isOnline && !aLive;
+    const bOnline = !!b.isOnline && !bLive;
+    if (aOnline !== bOnline) return aOnline ? -1 : 1;
+    if (a.isFeatured !== b.isFeatured) return a.isFeatured ? -1 : 1;
     if (a.isAvailable !== b.isAvailable) return a.isAvailable ? -1 : 1;
     return 0;
   });
@@ -543,6 +547,7 @@ export default function Live() {
 
   const liveCount = filteredPerformers.filter((p) => !!findLiveStream(p)).length;
   const onlineCount = filteredPerformers.filter((p) => p.isOnline && !findLiveStream(p)).length;
+  const offlineCount = filteredPerformers.length - liveCount - onlineCount;
 
   return (
     <div className="page-container">
@@ -551,50 +556,6 @@ export default function Live() {
         <meta name="description" content={t.live.pageDescription} />
       </Helmet>
       {showTutorial && <TutorialOverlay section="live" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
-
-      {/* Token CTA banner */}
-      <button
-        type="button"
-        onClick={() => isAuthenticated ? setShowBuyModal(true) : login()}
-        aria-label="Get tokens to join the action"
-        className="w-full flex items-center gap-3 px-4 py-3 mb-4 rounded-xl text-left transition-all active:scale-[0.99] hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500"
-        style={{
-          background: "linear-gradient(135deg, rgba(212,0,122,0.18) 0%, rgba(230,145,56,0.10) 100%)",
-          border: "1px solid rgba(212,0,122,0.28)",
-        }}
-      >
-        <div
-          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm"
-          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-        >
-          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="white" strokeWidth={2} aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-pnp-textPrimary leading-tight">
-            {isAuthenticated && tokenBalance != null && tokenBalance > 0
-              ? `${tokenBalance} tokens`
-              : isAuthenticated
-                ? "¡Entra a la acción!"
-                : "Únete a la fiesta"}
-          </p>
-          <p className="text-xs text-pnp-textSecondary mt-0.5 truncate">
-            {isAuthenticated
-              ? tokenBalance != null && tokenBalance < 60
-                ? "Recarga y mantén la energía al máximo"
-                : "Tips, sesiones privadas y contenido exclusivo"
-              : "Regístrate para tipear, chatear y más"}
-          </p>
-        </div>
-        <span
-          className="flex-shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white whitespace-nowrap shadow-sm"
-          style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
-        >
-          {isAuthenticated ? "Conseguir" : "Entrar"}
-        </span>
-      </button>
-
 
       {/* ── Header ── (design: LIVE NOW + amber ● N live counter) */}
       <div className="flex items-center justify-between gap-3 mb-4">
@@ -827,190 +788,35 @@ export default function Live() {
         </div>
       )}
 
-      {/* ── SpotlightStrip — active streams pinned + upcoming live events ── */}
-      <SpotlightStrip
-        items={[
-          ...liveStreams
-            .filter((s) => {
-              if (!s.isLive) return false;
-              if (selectedCategory !== "all" && !s.tags?.includes(selectedCategory)) return false;
-              // Hide if this stream is already represented in the performer grid
-              const matchedToPerformer = performers.some(
-                (p) => findLiveStream(p)?.id === s.id
-              );
-              return !matchedToPerformer;
-            })
-            .map((s) => ({
-              kind: "action" as const,
-              id: `stream-${s.id}`,
-              label: s.name || s.title || s.performerName || "Live",
-              sublabel: "LIVE NOW",
-              icon: (
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
-                </span>
-              ),
-              gradient: "linear-gradient(135deg, rgba(212,0,122,0.35), rgba(230,145,56,0.25))",
-              onClick: () => navigate(`/live/${s.id}`),
-              pinned: true,
-            })),
-          ...liveEvents.map((ev) => ({ kind: "event" as const, data: ev })),
-        ]}
-        onItemClick={(item) => {
-          if (item.kind === "event") setDetailEvent(item.data);
-        }}
-        showAction={false}
-      />
 
-      {/* ── Next Up Hero ── */}
-      {(() => {
-        if (!nextSlot) return null;
-        const startMs = new Date(nextSlot.start_time).getTime();
-        const diffMs = startMs - Date.now();
-        // Hide if the slot somehow went live (edge case race)
-        if (nextSlot.is_live || diffMs <= 0) return null;
-        const startingSoon = diffMs < 5 * 60 * 1000; // within 5 minutes
-        const title = nextSlot.title || nextSlot.performer_display_name || "Upcoming Show";
-        const avatar = isValidPhotoUrl(nextSlot.performer_avatar) ? nextSlot.performer_avatar : "/default-performer.svg";
-        return (
-          <div
-            className={`rounded-2xl p-4 mb-4 transition-all ${
-              startingSoon
-                ? "animate-pulse border-2 border-pnp-accent/60"
-                : "border border-pnp-border"
-            } bg-pnp-surface`}
-          >
-            {/* Mobile: stacked. sm+: row */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              {/* Avatar */}
-              <img
-                src={avatar}
-                alt={title}
-                className="w-16 h-16 rounded-full object-cover border-2 border-pnp-border self-center sm:self-auto flex-shrink-0"
-                onError={(e) => { (e.target as HTMLImageElement).src = "/default-performer.svg"; }}
-              />
-              {/* Info */}
-              <div className="flex-1 min-w-0 text-center sm:text-left">
-                <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white ${
-                      startingSoon ? "bg-pnp-accent" : "bg-pnp-border"
-                    }`}
-                    style={startingSoon ? {} : { color: "#5ED1C4", background: "rgba(94,209,196,0.15)" }}
-                  >
-                    {startingSoon ? "Starting Soon" : "Next Up"}
-                  </span>
-                </div>
-                <p className="text-sm font-bold text-pnp-textPrimary truncate">{title}</p>
-                <p className="text-xs text-pnp-textSecondary mt-0.5">{countdownLabel}</p>
-              </div>
-              {/* Notify button */}
-              <button
-                onClick={handleSlotNotify}
-                disabled={nextSlotNotifying}
-                className={`w-full sm:w-auto flex-shrink-0 px-4 py-2 rounded-xl text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 ${
-                  nextSlotSubscribed
-                    ? "bg-pnp-surface border border-pnp-accent/40 text-pnp-accent"
-                    : "text-white btn-gradient"
-                }`}
-              >
-                {nextSlotNotifying
-                  ? "..."
-                  : nextSlotSubscribed
-                  ? "\u2713 You'll be notified"
-                  : "Remind me"}
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
-      {/* ── PNPtv! 24/7 tile (only when the broadcaster is actually pushing) ── */}
-      {prime247Live && (
-        <div className="mb-4">
-          <h2 className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider mb-2">
-            Now playing
-          </h2>
-          <button
-            type="button"
-            onClick={() => navigate("/live/pnptv-main")}
-            className="group relative w-full overflow-hidden rounded-2xl border border-pnp-accent/30 bg-pnp-surface transition-all active:scale-[0.99] hover:border-pnp-accent/60"
-            style={{
-              background: "linear-gradient(135deg, rgba(212,0,122,0.14), rgba(123,97,255,0.14))",
-            }}
-          >
-            <div className="flex items-center gap-3 p-4">
-              <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-                style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
-              >
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <div className="min-w-0 flex-1 text-left">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-white">PNPtv! 24/7</span>
-                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden />
-                    LIVE
-                  </span>
-                </div>
-                <div className="text-xs text-pnp-textSecondary truncate">
-                  Always-on channel — curated Prime videos, all day.
-                </div>
-              </div>
-              <svg className="w-4 h-4 text-pnp-textSecondary group-hover:text-pnp-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </button>
-        </div>
-      )}
 
-      {/* ── Performer Grid ── */}
-      {/* Section header: live count + sort pills */}
-      {!performersLoading && performers.length > 0 && (
-        <div className="flex items-center justify-between mb-3 mt-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider">
-              {t.live.liveTitle || "Live"}
+      {/* Compact status summary — one quiet line, no sort UI */}
+      {!performersLoading && performers.length > 0 && (liveCount > 0 || onlineCount > 0 || offlineCount > 0) && (
+        <div className="flex items-center gap-2 mb-3 mt-1 flex-wrap">
+          {liveCount > 0 && (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-white text-[10px] font-bold"
+              style={{ background: "#D4007A" }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
+              {liveCount} live
             </span>
-            {liveCount > 0 && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-[10px] font-bold">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true" />
-                {liveCount} LIVE
-              </span>
-            )}
-            {onlineCount > 0 && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-[10px] font-bold">
-                {onlineCount} online
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setSortBy("popular")}
-              className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all border ${
-                sortBy === "popular"
-                  ? "bg-pnp-accent text-white border-pnp-accent"
-                  : "bg-pnp-surface text-pnp-textSecondary border-pnp-border hover:border-pnp-accent/40"
-              }`}
+          )}
+          {onlineCount > 0 && (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              style={{ color: "#34C759", background: "rgba(52,199,89,0.12)", border: "1px solid rgba(52,199,89,0.3)" }}
             >
-              Popular
-            </button>
-            <button
-              onClick={() => setSortBy("featured")}
-              className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all border ${
-                sortBy === "featured"
-                  ? "bg-pnp-accent text-white border-pnp-accent"
-                  : "bg-pnp-surface text-pnp-textSecondary border-pnp-border hover:border-pnp-accent/40"
-              }`}
-            >
-              Featured
-            </button>
-          </div>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#34C759" }} aria-hidden="true" />
+              {onlineCount} online
+            </span>
+          )}
+          {offlineCount > 0 && (
+            <span className="text-[10px] font-medium text-pnp-textSecondary px-2 py-0.5">
+              {offlineCount} offline
+            </span>
+          )}
         </div>
       )}
       {performersLoading ? (
@@ -1069,14 +875,14 @@ export default function Live() {
                     setDrawerStreamId(stream ? stream.id : p.hlsUrl && p.userId ? String(p.userId) : null);
                   }
                 }}
-                className="group relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer active:scale-[0.98] transition-transform bg-pnp-surface"
+                className={`group relative aspect-[3/4] rounded-xl overflow-hidden cursor-pointer active:scale-[0.98] transition-transform bg-pnp-surface ${!isLive && !p.isOnline ? "opacity-70" : ""}`}
               >
-                {/* Full-bleed image */}
+                {/* Full-bleed image (dimmed for offline performers) */}
                 {imgSrc ? (
                   <img
                     src={imgSrc}
                     alt={p.displayName}
-                    className="absolute inset-0 w-full h-full object-cover"
+                    className={`absolute inset-0 w-full h-full object-cover ${!isLive && !p.isOnline ? "grayscale-[0.4]" : ""}`}
                     loading="lazy"
                     onError={(e) => {
                       const img = e.target as HTMLImageElement;
@@ -1095,7 +901,7 @@ export default function Live() {
                 {/* Bottom scrim gradient */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent pointer-events-none" />
 
-                {/* Top-left: LIVE badge or AVAILABLE badge (design: magenta accent) */}
+                {/* Top-left status badge — accurate live/online/offline */}
                 {isLive ? (
                   <span
                     className="absolute top-2 left-2 z-10 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
@@ -1104,34 +910,33 @@ export default function Live() {
                     <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse flex-shrink-0" aria-hidden="true" />
                     LIVE
                   </span>
-                ) : p.isAvailable ? (
+                ) : p.isOnline ? (
                   <span
                     className="absolute top-2 left-2 z-10 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
-                    style={{ background: "#5ED1C4" }}
+                    style={{ background: "#34C759" }}
                   >
-                    Available
+                    <span className="w-1.5 h-1.5 rounded-full bg-white flex-shrink-0" aria-hidden="true" />
+                    Online
                   </span>
-                ) : null}
+                ) : (
+                  <span
+                    className="absolute top-2 left-2 z-10 flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold"
+                    style={{ background: "rgba(0,0,0,0.55)", color: "rgba(255,255,255,0.65)", backdropFilter: "blur(4px)" }}
+                  >
+                    Offline
+                  </span>
+                )}
 
-                {/* Top-right: viewer count (if live + has viewers) or online dot */}
-                {isLive && stream?.viewerCount && stream.viewerCount > 0 ? (
+                {/* Top-right: viewer count when live */}
+                {isLive && stream?.viewerCount && stream.viewerCount > 0 && (
                   <span className="absolute top-2 right-2 z-10 flex items-center gap-1 px-2 py-1 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold">
-                    {/* Eye icon */}
                     <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
                     {stream.viewerCount}
                   </span>
-                ) : p.isOnline && !isLive ? (
-                  <span
-                    className="absolute top-2 right-2 z-10 flex h-3 w-3"
-                    aria-label="Online"
-                  >
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-black/40" />
-                  </span>
-                ) : null}
+                )}
 
                 {/* Bottom overlay: name + location */}
                 <div className="absolute bottom-0 left-0 right-0 z-10 px-2.5 pb-2.5 pt-8">
