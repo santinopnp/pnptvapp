@@ -1380,6 +1380,175 @@ class PaymentRecoveryService {
   }
 
   /**
+   * Reconcile stuck Meru token-activation payments.
+   *
+   * Mirrors processStuckMeruPayments but targets `product LIKE 'token_pkg_%'` rows.
+   * Auto-heals paid-but-unactivated codes when the reservation owner is known.
+   * Orphans (paid, no reservation owner) are logged + alerted to ops.
+   *
+   * Idempotency: same atomic `WHERE status IN ('active','reserved') RETURNING id`
+   * guard as activateTokenCode — safe to run concurrently with a live activation.
+   *
+   * @returns {Promise<Object>} Reconciliation results
+   */
+  static async processStuckTokenActivations() {
+    logger.info('Starting Meru token-activation reconciliation...');
+
+    const results = {
+      checked: 0,
+      autoHealed: 0,
+      alreadyClaimedByUser: 0,
+      orphans: 0,
+      stillUnpaid: 0,
+      errors: 0,
+      startTime: new Date(),
+      endTime: null,
+    };
+
+    const lockKey = 'meru:token:activation:reconcile:lock';
+    const lockAcquired = await cache.acquireLock(lockKey, 600);
+    if (!lockAcquired) {
+      logger.warn('Token activation reconciliation already running, skipping');
+      return results;
+    }
+
+    try {
+      const meruPaySvc = require('./meruPaymentService');
+      const DashTokenSvc = require('./dashTokenService');
+
+      // Only rows that have an activation_code (reserved via the new flow).
+      // Limit to 90-day window and 100 rows per run — same as lifetime100 reconciler.
+      const { rows: candidates } = await query(`
+        SELECT id, code, product, status, activation_code,
+               reserved_for_user_id, reserved_for_email, created_at
+        FROM meru_payment_links
+        WHERE product LIKE 'token_pkg_%'
+          AND activation_code IS NOT NULL
+          AND status IN ('active', 'reserved')
+          AND created_at > NOW() - INTERVAL '90 days'
+        ORDER BY created_at DESC
+        LIMIT 100
+      `);
+
+      results.checked = candidates.length;
+      logger.info(`Token activation reconciler: ${candidates.length} candidate codes to verify`);
+
+      const orphans = [];
+
+      for (const c of candidates) {
+        try {
+          // Skip rows whose reservation window is still open (< 65 min old) — let the user activate themselves
+          const ageMs = Date.now() - new Date(c.created_at).getTime();
+          if (ageMs < 65 * 60 * 1000) {
+            results.stillUnpaid++;
+            continue;
+          }
+
+          const verification = await meruPaySvc.verifyPayment(c.code);
+          if (!verification.isPaid) {
+            results.stillUnpaid++;
+            continue;
+          }
+
+          if (!c.reserved_for_user_id) {
+            results.orphans++;
+            orphans.push({ code: c.code, activationCode: c.activation_code, paidAt: verification.paidAt });
+            continue;
+          }
+
+          // Auto-heal: same atomic claim + credit path as activateTokenCode
+          const claimResult = await query(
+            `UPDATE meru_payment_links
+                SET status = 'used',
+                    used_at = NOW(),
+                    used_by = $2
+              WHERE id = $1
+                AND status IN ('active', 'reserved')
+              RETURNING id`,
+            [c.id, c.reserved_for_user_id]
+          );
+
+          if (claimResult.rowCount === 0) {
+            // Already claimed by another process (typically the user's
+            // interactive activate call winning the race). Not a heal — a
+            // real heal is the reconciler successfully claiming + crediting.
+            results.alreadyClaimedByUser++;
+            continue;
+          }
+
+          // Derive token count from product
+          const packageKey = c.product.replace(/^token_/, '');
+          const pkg = DashTokenSvc.TOKEN_PACKAGES.find((p) => p.id === packageKey);
+          if (!pkg) {
+            logger.error('Token activation reconciler: unknown product', { product: c.product, code: c.code });
+            results.errors++;
+            continue;
+          }
+
+          const idempotencyKey = `meru:activation:${c.activation_code}`;
+          await DashTokenSvc.recordPurchase(c.reserved_for_user_id, pkg.tokens, pkg.usd, idempotencyKey);
+          const creditResult = await DashTokenSvc.creditTokens(
+            c.reserved_for_user_id, pkg.tokens, idempotencyKey,
+            { provider: 'meru_reconciler', usdAmount: pkg.usd }
+          );
+
+          results.autoHealed++;
+          logger.info('Token activation reconciler: auto-healed', {
+            code: c.code,
+            activationCode: c.activation_code,
+            userId: c.reserved_for_user_id,
+            tokens: pkg.tokens,
+            newBalance: creditResult.newBalance,
+            paidAt: verification.paidAt,
+          });
+        } catch (err) {
+          results.errors++;
+          logger.error('Token activation reconciler: per-code error', {
+            code: c.code, activationCode: c.activation_code, error: err.message,
+          });
+        }
+
+        // 1.1s between Meru fetches — they are HTML scrapes of a public page
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+
+      if (orphans.length > 0) {
+        try {
+          const throttleKey = 'meru:token:activation:reconcile:orphan:alarm';
+          const redis = require('../config/redis').getRedis();
+          const set = await redis.set(throttleKey, '1', 'EX', 6 * 3600, 'NX');
+          if (set === 'OK') {
+            const BusinessNotificationService = require('./businessNotificationService');
+            const lines = [
+              '🟠 <b>Meru token orphan codes — paid but unclaimed</b>',
+              '',
+              `${orphans.length} token activation link(s) show PAID but have no reservation owner.`,
+              'Manual token grant required after identifying the buyer.',
+              '',
+              ...orphans.slice(0, 8).map((o) => `• Meru: <code>${o.code}</code> | ActivCode: <code>${o.activationCode}</code> paid ${o.paidAt}`),
+              orphans.length > 8 ? `…and ${orphans.length - 8} more` : '',
+            ].filter(Boolean).join('\n');
+            await BusinessNotificationService.send(lines);
+          }
+        } catch (alertErr) {
+          logger.warn('Token activation orphan alert dispatch failed', { error: alertErr.message });
+        }
+      }
+
+      results.endTime = new Date();
+      logger.info('Token activation reconciliation complete', results);
+      return results;
+    } catch (error) {
+      logger.error('Token activation reconciliation: fatal error', { error: error.message });
+      results.errors++;
+      results.endTime = new Date();
+      return results;
+    } finally {
+      await cache.releaseLock(lockKey).catch(() => {});
+    }
+  }
+
+  /**
    * Get payment recovery statistics
    * @returns {Promise<Object>} Statistics
    */

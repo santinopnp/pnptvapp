@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Card, Skeleton, Button } from "@pnptv/ui-kit";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,7 +13,8 @@ import type { EventItem } from "@/components/events/EventCard";
 import { CallPackageCards } from "@/components/creators/CallPackageCards";
 import { SpotlightStrip, type SpotlightItem } from "@/components/SpotlightStrip";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
-import { getUpcomingEvents, getCastingStatus, submitCastingApplication, type CastingStatus } from "@/lib/api";
+import { loadPersistedActivation } from "@/components/TokenActivationForm";
+import { getUpcomingEvents, getCastingStatus, submitCastingApplication, type CastingStatus, getTokenActivationStatus } from "@/lib/api";
 import {
   getFeaturedPerformers,
   getLiveStreams,
@@ -56,6 +57,7 @@ export default function Live() {
   const { isAuthenticated, user, login } = useAuth();
   const t = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showTutorial, dismissTutorial, dismissForever } = useTutorial("live");
   const canCreateLive = isAuthenticated && (user?.role === "model" || user?.role === "creator" || user?.role === "admin" || user?.role === "superadmin");
   const [showCreateEvent, setShowCreateEvent] = useState(false);
@@ -109,6 +111,67 @@ export default function Live() {
   const [santinoGiftBalance, setSantinoGiftBalance] = useState<number>(0);
   const [dpnsHandle, setDpnsHandle] = useState<string | null>(null);
   const [showBuyModal, setShowBuyModal] = useState(false);
+
+  // Handle ?activate=CODE deep-link: open BuyTokensModal on the activation screen.
+  // We MUST verify ownership on the backend first — otherwise an attacker could
+  // craft /live?activate=THEIR_CODE and trick a victim into activating it under
+  // the victim's session. Backend returns 401 UNAUTHORIZED if the code belongs
+  // to a different user; we surface a clear message instead of silently loading.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const activateCode = params.get("activate");
+    if (!activateCode) return;
+
+    // Clean the URL param FIRST so a refresh doesn't re-trigger the attack path
+    const newSearch = new URLSearchParams(location.search);
+    newSearch.delete("activate");
+    const newUrl =
+      window.location.pathname +
+      (newSearch.toString() ? "?" + newSearch.toString() : "") +
+      window.location.hash;
+    window.history.replaceState({}, "", newUrl);
+
+    // If the user already has a persisted reservation for this exact code, just
+    // reopen the modal — this is the legitimate "returning from Meru" case.
+    const existing = loadPersistedActivation();
+    if (existing && existing.activationCode === activateCode) {
+      setShowBuyModal(true);
+      return;
+    }
+
+    // Otherwise verify ownership via the status endpoint. If the response is
+    // 401 the code isn't ours; do NOT open the modal or write to localStorage.
+    (async () => {
+      try {
+        const status = await getTokenActivationStatus(activateCode);
+        if (!status || status.status === "expired") {
+          // Silently ignore — the code is either expired or unknown.
+          return;
+        }
+        // Ownership confirmed by the backend (401 would have thrown). Synthesize
+        // a minimal entry so the form renders; the real meruUrl will be blank
+        // (button hidden by TokenActivationForm when empty).
+        const expiresAt = status.expiresAt
+          ? new Date(status.expiresAt).toISOString()
+          : new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        const synthetic = {
+          code: activateCode,
+          activationCode: activateCode,
+          meruUrl: "",
+          activationUrl: "",
+          expiresAt,
+          tokens: status.tokens ?? 0,
+          packageKey: "",
+        };
+        localStorage.setItem("pnptv:token_activation:pending", JSON.stringify(synthetic));
+        setShowBuyModal(true);
+      } catch {
+        // 401 or network error — do not open the modal. User can still use the
+        // regular Buy Tokens flow if they want to purchase.
+      }
+    })();
+  }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
   const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
   const [buyError, setBuyError] = useState<string | null>(null);

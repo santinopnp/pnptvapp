@@ -170,6 +170,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await apiLogout().catch(() => {});
     setUser(null);
     userManager.stopSilentRenew();
+    try {
+      localStorage.removeItem("pnptv:token_activation:pending");
+    } catch { /* localStorage may be unavailable */ }
 
     // signoutRedirect() reads the stored id_token_hint from localStorage to
     // tell Authentik which session to end — removeUser() must NOT be called

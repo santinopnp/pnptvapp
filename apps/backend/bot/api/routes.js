@@ -11913,6 +11913,134 @@ app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, asyncHandl
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Meru token activation-code flow (/live page)
+// Reserve → email activation code + Meru link → poll status → activate
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 3 reserves per hour per user — prevents link exhaustion from rapid fire
+const tokenActivationReserveLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (req, res) => res.status(429).json({ success: false, error: 'Too many reservation attempts. Try again in an hour.', code: 'RATE_LIMITED' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// 10 activation attempts per hour per user
+const tokenActivationActivateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  handler: (req, res) => res.status(429).json({ success: false, error: 'Too many activation attempts. Try again later.', code: 'RATE_LIMITED' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// 60 status polls per minute per user — frontend polls while user is on Meru
+const tokenActivationStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// POST /api/wallet/token-activation/reserve
+// Body: { packageKey: 'pkg_10'|'pkg_25'|'pkg_50'|'pkg_100'|'pkg_500', language?: 'es'|'en' }
+// Returns: { code, activationCode, meruUrl, activationUrl, expiresAt, tokens }
+app.post('/api/wallet/token-activation/reserve', tokenActivationReserveLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const userId = String(user.telegram_id || user.id);
+  const { packageKey, language } = req.body || {};
+  const lang = language === 'en' ? 'en' : 'es';
+
+  const TokenActivationService = require('../../services/tokenActivationService');
+
+  if (!packageKey || !TokenActivationService.TOKEN_PACKAGES[packageKey]) {
+    return res.status(400).json({ success: false, error: 'INVALID_PACKAGE', message: 'Invalid package key. Valid values: pkg_10, pkg_25, pkg_50, pkg_100, pkg_500' });
+  }
+
+  const email = user.email;
+  if (!email || email.endsWith('@telegram.pnptv.app')) {
+    return res.status(422).json({ success: false, error: 'EMAIL_REQUIRED', message: 'A verified email address is required to use Meru payments. Please add one in Settings.' });
+  }
+
+  const result = await TokenActivationService.reserveTokenActivation({ userId, packageKey, email, language: lang });
+
+  if (result.error === 'NO_LINKS_AVAILABLE') {
+    return res.status(503).json({ success: false, error: 'NO_LINKS_AVAILABLE', message: 'No Meru links are available for this package right now. Please try another payment method or come back later.' });
+  }
+  if (result.error === 'INVALID_PACKAGE') {
+    return res.status(400).json({ success: false, error: 'INVALID_PACKAGE' });
+  }
+
+  logger.info('[wallet/token-activation/reserve]', { userId, packageKey, activationCode: result.activationCode });
+  return res.json({
+    success: true,
+    code: result.code,
+    activationCode: result.activationCode,
+    meruUrl: result.meruUrl,
+    activationUrl: result.activationUrl,
+    expiresAt: result.expiresAt,
+    tokens: result.tokens,
+    usdAmount: result.usdAmount,
+    priceUsd: result.usdAmount,
+  });
+}));
+
+// POST /api/wallet/token-activation/activate
+// Body: { activationCode: string }
+// Returns: 200 { ok, tokensCredited, newBalance } | 402 | 409 | 410 | 404
+app.post('/api/wallet/token-activation/activate', tokenActivationActivateLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const userId = String(user.telegram_id || user.id);
+  const { activationCode } = req.body || {};
+
+  if (!activationCode || typeof activationCode !== 'string' || activationCode.trim().length > 20) {
+    return res.status(400).json({ success: false, error: 'INVALID_CODE', message: 'Activation code is required' });
+  }
+
+  const TokenActivationService = require('../../services/tokenActivationService');
+  const result = await TokenActivationService.activateTokenCode({ userId, activationCode: activationCode.trim() });
+
+  if (result.ok) {
+    logger.info('[wallet/token-activation/activate] Success', { userId, activationCode: activationCode.trim(), tokensCredited: result.tokensCredited });
+    return res.json({ success: true, ok: true, tokensCredited: result.tokensCredited, newBalance: result.newBalance });
+  }
+
+  const statusMap = { PAYMENT_REQUIRED: 402, EXPIRED: 410, ALREADY_USED: 409, CODE_NOT_FOUND: 404, UNAUTHORIZED: 401, UNKNOWN_PRODUCT: 500, INVALID_CODE: 400 };
+  const statusCode = result.statusCode || statusMap[result.error] || 500;
+  return res.status(statusCode).json({ success: false, error: result.error });
+}));
+
+// GET /api/wallet/token-activation/:activationCode/status
+// Returns: { status: 'reserved'|'paid_pending_activation'|'used'|'expired', expiresAt, tokens }
+app.get('/api/wallet/token-activation/:activationCode/status', tokenActivationStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const userId = String(user.telegram_id || user.id);
+  const { activationCode } = req.params;
+
+  if (!activationCode || typeof activationCode !== 'string' || activationCode.trim().length > 20) {
+    return res.status(400).json({ success: false, error: 'INVALID_CODE' });
+  }
+
+  // Verify the caller owns this code before revealing status
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows } = await dbQuery(
+    `SELECT reserved_for_user_id FROM meru_payment_links WHERE activation_code = $1 LIMIT 1`,
+    [activationCode.trim().toUpperCase()]
+  );
+  if (rows.length > 0 && rows[0].reserved_for_user_id && String(rows[0].reserved_for_user_id) !== String(userId)) {
+    return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
+  }
+
+  const TokenActivationService = require('../../services/tokenActivationService');
+  const status = await TokenActivationService.getTokenActivationStatus(activationCode.trim());
+  return res.json({ success: true, ...status });
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // NOWPayments — USDC / USDT stablecoin payments
 // ─────────────────────────────────────────────────────────────────────────────
 

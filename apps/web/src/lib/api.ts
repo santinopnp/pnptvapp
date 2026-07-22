@@ -933,6 +933,67 @@ export function activateMeruTokens(
   return request("/api/wallet/activate-meru-tokens", { method: "POST", body: { code, email, product } });
 }
 
+// ── Token Activation Code flow (Meru card/bank) ───────────────────────────────
+
+export interface TokenActivationReserveResult {
+  code: string;
+  activationCode: string;
+  meruUrl: string;
+  activationUrl: string;
+  expiresAt: string; // ISO 8601
+  tokens: number;
+  priceUsd?: number;
+  packageKey: string;
+}
+
+export interface TokenActivationActivateResult {
+  ok: boolean;
+  tokensCredited: number;
+  newBalance: number;
+}
+
+export interface TokenActivationStatus {
+  status: "pending" | "paid" | "activated" | "expired";
+  expiresAt: string;
+  tokens: number;
+  packageKey: string;
+}
+
+export type TokenActivationErrorCode =
+  | "INVALID_PACKAGE"
+  | "PAYMENT_REQUIRED"
+  | "EXPIRED"
+  | "ALREADY_USED"
+  | "CODE_NOT_FOUND"
+  | "NO_LINKS_AVAILABLE";
+
+export function reserveTokenActivation(params: {
+  packageKey: string;
+  language?: string;
+}): Promise<TokenActivationReserveResult> {
+  return request("/api/wallet/token-activation/reserve", {
+    method: "POST",
+    body: params,
+  });
+}
+
+export function activateTokenCode(params: {
+  activationCode: string;
+}): Promise<TokenActivationActivateResult> {
+  return request("/api/wallet/token-activation/activate", {
+    method: "POST",
+    body: params,
+  });
+}
+
+export function getTokenActivationStatus(
+  activationCode: string
+): Promise<TokenActivationStatus> {
+  return request(`/api/wallet/token-activation/${encodeURIComponent(activationCode)}/status`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function getRecentTips(
   limit = 10
 ): Promise<{ success: boolean; tips: RecentTip[] }> {

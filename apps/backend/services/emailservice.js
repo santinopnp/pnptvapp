@@ -2152,6 +2152,108 @@ class EmailService {
   }
 
   /**
+   * Send a token-purchase activation-code email for the /live Meru flow.
+   * The user receives:
+   *   1. A monospace 12-char activation code box
+   *   2. "Pay on Meru" button → meruUrl
+   *   3. "Already paid — Activate" button → activationUrl
+   *   4. 3-step instructions + 60-min expiry notice
+   *
+   * @param {{ to: string, language?: string, activationCode: string, meruUrl: string,
+   *            activationUrl: string, packageLabel: string, tokens: number,
+   *            usdAmount: number, expiresAt: Date }} opts
+   * @returns {Promise<{success: boolean, messageId?: string, error?: string}>}
+   */
+  async sendTokenActivationEmail({ to, language = 'es', activationCode, meruUrl, activationUrl, packageLabel, tokens, usdAmount, expiresAt }) {
+    try {
+      if (!this.transporters.pnptv) {
+        logger.warn('PNPtv transporter not configured, skipping token activation email');
+        return { success: false, error: 'Transporter not configured' };
+      }
+
+      const isEs = language === 'es';
+      const safeCode = String(activationCode || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Reject anything that isn't an https:// URL — defense-in-depth against
+      // a poisoned meru_link value making its way into a mailto/javascript: href.
+      const rawMeruUrl = String(meruUrl || '');
+      const safeMeruUrl = /^https:\/\//i.test(rawMeruUrl) ? rawMeruUrl.replace(/"/g, '%22') : '#';
+      const rawActivationUrl = String(activationUrl || '');
+      const safeActivationUrl = /^https:\/\//i.test(rawActivationUrl) ? rawActivationUrl.replace(/"/g, '%22') : '#';
+      const safePkgLabel = String(packageLabel || `${tokens} tokens ($${usdAmount})`).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      const expiryStr = expiresAt
+        ? new Date(expiresAt).toLocaleTimeString(isEs ? 'es-MX' : 'en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Mexico_City' })
+        : '60 min';
+
+      const subject = isEs
+        ? `Tu Código de Activación PNPtv Tokens — ${safePkgLabel} — Válido 1 Hora`
+        : `Your PNPtv Token Activation Code — ${safePkgLabel} — Valid 1 Hour`;
+
+      const html = isEs ? `
+<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px 24px;background:#120d14;color:#F5F5F7;border-radius:16px;">
+  <h2 style="color:#FFB454;margin:0 0 6px;font-size:22px;">¡Tus Tokens PNPtv! 🪙</h2>
+  <p style="margin:0 0 18px;font-size:14px;line-height:1.6;">Compraste <strong>${safePkgLabel}</strong>. Aquí está tu código de activación:</p>
+  <div style="background:rgba(255,180,84,0.10);border:2px dashed #FFB454;border-radius:12px;padding:20px;text-align:center;margin:18px 0;">
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;color:#FFB454;text-transform:uppercase;font-weight:700;">Tu Código de Activación</p>
+    <p style="margin:0;font-family:'Courier New',monospace;font-size:28px;font-weight:900;letter-spacing:3px;color:#fff;">${safeCode}</p>
+    <p style="margin:10px 0 0;font-size:12px;color:#ff3377;font-weight:700;">⏱ Válido solo por 1 hora (expira ~${expiryStr})</p>
+  </div>
+  <ol style="font-size:14px;line-height:1.7;padding-left:20px;margin:18px 0;">
+    <li><strong>Paga $${usdAmount} en Meru</strong> usando el botón de abajo.</li>
+    <li><strong>Regresa a PNPtv</strong> en la página /live.</li>
+    <li><strong>Ingresa el código</strong> de arriba y haz clic en "Activar".</li>
+  </ol>
+  <div style="text-align:center;margin:22px 0;">
+    <a href="${safeMeruUrl}" style="display:inline-block;padding:14px 28px;background:#ff3377;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;margin:4px;">💳 Pagar $${usdAmount} en Meru</a>
+    <br/>
+    <a href="${safeActivationUrl}" style="display:inline-block;padding:14px 28px;background:#FFB454;color:#120d14;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;margin:4px;">✓ Ya pagué — Activar</a>
+  </div>
+  <div style="margin-top:18px;padding:12px;background:rgba(255,255,255,0.04);border-left:3px solid #FFB454;border-radius:4px;">
+    <p style="margin:0;font-size:11px;color:#FFB454;font-weight:700;">🔑 ID de Recuperación (guarda esto)</p>
+    <p style="margin:4px 0 0;font-family:monospace;font-size:13px;color:#F5F5F7;">${safeCode}</p>
+  </div>
+  <p style="font-size:11px;color:#8E8E93;margin-top:20px;line-height:1.5;">Si tu código expira antes de completar el pago, regresa a pnptv.app/live y solicita uno nuevo. Los tokens se acreditan instantáneamente al activar.</p>
+</div>` : `
+<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px 24px;background:#120d14;color:#F5F5F7;border-radius:16px;">
+  <h2 style="color:#FFB454;margin:0 0 6px;font-size:22px;">Your PNPtv Tokens! 🪙</h2>
+  <p style="margin:0 0 18px;font-size:14px;line-height:1.6;">You're purchasing <strong>${safePkgLabel}</strong>. Here is your activation code:</p>
+  <div style="background:rgba(255,180,84,0.10);border:2px dashed #FFB454;border-radius:12px;padding:20px;text-align:center;margin:18px 0;">
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;color:#FFB454;text-transform:uppercase;font-weight:700;">Your Activation Code</p>
+    <p style="margin:0;font-family:'Courier New',monospace;font-size:28px;font-weight:900;letter-spacing:3px;color:#fff;">${safeCode}</p>
+    <p style="margin:10px 0 0;font-size:12px;color:#ff3377;font-weight:700;">⏱ Valid for 1 hour only (expires ~${expiryStr})</p>
+  </div>
+  <ol style="font-size:14px;line-height:1.7;padding-left:20px;margin:18px 0;">
+    <li><strong>Pay $${usdAmount} on Meru</strong> using the button below.</li>
+    <li><strong>Return to PNPtv</strong> on the /live page.</li>
+    <li><strong>Enter the code</strong> above and click "Activate".</li>
+  </ol>
+  <div style="text-align:center;margin:22px 0;">
+    <a href="${safeMeruUrl}" style="display:inline-block;padding:14px 28px;background:#ff3377;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;margin:4px;">💳 Pay $${usdAmount} on Meru</a>
+    <br/>
+    <a href="${safeActivationUrl}" style="display:inline-block;padding:14px 28px;background:#FFB454;color:#120d14;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;margin:4px;">✓ Already paid — Activate</a>
+  </div>
+  <div style="margin-top:18px;padding:12px;background:rgba(255,255,255,0.04);border-left:3px solid #FFB454;border-radius:4px;">
+    <p style="margin:0;font-size:11px;color:#FFB454;font-weight:700;">🔑 Recovery ID (save this)</p>
+    <p style="margin:4px 0 0;font-family:monospace;font-size:13px;color:#F5F5F7;">${safeCode}</p>
+  </div>
+  <p style="font-size:11px;color:#8E8E93;margin-top:20px;line-height:1.5;">If your code expires before you complete payment, return to pnptv.app/live and request a new one. Tokens are credited instantly on activation.</p>
+</div>`;
+
+      const result = await this.transporters.pnptv.sendMail({
+        from: process.env.PNPTV_FROM_EMAIL || '"PNPtv" <support@pnptv.app>',
+        to,
+        subject,
+        html,
+      });
+      logger.info('Token activation email sent', { to, activationCode, packageLabel, messageId: result.messageId });
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      logger.error('sendTokenActivationEmail error:', { error: error.message, to });
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Verify email transporter connections
    * @returns {Promise<boolean>} True if at least one transporter verifies
    */

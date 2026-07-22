@@ -16,11 +16,16 @@ import {
   getDashSubscriptionStatus,
   getPresaleStatus,
   assertPaymentUrl,
-  getMeruTokenLink,
-  activateMeruTokens,
+  reserveTokenActivation,
   NP_COINS,
   type TokenPackage,
+  type TokenActivationReserveResult,
 } from "@/lib/api";
+import {
+  TokenActivationForm,
+  loadPersistedActivation,
+  clearPersistedActivation,
+} from "@/components/TokenActivationForm";
 
 
 interface BuyTokensModalProps {
@@ -34,15 +39,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
   const t = useI18n();
   const [buyMethod, setBuyMethod] = useState<'select' | 'dash' | 'btc' | 'np' | 'np_usdc' | 'meru'>('select');
 
-  // Meru card/bank payment state
-  const [meruStep, setMeruStep] = useState<'packages' | 'link' | 'success'>('packages');
+  // Meru card/bank payment state (new activation-code flow)
   const [meruProduct, setMeruProduct] = useState<'tokens_250' | 'tokens_500' | null>(null);
   const [meruEmail, setMeruEmail] = useState('');
-  const [meruUrl, setMeruUrl] = useState<string | null>(null);
-  const [meruCode, setMeruCode] = useState('');
-  const [meruSubmitting, setMeruSubmitting] = useState(false);
+  const [meruReserving, setMeruReserving] = useState(false);
   const [meruError, setMeruError] = useState<string | null>(null);
-  const [meruTokensGranted, setMeruTokensGranted] = useState<number | null>(null);
+  const [meruReservation, setMeruReservation] = useState<TokenActivationReserveResult | null>(null);
   const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
   const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
   const [buyError, setBuyError] = useState<string | null>(null);
@@ -136,14 +138,21 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
       setNpSuccess(false);
       setNpPolling(false);
       if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-      setMeruStep('packages');
       setMeruProduct(null);
       setMeruEmail('');
-      setMeruUrl(null);
-      setMeruCode('');
-      setMeruSubmitting(false);
+      setMeruReserving(false);
       setMeruError(null);
-      setMeruTokensGranted(null);
+      setMeruReservation(null);
+    }
+  }, [isOpen]);
+
+  // When modal opens, check localStorage for a pending activation from a previous session
+  useEffect(() => {
+    if (!isOpen) return;
+    const pending = loadPersistedActivation();
+    if (pending) {
+      setBuyMethod('meru');
+      setMeruReservation(pending);
     }
   }, [isOpen]);
 
@@ -785,19 +794,35 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
         {/* Step 2 — Meru card/bank payment flow */}
         {buyMethod === 'meru' && (
           <div className="space-y-4">
-            {meruStep === 'packages' && (
+            {/* ── Activation code screen (shown after reservation succeeds) ── */}
+            {meruReservation ? (
+              <TokenActivationForm
+                reservation={meruReservation}
+                onSuccess={(newBalance) => {
+                  if (onSuccess) onSuccess(newBalance);
+                }}
+                onReset={() => {
+                  setMeruReservation(null);
+                  setMeruProduct(null);
+                  setMeruEmail('');
+                  setMeruError(null);
+                }}
+                onClose={onClose}
+              />
+            ) : (
+              /* ── Package + email selection (entry screen) ── */
               <>
                 <p className="text-xs text-pnp-textSecondary leading-relaxed">
                   {es
-                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Después de pagar, ingresa el código de tu enlace de pago para activar tus tokens."
-                    : "Pick a package and pay by card or PSE via Meru. After payment, enter the code from your payment link to activate your tokens."}
+                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tus tokens."
+                    : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your tokens."}
                 </p>
 
                 {/* Package cards */}
                 <div className="grid grid-cols-2 gap-3">
                   {([
-                    { product: 'tokens_250' as const, tokens: 250, label: es ? '250 Tokens' : '250 Tokens', sub: es ? 'Paquete Starter' : 'Starter Pack' },
-                    { product: 'tokens_500' as const, tokens: 500, label: es ? '500 Tokens' : '500 Tokens', sub: es ? 'Paquete Plus' : 'Plus Pack' },
+                    { product: 'tokens_250' as const, tokens: 250, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 5 },
+                    { product: 'tokens_500' as const, tokens: 500, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 9 },
                   ]).map((pkg) => (
                     <button
                       key={pkg.product}
@@ -815,21 +840,27 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                               <path strokeLinecap="round" strokeLinejoin="round" d="M2 5l2 2 4-4" />
                             </svg>
                           </div>
-                          <span className="text-[10px] font-semibold" style={{ color: "#D4007A" }}>Seleccionado</span>
+                          <span className="text-[10px] font-semibold" style={{ color: "#D4007A" }}>
+                            {es ? "Seleccionado" : "Selected"}
+                          </span>
                         </div>
                       )}
                     </button>
                   ))}
                 </div>
 
-                {/* Email input */}
+                {/* Email input — shown once a package is selected */}
                 {meruProduct && (
                   <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
                     <div>
-                      <label className="block text-xs font-semibold text-pnp-textSecondary mb-1.5">
+                      <label
+                        htmlFor="meru-email"
+                        className="block text-xs font-semibold text-pnp-textSecondary mb-1.5"
+                      >
                         {es ? "Tu correo electrónico" : "Your email address"}
                       </label>
                       <input
+                        id="meru-email"
                         type="email"
                         inputMode="email"
                         autoComplete="email"
@@ -837,179 +868,88 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                         onChange={(e) => { setMeruEmail(e.target.value); setMeruError(null); }}
                         placeholder={es ? "ejemplo@correo.com" : "you@example.com"}
                         className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-pink-500/60 transition-colors"
-                        disabled={meruSubmitting}
+                        disabled={meruReserving}
+                        aria-describedby={meruError ? "meru-error" : "meru-email-hint"}
+                        aria-invalid={!!meruError}
                       />
-                      <p className="text-[10px] text-pnp-textSecondary mt-1">
-                        {es ? "Para enviar el recibo de pago y el código de activación." : "We'll send the payment receipt and activation code to this address."}
+                      <p id="meru-email-hint" className="text-[10px] text-pnp-textSecondary mt-1">
+                        {es
+                          ? "Te enviaremos el código de activación a este correo."
+                          : "We'll send the activation code to this address."}
                       </p>
                     </div>
-                    {meruError && <p className="text-xs text-red-400">{meruError}</p>}
+
+                    {meruError && (
+                      <p id="meru-error" role="alert" className="text-xs text-red-400">
+                        {meruError}
+                      </p>
+                    )}
+
+                    {/* 503 NO_LINKS_AVAILABLE fallback note */}
+                    {meruError && meruError.toLowerCase().includes("unavailable") && (
+                      <p className="text-[11px] text-pnp-textSecondary text-center">
+                        {es
+                          ? "Puedes usar cripto (Bitcoin, USDT, etc.) como alternativa."
+                          : "You can use crypto (Bitcoin, USDT, etc.) as an alternative."}
+                      </p>
+                    )}
+
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!meruProduct || meruSubmitting) return;
+                        if (!meruProduct || meruReserving) return;
                         const trimEmail = meruEmail.trim();
                         if (!trimEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimEmail)) {
                           setMeruError(es ? 'Ingresa un correo electrónico válido' : 'Enter a valid email address');
                           return;
                         }
-                        setMeruSubmitting(true);
+                        setMeruReserving(true);
                         setMeruError(null);
                         try {
-                          const res = await getMeruTokenLink(meruProduct, trimEmail);
-                          if (!res.success || !res.meruUrl) {
-                            setMeruError(res.error || (es ? 'No hay enlaces disponibles. Intenta más tarde.' : 'No links available. Try again later.'));
-                            return;
-                          }
-                          setMeruUrl(res.meruUrl);
-                          setMeruStep('link');
+                          const res = await reserveTokenActivation({
+                            packageKey: meruProduct,
+                            language: es ? "es" : "en",
+                          });
+                          setMeruReservation(res);
                         } catch (err: unknown) {
                           const msg = err instanceof Error ? err.message : null;
-                          const is429 = msg?.includes('429') || msg?.toLowerCase().includes('many request') || msg?.toLowerCase().includes('rate');
-                          setMeruError(is429
-                            ? (es ? 'Demasiados intentos. Espera un momento e intenta de nuevo.' : 'Too many attempts. Wait a moment and try again.')
-                            : (msg || (es ? 'Error al obtener enlace. Intenta de nuevo.' : 'Failed to get payment link. Try again.')));
+                          const is503 = msg?.includes("503") || msg?.includes("NO_LINKS_AVAILABLE") || msg?.toLowerCase().includes("unavailable");
+                          const is429 = msg?.includes("429") || msg?.toLowerCase().includes("many request") || msg?.toLowerCase().includes("rate");
+                          if (is503) {
+                            setMeruError(es
+                              ? "Pago con tarjeta temporalmente no disponible. Intenta con cripto."
+                              : "Card payment temporarily unavailable. Try a crypto method.");
+                          } else if (is429) {
+                            setMeruError(es
+                              ? "Demasiados intentos. Espera un momento e intenta de nuevo."
+                              : "Too many attempts. Wait a moment and try again.");
+                          } else {
+                            setMeruError(msg || (es
+                              ? "Error al obtener enlace. Intenta de nuevo."
+                              : "Failed to get payment link. Try again."));
+                          }
                         } finally {
-                          setMeruSubmitting(false);
+                          setMeruReserving(false);
                         }
                       }}
-                      disabled={meruSubmitting || !meruEmail.trim()}
-                      className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={meruReserving || !meruEmail.trim()}
+                      aria-label={es ? "Obtener enlace de pago" : "Get payment link"}
+                      className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
                     >
-                      {meruSubmitting
-                        ? (es ? 'Generando enlace...' : 'Getting link...')
-                        : (es ? 'Obtener enlace de pago →' : 'Get payment link →')}
+                      {meruReserving && (
+                        <svg className="animate-spin h-4 w-4 text-white flex-shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      )}
+                      {meruReserving
+                        ? (es ? "Generando enlace…" : "Getting link…")
+                        : (es ? "Obtener enlace de pago →" : "Get payment link →")}
                     </button>
                   </div>
                 )}
               </>
-            )}
-
-            {meruStep === 'link' && meruUrl && (
-              <div className="space-y-4 animate-in fade-in duration-200">
-                {/* Open payment link CTA */}
-                <div
-                  className="rounded-xl p-4 text-center space-y-3"
-                  style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.12),rgba(230,145,56,0.08))", border: "1px solid rgba(212,0,122,0.25)" }}
-                >
-                  <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center" style={{ background: "rgba(212,0,122,0.18)" }}>
-                    <svg className="w-6 h-6" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-pnp-textPrimary mb-0.5">
-                      {es ? "1. Completa el pago en Meru" : "1. Complete payment on Meru"}
-                    </p>
-                    <p className="text-xs text-pnp-textSecondary">
-                      {es ? "El enlace se abrirá en una nueva pestaña" : "The link will open in a new tab"}
-                    </p>
-                  </div>
-                  <a
-                    href={meruUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 active:scale-[0.97]"
-                    style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                    {es ? "Abrir enlace de pago" : "Open payment link"}
-                  </a>
-                </div>
-
-                {/* Divider */}
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-white/8" />
-                  <span className="text-[10px] font-semibold text-pnp-textSecondary uppercase tracking-wide">
-                    {es ? "2. Ingresa tu código" : "2. Enter your code"}
-                  </span>
-                  <div className="flex-1 h-px bg-white/8" />
-                </div>
-
-                {/* Activation code input */}
-                <div className="space-y-3">
-                  <p className="text-xs text-pnp-textSecondary text-center">
-                    {es
-                      ? "Después de pagar, encontrarás el código en el recibo de Meru (es el código al final del enlace de pago)."
-                      : "After paying, find the code in your Meru receipt (it's the short code at the end of the payment link)."}
-                  </p>
-                  <input
-                    type="text"
-                    value={meruCode}
-                    onChange={(e) => { setMeruCode(e.target.value.replace(/[^A-Za-z0-9_\-]/g, '')); setMeruError(null); }}
-                    placeholder={es ? "Ej: 2J-2fM" : "e.g. 2J-2fM"}
-                    maxLength={20}
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-pink-500/60 transition-colors font-mono tracking-wider text-center"
-                    disabled={meruSubmitting}
-                  />
-                  {meruError && <p className="text-xs text-red-400 text-center">{meruError}</p>}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!meruCode.trim() || !meruProduct || meruSubmitting) return;
-                      setMeruSubmitting(true);
-                      setMeruError(null);
-                      try {
-                        const res = await activateMeruTokens(meruCode.trim(), meruEmail.trim(), meruProduct);
-                        if (!res.success) {
-                          setMeruError(res.error || (es ? 'Activación fallida. Verifica el código.' : 'Activation failed. Check your code.'));
-                          return;
-                        }
-                        setMeruTokensGranted(res.tokens);
-                        if (res.newBalance != null && onSuccess) onSuccess(res.newBalance);
-                        setMeruStep('success');
-                      } catch (err: unknown) {
-                        const msg = err instanceof Error ? err.message : null;
-                        const is429 = msg?.includes('429') || msg?.toLowerCase().includes('many request') || msg?.toLowerCase().includes('rate');
-                        setMeruError(is429
-                          ? (es ? 'Demasiados intentos. Espera un momento e intenta de nuevo.' : 'Too many attempts. Wait a moment and try again.')
-                          : (msg || (es ? 'Error de activación. Intenta de nuevo.' : 'Activation error. Please try again.')));
-                      } finally {
-                        setMeruSubmitting(false);
-                      }
-                    }}
-                    disabled={meruSubmitting || !meruCode.trim()}
-                    className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    style={{ background: meruSubmitting ? "rgba(212,0,122,0.4)" : "linear-gradient(90deg,#D4007A,#E69138)" }}
-                  >
-                    {meruSubmitting ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        {es ? 'Verificando...' : 'Verifying...'}
-                      </>
-                    ) : (es ? 'Activar tokens' : 'Activate tokens')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {meruStep === 'success' && (
-              <div className="flex flex-col items-center gap-4 py-6 animate-in fade-in zoom-in-95 duration-300">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(212,0,122,0.18)" }}>
-                  <svg className="w-8 h-8" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <div className="text-center">
-                  <p className="text-base font-bold text-pnp-textPrimary mb-1">
-                    {es ? `¡${meruTokensGranted ?? ''} tokens activados!` : `${meruTokensGranted ?? ''} tokens activated!`}
-                  </p>
-                  <p className="text-xs text-pnp-textSecondary">
-                    {es ? "Tus tokens ya están en tu saldo." : "Your tokens are now in your balance."}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-6 py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97]"
-                  style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
-                >
-                  {es ? "Cerrar" : "Close"}
-                </button>
-              </div>
             )}
           </div>
         )}

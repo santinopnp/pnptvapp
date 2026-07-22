@@ -207,6 +207,24 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // Meru token-activation reconciliation — every 15 min (offset +2 min from lifetime100)
+    // Same pattern as lifetime100 reconciler but targets product LIKE 'token_pkg_%'.
+    // Only processes rows older than 65 min (reservation window) so active users self-serve.
+    cron.schedule(process.env.MERU_TOKEN_RECONCILE_CRON || '9,24,39,54 * * * *', async () => {
+      try {
+        const results = await PaymentRecoveryService.processStuckTokenActivations();
+        logger.info('Meru token activation reconciliation completed', {
+          checked: results.checked,
+          autoHealed: results.autoHealed,
+          orphans: results.orphans,
+          stillUnpaid: results.stillUnpaid,
+          errors: results.errors,
+        });
+      } catch (error) {
+        logger.error('Error in Meru token activation reconciliation cron:', error);
+      }
+    });
+
     // Video leak detector — every hour at :17
     // Scans video_fetch_log over the last 60 min for two real leak signatures:
     //   A) Same user_id from 4+ distinct IPs (shared cookie / handed creds to friends)
