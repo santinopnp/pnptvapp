@@ -962,44 +962,44 @@ async function aiMetadataAll(userId, channelId, videoId, oneLiner) {
   if (!video) throw Object.assign(new Error('Video not found'), { status: 404 });
   if (String(video.uploader_id) !== String(userId)) throw Object.assign(new Error('Forbidden'), { status: 403 });
 
-  const prompt = `You are a metadata assistant for PNPtv!, an adult gay/queer creator platform.
-The creator wrote this one-liner about their video: "${oneLiner.replace(/"/g, "'")}"
+  // Fire the three CSAM-safe helpers in parallel. Using them (instead of a
+  // hand-rolled adult-persona prompt) avoids xAI's SAFETY_CHECK_TYPE_CSAM 403
+  // — see memory: feedback_grok_csam_filter.md.
+  const seed = oneLiner.trim();
+  const [titleRes, descRes, tagsRes] = await Promise.allSettled([
+    grokService.generateSafeVideoTitle({ prompt: seed }),
+    grokService.generateImprovedVideoDescription({
+      title: '', currentDescription: seed, tags: [],
+    }),
+    grokService.suggestSafeTags({ prompt: seed, taxonomy: TAG_TAXONOMY }),
+  ]);
 
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "title": "compelling video title, max 80 chars, match creator language (Spanish or English)",
-  "description": "2-3 sentence engaging description in same language as the one-liner",
-  "tags": ["tag1","tag2","tag3","tag4","tag5"]
-}
-Tags should be relevant adult content categories. Return 4-6 tags max.`;
+  const result = {
+    title: titleRes.status === 'fulfilled' && titleRes.value
+      ? String(titleRes.value).slice(0, 255)
+      : seed.slice(0, 80),
+    description: descRes.status === 'fulfilled' && descRes.value
+      ? String(descRes.value)
+      : seed,
+    tags: tagsRes.status === 'fulfilled' && Array.isArray(tagsRes.value)
+      ? tagsRes.value.slice(0, 8)
+      : [],
+  };
 
-  let result = { title: oneLiner.slice(0, 80), description: oneLiner, tags: [] };
-  try {
-    const raw = await grokService.chat({
-      mode: 'safe',
-      language: 'auto',
-      prompt,
-      maxTokens: 400,
-      systemOverride: 'You are a metadata assistant. Return only valid JSON.',
-    });
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      result = {
-        title: String(parsed.title || result.title).slice(0, 255),
-        description: String(parsed.description || result.description),
-        tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 8) : [],
-      };
-    }
-  } catch (err) {
-    logger.warn('aiMetadataAll: grok failed, using one-liner fallback', { err: err.message });
-  }
+  const meta = {
+    title: titleRes.status === 'fulfilled' ? 'ai' : 'fallback',
+    description: descRes.status === 'fulfilled' ? 'ai' : 'fallback',
+    tags: tagsRes.status === 'fulfilled' ? 'ai' : 'fallback',
+  };
+  if (titleRes.status === 'rejected') logger.warn('aiMetadataAll: safe title failed', { err: titleRes.reason?.message });
+  if (descRes.status === 'rejected') logger.warn('aiMetadataAll: safe description failed', { err: descRes.reason?.message });
+  if (tagsRes.status === 'rejected') logger.warn('aiMetadataAll: safe tags failed', { err: tagsRes.reason?.message });
 
   await query(
     `UPDATE channel_videos SET title = $1, description = $2, tags = $3,
        ai_generated_meta = $4 WHERE id = $5`,
-    [result.title, result.description, JSON.stringify(result.tags),
-     JSON.stringify({ title: 'ai', description: 'ai', tags: 'ai' }), videoId]
+    [result.title, result.description, result.tags,
+     JSON.stringify(meta), videoId]
   );
   return result;
 }

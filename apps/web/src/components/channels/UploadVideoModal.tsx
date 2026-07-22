@@ -37,7 +37,7 @@ interface Props {
 }
 
 const RESUME_KEY = "mux_upload_resume";
-const MAX_FILE_BYTES = 20 * 1024 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024 * 1024;
 
 function fmtBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -133,7 +133,7 @@ export default function UploadVideoModal({
   const validateFile = (f: File): string | null => {
     // Some mobile browsers report empty MIME for video files; allow those through
     if (f.type && !f.type.startsWith("video/")) return "Solo se permiten archivos de video.";
-    if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 20 GB).";
+    if (f.size > MAX_FILE_BYTES) return "El archivo es demasiado grande (máx 50 GB).";
     return null;
   };
 
@@ -370,7 +370,7 @@ export default function UploadVideoModal({
         ) : (
           <div className="text-center">
             <p className="text-sm font-semibold text-white">Arrastra tu video aquí</p>
-            <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 20 GB</p>
+            <p className="text-xs text-white/40 mt-0.5">o toca para elegir · MP4, MOV, WebM · máx 50 GB</p>
           </div>
         )}
         <input
@@ -382,11 +382,12 @@ export default function UploadVideoModal({
         />
       </div>
 
-      {/* One-liner */}
+      {/* One-liner — REQUIRED so the AI has something to work with */}
       {file && (
         <div>
           <label className="block text-xs font-semibold text-white/60 mb-1.5">
-            ¿De qué trata en una línea? <span className="text-white/30">(la IA hace el resto)</span>
+            ¿De qué trata en una línea? <span style={{ color: "#FF4DA6" }}>*</span>{" "}
+            <span className="text-white/30">— la IA arma título, descripción y tags a partir de esto</span>
           </label>
           <textarea
             rows={2}
@@ -397,19 +398,24 @@ export default function UploadVideoModal({
             className="w-full rounded-xl px-3 py-2.5 text-sm resize-none"
             style={{
               background: "#161616",
-              border: "1px solid #2A2A2A",
+              border: `1px solid ${oneLiner.trim() ? "#2A2A2A" : "rgba(212,0,122,.35)"}`,
               color: "#fff",
               outline: "none",
             }}
           />
+          {!oneLiner.trim() && (
+            <p className="text-[11px] text-white/40 mt-1">
+              Sin esto la IA no puede generar nada — el paso 2 quedaría vacío.
+            </p>
+          )}
         </div>
       )}
 
       {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
 
       <button
-        disabled={!file}
-        onClick={() => file && startUpload(file, oneLiner)}
+        disabled={!file || !oneLiner.trim()}
+        onClick={() => file && oneLiner.trim() && startUpload(file, oneLiner)}
         className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30"
         style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
       >
