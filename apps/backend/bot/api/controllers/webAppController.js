@@ -2169,6 +2169,7 @@ const getProfile = async (req, res) => {
   try {
     const result = await query(
       `SELECT u.id, u.pnptv_id, u.telegram, u.username, u.first_name, u.last_name, u.bio, u.photo_file_id,
+              u.cover_url,
               u.subscription_status, u.tier, u.plan_id, u.plan_expiry,
               u.language, u.interests, u.location_name, u.twitter,
               u.instagram, u.tiktok, u.youtube, u.email,
@@ -2221,6 +2222,7 @@ const getProfile = async (req, res) => {
         lastName: p.last_name,
         bio: p.bio,
         photoUrl: p.photo_file_id,
+        coverUrl: p.cover_url || null,
         subscriptionStatus: p.subscription_status,
         tier: p.tier || 'free',
         label,
@@ -2896,6 +2898,99 @@ const uploadAvatar = async (req, res) => {
 };
 
 /**
+ * POST /api/webapp/profile/cover
+ * Upload the current user's profile cover (banner) image.
+ * Mirrors uploadAvatar: magic-byte verification, sharp resize + webp,
+ * DB-first commit, stale file cleanup.
+ */
+const uploadCover = async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+  try {
+    const { buffer } = req.file;
+
+    const ALLOWED_COVER_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+    const detected = await FileType.fromBuffer(buffer);
+    const detectedMime = detected?.mime;
+
+    if (!detectedMime || !ALLOWED_COVER_MIMES.has(detectedMime)) {
+      logger.warn('uploadCover: rejected file — magic bytes do not match allowed image types', {
+        userId: user.id,
+        claimedMime: req.file.mimetype,
+        detectedMime: detectedMime || 'unknown',
+      });
+      return res.status(400).json({ error: 'Only image files (jpg, png, webp, gif) are allowed' });
+    }
+
+    const isGif = detectedMime === 'image/gif';
+    const filename = `${user.id}-${Date.now()}.${isGif ? 'gif' : 'webp'}`;
+    const uploadDir = path.join(__dirname, '../../../../../public/uploads/covers');
+    const filePath = path.join(uploadDir, filename);
+    const relativeUrl = `/uploads/covers/${filename}`;
+
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    // Cover aspect ~16:9 wide banner; resize to 1200x420 max (2× the 600x210
+    // display size for retina) and compress. GIFs saved as-is to keep animation.
+    if (isGif) {
+      await fs.writeFile(filePath, buffer);
+    } else {
+      await sharp(buffer, { failOn: 'none' })
+        .rotate()
+        .withMetadata(false)
+        .resize(1200, 420, { fit: 'cover', position: 'center' })
+        .webp({ quality: 80, progressive: true })
+        .toFile(filePath);
+    }
+
+    await query(
+      'UPDATE users SET cover_url = $1, updated_at = NOW() WHERE id = $2',
+      [relativeUrl, user.id]
+    );
+
+    // Stale file cleanup — DB is the source of truth for the canonical filename.
+    try {
+      const currentRow = await query('SELECT cover_url FROM users WHERE id = $1', [user.id]);
+      const canonicalUrl = currentRow.rows[0]?.cover_url || relativeUrl;
+      const canonicalFilename = path.basename(canonicalUrl);
+      const allFiles = await fs.readdir(uploadDir);
+      const staleFiles = allFiles.filter(f => f.startsWith(`${user.id}-`) && f !== canonicalFilename);
+      for (const staleFile of staleFiles) {
+        await fs.unlink(path.join(uploadDir, staleFile));
+      }
+    } catch (cleanupErr) {
+      logger.warn('uploadCover: cleanup error (non-fatal)', { userId: user.id, err: cleanupErr.message });
+    }
+
+    logger.info(`Cover uploaded: user ${user.id} → ${filename}`);
+
+    return res.json({ success: true, coverUrl: relativeUrl });
+  } catch (error) {
+    logger.error('Cover upload error:', error);
+    return res.status(500).json({ error: 'Failed to upload cover' });
+  }
+};
+
+/**
+ * DELETE /api/webapp/profile/cover
+ * Remove the current user's cover image.
+ */
+const deleteCover = async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    await query('UPDATE users SET cover_url = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Cover delete error:', error);
+    return res.status(500).json({ error: 'Failed to remove cover' });
+  }
+};
+
+/**
  * POST /api/webapp/auth/x/unlink
  * Unlinks X/Twitter identity from the current session user.
  */
@@ -3090,6 +3185,8 @@ module.exports = {
   resetPassword,
   getMastodonFeed,
   uploadAvatar,
+  uploadCover,
+  deleteCover,
   uploadEventCover,
 };
 

@@ -1496,6 +1496,17 @@ const avatarUpload = multer({
   }
 });
 
+// Profile cover (banner) upload — 15MB max, images only. Wider aspect than avatar.
+const coverUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const isImage = /^image\/(jpeg|jpg|png|webp|gif)$/i.test(file.mimetype || '');
+    if (isImage) return cb(null, true);
+    cb(new Error('Only image files are allowed'));
+  }
+});
+
 // Hangout group avatar upload - 5MB max, images only
 const hangoutAvatarUpload = multer({
   storage: multer.memoryStorage(),
@@ -3905,6 +3916,8 @@ app.post('/api/webapp/settings/change-email', requireSessionAuth, changeEmailLim
 app.get('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.getProfile));
 app.put('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.updateProfile));
 app.post('/api/webapp/profile/avatar', requireSessionAuth, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
+app.post('/api/webapp/profile/cover', requireSessionAuth, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
+app.delete('/api/webapp/profile/cover', requireSessionAuth, asyncHandler(webAppController.deleteCover));
 app.post('/api/webapp/profile/telegram/link', telegramWidgetLimiter, requireSessionAuth, asyncHandler(webAppController.linkTelegram));
 app.post('/api/webapp/profile/telegram/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkTelegram));
 app.post('/api/webapp/upload/event-cover', requireSessionAuth, uploadLimiter, eventCoverUpload.single('media'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadEventCover));
@@ -12015,7 +12028,7 @@ app.post('/api/wallet/token-activation/reserve', tokenActivationReserveLimiter, 
   const TokenActivationService = require('../../services/tokenActivationService');
 
   if (!packageKey || !TokenActivationService.TOKEN_PACKAGES[packageKey]) {
-    return res.status(400).json({ success: false, error: 'INVALID_PACKAGE', message: 'Invalid package key. Valid values: pkg_10, pkg_25, pkg_50, pkg_100, pkg_500' });
+    return res.status(400).json({ success: false, error: 'INVALID_PACKAGE', message: 'Invalid package key. Valid values: tokens_250, tokens_500' });
   }
 
   const email = user.email;
@@ -16297,6 +16310,7 @@ app.get('/api/public/creator/:username',
     const { rows: creatorRows } = await pool.query(
       `SELECT id, username, first_name,
               photo_file_id AS photo_url,
+              cover_url,
               bio, creator_type, creator_price_usd,
               creator_subscriber_count, creator_verified,
               creator_subscription_paused, pnptv_id,
@@ -16677,6 +16691,7 @@ app.get('/api/public/creator/:username',
         username: creator.username,
         first_name: creator.first_name,
         photo_url: creator.photo_url || null,
+        cover_url: creator.cover_url || null,
         bio: creator.bio,
         creator_type: creator.creator_type,
         creator_role: creator.creator_role || null,
