@@ -162,28 +162,25 @@ if (!resetInProgress) {
   });
 }
 
-// ── Service Worker update detection (silent auto-apply) ──
-// When a new SW finishes installing, apply it immediately without prompting.
-// controllerchange fires after SKIP_WAITING and reloads the page silently.
-function applyWaitingWorker(reg: ServiceWorkerRegistration): void {
-  if (reg.waiting) {
-    reg.waiting.postMessage({ type: "SKIP_WAITING" });
-  } else {
-    window.location.reload();
-  }
-}
+// ── Service Worker update detection (forced-update modal) ──
+// When a new SW finishes installing, dispatch pnptv:update-available so the
+// non-dismissible UpdateAvailableModal renders and forces the user to reload.
+// The modal itself posts SKIP_WAITING when the user taps "Update now"; the
+// controllerchange handler below then reloads the page.
 
 if (!resetInProgress && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((reg) => {
-    let updateApplied = false;
+    let announced = false;
 
     const announceWaitingWorker = (origin: string) => {
       if (!reg.waiting) return;
-      if (updateApplied) return;
-      updateApplied = true;
+      if (announced) return;
+      announced = true;
       markSwUpdatePending();
-      dispatchSwUpdateStatus(`${origin}-silent`);
-      applyWaitingWorker(reg);
+      dispatchSwUpdateStatus(`${origin}-prompt`);
+      // Fire the event UpdateAvailableModal listens for. The modal is
+      // non-dismissible so the user *must* update before continuing.
+      window.dispatchEvent(new Event("pnptv:update-available"));
     };
 
     // Poll for updates every 10 min while the tab is open
@@ -214,8 +211,6 @@ if (!resetInProgress && "serviceWorker" in navigator) {
     reg.addEventListener("updatefound", () => {
       if (reg.installing) watchInstalling(reg.installing);
     });
-
-    // Updates are applied silently — no user prompt needed.
   });
 
   // controllerchange fires after SKIP_WAITING — always reload to activate new SW.
