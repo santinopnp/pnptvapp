@@ -726,7 +726,7 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
                 onClick={() => setShowBookModal(true)}
                 className="col-span-1 py-2.5 rounded-xl text-xs font-bold text-pnp-textPrimary bg-pnp-surface border border-pnp-border hover:border-pnp-accent/40 active:scale-95 transition-all"
               >
-                Book Call
+                Buy Call
               </button>
             ))}
 

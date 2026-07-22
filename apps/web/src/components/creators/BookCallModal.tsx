@@ -1797,7 +1797,7 @@ export function BookCallModal({
                     </span>. We'll send a reminder 15 min before.
                   </>
                 ) : (
-                  "Your booking is confirmed. The creator will reach out to schedule."
+                  "Call purchased. The creator will DM you to schedule."
                 )}
               </div>
               <button

@@ -308,14 +308,14 @@ const strings = {
 
     // BookCallModal — step titles
     stepTitleChooseModel: "Choose a Model",
-    stepTitleBookCall: "Book a Call",
+    stepTitleBookCall: "Get a Private Call",
     stepTitleChooseSlot: "Choose a Time Slot",
     stepTitleCheckout: "Checkout",
-    stepTitleBookingConfirmed: "Booking Confirmed!",
+    stepTitleBookingConfirmed: "Call Purchased!",
 
     // BookCallModal — modal aria-labels
-    ariaBookCallWith: (name: string) => `Book a call with ${name}`,
-    ariaBookPrivateCall: "Book a private call",
+    ariaBookCallWith: (name: string) => `Buy a call with ${name}`,
+    ariaBookPrivateCall: "Buy a private call",
     ariaGoBack: "Go back",
     ariaCloseBookingModal: "Close booking modal",
     ariaLoadingSlots: "Loading available slots",
@@ -390,19 +390,19 @@ const strings = {
     payMethodCard: "Card",
 
     // BookCallModal — SUCCESS step
-    bookingConfirmedTitle: "Booking Confirmed!",
+    bookingConfirmedTitle: "Call Purchased!",
     callScheduledFor: (date: string, time: string) => `Your call is scheduled for ${date} at ${time}`,
     callStartsInFifteen: "Your call will start in approximately 15 minutes.",
-    bookingReceived: "Your booking has been received.",
+    bookingReceived: "Purchase received. The creator will DM you to schedule.",
     callDetailsTitle: "Call Details",
     callDetailCreator: "Creator: ",
     callDetailDuration: "Duration: ",
     closeBtn: "Close",
 
     // CallPackageCards — section header & CTA
-    bookPrivateSession: "Book a Private Session",
-    bookNowBtn: "Book Now",
-    bookNowAriaLabel: (name: string, mins: number, price: number) => `Book ${name} — ${mins} minutes for $${price}`,
+    bookPrivateSession: "Buy a Private Call",
+    bookNowBtn: "Buy Now",
+    bookNowAriaLabel: (name: string, mins: number, price: number) => `Buy ${name} — ${mins} minutes for $${price}`,
     durationPill: (mins: number) => `${mins} minutes`,
 
     // CallPackageCards — 30-min package strings
@@ -714,14 +714,14 @@ const strings = {
 
     // BookCallModal — step titles
     stepTitleChooseModel: "Elige un modelo",
-    stepTitleBookCall: "Reservar llamada",
+    stepTitleBookCall: "Compra una llamada privada",
     stepTitleChooseSlot: "Elige un horario",
     stepTitleCheckout: "Pago",
-    stepTitleBookingConfirmed: "¡Reserva confirmada!",
+    stepTitleBookingConfirmed: "¡Llamada comprada!",
 
     // BookCallModal — modal aria-labels
-    ariaBookCallWith: (name: string) => `Reservar llamada con ${name}`,
-    ariaBookPrivateCall: "Reservar una llamada privada",
+    ariaBookCallWith: (name: string) => `Comprar llamada con ${name}`,
+    ariaBookPrivateCall: "Comprar una llamada privada",
     ariaGoBack: "Volver",
     ariaCloseBookingModal: "Cerrar modal de reserva",
     ariaLoadingSlots: "Cargando horarios disponibles",
@@ -796,19 +796,19 @@ const strings = {
     payMethodCard: "Tarjeta",
 
     // BookCallModal — SUCCESS step
-    bookingConfirmedTitle: "¡Reserva confirmada!",
+    bookingConfirmedTitle: "¡Llamada comprada!",
     callScheduledFor: (date: string, time: string) => `Tu llamada está programada para el ${date} a las ${time}`,
     callStartsInFifteen: "Tu llamada iniciará en aproximadamente 15 minutos.",
-    bookingReceived: "Tu reserva ha sido recibida.",
+    bookingReceived: "Compra recibida. El creador te enviará un DM para agendar.",
     callDetailsTitle: "Detalles de la llamada",
     callDetailCreator: "Creador: ",
     callDetailDuration: "Duración: ",
     closeBtn: "Cerrar",
 
     // CallPackageCards — section header & CTA
-    bookPrivateSession: "Reservar sesión privada",
-    bookNowBtn: "Reservar ahora",
-    bookNowAriaLabel: (name: string, mins: number, price: number) => `Reservar ${name} — ${mins} minutos por $${price}`,
+    bookPrivateSession: "Compra una llamada privada",
+    bookNowBtn: "Comprar ahora",
+    bookNowAriaLabel: (name: string, mins: number, price: number) => `Comprar ${name} — ${mins} minutos por $${price}`,
     durationPill: (mins: number) => `${mins} minutos`,
 
     // CallPackageCards — 30-min package strings

@@ -1444,7 +1444,7 @@ export default function CreatorProfilePage() {
                       style={{ border: "1px solid rgba(255,255,255,0.15)", background: "#161616", color: "#fff" }}
                     >
                       <PhoneCall size={13} aria-hidden="true" />
-                      Book {pkg.duration_minutes} min call
+                      Buy {pkg.duration_minutes} min call
                     </button>
                   ))}
                 </div>

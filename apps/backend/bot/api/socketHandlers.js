@@ -688,8 +688,11 @@ function initSocketIO(io) {
       });
     }
 
-    // Push notification: alert all users when a performer first comes online.
+    // Push notification: alert followers when a performer first comes online.
     // Debounced per performer per hour via Redis to suppress multi-tab noise.
+    // When the creator has at least one active call package, the deep link
+    // opens the call-checkout modal directly (profile ?action=book auto-opens
+    // BookCallModal via CreatorProfilePage). Otherwise falls back to profile.
     if (isFirstConnection && (user.role === 'model' || user.role === 'creator')) {
       setImmediate(async () => {
         try {
@@ -700,20 +703,41 @@ function initSocketIO(io) {
 
           const PushNotificationService = require('../../services/pushNotificationService');
           const displayName = user.firstName || user.first_name || user.username || 'A performer';
-          const profileUrl = `/profile/${user.id}`;
+
           // WS-HIGH-06: Only push to followers, not all users.
           const { rows: followerRows } = await query(
             'SELECT follower_id FROM user_follows WHERE following_id = $1',
             [String(user.id)]
           );
           if (followerRows.length === 0) return;
+
+          // Check if this creator is currently bookable — has an active call
+          // package. If yes, deep-link into the checkout modal + tailor copy;
+          // otherwise use the plain profile-visit push.
+          let bookable = false;
+          try {
+            const { rows: pkgRows } = await query(
+              'SELECT 1 FROM call_packages WHERE creator_id = $1 AND is_active = TRUE LIMIT 1',
+              [String(user.id)]
+            );
+            bookable = pkgRows.length > 0;
+          } catch (_) { /* non-fatal — falls back to profile */ }
+
           const followerIds = followerRows.map(r => r.follower_id);
-          await PushNotificationService.sendToUsers(followerIds, {
-            title: `${displayName} is online`,
-            body: 'Click to visit their profile',
-            url: profileUrl,
-            tag: `performer_online_${user.id}`,
-          });
+          const payload = bookable
+            ? {
+                title: `${displayName} is online — book a private call now`,
+                body: 'Tap to check out and pay',
+                url: `/profile/${user.id}?action=book&open=1`,
+                tag: `performer_online_${user.id}`,
+              }
+            : {
+                title: `${displayName} is online`,
+                body: 'Click to visit their profile',
+                url: `/profile/${user.id}`,
+                tag: `performer_online_${user.id}`,
+              };
+          await PushNotificationService.sendToUsers(followerIds, payload);
         } catch (_) {}
       });
     }

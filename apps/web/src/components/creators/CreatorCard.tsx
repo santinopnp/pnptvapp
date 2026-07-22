@@ -204,7 +204,7 @@ export function CreatorCard({
           ) : (
             <button
               type="button"
-              aria-label={`Book a call with ${creator.username}`}
+              aria-label={`Buy a call with ${creator.username}`}
               onClick={(e) => {
                 e.stopPropagation();
                 setModalOpen(true);
