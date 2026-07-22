@@ -11,14 +11,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "vite-env.d.ts"],
-  "references": [
-    { "path": "../../packages/types" },
-    { "path": "../../packages/ui-kit" }
-  ]
+  "include": ["src", "vite-env.d.ts"]
 }
