@@ -1259,24 +1259,12 @@ app.get('/nearby', pageLimiter, (req, res) => {
   res.sendFile(path.join(__dirname, '../../../public/nearby.html'));
 });
 
-// Landing page routes
-// Home page — serve login page directly; if already authenticated send to React SPA
-app.get('/', (req, res) => {
-  // Authenticated → go to the React SPA
-  if (req.session?.user) {
-    return res.redirect(302, 'https://pnptv.app');
-  }
-  // Not authenticated → show login
-  return res.sendFile(path.join(__dirname, '../../../public/login.html'));
-});
-
-// /login → same behaviour as /
-app.get('/login', (req, res) => {
-  if (req.session?.user) {
-    return res.redirect(302, 'https://pnptv.app');
-  }
-  return res.sendFile(path.join(__dirname, '../../../public/login.html'));
-});
+// NOTE: `/` and `/login` are intentionally NOT registered here. Both routes
+// are handled by the React SPA (apps/web/src/pages/LandingPage.tsx via
+// router.tsx). nginx (proxy_host/10.conf) sends `/` to pnptv-web by default;
+// serving them from Express would resurrect the old apps/public/login.html
+// whose "Create account" link pointed at auth.pnptv.app's enrollment flow
+// (not publicly enabled → "not authorized"). See 2026-07-23 signup outage.
 
 
 
