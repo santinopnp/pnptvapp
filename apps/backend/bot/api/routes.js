@@ -14184,6 +14184,45 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
       if (!req.file) return res.status(400).json({ success: false, error: 'No chunk data' });
+
+      // Same early-reject as the creator-media chunk endpoint: sniff first
+      // chunk header and refuse if it isn't a video container. Channel videos
+      // support a wider format list (MP4/MOV/WebM/MKV/AVI/M4V/WMV/FLV/TS).
+      if (String(chunkIndex) === '0') {
+        try {
+          const chunkPath = path.join(dir, '000000.part');
+          const fd = await fs.promises.open(chunkPath, 'r');
+          try {
+            const head = Buffer.alloc(64);
+            await fd.read(head, 0, 64, 0);
+            const detected = await FileType.fromBuffer(head);
+            const CHANNEL_VIDEO_MIMES = new Set([
+              'video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo',
+              'video/x-matroska', 'video/x-m4v', 'video/x-ms-wmv',
+              'video/x-flv', 'video/mp2t',
+            ]);
+            if (!detected || !CHANNEL_VIDEO_MIMES.has(detected.mime)) {
+              await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+              logger.warn('Channel video chunk rejected: bad magic bytes on first chunk', {
+                userId: String(req.session?.user?.id),
+                detected: detected?.mime ?? 'unknown',
+                claimedName: meta.fileName,
+              });
+              return res.status(400).json({
+                success: false,
+                error: 'File is not a supported video format.',
+              });
+            }
+          } finally {
+            await fd.close().catch(() => {});
+          }
+        } catch (sniffErr) {
+          logger.warn('Channel video chunk: magic byte sniff failed (allowing chunk through)', {
+            userId: String(req.session?.user?.id), error: sniffErr.message,
+          });
+        }
+      }
+
       const parts = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.part'));
       return res.json({ success: true, received: parts.length, total: Number(totalChunks) });
     }));
@@ -15531,11 +15570,24 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
         );
         primeRow = data?.data;
       } catch (err) {
-        logger.error('prime_videos insert failed', { fileId, error: err.message });
+        logger.error('prime_videos insert failed — rolling back Directus file', { fileId, error: err.message });
+        // Prevent orphaned Directus asset: the file exists but no prime_videos
+        // row references it, and prior to this cleanup it was invisible to
+        // both the admin UI and cleanup crons.
+        try {
+          await axios.delete(`${directusBaseUrl()}/files/${fileId}`, {
+            headers: directusHeaders(),
+            timeout: 8000,
+          });
+          logger.info('prime_videos rollback: orphaned Directus file deleted', { fileId });
+        } catch (cleanupErr) {
+          logger.error('prime_videos rollback: FAILED to delete orphaned Directus file — MANUAL CLEANUP REQUIRED', {
+            fileId, cleanupError: cleanupErr.message,
+          });
+        }
         return res.status(502).json({
           success: false,
-          error: 'Created file but failed to create prime_video: ' + err.message,
-          file_id: fileId,
+          error: 'Failed to create prime_video row (uploaded file rolled back): ' + err.message,
         });
       }
 
@@ -15685,6 +15737,40 @@ app.post('/api/webapp/creators/media/upload-video/chunk',
     if (meta.userId !== sessionUserId) return res.status(403).json({ success: false, error: 'Forbidden' });
 
     if (!req.file) return res.status(400).json({ success: false, error: 'No chunk data' });
+
+    // Fail fast on non-video uploads: sniff the first chunk's magic bytes and
+    // reject if the file header doesn't match a known video container. Without
+    // this, a bad file wastes 500 MB of disk + reassembly time before the
+    // /complete endpoint discovers the mismatch.
+    if (String(chunkIndex) === '0') {
+      try {
+        const chunkPath = path.join(dir, '000000.part');
+        const fd = await fs.promises.open(chunkPath, 'r');
+        try {
+          const head = Buffer.alloc(64);
+          await fd.read(head, 0, 64, 0);
+          const detected = await FileType.fromBuffer(head);
+          if (!detected || !VIDEO_MIMES.has(detected.mime)) {
+            await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+            logger.warn('Chunked video upload rejected: bad magic bytes on first chunk', {
+              userId: sessionUserId,
+              detected: detected?.mime ?? 'unknown',
+              claimedName: meta.fileName,
+            });
+            return res.status(400).json({
+              success: false,
+              error: 'File is not a supported video format (mp4, webm, mov, mkv, avi).',
+            });
+          }
+        } finally {
+          await fd.close().catch(() => {});
+        }
+      } catch (sniffErr) {
+        logger.warn('Chunked video upload: magic byte sniff failed (allowing chunk through)', {
+          userId: sessionUserId, error: sniffErr.message,
+        });
+      }
+    }
 
     const parts = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.part'));
     return res.json({ success: true, received: parts.length, total: Number(totalChunks) });
@@ -16089,10 +16175,11 @@ app.delete('/api/webapp/creators/media/:id',
         }
 
         try {
-          await getPool().query(
+          const { rows: mediaRows } = await getPool().query(
             `INSERT INTO creator_media (creator_id, media_type, url, thumb_url, caption, is_premium, sort_order, duration_seconds)
              VALUES ($1, $2, $3, $4, $5, $6,
-               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7)`,
+               COALESCE((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM creator_media WHERE creator_id = $1), 0), $7)
+             RETURNING id`,
             [meta.userId, meta.mediaType, url, thumbUrl, meta.caption || null, meta.isPremium || false, durationSeconds]
           );
 
@@ -16101,6 +16188,13 @@ app.delete('/api/webapp/creators/media/:id',
             ContentComplianceService.markCompliantIfNewlyQualified(meta.userId).catch((complianceErr) => {
               logger.warn('Creator tus: compliance check failed (non-fatal)', { userId: meta.userId, error: complianceErr.message });
             });
+          }
+
+          // Same AI enrichment as the addMedia path (chunked / single-shot) so
+          // TUS uploads aren't second-class citizens for tag discovery.
+          if (mediaRows[0]?.id && meta.caption) {
+            const creatorMediaService = require('../../services/creatorMediaService');
+            creatorMediaService.scheduleAiEnhancement(mediaRows[0].id, meta.caption);
           }
         } catch (dbErr) {
           logger.error('Creator tus: creator_media insert failed after upload completion', { uploadId: fileId, userId: meta.userId, error: dbErr.message });

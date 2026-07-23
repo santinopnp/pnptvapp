@@ -28,7 +28,86 @@
 const { query } = require('../config/postgres');
 const muxService = require('./muxService');
 const SocialPostService = require('./socialPostService');
+const grokService = require('./grokService');
 const logger = require('../utils/logger');
+
+// Same taxonomy channelVideoService uses so tags stay bounded/queryable.
+const TAG_TAXONOMY = [
+  'solo', 'duo', 'group', 'orgy',
+  'amateur', 'professional',
+  'twink', 'bear', 'daddy', 'jock', 'otter', 'muscle', 'chub',
+  'latino', 'black', 'asian', 'white', 'mixed',
+  'clouds', 'party', 'sober',
+  'breeding', 'raw', 'condom', 'oral', 'rim',
+  'leather', 'gear', 'bdsm', 's&m', 'bondage', 'sex-slave', 'golden-shower',
+  'fisting', 'spanking', 'foot', 'spit', 'watersports', 'pig-play',
+  'roleplay', 'voyeur', 'exhibition', 'outdoor', 'public',
+  'live', 'recorded', 'show', 'private',
+];
+
+// Fire-and-forget AI metadata generation for a freshly-finalized Mux post.
+// Uses the caption as seed; mirrors channelVideoService.aiMetadataAll so both
+// upload paths produce comparable metadata quality. Failures are non-fatal —
+// the post is already visible with the user's caption.
+function scheduleAiMetadata(postId, seedContent) {
+  const seed = String(seedContent || '').trim();
+  if (!seed) return;
+
+  setImmediate(async () => {
+    try {
+      const [titleRes, descRes, tagsRes] = await Promise.allSettled([
+        grokService.generateSafeVideoTitle({ prompt: seed }),
+        grokService.generateBilingualSafeVideoDescription({ prompt: seed }),
+        grokService.suggestSafeTags({ prompt: seed, taxonomy: TAG_TAXONOMY }),
+      ]);
+
+      const title = titleRes.status === 'fulfilled' && titleRes.value
+        ? String(titleRes.value).slice(0, 150)
+        : null;
+      const description = descRes.status === 'fulfilled' && descRes.value
+        ? String(descRes.value)
+        : null;
+      const tags = tagsRes.status === 'fulfilled' && Array.isArray(tagsRes.value)
+        ? tagsRes.value.slice(0, 8)
+        : [];
+
+      await query(
+        `UPDATE social_posts
+            SET video_title = COALESCE(video_title, $1),
+                video_description = COALESCE(video_description, $2),
+                metadata = metadata || jsonb_build_object(
+                  'ai_tags', $3::jsonb,
+                  'ai_generated', jsonb_build_object(
+                    'title', $4::text,
+                    'description', $5::text,
+                    'tags', $6::text
+                  )
+                )
+          WHERE id = $7`,
+        [
+          title,
+          description,
+          JSON.stringify(tags),
+          titleRes.status === 'fulfilled' ? 'ai' : 'fallback',
+          descRes.status === 'fulfilled' ? 'ai' : 'fallback',
+          tagsRes.status === 'fulfilled' ? 'ai' : 'fallback',
+          postId,
+        ]
+      );
+
+      logger.info('socialPostMuxService: AI metadata populated', {
+        postId,
+        titleSource: titleRes.status,
+        descSource: descRes.status,
+        tagsSource: tagsRes.status,
+      });
+    } catch (err) {
+      logger.warn('socialPostMuxService: AI metadata generation failed', {
+        postId, error: err.message,
+      });
+    }
+  });
+}
 
 // ── Auth helper ──────────────────────────────────────────────────────────────
 
@@ -130,6 +209,11 @@ async function finalizeMuxPost(userId, params) {
     }
   }
 
+  // Kick off AI metadata generation in the background. Populates video_title,
+  // video_description, and tags in metadata so social videos have parity with
+  // channel videos (which run the same helpers via aiMetadataAll).
+  scheduleAiMetadata(post.id, content);
+
   return {
     ...post,
     mux_upload_id: uploadId,
@@ -162,6 +246,8 @@ async function handleMuxWebhook(event) {
     if (!playbackId) return 0;
     const thumbUrl = muxService.getThumbnailUrl(playbackId, { percentage: 25 });
     const playUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+    const durationSecs = duration ? Math.round(duration) : null;
+
     const result = await query(
       `UPDATE social_posts
           SET mux_playback_id = $1,
@@ -170,11 +256,37 @@ async function handleMuxWebhook(event) {
               video_thumbnail_url = COALESCE(video_thumbnail_url, $3),
               metadata = metadata || jsonb_build_object('mux_duration_sec', $4::int)
         WHERE mux_asset_id = $5`,
-      [playbackId, playUrl, thumbUrl, duration ? Math.round(duration) : null, assetId]
+      [playbackId, playUrl, thumbUrl, durationSecs, assetId]
     );
     if (result.rowCount) {
-      logger.info('social mux webhook: asset ready', { assetId, playbackId });
+      logger.info('social mux webhook: asset ready', { assetId, playbackId, durationSecs });
     }
+
+    // Enforce the 4-minute exclusive-content minimum. If the finalized post
+    // was flagged exclusive but the processed video is shorter than 240s,
+    // demote it to a regular post so it doesn't sit gated behind PRIME with
+    // sub-minute content. Same rule the disk-upload path enforces at ingest.
+    if (durationSecs !== null && durationSecs < 240) {
+      const demoted = await query(
+        `UPDATE social_posts
+            SET is_exclusive = false,
+                metadata = metadata || jsonb_build_object(
+                  'exclusive_demoted', jsonb_build_object(
+                    'reason', 'duration_below_minimum',
+                    'duration_sec', $1::int,
+                    'demoted_at', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                  )
+                )
+          WHERE mux_asset_id = $2 AND is_exclusive = true`,
+        [durationSecs, assetId]
+      );
+      if (demoted.rowCount) {
+        logger.warn('social mux webhook: demoted exclusive post below 4-min minimum', {
+          assetId, durationSecs,
+        });
+      }
+    }
+
     return result.rowCount;
   }
 

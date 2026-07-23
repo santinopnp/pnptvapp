@@ -12,6 +12,56 @@ const path = require('path');
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
 const ContentComplianceService = require('./contentComplianceService');
+const grokService = require('./grokService');
+
+// Same bounded taxonomy channelVideoService uses. Keeps the LLM honest and
+// makes downstream filtering/search predictable across surfaces.
+const AI_TAG_TAXONOMY = [
+  'solo', 'duo', 'group', 'orgy',
+  'amateur', 'professional',
+  'twink', 'bear', 'daddy', 'jock', 'otter', 'muscle', 'chub',
+  'latino', 'black', 'asian', 'white', 'mixed',
+  'clouds', 'party', 'sober',
+  'breeding', 'raw', 'condom', 'oral', 'rim',
+  'leather', 'gear', 'bdsm', 's&m', 'bondage', 'sex-slave', 'golden-shower',
+  'fisting', 'spanking', 'foot', 'spit', 'watersports', 'pig-play',
+  'roleplay', 'voyeur', 'exhibition', 'outdoor', 'public',
+  'live', 'recorded', 'show', 'private',
+];
+
+// Fire-and-forget: enhance a fresh creator_media row with AI-derived tags
+// when the uploader supplied a caption we can use as seed. Failures are
+// non-fatal — the row is already visible with the user-provided fields.
+function scheduleAiEnhancement(mediaId, caption) {
+  const seed = String(caption || '').trim();
+  if (!seed) return;
+
+  setImmediate(async () => {
+    try {
+      const tagsRes = await grokService.suggestSafeTags({
+        prompt: seed,
+        taxonomy: AI_TAG_TAXONOMY,
+      });
+      const tags = Array.isArray(tagsRes) ? tagsRes.slice(0, 8) : [];
+      if (tags.length === 0) return;
+
+      await query(
+        `UPDATE creator_media
+            SET metadata = metadata || jsonb_build_object(
+              'ai_tags', $1::jsonb,
+              'ai_generated', jsonb_build_object('tags', 'ai')
+            )
+          WHERE id = $2`,
+        [JSON.stringify(tags), mediaId]
+      );
+      logger.info('creatorMediaService: AI tags populated', { mediaId, tagCount: tags.length });
+    } catch (err) {
+      logger.warn('creatorMediaService: AI enhancement failed (non-fatal)', {
+        mediaId, error: err.message,
+      });
+    }
+  });
+}
 
 // The main album upload endpoints store files on local disk and save a
 // relative `/uploads/...` URL (served from the repo-root public/ dir) — only
@@ -153,6 +203,9 @@ async function addMedia(creatorId, { type, url, thumbUrl = null, caption = null,
   }
 
   const row = rows[0];
+  // Kick off AI tag enrichment in the background (no-op when caption is empty).
+  scheduleAiEnhancement(row.id, caption);
+
   return {
     id: String(row.id),
     type: row.type,
@@ -256,4 +309,4 @@ async function reorderMedia(creatorId, items) {
   }
 }
 
-module.exports = { listByCreator, addMedia, updateMedia, deleteMedia, reorderMedia };
+module.exports = { listByCreator, addMedia, updateMedia, deleteMedia, reorderMedia, scheduleAiEnhancement };
