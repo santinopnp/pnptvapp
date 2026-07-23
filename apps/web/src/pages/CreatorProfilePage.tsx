@@ -57,6 +57,7 @@ import {
   isUserBlocked,
   createUserReport,
   ApiError,
+  getOwnChannels,
   type CreatorTipPayload,
   type CreatorPublicProfile,
   type PublicCreatorMediaItem,
@@ -68,11 +69,13 @@ import {
   type CreatorNextAvailability,
   type CreatorExclusiveTeaser,
   type ReportCategory,
+  type CreatorChannel,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import UploadVideoModal from "@/components/channels/UploadVideoModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -763,6 +766,11 @@ export default function CreatorProfilePage() {
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60 | undefined>(undefined);
 
+  // Own-profile upload FAB — populated lazily once we know this is the viewer's own profile.
+  const [ownChannels, setOwnChannels] = useState<CreatorChannel[]>([]);
+  const [showUploadChooser, setShowUploadChooser] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<CreatorChannel | null>(null);
+
   // Tip state
   const [showTipPanel, setShowTipPanel] = useState(false);
   const [tipAmount, setTipAmount] = useState<number>(10);
@@ -1066,6 +1074,20 @@ export default function CreatorProfilePage() {
       if (tipPollRef.current) clearInterval(tipPollRef.current);
     };
   }, []);
+
+  // Own-profile upload FAB — fetch own channels only when the viewer is the creator.
+  // Public profiles never trigger this call, so /creator/channels stays authed-and-scoped.
+  const viewerId = user ? String(user.dbId || user.id) : null;
+  const profileCreatorId = data?.creator?.id != null ? String(data.creator.id) : null;
+  const viewingOwnProfile = !!viewerId && !!profileCreatorId && viewerId === profileCreatorId;
+  useEffect(() => {
+    if (!viewingOwnProfile) return;
+    let cancelled = false;
+    getOwnChannels()
+      .then((res) => { if (!cancelled && res.success) setOwnChannels(res.channels); })
+      .catch(() => { /* silent — FAB just stays hidden */ });
+    return () => { cancelled = true; };
+  }, [viewingOwnProfile]);
 
   // ── Loading ──
   if (isLoading) return <PageSkeleton />;
@@ -1455,46 +1477,37 @@ export default function CreatorProfilePage() {
               </button>
             )}
 
-            {/* Book 30 min / 60 min — two half-width secondary buttons
-                (falls back to top-2 packages if creator doesn't offer exactly 30/60).
-                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
-            {isSubscribed && hasCallPackages && (() => {
-              const pkg30 = activePackages.find((p) => p.duration_minutes === 30);
-              const pkg60 = activePackages.find((p) => p.duration_minutes === 60);
-              // If exact matches missing, show the 2 cheapest packages instead
-              const fallback = [...activePackages].sort((a, b) => a.duration_minutes - b.duration_minutes).slice(0, 2);
-              const pair: PublicCallPackage[] = pkg30 && pkg60 ? [pkg30, pkg60] : fallback;
-              if (pair.length === 0) return null;
-              return (
-                <div className="flex gap-2">
-                  {pair.map((pkg) => (
+            {/* Book a Call — horizontal-scroll carousel of every enabled
+                call package. Replaces the previous hardcoded 30/60 pair and
+                the ghost "Channels" scroll button. Subscribed-only. */}
+            {isSubscribed && hasCallPackages && (
+              <div>
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <PhoneCall size={13} aria-hidden="true" className="text-pnp-textSecondary" />
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-pnp-textSecondary">Book a call</span>
+                </div>
+                <div
+                  className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1 -mx-1 px-1"
+                  role="list"
+                  aria-label="Available call packages"
+                >
+                  {activePackages.map((pkg) => (
                     <button
                       key={pkg.id}
+                      role="listitem"
                       onClick={() => { setBookCallDuration(pkg.duration_minutes as 30 | 60); setShowBookCall(true); }}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[44px]"
+                      className="snap-start flex-shrink-0 min-w-[120px] flex flex-col items-center justify-center gap-1 py-3 px-3.5 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98]"
                       style={{ border: "1px solid rgba(255,255,255,0.15)", background: "#161616", color: "#fff" }}
                     >
-                      <PhoneCall size={13} aria-hidden="true" />
-                      Buy {pkg.duration_minutes} min call
+                      <span className="text-white text-sm">{pkg.duration_minutes} min</span>
+                      <span className="text-[11px] font-semibold text-pnp-textSecondary">
+                        ${Number(pkg.price_usd).toFixed(pkg.price_usd % 1 === 0 ? 0 : 2)}
+                        {pkg.quantity > 1 && <> · x{pkg.quantity}</>}
+                      </span>
                     </button>
                   ))}
                 </div>
-              );
-            })()}
-
-            {/* Channels — ghost, full-width, scrolls to Canales section.
-                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
-            {isSubscribed && hasChannels && (
-              <button
-                onClick={() => {
-                  const el = document.getElementById("creator-channels");
-                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-semibold transition-colors min-h-[44px]"
-                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "transparent", color: "rgba(255,255,255,0.75)" }}
-              >
-                Channels
-              </button>
+              </div>
             )}
 
             {/* Compact Follow chip (only if not own profile) — mockup omits
@@ -2176,6 +2189,99 @@ export default function CreatorProfilePage() {
           skipPackageStep={bookCallDuration !== undefined}
         />
       )}
+
+      {/* ── Own-profile Mux upload FAB + chooser + modal ─────────────────────
+          Renders only for the creator viewing their own page. FAB opens the
+          chooser sheet (público vs exclusivo); the chooser targets one of the
+          creator's own channels — free or subscription — and hands off to the
+          existing UploadVideoModal (Mux direct upload, resumable, thumbnail
+          picker). If the creator has only one channel, the chooser is skipped. */}
+      {viewingOwnProfile && ownChannels.length > 0 && (() => {
+        const freeCh = ownChannels.find((c) => c.accessType === "free") || null;
+        const subCh = ownChannels.find((c) => c.accessType === "subscription") || null;
+        const onlyOne = (freeCh && !subCh) || (subCh && !freeCh);
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Subir video"
+              onClick={() => {
+                if (onlyOne) { setUploadTarget(freeCh || subCh); return; }
+                setShowUploadChooser(true);
+              }}
+              className="fixed bottom-24 right-4 z-40 w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
+              style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)", boxShadow: "0 12px 28px rgba(255,51,119,0.40)", color: "#fff" }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+
+            {showUploadChooser && (
+              <div
+                className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+                style={{ background: "rgba(0,0,0,0.75)" }}
+                onClick={() => setShowUploadChooser(false)}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Elige tipo de video"
+                  className="w-full max-w-sm rounded-2xl p-5 space-y-3"
+                  style={{ background: "var(--pnp-surface-raised, #1e1e2e)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h3 className="text-base font-bold text-pnp-textPrimary">¿A dónde va el video?</h3>
+                  {freeCh && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowUploadChooser(false); setUploadTarget(freeCh); }}
+                      className="w-full text-left rounded-xl p-3 flex items-start gap-3 transition-colors hover:bg-white/5"
+                      style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)" }}
+                    >
+                      <div className="w-7 h-7 rounded-lg flex-shrink-0 mt-0.5" style={{ background: "linear-gradient(135deg,#5ED1C4,#7B61FF)" }} aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white">Público</p>
+                        <p className="text-[11px] text-pnp-textSecondary mt-0.5">Visible para todos en tu canal gratis</p>
+                      </div>
+                    </button>
+                  )}
+                  {subCh && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowUploadChooser(false); setUploadTarget(subCh); }}
+                      className="w-full text-left rounded-xl p-3 flex items-start gap-3 transition-colors hover:bg-white/5"
+                      style={{ border: "1px solid rgba(212,0,122,.35)", background: "rgba(212,0,122,.06)" }}
+                    >
+                      <div className="w-7 h-7 rounded-lg flex-shrink-0 mt-0.5" style={{ background: "linear-gradient(135deg,#FFB454,#D4007A)" }} aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white">Exclusivo · Solo suscriptores</p>
+                        <p className="text-[11px] text-pnp-textSecondary mt-0.5">Solo lo ven quienes pagan tu suscripción</p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {uploadTarget && (
+              <UploadVideoModal
+                channelId={uploadTarget.id}
+                channelName={uploadTarget.name}
+                channelSlug={uploadTarget.slug}
+                accessType={uploadTarget.accessType}
+                pricePerMonth={uploadTarget.priceUsd ?? null}
+                creatorUsername={uploadTarget.creatorUsername ?? null}
+                onClose={() => setUploadTarget(null)}
+                onPublished={() => {
+                  setUploadTarget(null);
+                  void load();
+                }}
+              />
+            )}
+          </>
+        );
+      })()}
 
       {/* ── Purchase confirmation modal ────────────────────────────────────────── */}
       {showVideoConfirm && (() => {
