@@ -116,11 +116,27 @@ const {
 } = broadcastUtils;
 
 function getBroadcastButtonOptions(lang) {
-  const options = getStandardButtonOptions();
-
-  // Return options as-is (button text is already in English)
-  // Language preference doesn't affect button labels in this implementation
-  return options;
+  const isEs = lang === 'es';
+  return [
+    {
+      key: 'get_prime',
+      text: isEs ? '💎 Obtener PRIME' : '💎 Get PRIME',
+      type: 'url',
+      target: 'https://pnptv.app/subscribe',
+    },
+    {
+      key: 'lifetime100',
+      text: '⭐ Lifetime100',
+      type: 'url',
+      target: 'https://pnptv.app/lifetime100',
+    },
+    {
+      key: 'crypto_guide',
+      text: isEs ? '🪙 Configurar Crypto' : '🪙 Get Set Up for Crypto',
+      type: 'url',
+      target: 'https://pnptv.app/crypto-guide',
+    },
+  ];
 }
 
 function summarizeBroadcastButtons(buttons) {
