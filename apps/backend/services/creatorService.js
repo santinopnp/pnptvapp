@@ -1843,17 +1843,16 @@ class CreatorService {
     // the creator-setup checklist sees the "Payout Method" item as done. The
     // wizard only writes to creator_enrollments; without this copy the checker
     // (creatorController.getSetupStatus) reports payout as unconfigured.
+    //
+    // Post-migration 326: payment_method is now the NowPayments currency code
+    // itself (btc, usdttrc20, dash, …). Every crypto code lands in
+    // creator_wallet_address; the specific code is preserved on the enrollment
+    // row (used at payout time by nowpaymentsPayoutService). 'meru' stays
+    // grandfathered on the legacy fiat path.
     if (enrollment.payment_address) {
       const addr = enrollment.payment_address.trim();
-      const method = enrollment.payment_method;
-      if (method === 'dash') {
-        await query(
-          `UPDATE users SET creator_dash_address = COALESCE(NULLIF(creator_dash_address, ''), $2),
-                            payout_method = 'crypto'
-             WHERE id = $1`,
-          [enrollment.user_id, addr]
-        );
-      } else if (method === 'meru') {
+      const method = String(enrollment.payment_method || '').toLowerCase();
+      if (method === 'meru') {
         await query(
           `UPDATE users SET meru_account = COALESCE(NULLIF(meru_account, ''), $2),
                             fiat_payout_method = COALESCE(fiat_payout_method, 'meru'),
@@ -1862,7 +1861,21 @@ class CreatorService {
              WHERE id = $1`,
           [enrollment.user_id, addr]
         );
-      } else if (method === 'usdc' || method === 'usdt') {
+      } else if (method === 'dash') {
+        // Preserve the legacy dash column for downstream tooling that reads it,
+        // but ALSO populate creator_wallet_address so the payout service (which
+        // has a single address read) works for every token type uniformly.
+        await query(
+          `UPDATE users SET creator_dash_address = COALESCE(NULLIF(creator_dash_address, ''), $2),
+                            creator_wallet_address = COALESCE(NULLIF(creator_wallet_address, ''), $2),
+                            payout_method = 'crypto'
+             WHERE id = $1`,
+          [enrollment.user_id, addr]
+        );
+      } else if (method) {
+        // All other NowPayments crypto tokens (btc, btcln, eth, ltc, xmr, bch,
+        // usdt/*, usdc/*, sol, doge). Address format is currency-specific and
+        // validated by nowpaymentsPayoutService before the payout API call.
         await query(
           `UPDATE users SET creator_wallet_address = COALESCE(NULLIF(creator_wallet_address, ''), $2),
                             payout_method = 'crypto'

@@ -61,6 +61,26 @@ async function compressImageForUpload(file: File, maxDim: number, quality: numbe
   }
 }
 
+// Display labels for NowPayments currency codes — kept in sync with the
+// <select> options in step 3 and with ADDRESS_VALIDATORS on the backend.
+const TOKEN_LABELS: Record<string, string> = {
+  btc:       "Bitcoin (BTC)",
+  btcln:     "Bitcoin Lightning",
+  eth:       "Ethereum (ETH)",
+  ltc:       "Litecoin (LTC)",
+  xmr:       "Monero (XMR)",
+  bch:       "Bitcoin Cash (BCH)",
+  usdt:      "USDT · Ethereum (ERC-20)",
+  usdttrc20: "USDT · Tron (TRC-20)",
+  usdtbsc:   "USDT · BSC (BEP-20)",
+  usdc:      "USDC · Ethereum",
+  usdcbsc:   "USDC · BSC (BEP-20)",
+  usdcsol:   "USDC · Solana",
+  dash:      "Dash",
+  sol:       "Solana (SOL)",
+  doge:      "Dogecoin (DOGE)",
+};
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface CreatorEnrollmentWizardProps {
@@ -220,13 +240,14 @@ export default function CreatorEnrollmentWizard({
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   // Step 3 state (payment)
-  // Dash via BTCPay is the canonical crypto payout path post-Daimo retirement
-  // (2026-04-21). Meru is the fiat off-ramp. usdc/usdt remain UI options for
-  // creators who already set them up before the migration; new creators are
-  // nudged to Dash by ordering it first.
-  const [paymentMethod, setPaymentMethod] = useState<"dash" | "meru" | "usdc" | "usdt">("dash");
+  // paymentMethod is now the exact NowPayments currency code (matches the
+  // set the checkout uses for incoming payments) — see routes.js:11071 and
+  // apps/backend/services/nowpaymentsPayoutService.js ADDRESS_VALIDATORS.
+  // The old Dash/Meru/USDC/USDT UI groups were flattened into a single
+  // dropdown so the picker maps 1:1 to what the payout API expects.
+  const [paymentMethod, setPaymentMethod] = useState<string>("usdttrc20");
   const [paymentAddress, setPaymentAddress] = useState("");
-  const [paymentNetwork, setPaymentNetwork] = useState("dash");
+  const [paymentNetwork, setPaymentNetwork] = useState("");
 
   // Step 4 state (ID + 2257 fields + signature)
   const [idFile, setIdFile] = useState<File | null>(null);
@@ -312,7 +333,16 @@ export default function CreatorEnrollmentWizard({
   const canProceedStep0 = true; // selectedTier always has a value
   const canProceedStep1 = guidelinesRead;
   const canProceedStep2 = termsAccepted && commitmentAccepted && privacyAccepted;
-  const paymentMinLength = paymentMethod === 'meru' ? 7 : 26;
+  // Minimum address length per token — matches the tightest of each family's
+  // real formats. Full validation happens server-side against a per-currency
+  // regex in nowpaymentsPayoutService.ADDRESS_VALIDATORS.
+  const PAYMENT_MIN_LENGTH: Record<string, number> = {
+    btc: 26, btcln: 6, eth: 42, ltc: 26, xmr: 95, bch: 34,
+    usdt: 42, usdttrc20: 34, usdtbsc: 42,
+    usdc: 42, usdcbsc: 42, usdcsol: 32,
+    dash: 34, sol: 32, doge: 34,
+  };
+  const paymentMinLength = PAYMENT_MIN_LENGTH[paymentMethod] ?? 26;
   const canProceedStep3 = paymentAddress.trim().length >= paymentMinLength;
   const canProceedStep4 = !!idFile && idLegalName.trim().length >= 1 && idDob.length > 0 && idType.length > 0;
   const canProceedStep5 = !!signatureData;
@@ -581,76 +611,59 @@ export default function CreatorEnrollmentWizard({
               </div>
 
               <div>
-                <p className="text-xs font-medium mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{pr.selectPaymentMethod}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: "dash" as const, label: "Dash", icon: "💎" },
-                    { id: "meru" as const, label: pr.meruApp, icon: "💳" },
-                    { id: "usdc" as const, label: "USDC", icon: "🔵" },
-                    { id: "usdt" as const, label: "USDT", icon: "🟢" },
-                  ]).map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        if (m.id === paymentMethod) return;
-                        // Only wipe the address when switching FROM a format that
-                        // can't possibly match the new one (crypto ↔ meru). Within
-                        // the crypto family the user might be correcting a typo.
-                        const switchingFamily =
-                          (paymentMethod === "meru") !== (m.id === "meru");
-                        if (switchingFamily) setPaymentAddress("");
-                        setPaymentMethod(m.id);
-                        if (m.id === "dash") setPaymentNetwork("dash");
-                        else if (m.id === "usdt") setPaymentNetwork("tron");
-                        else if (m.id === "usdc") setPaymentNetwork("base");
-                        else setPaymentNetwork("");
-                      }}
-                      className="py-3 rounded-xl text-center transition-all"
-                      style={paymentMethod === m.id
-                        ? { background: `rgba(${t.rgb},0.15)`, border: `2px solid rgba(${t.rgb},0.5)` }
-                        : { background: "rgba(255,255,255,0.04)", border: "2px solid rgba(255,255,255,0.08)" }
-                      }
-                    >
-                      <p className="text-lg mb-0.5">{m.icon}</p>
-                      <p className="text-xs font-semibold" style={{ color: paymentMethod === m.id ? t.color : "var(--pnp-text-secondary, #8E8E93)" }}>{m.label}</p>
-                    </button>
-                  ))}
-                </div>
+                <label htmlFor="payout-token" className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {pr.selectPaymentMethod}
+                </label>
+                <select
+                  id="payout-token"
+                  value={paymentMethod}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (next === paymentMethod) return;
+                    // Wipe the address whenever the token changes — a Bitcoin
+                    // address will never validate as Ethereum, USDT-TRC, etc.
+                    setPaymentAddress("");
+                    setPaymentMethod(next);
+                    setPaymentNetwork(next);
+                  }}
+                  className="w-full rounded-lg px-3 py-2.5 text-white outline-none appearance-none"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: `1px solid rgba(${t.rgb},0.35)`,
+                    fontSize: "16px",
+                    backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'><path d='M1 1L6 6L11 1' stroke='%238E8E93' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>\")",
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "right 12px center",
+                    paddingRight: "36px",
+                  }}
+                >
+                  <option value="btc">Bitcoin (BTC)</option>
+                  <option value="btcln">Bitcoin Lightning</option>
+                  <option value="eth">Ethereum (ETH)</option>
+                  <option value="ltc">Litecoin (LTC)</option>
+                  <option value="xmr">Monero (XMR)</option>
+                  <option value="bch">Bitcoin Cash (BCH)</option>
+                  <option value="usdttrc20">USDT · Tron (TRC-20)</option>
+                  <option value="usdt">USDT · Ethereum (ERC-20)</option>
+                  <option value="usdtbsc">USDT · BSC (BEP-20)</option>
+                  <option value="usdc">USDC · Ethereum</option>
+                  <option value="usdcbsc">USDC · BSC (BEP-20)</option>
+                  <option value="usdcsol">USDC · Solana</option>
+                  <option value="dash">Dash</option>
+                  <option value="sol">Solana (SOL)</option>
+                  <option value="doge">Dogecoin (DOGE)</option>
+                </select>
               </div>
-
-              {(paymentMethod === "usdc" || paymentMethod === "usdt") && (
-                <div>
-                  <p className="text-xs font-medium mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{pr.network}</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(paymentMethod === "usdc"
-                      ? [{ id: "base", label: "Base" }, { id: "ethereum", label: "Ethereum" }]
-                      : [{ id: "tron", label: "Tron (TRC-20)" }, { id: "ethereum", label: "Ethereum (ERC-20)" }]
-                    ).map((n) => (
-                      <button
-                        key={n.id}
-                        onClick={() => setPaymentNetwork(n.id)}
-                        className="py-2 rounded-lg text-xs font-medium transition-colors border"
-                        style={paymentNetwork === n.id
-                          ? { background: `rgba(${t.rgb},0.12)`, color: t.color, borderColor: `rgba(${t.rgb},0.3)` }
-                          : { background: "rgba(255,255,255,0.04)", color: "var(--pnp-text-secondary, #8E8E93)", borderColor: "rgba(255,255,255,0.08)" }
-                        }
-                      >
-                        {n.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               <div>
                 <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  {paymentMethod === "meru" ? pr.meruAccountOrPhone : pr.walletAddress}
+                  {pr.walletAddress}
                 </label>
                 <input
                   type="text"
                   value={paymentAddress}
                   onChange={(e) => setPaymentAddress(e.target.value)}
-                  placeholder={paymentMethod === "meru" ? pr.meruPlaceholder : pr.walletPlaceholder}
+                  placeholder={pr.walletPlaceholder}
                   className="w-full rounded-lg px-3 py-2.5 text-white outline-none"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontSize: "16px" }}
                   autoComplete="off"
@@ -824,14 +837,8 @@ export default function CreatorEnrollmentWizard({
                   <div className="space-y-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     <div className="flex justify-between">
                       <span>{pr.method}</span>
-                      <span className="text-white font-medium capitalize">{paymentMethod}</span>
+                      <span className="text-white font-medium">{TOKEN_LABELS[paymentMethod] ?? paymentMethod}</span>
                     </div>
-                    {paymentNetwork && paymentMethod !== "meru" && (
-                      <div className="flex justify-between">
-                        <span>{pr.network}</span>
-                        <span className="text-white font-medium capitalize">{paymentNetwork}</span>
-                      </div>
-                    )}
                     <div className="flex justify-between">
                       <span>{pr.address}</span>
                       <span className="text-white font-medium truncate ml-4" style={{ maxWidth: 160 }}>{paymentAddress}</span>

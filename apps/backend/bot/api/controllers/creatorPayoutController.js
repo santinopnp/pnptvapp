@@ -1,6 +1,7 @@
 'use strict';
 
 const { getCreatorPayoutBalance, requestPayout, getPayoutHistory } = require('../../../services/nowpaymentsPayoutService');
+const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 
 exports.getPayoutBalance = async (req, res) => {
@@ -24,10 +25,22 @@ exports.requestPayout = async (req, res) => {
     const { address } = req.body;
 
     if (!address) {
-      return res.status(400).json({ success: false, error: 'USDT TRC-20 wallet address is required' });
+      return res.status(400).json({ success: false, error: 'Crypto wallet address is required' });
     }
 
-    const payout = await requestPayout({ userId, address });
+    // Read the creator's chosen payout token from the latest approved
+    // enrollment. Post-migration 326 this is a NowPayments currency code
+    // (btc, usdttrc20, dash, …). Falls back to usdttrc20 for legacy rows.
+    const { rows: enrRows } = await query(
+      `SELECT payment_method FROM creator_enrollments
+        WHERE user_id = $1 AND status = 'approved'
+        ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    const currency = String(enrRows[0]?.payment_method || 'usdttrc20').toLowerCase();
+
+    const payout = await requestPayout({ userId, address, currency });
     return res.json({
       success: true,
       payout: {
