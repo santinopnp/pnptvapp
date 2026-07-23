@@ -5736,12 +5736,22 @@ const lifetime100ActivateLimiter = rateLimit({
 });
 
 // GET /api/public/lifetime100/availability — returns { success, available }
+//
+// Must count the same rows reserveRandomLink() treats as claimable — a
+// 'reserved' row whose 60-min hold has expired is just as available as an
+// 'active' one (reserveRandomLink's own WHERE re-reserves it directly,
+// no separate "release" step required). This previously only counted
+// status='active', so abandoned reservations (checkout started, never
+// finished) piled up invisibly: the count could hit 0 and disable the
+// reserve CTA even though real, reusable codes existed, and with the CTA
+// disabled nobody could call /reserve to trigger the one code path that
+// would've reclaimed them — a permanent false "sold out".
 app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) => {
   const { query: dbQuery } = require('../../config/postgres');
   const { rows } = await dbQuery(
     `SELECT COUNT(*)::int AS n FROM meru_payment_links
-      WHERE product='lifetime100' AND status='active'
-        AND (reserved_until IS NULL OR reserved_until < NOW())`
+      WHERE product='lifetime100'
+        AND (status='active' OR (status='reserved' AND reserved_until < NOW()))`
   );
   return res.json({ success: true, available: rows[0]?.n || 0 });
 }));

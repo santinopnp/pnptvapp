@@ -2419,12 +2419,17 @@ const getUserPayments = async (req, res) => {
  */
 const meruLinkStats = async (req, res) => {
   try {
+    // "available" must match reserveRandomLink()'s own claimability check
+    // (meruLinkService.js) — a 'reserved' row past its reserved_until is
+    // just as reusable as an 'active' one. Counting status='active' alone
+    // undercounts real inventory whenever checkouts are started and
+    // abandoned, understating what's actually still sellable.
     const result = await query(`
       SELECT
         product,
         COUNT(*) AS total,
         COUNT(CASE WHEN status = 'used' THEN 1 END) AS used,
-        COUNT(CASE WHEN status = 'active' THEN 1 END) AS available
+        COUNT(CASE WHEN status = 'active' OR (status = 'reserved' AND reserved_until < NOW()) THEN 1 END) AS available
       FROM meru_payment_links
       GROUP BY product
       ORDER BY product
