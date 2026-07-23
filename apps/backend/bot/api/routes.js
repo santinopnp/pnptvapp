@@ -437,10 +437,9 @@ app.use(ipTracker); // Log every authenticated request IP for security
 // (geoip module is already required at the top of the file — reuse it.)
 const BLOCKED_US_REGIONS = new Set();
 // CO + VE geo-blocks lifted 2026-06-18 — full open access.
-// CO re-blocked 2026-07-21 per operator instruction — site-wide, not
-// content-specific (uses the existing app.use geo-block middleware below,
-// so it covers every route including public /v/ share pages).
-const BLOCKED_COUNTRIES = new Set(['CO']);
+// CO re-blocked 2026-07-21 per operator instruction, then lifted again
+// 2026-07-23 per operator instruction — full open access restored.
+const BLOCKED_COUNTRIES = new Set();
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
 const GEO_BLOCK_USER_WHITELIST = new Set(['7246621722', '8599671840']); // PNPLatinoBoy, SantinoFurioso
 
@@ -1469,8 +1468,11 @@ const limiter = rateLimit({
   },
 });
 app.use('/api/', limiter);
-// Colombia Socio gate — blocks CO IPs; whitelists existing members + Socios
-app.use(colombiaAccessGate);
+// Colombia Socio gate — disabled 2026-07-23 per operator instruction
+// alongside the BLOCKED_COUNTRIES hard block above; CO is fully open again.
+// colombiaAccessGate() is left defined (unused) so this can be re-mounted
+// in one line if the restriction needs to come back.
+// app.use(colombiaAccessGate);
 
 const ageVerificationUpload = multer({
   storage: multer.memoryStorage(),
