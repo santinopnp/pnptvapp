@@ -51,6 +51,10 @@ const TYPE_EMOJI = {
 
 function buildUrl(type, entityType, entityId) {
   const base = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
+  // Weekly payout proposals deep-link to the approval banner on the earnings tab.
+  if (entityType === 'weekly_payout_proposal' && entityId) {
+    return `${base}/creator/earnings?approve=${encodeURIComponent(entityId)}`;
+  }
   switch (type) {
     case 'follow':
       return entityId ? `${base}/profile/${entityId}` : base;

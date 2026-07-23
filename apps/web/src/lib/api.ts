@@ -3903,6 +3903,24 @@ export function getOwnChannels(): Promise<{ success: boolean; channels: CreatorC
   return request("/api/webapp/creator/channels");
 }
 
+// ── Creator user manual ─────────────────────────────────────────────────────
+export interface CreatorManual {
+  markdown: string;
+  updatedAt: string | null;
+}
+
+export function getCreatorManual(idOrHandle: string | number): Promise<{ success: boolean; markdown: string; updatedAt: string | null }> {
+  return request(`/api/webapp/creator/${encodeURIComponent(String(idOrHandle))}/manual`);
+}
+
+export function saveCreatorManual(markdown: string): Promise<{ success: boolean; markdown: string; updatedAt: string }> {
+  return request("/api/webapp/creator/manual", { method: "PUT", body: { markdown } });
+}
+
+export function suggestCreatorManualAI(): Promise<{ success: boolean; markdown: string }> {
+  return request("/api/webapp/creator/manual/ai-suggest", { method: "POST" });
+}
+
 export function provisionCreatorDefaults(): Promise<{
   success: boolean;
   freeChannelId?: number;
@@ -4191,11 +4209,13 @@ export function getCreatorDashboard(): Promise<{
   return request("/api/webapp/creator/dashboard");
 }
 
-// Payout destinations are stored as a per-lane jsonb blob. The 5 supported
-// lanes are: meru / btc / dash / usdt_tron / usdt_base. Lane payloads:
+// Payout destinations are stored as a per-lane jsonb blob. Lane payloads:
 //   meru      → { handle: string }
+//   bre_b     → { key: string, key_type: "phone" | "cedula" | "email" }  (Colombia only)
 //   others    → { address: string }
-export type PayoutLane = "meru" | "btc" | "dash" | "usdt_tron" | "usdt_base";
+export type PayoutLane = "meru" | "btc" | "dash" | "usdt_tron" | "usdt_base" | "bre_b";
+
+export type BreBKeyType = "phone" | "cedula" | "email";
 
 export type PayoutDestinations = Partial<{
   meru:      { handle:  string };
@@ -4203,6 +4223,7 @@ export type PayoutDestinations = Partial<{
   dash:      { address: string };
   usdt_tron: { address: string };
   usdt_base: { address: string };
+  bre_b:     { key: string; key_type: BreBKeyType };
 }>;
 
 export function getCreatorWallet(): Promise<{
@@ -4738,6 +4759,115 @@ export function requestCreatorPayout(body: {
 
 export function getCreatorPayoutHistory(): Promise<{ success: boolean; payouts: CreatorPayoutRecord[] }> {
   return request('/api/webapp/creator/payout/history');
+}
+
+// ── Weekly payout approval (Colombia-friendly) ────────────────────────────────
+export interface WeeklyPayoutMethodSnapshot {
+  lane: string;
+  label?: string;
+  address?: string;
+  handle?: string;
+  key?: string;
+  key_type?: string;
+  account?: string;
+  provider?: string;
+}
+
+export interface WeeklyPayoutApproval {
+  id: string;
+  weekStart: string;
+  balanceUsd: number;
+  balanceCop: number | null;
+  usdCopRate: number | null;
+  method: WeeklyPayoutMethodSnapshot;
+  methodOverride: WeeklyPayoutMethodSnapshot | null;
+  status: 'proposed' | 'approved' | 'rejected' | 'expired' | 'paid';
+  approvedAt: string | null;
+  createdAt: string;
+  deadlineAt: string;
+}
+
+export function getWeeklyPayoutPending(): Promise<{ success: boolean; approval: WeeklyPayoutApproval | null }> {
+  return request('/api/webapp/creator/payout/weekly/pending');
+}
+
+export function approveWeeklyPayout(
+  id: string,
+  methodOverride?: WeeklyPayoutMethodSnapshot
+): Promise<{ success: boolean }> {
+  return request(`/api/webapp/creator/payout/weekly/${id}/approve`, {
+    method: 'POST',
+    body: methodOverride ? { methodOverride } : {},
+  });
+}
+
+export function rejectWeeklyPayout(id: string): Promise<{ success: boolean }> {
+  return request(`/api/webapp/creator/payout/weekly/${id}/reject`, { method: 'POST' });
+}
+
+// Admin weekly payout ledger
+export interface AdminWeeklyPayoutRow {
+  id: string;
+  creatorId: string;
+  username: string | null;
+  firstName: string | null;
+  email: string | null;
+  country: string | null;
+  language: string | null;
+  balanceUsd: number;
+  balanceCop: number | null;
+  usdCopRate: number | null;
+  method: WeeklyPayoutMethodSnapshot;
+  methodOverride: WeeklyPayoutMethodSnapshot | null;
+  status: 'proposed' | 'approved' | 'rejected' | 'expired' | 'paid';
+  approvedAt: string | null;
+  processedAt: string | null;
+  processedByAdminId: string | null;
+  receiptUrl: string | null;
+  txReference: string | null;
+  adminNotes: string | null;
+  createdAt: string;
+}
+
+export function getAdminWeeklyPayouts(params: {
+  weekStart?: string;
+  status?: string;
+  country?: string;
+}): Promise<{
+  success: boolean;
+  weekStart: string;
+  deadlineAt: string;
+  summary: { status: string; count: number; total_usd: number }[];
+  rows: AdminWeeklyPayoutRow[];
+}> {
+  const qs = new URLSearchParams();
+  if (params.weekStart) qs.set('week_start', params.weekStart);
+  if (params.status) qs.set('status', params.status);
+  if (params.country) qs.set('country', params.country);
+  const q = qs.toString();
+  return request(`/api/webapp/admin/creator-payouts/weekly${q ? `?${q}` : ''}`);
+}
+
+export async function markWeeklyPayoutPaid(
+  id: string,
+  data: { txReference: string; adminNotes?: string; receipt?: File | null }
+): Promise<{ success: boolean }> {
+  const fd = new FormData();
+  fd.append('tx_reference', data.txReference);
+  if (data.adminNotes) fd.append('admin_notes', data.adminNotes);
+  if (data.receipt) fd.append('receipt', data.receipt);
+  const res = await fetch(`/api/webapp/admin/creator-payouts/weekly/${id}/mark-paid`, {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || 'Failed to mark paid');
+  return body;
+}
+
+export function getWeeklyPayoutReceiptUrl(id: string): Promise<{ success: boolean; url: string }> {
+  return request(`/api/webapp/admin/creator-payouts/weekly/${id}/receipt`);
 }
 
 // ── Creator invite links ──────────────────────────────────────────────────────

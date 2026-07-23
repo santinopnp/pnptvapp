@@ -11,12 +11,16 @@ import {
   processAllPayouts,
   adminCancelCreatorSubscription,
   adminExtendCreatorSubscription,
+  getAdminWeeklyPayouts,
+  markWeeklyPayoutPaid,
+  getWeeklyPayoutReceiptUrl,
   type CreatorSubscriptionSummary,
   type SubscriptionDetail,
   type CreatorDetailAdmin,
   type MonthlyRevenueRow,
   type CreatorPayoutSummary,
   type PlatformPayoutSummary,
+  type AdminWeeklyPayoutRow,
 } from "@/lib/api";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -598,6 +602,279 @@ function CreatorDetailPanel({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+// ── Weekly payout ledger (Colombia + all creators) ──────────────────────────
+
+function currentBogotaMonday(): string {
+  const now = new Date();
+  const bogotaMs = now.getTime() - 5 * 3600 * 1000;
+  const b = new Date(bogotaMs);
+  const daysBack = (b.getUTCDay() + 6) % 7;
+  const mon = new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate() - daysBack));
+  return mon.toISOString().slice(0, 10);
+}
+
+function weeklyMethodLabel(m: AdminWeeklyPayoutRow["method"] | null): string {
+  if (!m) return "—";
+  const laneName: Record<string, string> = {
+    bre_b: "Bre-B",
+    meru: "Meru",
+    btc: "Bitcoin",
+    dash: "Dash",
+    usdt_tron: "USDT (TRON)",
+    usdt_base: "USDT (Base)",
+    fiat_legacy: "Fiat (legacy)",
+  };
+  const val = m.address || m.handle || m.key || m.account || "";
+  const short = val.length > 18 ? `${val.slice(0, 8)}…${val.slice(-6)}` : val;
+  return `${laneName[m.lane] || m.lane}${short ? ` · ${short}` : ""}`;
+}
+
+function StatusPill({ status }: { status: AdminWeeklyPayoutRow["status"] }) {
+  const map: Record<string, { bg: string; fg: string; label: string }> = {
+    proposed: { bg: "rgba(212,0,122,0.15)", fg: "#D4007A", label: "Propuesto" },
+    approved: { bg: "rgba(94,209,196,0.15)", fg: "#5ED1C4", label: "Aprobado" },
+    rejected: { bg: "rgba(255,69,58,0.15)", fg: "#FF453A", label: "Rechazado" },
+    expired:  { bg: "rgba(142,142,147,0.2)", fg: "#8E8E93", label: "Expirado" },
+    paid:     { bg: "rgba(50,215,75,0.15)", fg: "#32D74B", label: "Pagado" },
+  };
+  const s = map[status] || map.proposed;
+  return (
+    <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: s.bg, color: s.fg }}>
+      {s.label}
+    </span>
+  );
+}
+
+function MarkPaidModal({
+  row,
+  open,
+  onClose,
+  onSaved,
+}: {
+  row: AdminWeeklyPayoutRow | null;
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [txRef, setTxRef] = useState("");
+  const [notes, setNotes] = useState("");
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) { setTxRef(""); setNotes(""); setReceipt(null); setError(null); }
+  }, [open]);
+
+  if (!open || !row) return null;
+
+  async function submit() {
+    if (!row) return;
+    if (!txRef.trim()) { setError("Referencia de transacción requerida"); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await markWeeklyPayoutPaid(row.id, { txReference: txRef.trim(), adminNotes: notes.trim() || undefined, receipt });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falló marcar como pagado");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.75)" }} onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl p-5" style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.1)" }} onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-white mb-1">Marcar como pagado</h3>
+        <p className="text-xs text-white/60 mb-4">
+          {row.username ? `@${row.username}` : row.creatorId} · ${row.balanceUsd.toFixed(2)} USD
+          {row.balanceCop != null ? ` (≈ COP $${row.balanceCop.toLocaleString("es-CO")})` : ""}
+        </p>
+        <label className="block text-xs font-semibold text-white/80 mb-1">Referencia de transacción *</label>
+        <input type="text" value={txRef} onChange={(e) => setTxRef(e.target.value)}
+          placeholder="Ej: TRX-2026-07-23-001" className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30" />
+        <label className="block text-xs font-semibold text-white/80 mt-3 mb-1">Notas del admin (opcional)</label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+          className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30" />
+        <label className="block text-xs font-semibold text-white/80 mt-3 mb-1">Comprobante (PDF, JPG, PNG · máx 5MB)</label>
+        <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
+          onChange={(e) => setReceipt(e.target.files?.[0] || null)}
+          className="w-full text-xs text-white/80 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:text-xs file:bg-white/10 file:text-white" />
+        {error && (
+          <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,69,58,0.1)", color: "#FF453A" }}>{error}</p>
+        )}
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm bg-white/10 text-white/80">Cancelar</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+            {saving ? "Guardando…" : "Marcar pagado"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WeeklyPayoutsLedger() {
+  const [weekStart, setWeekStart] = useState<string>(currentBogotaMonday());
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [countryFilter, setCountryFilter] = useState<string>("");
+  const [rows, setRows] = useState<AdminWeeklyPayoutRow[]>([]);
+  const [summary, setSummary] = useState<{ status: string; count: number; total_usd: number }[]>([]);
+  const [deadlineAt, setDeadlineAt] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [markTarget, setMarkTarget] = useState<AdminWeeklyPayoutRow | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getAdminWeeklyPayouts({ weekStart, status: statusFilter || undefined, country: countryFilter || undefined });
+      setRows(res.rows);
+      setSummary(res.summary);
+      setDeadlineAt(res.deadlineAt);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [weekStart, statusFilter, countryFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function viewReceipt(id: string) {
+    try {
+      const r = await getWeeklyPayoutReceiptUrl(id);
+      if (r.url) window.open(r.url, "_blank", "noopener");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "No se pudo abrir el comprobante");
+    }
+  }
+
+  const totalApproved = summary.find((s) => s.status === "approved")?.total_usd || 0;
+  const totalApprovedCount = summary.find((s) => s.status === "approved")?.count || 0;
+  const totalPaid = summary.find((s) => s.status === "paid")?.total_usd || 0;
+  const totalPaidCount = summary.find((s) => s.status === "paid")?.count || 0;
+
+  return (
+    <div className="rounded-xl border border-pnp-border bg-pnp-surface p-5 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-base font-bold text-pnp-textPrimary">Payouts semanales</h2>
+          <p className="text-xs text-pnp-textSecondary mt-0.5">
+            Aprobados por creador · procesar los martes · deadline {deadlineAt ? new Date(deadlineAt).toLocaleString() : "—"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-pnp-textSecondary">Semana:</label>
+          <input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent" />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent">
+            <option value="">Todos</option>
+            <option value="proposed">Propuestos</option>
+            <option value="approved">Aprobados</option>
+            <option value="paid">Pagados</option>
+            <option value="rejected">Rechazados</option>
+            <option value="expired">Expirados</option>
+          </select>
+          <input type="text" placeholder="País (ej. Colombia)" value={countryFilter}
+            onChange={(e) => setCountryFilter(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent w-40" />
+          <a
+            href={`/api/webapp/admin/creator-payouts/weekly/export.csv?week_start=${weekStart}${statusFilter ? `&status=${statusFilter}` : ""}${countryFilter ? `&country=${encodeURIComponent(countryFilter)}` : ""}`}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-white/90 hover:bg-white/20"
+          >
+            Export CSV
+          </a>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="rounded-lg border border-pnp-border bg-pnp-background p-3">
+          <p className="text-xs text-pnp-textSecondary">Aprobados</p>
+          <p className="text-lg font-bold text-pnp-textPrimary">{totalApprovedCount}</p>
+          <p className="text-xs text-teal-400">{fmtUsd(totalApproved)} listos para pagar</p>
+        </div>
+        <div className="rounded-lg border border-pnp-border bg-pnp-background p-3">
+          <p className="text-xs text-pnp-textSecondary">Pagados</p>
+          <p className="text-lg font-bold text-pnp-textPrimary">{totalPaidCount}</p>
+          <p className="text-xs text-green-400">{fmtUsd(totalPaid)}</p>
+        </div>
+        <div className="rounded-lg border border-pnp-border bg-pnp-background p-3">
+          <p className="text-xs text-pnp-textSecondary">Propuestos</p>
+          <p className="text-lg font-bold text-pnp-textPrimary">
+            {summary.find((s) => s.status === "proposed")?.count || 0}
+          </p>
+          <p className="text-xs text-pnp-accent">{fmtUsd(summary.find((s) => s.status === "proposed")?.total_usd || 0)}</p>
+        </div>
+        <div className="rounded-lg border border-pnp-border bg-pnp-background p-3">
+          <p className="text-xs text-pnp-textSecondary">Expirados</p>
+          <p className="text-lg font-bold text-pnp-textPrimary">
+            {summary.find((s) => s.status === "expired")?.count || 0}
+          </p>
+          <p className="text-xs text-white/40">{fmtUsd(summary.find((s) => s.status === "expired")?.total_usd || 0)}</p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-pnp-textSecondary py-8 text-center">Cargando…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-sm text-pnp-textSecondary py-8 text-center">No hay propuestas para esta semana.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-pnp-border text-left">
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary">Creador</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary">País</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary text-right">USD</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary text-right">COP</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary">Método</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary">Estatus</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary">Aprobado</th>
+                <th className="py-2 pr-3 text-xs font-semibold text-pnp-textSecondary text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-b border-pnp-border/50">
+                  <td className="py-2 pr-3">
+                    <p className="text-pnp-textPrimary">{r.firstName || r.username || r.creatorId}</p>
+                    <p className="text-xs text-pnp-textSecondary">@{r.username || "—"} · {r.email || ""}</p>
+                  </td>
+                  <td className="py-2 pr-3 text-pnp-textSecondary">{r.country || "—"}</td>
+                  <td className="py-2 pr-3 text-right text-pnp-textPrimary font-semibold">${r.balanceUsd.toFixed(2)}</td>
+                  <td className="py-2 pr-3 text-right text-pnp-textSecondary">{r.balanceCop != null ? `$${r.balanceCop.toLocaleString("es-CO")}` : "—"}</td>
+                  <td className="py-2 pr-3 text-xs">{weeklyMethodLabel(r.methodOverride || r.method)}</td>
+                  <td className="py-2 pr-3"><StatusPill status={r.status} /></td>
+                  <td className="py-2 pr-3 text-xs text-pnp-textSecondary">
+                    {r.approvedAt ? new Date(r.approvedAt).toLocaleString() : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right space-x-2">
+                    {r.status === "approved" && (
+                      <button onClick={() => setMarkTarget(r)}
+                        className="text-xs px-2 py-1 rounded bg-[#D4007A] text-white hover:bg-[#b8006a]">Marcar pagado</button>
+                    )}
+                    {r.receiptUrl && (
+                      <button onClick={() => viewReceipt(r.id)}
+                        className="text-xs px-2 py-1 rounded bg-white/10 text-white hover:bg-white/20">Comprobante</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <MarkPaidModal row={markTarget} open={markTarget !== null} onClose={() => setMarkTarget(null)} onSaved={load} />
+    </div>
+  );
+}
+
 type SortKey = "active_subscribers" | "total_revenue" | "pending_payout";
 
 export default function CreatorSubscriptions() {
@@ -827,6 +1104,9 @@ export default function CreatorSubscriptions() {
           processing={processAllLoading}
         />
       ) : null}
+
+      {/* Weekly payout ledger — Monday proposal → Tuesday admin processing */}
+      <WeeklyPayoutsLedger />
 
       {/* Section A: Creator Overview Table */}
       <div className="rounded-xl border border-pnp-border bg-pnp-surface p-5 space-y-4">

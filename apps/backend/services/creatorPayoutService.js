@@ -32,6 +32,11 @@ const NotificationEmitter = require('./notificationEmitter');
 
 const MINIMUM_PAYOUT_USD = 1.00;
 
+// Weekly approval workflow — Monday 09:00 Bogota -> proposal; Monday 16:00 -> deadline.
+const WEEKLY_MINIMUM_USD = Number(process.env.CREATOR_WEEKLY_MIN_USD || 10);
+const TRM_FALLBACK_COP = Number(process.env.USD_COP_FALLBACK || 4100);
+const DATOSGOV_TRM_URL = 'https://www.datos.gov.co/resource/mcec-87by.json?$order=vigenciadesde%20DESC&$limit=1';
+
 // ── CreatorPayoutService ──────────────────────────────────────────────────────
 
 class CreatorPayoutService {
@@ -985,6 +990,504 @@ class CreatorPayoutService {
       daysLeft, hasEmail: !!user_email,
     });
     return { reminded: true };
+  }
+
+  // ── Weekly approval workflow (Colombia-friendly) ────────────────────────────
+  //
+  // Cadence:
+  //   Monday 09:00 America/Bogota → runWeeklyPayoutProposals()
+  //     • Aggregates available earnings per creator (>= WEEKLY_MINIMUM_USD).
+  //     • Snapshots preferred payout method + USD/COP TRM.
+  //     • Moves earnings to status='in_payout' (transactional reservation).
+  //     • Emails + DMs the creator with a deep-link to /creator/earnings.
+  //
+  //   Monday 16:00 America/Bogota → runWeeklyApprovalDeadline()
+  //     • Any 'proposed' row that has aged past the deadline is expired.
+  //     • Its reserved earnings roll back to 'available' for next Monday.
+  //
+  //   Tuesday → admin marks approved rows as paid via the admin ledger
+  //   (POST /api/admin/creator-payouts/weekly/:id/mark-paid).
+
+  /**
+   * Get today's USD->COP TRM. Caches by rate_date in Postgres so multiple
+   * concurrent renders share the same daily fetch. Falls back to the most
+   * recent cached rate, then to TRM_FALLBACK_COP when the API is unreachable.
+   */
+  static async getUsdCopRate() {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const { rows: cached } = await query(
+        'SELECT rate_cop FROM usd_cop_rate_cache WHERE rate_date = $1',
+        [today]
+      );
+      if (cached[0]) return Number(cached[0].rate_cop);
+    } catch (err) {
+      logger.warn('getUsdCopRate: cache read failed', { error: err.message });
+    }
+
+    let rate = null;
+    try {
+      const resp = await fetch(DATOSGOV_TRM_URL, { headers: { Accept: 'application/json' } });
+      if (resp.ok) {
+        const data = await resp.json();
+        // Row shape: [{ valor: "4123.45", unidad, vigenciadesde, vigenciahasta }]
+        const raw = Array.isArray(data) && data[0]?.valor ? parseFloat(data[0].valor) : null;
+        if (Number.isFinite(raw) && raw > 100) rate = raw;
+      }
+    } catch (err) {
+      logger.warn('getUsdCopRate: TRM fetch failed', { error: err.message });
+    }
+
+    if (rate) {
+      try {
+        await query(
+          `INSERT INTO usd_cop_rate_cache (rate_date, rate_cop, source)
+           VALUES ($1, $2, 'banrep_datosgov')
+           ON CONFLICT (rate_date) DO UPDATE
+             SET rate_cop = EXCLUDED.rate_cop, fetched_at = NOW()`,
+          [today, rate]
+        );
+      } catch (err) {
+        logger.warn('getUsdCopRate: cache write failed', { error: err.message });
+      }
+      return rate;
+    }
+
+    // Fallback: last known rate, then env constant.
+    try {
+      const { rows } = await query(
+        'SELECT rate_cop FROM usd_cop_rate_cache ORDER BY rate_date DESC LIMIT 1'
+      );
+      if (rows[0]) return Number(rows[0].rate_cop);
+    } catch (_) { /* ignore */ }
+    return TRM_FALLBACK_COP;
+  }
+
+  /**
+   * Return the Monday 00:00 America/Bogota date for the current run as YYYY-MM-DD.
+   * Uses a UTC-5 offset (Colombia has no DST) so cron ticks near midnight land
+   * on the correct week.
+   */
+  static _mondayOfBogotaWeek(now = new Date()) {
+    const bogotaMs = now.getTime() - 5 * 3600 * 1000;
+    const b = new Date(bogotaMs);
+    // Bogota day-of-week (0=Sun ... 1=Mon)
+    const dow = b.getUTCDay();
+    const daysBack = (dow + 6) % 7; // Mon-start
+    const monday = new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate() - daysBack));
+    return monday.toISOString().slice(0, 10);
+  }
+
+  /**
+   * Read the creator's preferred payout method as { lane, dest, label }.
+   * Priority: creator_payout_destinations (JSONB) → legacy dash/fiat columns.
+   */
+  static _pickPreferredMethod(user) {
+    const dests = user.creator_payout_destinations || {};
+    const order = ['bre_b', 'meru', 'usdt_tron', 'usdt_base', 'btc', 'dash'];
+    for (const lane of order) {
+      const d = dests[lane];
+      if (!d) continue;
+      const val = d.address || d.handle || d.key || null;
+      if (val) return { lane, dest: d, label: lane };
+    }
+    if (user.creator_dash_address) {
+      return { lane: 'dash', dest: { address: user.creator_dash_address }, label: 'dash' };
+    }
+    if (user.fiat_payout_method && user.fiat_payout_account) {
+      return {
+        lane: 'fiat_legacy',
+        dest: { provider: user.fiat_payout_method, account: user.fiat_payout_account },
+        label: user.fiat_payout_method,
+      };
+    }
+    if (user.meru_account) {
+      return { lane: 'meru', dest: { handle: user.meru_account }, label: 'meru' };
+    }
+    return null;
+  }
+
+  /**
+   * Monday 09:00 Bogota cron. Aggregates available earnings per creator and
+   * creates one creator_weekly_payout_approvals row per creator with status
+   * 'proposed'. Reserves the underlying earnings (status='in_payout') so
+   * concurrent payout paths cannot double-count them.
+   */
+  static async runWeeklyPayoutProposals() {
+    logger.info('CreatorPayoutService: starting weekly payout proposals');
+    const weekStart = this._mondayOfBogotaWeek();
+    const rateCop = await this.getUsdCopRate();
+
+    let rows;
+    try {
+      const result = await query(`
+        SELECT
+          ce.creator_id,
+          COALESCE(SUM(ce.amount_creator), 0)::numeric   AS total_creator,
+          ARRAY_AGG(ce.id)                                AS earning_ids,
+          MAX(u.email)                                    AS email,
+          MAX(u.username)                                 AS username,
+          MAX(u.first_name)                               AS first_name,
+          MAX(u.language)                                 AS language,
+          MAX(u.country)                                  AS country,
+          MAX(u.creator_dash_address)                     AS creator_dash_address,
+          MAX(u.meru_account)                             AS meru_account,
+          MAX(u.fiat_payout_method)                       AS fiat_payout_method,
+          MAX(u.fiat_payout_account)                      AS fiat_payout_account,
+          MAX(u.creator_payout_destinations::text)::jsonb AS creator_payout_destinations
+        FROM creator_earnings ce
+        LEFT JOIN users u ON u.id = ce.creator_id
+        WHERE ce.status  = 'available'
+          AND ce.paid_at IS NULL
+        GROUP BY ce.creator_id
+        HAVING COALESCE(SUM(ce.amount_creator), 0) >= $1
+      `, [WEEKLY_MINIMUM_USD]);
+      rows = result.rows;
+    } catch (err) {
+      logger.error('runWeeklyPayoutProposals: fetch failed', { error: err.message });
+      return { success: false, error: err.message };
+    }
+
+    let proposed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const row of rows) {
+      const creatorId = row.creator_id;
+      const amountUsd = Number(row.total_creator);
+      const method = this._pickPreferredMethod(row);
+      if (!method) {
+        skipped++;
+        logger.warn('runWeeklyPayoutProposals: no method configured, skipping', { creatorId });
+        continue;
+      }
+      const balanceCop = Math.round(amountUsd * rateCop);
+
+      const client = await require('../config/postgres').getPool().connect();
+      try {
+        await client.query('BEGIN');
+        // Reserve earnings so any parallel monthly-payout or ad-hoc cashout skips them.
+        const { rows: reserved } = await client.query(
+          `UPDATE creator_earnings
+             SET status = 'in_payout',
+                 metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('weekly_approval_week', $2::text)
+           WHERE id = ANY($1::uuid[])
+             AND status = 'available'
+             AND paid_at IS NULL
+           RETURNING id`,
+          [row.earning_ids, weekStart]
+        );
+        if (reserved.length === 0) {
+          await client.query('ROLLBACK');
+          skipped++;
+          continue;
+        }
+        const reservedIds = reserved.map((r) => r.id);
+        const { rows: inserted } = await client.query(
+          `INSERT INTO creator_weekly_payout_approvals
+             (week_start, creator_id, balance_usd, balance_cop, usd_cop_rate,
+              payout_method_snapshot, source_earning_ids, status)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'proposed')
+           ON CONFLICT (week_start, creator_id) DO NOTHING
+           RETURNING id`,
+          [weekStart, creatorId, amountUsd, balanceCop, rateCop,
+            JSON.stringify({ lane: method.lane, ...method.dest, label: method.label }),
+            reservedIds]
+        );
+        if (inserted.length === 0) {
+          // Race with another tick — release the reservation.
+          await client.query(
+            `UPDATE creator_earnings SET status = 'available'
+               WHERE id = ANY($1::uuid[]) AND status = 'in_payout'`,
+            [reservedIds]
+          );
+          await client.query('COMMIT');
+          skipped++;
+          continue;
+        }
+        await client.query('COMMIT');
+        proposed++;
+
+        const approvalId = inserted[0].id;
+        // Fire notifications outside the txn — best-effort.
+        try {
+          const emailService = require('./emailservice');
+          if (row.email && emailService.isEmailSafe && emailService.isEmailSafe(row.email)) {
+            await emailService.sendCreatorWeeklyPayoutProposal({
+              to: row.email,
+              displayName: row.username || row.first_name || String(creatorId),
+              language: row.language || 'en',
+              approvalId,
+              balanceUsd: amountUsd,
+              balanceCop,
+              methodLabel: method.label,
+              country: row.country,
+            });
+          }
+        } catch (emailErr) {
+          logger.warn('runWeeklyPayoutProposals: email failed (non-fatal)', {
+            creatorId, error: emailErr.message,
+          });
+        }
+        try {
+          const { sendNotificationViaTelegram } = require('./notificationBotDelivery');
+          await sendNotificationViaTelegram(creatorId, {
+            type: 'payment',
+            entityType: 'weekly_payout_proposal',
+            entityId: String(approvalId),
+            message: (row.language || 'en').toLowerCase().startsWith('es')
+              ? `Tu pago semanal de $${amountUsd.toFixed(2)} USD está listo para aprobar. Confirma antes de las 4pm (Bogotá).`
+              : `Your weekly payout of $${amountUsd.toFixed(2)} USD is ready to approve. Confirm before 4pm (Bogota).`,
+          });
+        } catch (dmErr) {
+          logger.warn('runWeeklyPayoutProposals: DM failed (non-fatal)', {
+            creatorId, error: dmErr.message,
+          });
+        }
+      } catch (err) {
+        failed++;
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+        logger.error('runWeeklyPayoutProposals: creator failed', {
+          creatorId, error: err.message,
+        });
+      } finally {
+        client.release();
+      }
+    }
+
+    logger.info('runWeeklyPayoutProposals: complete', {
+      weekStart, eligible: rows.length, proposed, skipped, failed,
+    });
+    return { success: true, weekStart, proposed, skipped, failed };
+  }
+
+  /**
+   * Monday 16:00 Bogota cron. Any row still in 'proposed' state past the
+   * deadline expires and its reserved earnings roll back to 'available' so
+   * they're picked up in next week's batch.
+   */
+  static async runWeeklyApprovalDeadline() {
+    logger.info('CreatorPayoutService: running weekly approval deadline sweep');
+    const weekStart = this._mondayOfBogotaWeek();
+
+    let expired;
+    try {
+      const { rows } = await query(
+        `UPDATE creator_weekly_payout_approvals
+            SET status = 'expired', updated_at = NOW()
+          WHERE status = 'proposed'
+            AND week_start = $1
+        RETURNING id, creator_id, source_earning_ids`,
+        [weekStart]
+      );
+      expired = rows;
+    } catch (err) {
+      logger.error('runWeeklyApprovalDeadline: expire query failed', { error: err.message });
+      return { success: false, error: err.message };
+    }
+
+    let restored = 0;
+    for (const row of expired) {
+      try {
+        await query(
+          `UPDATE creator_earnings
+             SET status = 'available'
+           WHERE id = ANY($1::uuid[])
+             AND status = 'in_payout'`,
+          [row.source_earning_ids]
+        );
+        restored++;
+      } catch (err) {
+        logger.warn('runWeeklyApprovalDeadline: rollback failed', {
+          approvalId: row.id, error: err.message,
+        });
+      }
+    }
+
+    logger.info('runWeeklyApprovalDeadline: complete', {
+      weekStart, expiredCount: expired.length, restored,
+    });
+    return { success: true, weekStart, expired: expired.length, restored };
+  }
+
+  /**
+   * Approve or reject a weekly proposal for the authenticated creator.
+   * When `methodOverride` is provided the snapshot's `approved_method_override`
+   * is stored so the admin sees exactly what to pay to.
+   */
+  static async approveWeeklyProposal(approvalId, creatorId, { methodOverride } = {}) {
+    const { rows } = await query(
+      `UPDATE creator_weekly_payout_approvals
+         SET status = 'approved',
+             approved_at = NOW(),
+             approved_method_override = $3::jsonb,
+             updated_at = NOW()
+       WHERE id = $1
+         AND creator_id = $2
+         AND status = 'proposed'
+       RETURNING id, balance_usd, balance_cop`,
+      [approvalId, creatorId, methodOverride ? JSON.stringify(methodOverride) : null]
+    );
+    if (rows.length === 0) {
+      const err = new Error('Approval row not found or not in proposed state');
+      err.code = 'NOT_APPROVABLE';
+      throw err;
+    }
+    return rows[0];
+  }
+
+  static async rejectWeeklyProposal(approvalId, creatorId) {
+    const client = await require('../config/postgres').getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `UPDATE creator_weekly_payout_approvals
+           SET status = 'rejected', updated_at = NOW()
+         WHERE id = $1
+           AND creator_id = $2
+           AND status = 'proposed'
+         RETURNING id, source_earning_ids`,
+        [approvalId, creatorId]
+      );
+      if (rows.length === 0) {
+        await client.query('ROLLBACK');
+        const err = new Error('Approval row not found or not in proposed state');
+        err.code = 'NOT_REJECTABLE';
+        throw err;
+      }
+      await client.query(
+        `UPDATE creator_earnings SET status = 'available'
+           WHERE id = ANY($1::uuid[]) AND status = 'in_payout'`,
+        [rows[0].source_earning_ids]
+      );
+      await client.query('COMMIT');
+      return rows[0];
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Admin: mark an approved weekly payout as paid. Stamps receipt_url +
+   * tx_reference, flips source_earning_ids to 'paid_out', writes paid_at.
+   */
+  static async adminMarkWeeklyPaid(approvalId, adminId, { txReference, receiptUrl, adminNotes }) {
+    const client = await require('../config/postgres').getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: approvalRows } = await client.query(
+        `UPDATE creator_weekly_payout_approvals
+           SET status = 'paid',
+               processed_at = NOW(),
+               processed_by_admin_id = $2,
+               tx_reference = $3,
+               receipt_url = COALESCE($4, receipt_url),
+               receipt_uploaded_at = CASE WHEN $4 IS NOT NULL THEN NOW() ELSE receipt_uploaded_at END,
+               admin_notes = $5,
+               updated_at = NOW()
+         WHERE id = $1
+           AND status = 'approved'
+         RETURNING id, creator_id, source_earning_ids, balance_usd`,
+        [approvalId, adminId, txReference, receiptUrl || null, adminNotes || null]
+      );
+      if (approvalRows.length === 0) {
+        await client.query('ROLLBACK');
+        const err = new Error('Approval row not in approved state');
+        err.code = 'NOT_MARKABLE';
+        throw err;
+      }
+      const approval = approvalRows[0];
+      await client.query(
+        `UPDATE creator_earnings
+           SET status  = 'paid_out',
+               paid_at = NOW(),
+               metadata = COALESCE(metadata, '{}'::jsonb)
+                        || jsonb_build_object(
+                             'weekly_approval_id', $2::text,
+                             'tx_reference', $3::text,
+                             'payoutMethod', 'weekly_manual'
+                           )
+         WHERE id = ANY($1::uuid[])
+           AND status IN ('in_payout','available')`,
+        [approval.source_earning_ids, approvalId, txReference || '']
+      );
+      await client.query('COMMIT');
+      return approval;
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async attachWeeklyReceipt(approvalId, receiptUrl) {
+    const { rows } = await query(
+      `UPDATE creator_weekly_payout_approvals
+         SET receipt_url = $2, receipt_uploaded_at = NOW(), updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, receipt_url`,
+      [approvalId, receiptUrl]
+    );
+    return rows[0] || null;
+  }
+
+  /**
+   * Fetch the open weekly proposal for a creator (proposed OR approved this week).
+   */
+  static async getCreatorPendingApproval(creatorId) {
+    const weekStart = this._mondayOfBogotaWeek();
+    const { rows } = await query(
+      `SELECT id, week_start, balance_usd, balance_cop, usd_cop_rate,
+              payout_method_snapshot, approved_method_override, status,
+              approved_at, created_at
+         FROM creator_weekly_payout_approvals
+        WHERE creator_id = $1
+          AND week_start = $2
+          AND status IN ('proposed','approved')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [creatorId, weekStart]
+    );
+    return rows[0] || null;
+  }
+
+  /**
+   * Admin: list weekly payouts with filters. Joins creator info for display.
+   */
+  static async getAdminWeeklyLedger({ weekStart, status, country }) {
+    const params = [weekStart];
+    let sql = `
+      SELECT a.id, a.week_start, a.creator_id, a.balance_usd, a.balance_cop, a.usd_cop_rate,
+             a.payout_method_snapshot, a.approved_method_override, a.status,
+             a.approved_at, a.processed_at, a.processed_by_admin_id,
+             a.receipt_url, a.tx_reference, a.admin_notes, a.created_at,
+             u.username, u.first_name, u.email, u.country, u.language
+        FROM creator_weekly_payout_approvals a
+        LEFT JOIN users u ON u.id = a.creator_id
+       WHERE a.week_start = $1
+    `;
+    if (status) { params.push(status); sql += ` AND a.status = $${params.length}`; }
+    if (country) { params.push(country); sql += ` AND u.country = $${params.length}`; }
+    sql += ' ORDER BY a.balance_usd DESC';
+    const { rows } = await query(sql, params);
+    return rows;
+  }
+
+  static async getAdminWeeklySummary({ weekStart }) {
+    const { rows } = await query(
+      `SELECT status,
+              COUNT(*)::int AS count,
+              COALESCE(SUM(balance_usd), 0)::numeric AS total_usd
+         FROM creator_weekly_payout_approvals
+        WHERE week_start = $1
+        GROUP BY status`,
+      [weekStart]
+    );
+    return rows;
   }
 }
 

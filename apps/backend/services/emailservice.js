@@ -2284,4 +2284,61 @@ class EmailService {
 }
 
 // Export singleton instance
+/**
+ * Weekly creator payout proposal — Mondays 09:00 America/Bogota.
+ * Sends a bilingual (ES/EN) reminder with the balance + method snapshot and
+ * a deep-link to the approval banner on /creator/earnings.
+ */
+EmailService.prototype.sendCreatorWeeklyPayoutProposal = async function sendCreatorWeeklyPayoutProposal({
+  to,
+  displayName,
+  language,
+  approvalId,
+  balanceUsd,
+  balanceCop,
+  methodLabel,
+  country,
+}) {
+  const es = String(language || 'en').toLowerCase().startsWith('es');
+  const base = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
+  const url = `${base}/creator/earnings?approve=${encodeURIComponent(approvalId)}`;
+  const showCop = country && country.toLowerCase().startsWith('col');
+  const usd = Number(balanceUsd || 0).toFixed(2);
+  const cop = balanceCop ? Number(balanceCop).toLocaleString('es-CO') : null;
+
+  const subject = es
+    ? `Tu pago semanal PNPtv! está listo — $${usd} USD`
+    : `Your weekly PNPtv! payout is ready — $${usd} USD`;
+
+  const html = es
+    ? `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
+        <h2 style="color:#D4007A;margin:0 0 8px">Hola ${displayName},</h2>
+        <p>Tu saldo acumulado esta semana está listo para aprobación.</p>
+        <div style="background:#faf5f8;border:1px solid #f0d5e5;border-radius:12px;padding:20px;margin:16px 0">
+          <p style="margin:0;font-size:12px;color:#888">Monto a pagar</p>
+          <p style="margin:4px 0 0;font-size:28px;font-weight:700;color:#D4007A">$${usd} USD</p>
+          ${showCop && cop ? `<p style="margin:2px 0 0;font-size:14px;color:#666">≈ COP $${cop}</p>` : ''}
+          <p style="margin:12px 0 0;font-size:12px;color:#888">Método de pago actual: <strong>${methodLabel}</strong></p>
+        </div>
+        <p><strong>Aprueba antes de las 4pm (Bogotá) para que se procese mañana martes.</strong> Puedes cambiar tu método al aprobar.</p>
+        <p style="margin:24px 0"><a href="${url}" style="background:#D4007A;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Revisar y aprobar</a></p>
+        <p style="color:#888;font-size:12px">Si no apruebas hoy, el saldo se acumula para la propuesta del próximo lunes — no se pierde.</p>
+      </div>`
+    : `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
+        <h2 style="color:#D4007A;margin:0 0 8px">Hi ${displayName},</h2>
+        <p>Your weekly balance is ready for your approval.</p>
+        <div style="background:#faf5f8;border:1px solid #f0d5e5;border-radius:12px;padding:20px;margin:16px 0">
+          <p style="margin:0;font-size:12px;color:#888">Amount</p>
+          <p style="margin:4px 0 0;font-size:28px;font-weight:700;color:#D4007A">$${usd} USD</p>
+          ${showCop && cop ? `<p style="margin:2px 0 0;font-size:14px;color:#666">≈ COP $${cop}</p>` : ''}
+          <p style="margin:12px 0 0;font-size:12px;color:#888">Current payout method: <strong>${methodLabel}</strong></p>
+        </div>
+        <p><strong>Approve before 4pm (Bogota) so we can process tomorrow (Tuesday).</strong> You can change your payout method when you approve.</p>
+        <p style="margin:24px 0"><a href="${url}" style="background:#D4007A;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Review and approve</a></p>
+        <p style="color:#888;font-size:12px">If you don't approve today, the balance rolls over to next Monday's proposal — nothing is lost.</p>
+      </div>`;
+
+  return this.send({ to, subject, html });
+};
+
 module.exports = new EmailService();

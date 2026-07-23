@@ -6551,6 +6551,31 @@ app.post('/api/webapp/admin/creator-subscriptions/:creatorId/payout', adminGuard
 app.post('/api/webapp/admin/creator-subscriptions/:creatorId/subscriptions/:subscriptionId/cancel', adminGuard, asyncHandler(creatorSubscriptionAdminController.cancelSubscription));
 app.post('/api/webapp/admin/creator-subscriptions/:creatorId/subscriptions/:subscriptionId/extend', adminGuard, asyncHandler(creatorSubscriptionAdminController.extendSubscription));
 
+// Weekly creator payout ledger (Monday proposal → Tuesday admin processing)
+const creatorPayoutCtl = require('./controllers/creatorPayoutController');
+const weeklyReceiptUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = '/tmp/weekly-payout-receipts';
+      require('fs').mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = require('path').extname(file.originalname || '').toLowerCase().slice(0, 6) || '.bin';
+      cb(null, `${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /^(image\/(png|jpe?g|webp)|application\/pdf)$/.test(file.mimetype);
+    cb(ok ? null : new Error('Only PNG/JPEG/WEBP/PDF up to 5MB'), ok);
+  },
+});
+app.get('/api/webapp/admin/creator-payouts/weekly', adminGuard, asyncHandler(creatorPayoutCtl.adminListWeekly));
+app.get('/api/webapp/admin/creator-payouts/weekly/export.csv', adminGuard, asyncHandler(creatorPayoutCtl.adminExportWeeklyCsv));
+app.post('/api/webapp/admin/creator-payouts/weekly/:id/mark-paid', adminGuard, weeklyReceiptUpload.single('receipt'), asyncHandler(creatorPayoutCtl.adminMarkPaid));
+app.get('/api/webapp/admin/creator-payouts/weekly/:id/receipt', adminGuard, asyncHandler(creatorPayoutCtl.adminGetReceipt));
+
 // Grok Social Media Manager chat
 app.post('/api/webapp/admin/grok/manager-chat', adminGuard, asyncHandler(async (req, res) => {
   const { chatWithGrokManager } = require('../../services/grokService');
@@ -15189,6 +15214,40 @@ app.put('/api/webapp/creator/next-show-date',
 // GET /api/webapp/creator/subscribers — handled by creatorRoutes.js (mounted above)
 
 // ==========================================
+// CREATOR USER MANUAL (public "how to book / what to expect")
+// ==========================================
+const creatorManualService = require('../../services/creatorManualService');
+const { resolveUserId: resolveManualUserId } = require('../utils/helpers');
+
+// GET /api/webapp/creator/:id/manual — public (accepts numeric id or @username)
+app.get('/api/webapp/creator/:id/manual', asyncHandler(async (req, res) => {
+  const targetId = await resolveManualUserId(req.params.id);
+  if (!targetId) return res.status(404).json({ error: 'User not found' });
+  const manual = await creatorManualService.getManual(targetId);
+  if (!manual) return res.status(404).json({ error: 'User not found' });
+  return res.json({ success: true, ...manual });
+}));
+
+// PUT /api/webapp/creator/manual — creator writes their own manual
+app.put('/api/webapp/creator/manual', requireSessionAuth, creatorGuard, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const saved = await creatorManualService.saveManual(userId, req.body?.markdown);
+  return res.json({ success: true, ...saved });
+}));
+
+// POST /api/webapp/creator/manual/ai-suggest — Grok drafts a starter manual
+app.post('/api/webapp/creator/manual/ai-suggest', requireSessionAuth, creatorGuard, asyncHandler(async (req, res) => {
+  try {
+    const userId = req.session.user.id;
+    const markdown = await creatorManualService.generateManualSuggestion(userId);
+    return res.json({ success: true, markdown });
+  } catch (err) {
+    logger.error('[creator/manual/ai-suggest] failed', { error: err.message });
+    return res.status(err.status || 500).json({ success: false, error: err.message || 'AI suggestion failed' });
+  }
+}));
+
+// ==========================================
 // X (TWITTER) CROSS-POST ENDPOINTS
 // ==========================================
 const xShareController = require('./controllers/xShareController');
@@ -17031,7 +17090,7 @@ app.get('/api/public/creator/:username',
     let completedCallsCount = 0;
     try {
       const { rows: callRows } = await pool.query(
-        `SELECT COUNT(*)::int AS count FROM bookings WHERE performer_id = $1 AND status = 'completed'`,
+        `SELECT COUNT(*)::int AS count FROM bookings WHERE performer_id::text = $1 AND status = 'completed'`,
         [creatorId]
       );
       completedCallsCount = callRows[0]?.count ?? 0;

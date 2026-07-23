@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { StatCard } from "@/components/admin/StatCard";
+import { getAdminWeeklyPayouts } from "@/lib/api";
 import { DataTable } from "@/components/admin/DataTable";
 import { ConfirmModal } from "@/components/admin/ConfirmModal";
 import { STATUS_BADGE_VARIANTS } from "@/components/admin/shared";
@@ -111,6 +112,26 @@ export default function StatsOverview() {
   const [tierFeatures, setTierFeatures] = useState<TierFeaturesData | null>(null);
   const [tierFeaturesLoading, setTierFeaturesLoading] = useState(false);
   const [tierView, setTierView] = useState<'total' | 'per-user'>('per-user');
+
+  // Weekly payout KPIs — Monday proposals + admin-ready approvals for Tuesday.
+  const [weeklyKpi, setWeeklyKpi] = useState<{
+    proposedCount: number;
+    approvedCount: number;
+    approvedUsd: number;
+  } | null>(null);
+  useEffect(() => {
+    getAdminWeeklyPayouts({})
+      .then((res) => {
+        const proposed = res.summary.find((s) => s.status === "proposed");
+        const approved = res.summary.find((s) => s.status === "approved");
+        setWeeklyKpi({
+          proposedCount: Number(proposed?.count || 0),
+          approvedCount: Number(approved?.count || 0),
+          approvedUsd: Number(approved?.total_usd || 0),
+        });
+      })
+      .catch(() => setWeeklyKpi(null));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -267,6 +288,29 @@ export default function StatsOverview() {
           <span><span className="font-semibold">Active payment providers:</span> NowPayments + BTCPay only. ePayco closed 2026-06-27. Daimo retired 2026-04-21.</span>
         </div>
       </div>
+
+      {/* Weekly payouts KPI — Monday proposals + Tuesday-ready approvals */}
+      {weeklyKpi && (weeklyKpi.proposedCount + weeklyKpi.approvedCount) > 0 && (
+        <a href="/admin/creator-subscriptions" className="block">
+          <div className="rounded-xl border border-pnp-border bg-pnp-surface p-4 flex items-center justify-between gap-4 hover:border-pnp-accent transition-colors">
+            <div className="flex gap-6">
+              <div>
+                <p className="text-xs text-pnp-textSecondary">Aprobados listos para procesar (martes)</p>
+                <p className="text-xl font-bold text-teal-400">
+                  {weeklyKpi.approvedCount} <span className="text-sm text-pnp-textSecondary font-normal">creador(es)</span>
+                </p>
+                <p className="text-xs text-teal-400">${weeklyKpi.approvedUsd.toFixed(2)} USD</p>
+              </div>
+              <div>
+                <p className="text-xs text-pnp-textSecondary">Esperando aprobación del creador</p>
+                <p className="text-xl font-bold text-pnp-accent">{weeklyKpi.proposedCount}</p>
+                <p className="text-xs text-pnp-textSecondary">deadline lunes 4pm Bogotá</p>
+              </div>
+            </div>
+            <span className="text-xs text-pnp-accent underline">Abrir ledger →</span>
+          </div>
+        </a>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

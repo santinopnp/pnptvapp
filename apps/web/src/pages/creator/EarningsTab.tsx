@@ -1,7 +1,158 @@
-import React, { useState, useEffect, useCallback } from "react";
-import type { ModelEarnings, CreatorPayoutBalance, CreatorPayoutRecord, CreatorEarningsTrend } from "@/lib/api";
-import { getCreatorPayoutBalance, requestCreatorPayout, getCreatorPayoutHistory, getCreatorEarnings } from "@/lib/api";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import type { ModelEarnings, CreatorPayoutBalance, CreatorPayoutRecord, CreatorEarningsTrend, WeeklyPayoutApproval } from "@/lib/api";
+import {
+  getCreatorPayoutBalance,
+  requestCreatorPayout,
+  getCreatorPayoutHistory,
+  getCreatorEarnings,
+  getWeeklyPayoutPending,
+  approveWeeklyPayout,
+  rejectWeeklyPayout,
+} from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
+
+function fmtCop(v: number | null | undefined): string {
+  if (v == null) return "";
+  return v.toLocaleString("es-CO");
+}
+
+function methodLabel(method: WeeklyPayoutApproval["method"] | null): string {
+  if (!method) return "—";
+  const lane = method.lane || "";
+  const val = method.address || method.handle || method.key || method.account || "";
+  const laneName: Record<string, string> = {
+    bre_b: "Bre-B",
+    meru: "Meru",
+    btc: "Bitcoin",
+    dash: "Dash",
+    usdt_tron: "USDT (TRON)",
+    usdt_base: "USDT (Base)",
+    fiat_legacy: "Fiat (legacy)",
+  };
+  const short = val.length > 14 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val;
+  return `${laneName[lane] || lane}${short ? ` · ${short}` : ""}`;
+}
+
+function WeeklyApprovalBanner({
+  approval,
+  onDone,
+  scrollRef,
+}: {
+  approval: WeeklyPayoutApproval;
+  onDone: () => void;
+  scrollRef: React.RefObject<HTMLDivElement>;
+}) {
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+  const isApproved = approval.status === "approved";
+  const isColombiaBalance = approval.balanceCop != null;
+
+  const deadline = new Date(approval.deadlineAt).getTime();
+  const [msLeft, setMsLeft] = useState(deadline - Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setMsLeft(deadline - Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, [deadline]);
+  const hoursLeft = Math.max(0, Math.floor(msLeft / 3_600_000));
+  const minsLeft = Math.max(0, Math.floor((msLeft % 3_600_000) / 60_000));
+
+  async function handleApprove() {
+    setBusy("approve");
+    setError(null);
+    try {
+      await approveWeeklyPayout(approval.id);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Approval failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function handleReject() {
+    if (!confirm(es ? "¿Rechazar este pago y devolver saldo a disponible?" : "Reject this payout and return the balance to available?")) return;
+    setBusy("reject");
+    setError(null);
+    try {
+      await rejectWeeklyPayout(approval.id);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reject failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div
+      ref={scrollRef}
+      className="glass-card-sm p-4 border"
+      style={{
+        borderColor: isApproved ? "rgba(94,209,196,0.35)" : "rgba(212,0,122,0.35)",
+        background: isApproved ? "rgba(94,209,196,0.06)" : "rgba(212,0,122,0.06)",
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: isApproved ? "#5ED1C4" : "#D4007A" }}>
+            {isApproved
+              ? (es ? "Pago aprobado — se procesa el martes" : "Approved — will be processed Tuesday")
+              : (es ? "Aprobación semanal pendiente" : "Weekly approval pending")}
+          </p>
+          <p className="text-2xl font-bold text-white mt-1">${approval.balanceUsd.toFixed(2)} USD</p>
+          {isColombiaBalance && (
+            <p className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              ≈ COP ${fmtCop(approval.balanceCop)}
+              {approval.usdCopRate ? ` · TRM ${approval.usdCopRate.toLocaleString("es-CO")}` : ""}
+            </p>
+          )}
+          <p className="text-xs mt-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {es ? "Método: " : "Method: "}{methodLabel(approval.methodOverride || approval.method)}
+          </p>
+        </div>
+        {!isApproved && msLeft > 0 && (
+          <div className="text-right text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <p>{es ? "Aprueba antes de" : "Approve before"}</p>
+            <p className="font-mono font-semibold text-white">4pm Bogotá</p>
+            <p className="mt-0.5">{hoursLeft}h {minsLeft}m {es ? "restantes" : "left"}</p>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-xs mt-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,69,58,0.1)", color: "#FF453A" }}>{error}</p>
+      )}
+
+      {!isApproved && (
+        <div className="flex gap-2 mt-4">
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={busy !== null || msLeft <= 0}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-[#D4007A] text-white hover:bg-[#b8006a] disabled:opacity-50"
+          >
+            {busy === "approve" ? "…" : es ? "Aprobar" : "Approve"}
+          </button>
+          <button
+            type="button"
+            onClick={handleReject}
+            disabled={busy !== null}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-50"
+          >
+            {busy === "reject" ? "…" : es ? "Rechazar" : "Reject"}
+          </button>
+        </div>
+      )}
+      {isApproved && (
+        <p className="text-xs mt-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          {es
+            ? "El equipo procesará tu pago mañana martes y adjuntará el comprobante en tu historial."
+            : "The team will process your payout tomorrow (Tuesday) and attach a receipt to your history."}
+        </p>
+      )}
+    </div>
+  );
+}
 
 interface EarningsTabProps {
   earnings: ModelEarnings | null;
@@ -25,6 +176,14 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
   const [balanceLoading, setBalanceLoading] = useState(true);
   // FIX 12: Track balance fetch errors so creators see a retry option instead of silent failure
   const [balanceError, setBalanceError] = useState(false);
+
+  const [weeklyApproval, setWeeklyApproval] = useState<WeeklyPayoutApproval | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const fetchWeekly = useCallback(() => {
+    getWeeklyPayoutPending()
+      .then((res) => setWeeklyApproval(res.approval))
+      .catch(() => setWeeklyApproval(null));
+  }, []);
 
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState('');
@@ -52,13 +211,23 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
 
   useEffect(() => {
     fetchBalance();
+    fetchWeekly();
 
     setPayoutsLoading(true);
     getCreatorPayoutHistory()
       .then(res => { if (res.success) setPayouts(res.payouts.slice(0, 5)); })
       .catch(() => {})
       .finally(() => setPayoutsLoading(false));
-  }, [fetchBalance]);
+  }, [fetchBalance, fetchWeekly]);
+
+  // If landed with ?approve=<id> from email/DM, scroll banner into view once mounted.
+  useEffect(() => {
+    if (!weeklyApproval) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("approve") === weeklyApproval.id) {
+      setTimeout(() => bannerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    }
+  }, [weeklyApproval]);
 
   // FIX 8: Re-fetch trends from server whenever the period selector changes
   useEffect(() => {
@@ -95,6 +264,13 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
 
   return (
     <div className="space-y-4">
+      {weeklyApproval && (
+        <WeeklyApprovalBanner
+          approval={weeklyApproval}
+          onDone={() => { fetchWeekly(); fetchBalance(); }}
+          scrollRef={bannerRef as React.RefObject<HTMLDivElement>}
+        />
+      )}
       {earnings ? (
         <div className="grid grid-cols-2 gap-3">
           <div className="glass-card-sm p-4 text-center">

@@ -283,6 +283,10 @@ router.get('/payout/balance', authGuard, creatorGuard, creatorPayoutController.g
 // FIX 6: payoutRequestLimiter — 3/hr per user prevents double-submission abuse
 router.post('/payout/request', authGuard, creatorGuard, payoutRequestLimiter, creatorPayoutController.requestPayout);
 router.get('/payout/history', authGuard, creatorGuard, creatorPayoutController.getPayoutHistory);
+// Weekly approval workflow (Mondays 9am->4pm Bogota) — creator side
+router.get('/payout/weekly/pending', authGuard, creatorGuard, creatorPayoutController.getPendingApproval);
+router.post('/payout/weekly/:id/approve', authGuard, creatorGuard, creatorPayoutController.approveWeekly);
+router.post('/payout/weekly/:id/reject', authGuard, creatorGuard, creatorPayoutController.rejectWeekly);
 router.get('/subscribers', authGuard, creatorGuard, creatorController.getMySubscribers);
 router.get('/channel-subscribers', authGuard, creatorGuard, creatorController.getMyChannelSubscribers);
 router.get('/consents', authGuard, creatorGuard, creatorController.getMyConsents);

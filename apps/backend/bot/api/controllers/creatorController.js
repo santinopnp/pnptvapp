@@ -284,6 +284,27 @@ const PAYOUT_VALIDATORS = {
     }
     return null;
   },
+  // Colombia: Bre-B is the Banrep interoperable instant-payment key.
+  // Payload: { key: string, key_type: 'phone' | 'cedula' | 'email' }
+  bre_b: (d) => {
+    const key = (d?.key || '').trim();
+    const type = (d?.key_type || '').trim().toLowerCase();
+    if (!key) return 'Bre-B key is required.';
+    if (!['phone', 'cedula', 'email'].includes(type)) {
+      return 'Bre-B key_type must be phone, cedula, or email.';
+    }
+    if (type === 'phone' && !/^\+?[0-9]{10,15}$/.test(key)) {
+      return 'Invalid Bre-B phone. Use 10–15 digits (e.g. 3001234567 or +573001234567).';
+    }
+    if (type === 'cedula' && !/^[0-9]{6,12}$/.test(key)) {
+      return 'Invalid Bre-B cedula. Use 6–12 digits.';
+    }
+    if (type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(key)) {
+      return 'Invalid Bre-B email.';
+    }
+    if (key.length > 200) return 'Bre-B key too long.';
+    return null;
+  },
 };
 
 const VALID_PAYOUT_LANES = Object.keys(PAYOUT_VALIDATORS);
@@ -357,6 +378,7 @@ const saveWalletAddress = async (req, res) => {
       if (error) return res.status(400).json({ error });
       // Normalise whitespace in stored values.
       if (lane === 'meru') sanitized[lane] = { handle: payload.handle.trim() };
+      else if (lane === 'bre_b') sanitized[lane] = { key: payload.key.trim(), key_type: payload.key_type.trim().toLowerCase() };
       else sanitized[lane] = { address: payload.address.trim() };
     }
 

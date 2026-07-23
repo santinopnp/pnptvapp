@@ -23,6 +23,9 @@ import {
   changeTier,
   getProfile,
   getCreatorEligibilityStatus,
+  getCreatorManual,
+  saveCreatorManual,
+  suggestCreatorManualAI,
   type CreatorDashboard as DashboardData,
   type CreatorMediaItem,
   type StreamRecording,
@@ -83,6 +86,10 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const [dashAddress, setDashAddress]         = useState<string>("");
   const [usdtTronAddress, setUsdtTronAddress] = useState<string>("");
   const [usdtBaseAddress, setUsdtBaseAddress] = useState<string>("");
+  // Bre-B (Colombia): interoperable instant payment key registered with the
+  // creator's bank. Payload stored as { key, key_type }.
+  const [breBKey, setBreBKey]                 = useState<string>("");
+  const [breBKeyType, setBreBKeyType]         = useState<"phone" | "cedula" | "email">("phone");
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletSaving, setWalletSaving] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -154,6 +161,61 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const [profilePhotoError, setProfilePhotoError] = useState<string | null>(null);
   const [profilePhotoSuccess, setProfilePhotoSuccess] = useState<string | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<string | null>(null);
+
+  // User manual state — public "how to book / what to expect" markdown
+  const MANUAL_MAX = 5000;
+  const [manualMarkdown, setManualMarkdown] = useState<string>("");
+  const [manualLoading, setManualLoading] = useState<boolean>(true);
+  const [manualSaving, setManualSaving] = useState<boolean>(false);
+  const [manualAiLoading, setManualAiLoading] = useState<boolean>(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualSuccess, setManualSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userId = authUser?.id ? String(authUser.id) : null;
+    if (!userId) { setManualLoading(false); return; }
+    getCreatorManual(userId)
+      .then((res) => { setManualMarkdown(res.markdown || ""); })
+      .catch(() => { /* 404 first time = no manual yet */ })
+      .finally(() => setManualLoading(false));
+  }, [authUser?.id]);
+
+  const handleGenerateManualAI = useCallback(async () => {
+    setManualAiLoading(true);
+    setManualError(null);
+    setManualSuccess(null);
+    try {
+      const res = await suggestCreatorManualAI();
+      if (res.success && res.markdown) {
+        setManualMarkdown(res.markdown);
+        setManualSuccess("Draft generated. Edit and save to publish.");
+      } else {
+        setManualError("AI could not draft a manual right now. Try again in a moment.");
+      }
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : "AI suggestion failed");
+    } finally {
+      setManualAiLoading(false);
+    }
+  }, []);
+
+  const handleSaveManual = useCallback(async () => {
+    if (manualMarkdown.length > MANUAL_MAX) {
+      setManualError(`Too long — max ${MANUAL_MAX} characters.`);
+      return;
+    }
+    setManualSaving(true);
+    setManualError(null);
+    setManualSuccess(null);
+    try {
+      await saveCreatorManual(manualMarkdown);
+      setManualSuccess("Saved. Visible on your profile now.");
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setManualSaving(false);
+    }
+  }, [manualMarkdown]);
 
   const loadAlbum = useCallback(async () => {
     const userId = authUser?.id ? String(authUser.id) : null;
@@ -435,6 +497,10 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         setDashAddress(d.dash?.address     || res.dashAddress  || "");
         setUsdtTronAddress(d.usdt_tron?.address || "");
         setUsdtBaseAddress(d.usdt_base?.address || "");
+        if (d.bre_b?.key) {
+          setBreBKey(d.bre_b.key);
+          setBreBKeyType(d.bre_b.key_type || "phone");
+        }
       }
     } catch {
       // Non-critical
@@ -494,6 +560,24 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         return;
       }
       destinations!.usdt_base = { address: bas };
+    }
+    const breB = breBKey.trim();
+    if (breB) {
+      const invalid =
+        (breBKeyType === "phone"  && !/^\+?[0-9]{10,15}$/.test(breB)) ||
+        (breBKeyType === "cedula" && !/^[0-9]{6,12}$/.test(breB)) ||
+        (breBKeyType === "email"  && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(breB));
+      if (invalid) {
+        setWalletError(
+          breBKeyType === "phone"
+            ? "Llave Bre-B (celular) inválida. Usa 10 a 15 dígitos (ej: 3001234567 o +573001234567)."
+            : breBKeyType === "cedula"
+              ? "Llave Bre-B (cédula) inválida. Usa 6 a 12 dígitos."
+              : "Llave Bre-B (email) inválida."
+        );
+        return;
+      }
+      destinations!.bre_b = { key: breB, key_type: breBKeyType };
     }
 
     if (Object.keys(destinations!).length === 0) {
@@ -782,6 +866,36 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 autoComplete="off"
                 className="w-full px-3 py-2 rounded-lg text-sm font-mono text-white placeholder-white/30 bg-white/5 border border-white/10 focus:outline-none focus:border-white/30"
               />
+            </div>
+
+            {/* Bre-B (Colombia) — Banrep interoperable instant-payment key */}
+            <div>
+              <label className="block text-xs font-semibold text-white mb-1">
+                🇨🇴 Llave Bre-B <span className="font-normal text-white/50">(Colombia)</span>
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={breBKeyType}
+                  onChange={(e) => { setBreBKeyType(e.target.value as "phone" | "cedula" | "email"); setWalletError(null); setWalletSuccess(null); }}
+                  className="px-2 py-2 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30"
+                >
+                  <option value="phone">Celular</option>
+                  <option value="cedula">Cédula</option>
+                  <option value="email">Email</option>
+                </select>
+                <input
+                  type="text"
+                  value={breBKey}
+                  onChange={(e) => { setBreBKey(e.target.value); setWalletError(null); setWalletSuccess(null); }}
+                  placeholder={breBKeyType === "phone" ? "3001234567" : breBKeyType === "cedula" ? "1020304050" : "tucorreo@ejemplo.com"}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="flex-1 px-3 py-2 rounded-lg text-sm text-white placeholder-white/30 bg-white/5 border border-white/10 focus:outline-none focus:border-white/30"
+                />
+              </div>
+              <p className="text-[10px] mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Registra esta llave en tu banco con el sistema Bre-B para recibir pagos instantáneos desde cualquier banco colombiano.
+              </p>
             </div>
           </div>
         )}
@@ -1255,6 +1369,70 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── User Manual ────────────────────────────────────────────────── */}
+      <div
+        className="rounded-2xl p-6"
+        style={{
+          background: "var(--pnp-surface, #1e1e1e)",
+          border: "1px solid var(--pnp-border, #2a2a2a)",
+        }}
+      >
+        <div className="flex items-baseline justify-between mb-2">
+          <h2 className="text-lg font-semibold text-white">User manual</h2>
+          <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {manualMarkdown.length} / {MANUAL_MAX}
+          </span>
+        </div>
+        <p className="text-sm mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          A public overview subscribers see on your profile: how to book, what you offer, boundaries.
+          Markdown supported (## headings, - bullets).
+        </p>
+
+        <textarea
+          value={manualMarkdown}
+          onChange={(e) => setManualMarkdown(e.target.value.slice(0, MANUAL_MAX))}
+          disabled={manualLoading || manualAiLoading}
+          rows={14}
+          placeholder={manualLoading ? "Loading…" : "## About me\n...\n\n## What I offer\n- ...\n\n## Boundaries\n- ...\n\n## How to book\n1. Subscribe\n2. DM me\n\n## Best times to catch me\n..."}
+          className="w-full rounded-lg p-3 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none disabled:opacity-50"
+          style={{
+            background: "var(--pnp-bg, #121212)",
+            border: "1px solid var(--pnp-border, #2a2a2a)",
+            resize: "vertical",
+          }}
+        />
+
+        {manualError && (
+          <p className="mt-3 text-sm" style={{ color: "#FF453A" }}>{manualError}</p>
+        )}
+        {manualSuccess && (
+          <p className="mt-3 text-sm" style={{ color: "#34C759" }}>{manualSuccess}</p>
+        )}
+
+        <div className="flex flex-wrap gap-3 mt-4">
+          <button
+            type="button"
+            onClick={handleGenerateManualAI}
+            disabled={manualAiLoading || manualSaving}
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+            style={{
+              background: "linear-gradient(135deg, #D4007A, #E69138)",
+            }}
+          >
+            {manualAiLoading ? "Drafting with Grok…" : "✨ Draft with AI"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveManual}
+            disabled={manualSaving || manualAiLoading || manualLoading}
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+            style={{ background: "var(--pnp-accent, #D4007A)" }}
+          >
+            {manualSaving ? "Saving…" : "Save manual"}
+          </button>
+        </div>
       </div>
     </div>
   );

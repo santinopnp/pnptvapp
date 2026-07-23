@@ -538,6 +538,32 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // ── Weekly payout proposal — Mondays 09:00 America/Bogota ─────────────
+    // Snapshots each creator's available earnings + preferred method, sends
+    // email + Telegram DM asking them to approve before the 16:00 deadline.
+    cron.schedule(process.env.CREATOR_WEEKLY_PROPOSAL_CRON || '0 9 * * 1', async () => {
+      try {
+        logger.info('Running weekly creator payout proposals...');
+        const results = await CreatorPayoutService.runWeeklyPayoutProposals();
+        logger.info('Weekly creator payout proposals completed', results);
+      } catch (error) {
+        logger.error('Error in weekly creator payout proposal cron:', error);
+      }
+    }, { timezone: 'America/Bogota' });
+
+    // ── Weekly approval deadline — Mondays 16:00 America/Bogota ───────────
+    // Any 'proposed' row still open at deadline is expired; its reserved
+    // earnings roll back to 'available' for next Monday's batch.
+    cron.schedule(process.env.CREATOR_WEEKLY_DEADLINE_CRON || '0 16 * * 1', async () => {
+      try {
+        logger.info('Running weekly creator payout deadline sweep...');
+        const results = await CreatorPayoutService.runWeeklyApprovalDeadline();
+        logger.info('Weekly creator payout deadline sweep completed', results);
+      } catch (error) {
+        logger.error('Error in weekly creator payout deadline cron:', error);
+      }
+    }, { timezone: 'America/Bogota' });
+
     // ── FIX 9: Reconcile stuck in_payout earnings — daily at 03:00 UTC ──────
     // Finds creator_earnings stuck in 'in_payout' for 48h+ with no active payout
     // record. Rolls them back to 'available' so creators can re-request payout.
