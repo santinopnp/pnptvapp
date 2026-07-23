@@ -15,6 +15,9 @@ const crypto = require('crypto');
 const { Telegraf } = require('telegraf');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
 
+// Santino's "Santino's Subscribers" hangout — every PRIME holder is auto-joined here.
+const PRIME_HANGOUT_GROUP_ID = 719;
+
 // Singleton bot instance — avoids spawning a new Telegraf per payment event.
 let _botInstance = null;
 function getBotInstance() {
@@ -878,6 +881,22 @@ class PaymentService {
           });
         } catch (joinErr) {
           logger.warn('Failed to auto-join hangout after channel access', { error: joinErr.message });
+        }
+      }
+
+      // Auto-join every PRIME entitlement holder into Santino's private hangout.
+      // Fires whenever any add-on granted by this plan is 'prime'.
+      if (addOnsResult.rows.some(r => r.add_on_id === 'prime')) {
+        try {
+          await query(
+            'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+            [PRIME_HANGOUT_GROUP_ID, userId, 'member']
+          );
+          logger.info('Auto-joined PRIME hangout after prime grant', {
+            userId, groupId: PRIME_HANGOUT_GROUP_ID, planId,
+          });
+        } catch (joinErr) {
+          logger.warn('Failed to auto-join PRIME hangout after prime grant', { error: joinErr.message });
         }
       }
 
