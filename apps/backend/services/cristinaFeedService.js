@@ -266,17 +266,23 @@ async function announceLiveStream(creatorId, creatorName, channelRef) {
     const displayName = creatorName || 'Creator';
     const streamUrl = `${APP_BASE_URL}/live/${channelRef}`;
 
-    // Build branded composite image
+    // Build branded composite image. If the snapshot fetch fails (Restreamer
+    // offline, upstream errored, channel not producing frames yet), we skip
+    // creating the feed post entirely — a text-only post without the branded
+    // card is off-brand and clutters the feed. Better to no-op than to ship
+    // a broken-looking card. DM/group/email fanout still happens via the
+    // parent broadcastGoingLive setImmediate blocks — this only gates the
+    // in-app feed post + X cross-post.
     const branded = await ogService.fetchAndBrandStreamSnapshot(channelRef, displayName);
-
-    // Save to public uploads so it can be served as social post media and X image
-    let mediaUrl = null;
-    if (branded) {
-      if (!fs.existsSync(SNAPSHOTS_DIR)) fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-      const filename = `live-${channelRef}-${Date.now()}.jpg`;
-      fs.writeFileSync(path.join(SNAPSHOTS_DIR, filename), branded);
-      mediaUrl = `/uploads/live-snapshots/${filename}`;
+    if (!branded) {
+      logger.warn('cristinaFeed: announceLiveStream — no branded snapshot, skipping feed post', { creatorId, channelRef });
+      return;
     }
+
+    if (!fs.existsSync(SNAPSHOTS_DIR)) fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    const filename = `live-${channelRef}-${Date.now()}.jpg`;
+    fs.writeFileSync(path.join(SNAPSHOTS_DIR, filename), branded);
+    const mediaUrl = `/uploads/live-snapshots/${filename}`;
 
     // Create in-app feed post from @pnptv system account
     const postContent = `🔴 ${displayName} is LIVE on PNPtv!\nReal Models. Real Clouds. 🌫️\n\n👉 ${streamUrl}`;
@@ -284,7 +290,7 @@ async function announceLiveStream(creatorId, creatorName, channelRef) {
       CRISTINA_USER_ID,
       postContent,
       mediaUrl,
-      mediaUrl ? 'image' : null,
+      'image',
       null, null, false, false, true,
       null, null, null, null, null,
       'social'
