@@ -152,6 +152,7 @@ const Welcome = lazy(() => import("@/pages/Welcome"));
 const Join = lazy(() => import("@/pages/Join"));
 const BecomeModel = lazy(() => import("@/pages/BecomeModel"));
 const CmsPage = lazy(() => import("@/pages/CmsPage"));
+const BlockedJurisdictionPage = lazy(() => import("@/pages/BlockedJurisdictionPage"));
 const LandingPage = lazy(() => import("@/pages/LandingPage"));
 const BlogPage = lazy(() => import("@/pages/BlogPage"));
 const AboutPage = lazy(() => import("@/pages/AboutPage"));
@@ -1051,6 +1052,20 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <Join />
+      </ModuleLoader>
+    ),
+  },
+  {
+    // Geo-block explanation + self-certify page. Standalone top-level route
+    // (no Layout wrapper) so it renders even for logged-out/blocked visitors
+    // and outranks the "/" Layout tree's ":username" catch-all regardless of
+    // declaration order (React Router v6 scores static segments higher than
+    // dynamic ones) — without this route it fell through to that catch-all
+    // and rendered as a "user not found" profile page.
+    path: "/blocked-jurisdiction",
+    element: (
+      <ModuleLoader>
+        <BlockedJurisdictionPage />
       </ModuleLoader>
     ),
   },

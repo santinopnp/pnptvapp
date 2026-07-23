@@ -126,13 +126,30 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
           typeof error.code === "string"
             ? error.code
             : (stringError && looksLikeMachineCode(stringError) ? stringError : undefined);
-        // Colombia gate: redirect to the Socio Colombia info page.
+        // Geo-block redirect: the backend has two overlapping gates —
+        // GEO_BLOCKED (451, all requests, multi-jurisdiction hard block in
+        // routes.js's `app.use` geo middleware) and CO_REGION_GATED (403,
+        // authenticated-only, Colombia-specific `colombiaAccessGate`). Both
+        // land on the same static /blocked-jurisdiction page; mirror the
+        // backend's own server-side redirect (`?j=<jurisdiction>&reason=colombia`)
+        // so the query params it reads are populated the same way regardless
+        // of which gate fired.
         if (
-          errorCode === "CO_REGION_GATED" &&
+          (errorCode === "GEO_BLOCKED" || errorCode === "CO_REGION_GATED") &&
           typeof window !== "undefined" &&
           !window.location.pathname.startsWith("/blocked-jurisdiction")
         ) {
-          window.location.replace("/blocked-jurisdiction?reason=colombia");
+          const jurisdiction =
+            typeof error.jurisdiction === "string"
+              ? error.jurisdiction
+              : typeof error.country === "string"
+                ? error.country
+                : undefined;
+          const isColombia = jurisdiction === "CO" || error.country === "CO";
+          const params = new URLSearchParams();
+          if (jurisdiction) params.set("j", jurisdiction);
+          if (isColombia) params.set("reason", "colombia");
+          window.location.replace(`/blocked-jurisdiction${params.toString() ? `?${params.toString()}` : ""}`);
         }
         // Extract structured access details for scoped-resource 403 responses so
         // callers can render the right in-context purchase modal instead of
@@ -286,6 +303,13 @@ export function checkAuthStatus(): Promise<AuthStatusResponse> {
 
 export function getGeoCountry(): Promise<{ country: string | null; isLatam: boolean }> {
   return request("/api/webapp/geo");
+}
+
+// Self-certify bypass for the geo-block (routes.js `app.use` geo middleware) —
+// for users misidentified by carrier/VPN exit nodes. Sets a 24h session flag
+// server-side; see BlockedJurisdictionPage.
+export function submitGeoBypass(): Promise<{ success: boolean }> {
+  return request("/api/public/geo-bypass", { method: "POST" });
 }
 
 export function acceptTerms(): Promise<{ success: boolean }> {
