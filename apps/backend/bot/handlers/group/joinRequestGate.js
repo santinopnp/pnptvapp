@@ -211,14 +211,15 @@ async function sendCaptchaChallenge(ctx, req) {
     try {
       const still = await redis.get(capKey).catch(() => null);
       if (!still) return; // already resolved (correct or wrong click)
+      // Read msg meta BEFORE deleting the key, otherwise the DM edit below never fires.
+      const msgMetaRaw = await redis.get(`${capKey}:msg`).catch(() => null);
       await redis.del(capKey).catch(() => {});
       await redis.del(`${capKey}:msg`).catch(() => {});
       await notifyGatekeeper(ctx, req, '⏰ <b>CAPTCHA TIMEOUT</b> — review manually');
       // Politely close the DM challenge so the user doesn't think it's still live.
       try {
-        const msgMeta = await redis.get(`${capKey}:msg`).catch(() => null);
-        if (msgMeta) {
-          const { messageId } = JSON.parse(msgMeta);
+        if (msgMetaRaw) {
+          const { messageId } = JSON.parse(msgMetaRaw);
           await ctx.telegram.editMessageText(
             applicantId, messageId, undefined,
             '⏰ Time is up. Your join request is now under manual review.',
