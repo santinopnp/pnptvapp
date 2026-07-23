@@ -261,9 +261,27 @@ async function notifyLinkedGroups(bot, creatorId, channelRef, creatorName, custo
       sent++;
       if (redis) await redis.set(dedupKey, '1', 'EX', 3600).catch(() => {});
     } catch (err) {
+      const desc = err?.response?.description || err.message || '';
       logger.warn('goingLiveBroadcast: group notify failed', {
-        chatId, creatorId, error: err?.response?.description || err.message,
+        chatId, creatorId, error: desc,
       });
+      // Auto-unlink groups where the bot has been permanently removed.
+      // 403 "kicked" / "not a member" is terminal — the link is dead. Clearing
+      // telegram_chat_id stops every future broadcast from re-hitting the
+      // same 403 (which after this fix was accumulating on every go-live).
+      const kicked = err?.response?.error_code === 403
+        || /kicked|not a member|chat not found|chat_write_forbidden/i.test(desc);
+      if (kicked) {
+        try {
+          await query(
+            `UPDATE hangout_groups SET telegram_chat_id = NULL WHERE telegram_chat_id::text = $1`,
+            [String(chatId)],
+          );
+          logger.info('goingLiveBroadcast: auto-unlinked kicked group', { chatId, creatorId });
+        } catch (unlinkErr) {
+          logger.warn('goingLiveBroadcast: auto-unlink failed', { chatId, error: unlinkErr.message });
+        }
+      }
     }
   }
   return sent;
@@ -525,6 +543,17 @@ function sanitizeChannelRef(raw) {
   return trimmed;
 }
 
+// A Restreamer process is truly "live" only when FFmpeg is running AND active
+// bitrate > 0. `exec:'running'` alone can mean "waiting for RTMP reconnect"
+// (0 kbps) — announcing on that state fans out to followers when nothing is
+// actually being streamed. Must match the criterion used by the UI surfaces
+// (fetchRunningLiveChannels in routes.js and /api/proxy/live/streams).
+function isProcessLive(p) {
+  if (p?.state?.exec !== 'running') return false;
+  const kbps = typeof p.state?.progress?.bitrate_kbit === 'number' ? p.state.progress.bitrate_kbit : 0;
+  return kbps > 0;
+}
+
 async function pollTick(bot) {
   if (pollerBusy) return;
   pollerBusy = true;
@@ -546,7 +575,7 @@ async function pollTick(bot) {
     for (const p of processes) {
       const refId = sanitizeChannelRef(p.reference || p.id);
       if (!refId) continue;
-      const isLive = p.state?.exec === 'running';
+      const isLive = isProcessLive(p);
       const lastRaw = await redis.get(LAST_STATE_KEY(refId)).catch(() => null);
       const wasLive = lastRaw === '1';
 
@@ -568,9 +597,11 @@ async function pollTick(bot) {
             [refId]
           );
           if (rows[0]?.id) {
-            const streamId = `auto-${Date.now()}`;
-            // Fire and forget — the internal dedup key still guards against
-            // duplicate broadcasts if a manual trigger happened in the same 6h.
+            // Bucket by the dedup TTL so a flap within the same 6h window
+            // hits the existing isAlreadyAnnounced key. The prior `auto-${Date.now()}`
+            // was unique per tick and bypassed dedup entirely.
+            const bucket = Math.floor(Date.now() / (DEDUP_TTL_SECONDS * 1000));
+            const streamId = `auto-${refId}-${bucket}`;
             broadcastGoingLive(bot, rows[0].id, refId, {}, streamId).catch((err) => {
               logger.warn('goLivePoller: broadcastGoingLive threw', { refId, error: err.message });
             });
@@ -614,7 +645,7 @@ function startGoLivePoller(bot) {
         for (const p of processes) {
           const refId = sanitizeChannelRef(p.reference || p.id);
           if (!refId) continue;
-          const isLive = p.state?.exec === 'running';
+          const isLive = isProcessLive(p);
           await redis.set(LAST_STATE_KEY(refId), isLive ? '1' : '0', 'EX', LAST_STATE_TTL_S).catch(() => {});
         }
       }
