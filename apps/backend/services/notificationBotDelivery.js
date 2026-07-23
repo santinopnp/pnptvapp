@@ -112,34 +112,69 @@ async function getTelegramId(userId) {
 /**
  * Send a notification to a user via Telegram bot DM.
  * Fire-and-forget: never throws.
+ *
+ * When actorPhotoUrl is provided and resolvable to a public URL, we send
+ * the avatar as a photo with the notification text as caption. When it's
+ * missing (system notifications, or actor with no avatar), or when the
+ * photo send fails, we fall back to a plain text sendMessage.
  */
-async function sendNotificationViaTelegram(userId, { type, message, entityType = null, entityId = null }) {
+async function sendNotificationViaTelegram(userId, { type, message, entityType = null, entityId = null, actorPhotoUrl = null }) {
   const bot = getBot();
   if (!bot) return;
 
   const telegramId = await getTelegramId(userId);
   if (!telegramId) return;
 
+  const emoji = TYPE_EMOJI[type] || '\u{1F514}';
+  const escapedMessage = message
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const caption = `${emoji} ${escapedMessage}`;
+  const deepUrl = buildUrl(type, entityType, entityId);
+  const replyMarkup = {
+    inline_keyboard: [[{ text: 'View on PNPtv!', url: deepUrl }]],
+  };
+
+  // Resolve actor photo to an absolute URL Telegram can fetch. Bail out to
+  // text-only if the URL isn't safe/absolute or the media fetch fails.
+  const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+  let publicPhotoUrl = null;
+  if (typeof actorPhotoUrl === 'string' && actorPhotoUrl) {
+    if (actorPhotoUrl.startsWith('/')) publicPhotoUrl = `${appUrl}${actorPhotoUrl}`;
+    else if (/^https?:\/\//i.test(actorPhotoUrl)) publicPhotoUrl = actorPhotoUrl;
+  }
+
+  if (publicPhotoUrl) {
+    try {
+      await bot.telegram.sendPhoto(telegramId, publicPhotoUrl, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup,
+      });
+      return;
+    } catch (err) {
+      const code = err.response?.error_code;
+      if (code === 403 || code === 400) {
+        // 403 = blocked bot, 400 = chat not found OR wrong file type
+        // — for the chat cases we can't recover; for wrong-file we fall through.
+        if (code === 403) return;
+        // Fall through to text-only send below on 400.
+      } else {
+        logger.warn('[notificationBotDelivery] Telegram sendPhoto failed, falling back to text', {
+          userId, telegramId, type, errorCode: code, error: err.message,
+        });
+      }
+    }
+  }
+
   try {
-    const emoji = TYPE_EMOJI[type] || '\u{1F514}';
-    const escapedMessage = message
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-    const deepUrl = buildUrl(type, entityType, entityId);
-
-    await bot.telegram.sendMessage(telegramId, `${emoji} ${escapedMessage}`, {
+    await bot.telegram.sendMessage(telegramId, caption, {
       parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: 'View on PNPtv!', url: deepUrl },
-        ]],
-      },
+      reply_markup: replyMarkup,
     });
   } catch (err) {
     const code = err.response?.error_code;
-    // 403 = blocked bot, 400 = chat not found — both expected, silent
     if (code === 403 || code === 400) return;
     logger.warn('[notificationBotDelivery] Telegram DM failed', {
       userId, telegramId, type, errorCode: code, error: err.message,

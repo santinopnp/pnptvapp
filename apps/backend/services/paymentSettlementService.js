@@ -456,6 +456,19 @@ class PaymentSettlementService {
       }
       logger.info('BTCPay: entitlements granted', { userId: order.user_id, planId: order.plan_id });
       MetricsService.recordGrantSucceeded('btcpay', order.plan_id);
+
+      // Finalize promo redemption if this order carried one. Non-fatal — a
+      // stuck 'claimed' redemption is a metrics issue, not a service outage.
+      try {
+        const orderMeta = typeof order.metadata === 'string' ? JSON.parse(order.metadata) : (order.metadata || {});
+        if (orderMeta.redemptionId) {
+          const PromoService = require('./promoService');
+          await PromoService.completePromoRedemption(orderMeta.redemptionId, invoiceId);
+          logger.info('BTCPay: promo redemption completed', { invoiceId, redemptionId: orderMeta.redemptionId, promoCode: orderMeta.promoCode });
+        }
+      } catch (promoErr) {
+        logger.warn('BTCPay: promo redemption complete failed (non-fatal)', { invoiceId, error: promoErr.message });
+      }
     } catch (entErr) {
       logger.error('BTCPay: entitlement grant failed — rolling back to pending for retry', {
         userId: order.user_id, planId: order.plan_id, invoiceId, error: entErr.message,

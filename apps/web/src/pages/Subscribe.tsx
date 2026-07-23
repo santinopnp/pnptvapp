@@ -421,7 +421,7 @@ export default function Subscribe() {
     setShowCryptoNudge(false);
     setSubmitting(true);
     try {
-      const result = await startNowPayments(planId, user?.email || undefined, undefined, false, payCurrency);
+      const result = await startNowPayments(planId, user?.email || undefined, undefined, false, payCurrency, appliedPromo?.code);
       if (!result.success) {
         setError(result.error || s.failedToCreateUsdcInvoice);
       }
@@ -438,7 +438,7 @@ export default function Subscribe() {
     setError(null);
     setSubmitting(true);
     try {
-      const result = await startNowPayments(planId, user?.email || undefined, undefined, true, payCurrency);
+      const result = await startNowPayments(planId, user?.email || undefined, undefined, true, payCurrency, appliedPromo?.code);
       if (!result.success) {
         setError(result.error || (t.lang === "es" ? "No se pudo crear la suscripción. Intenta de nuevo." : "Failed to create subscription. Please try again."));
       }
@@ -455,7 +455,7 @@ export default function Subscribe() {
     setSelectedPlan(planId);
     setError(null);
     try {
-      const result = await createBtcSubscription(planId, undefined);
+      const result = await createBtcSubscription(planId, undefined, appliedPromo?.code);
       if (!result.success || !result.checkoutUrl) {
         setError(result.error || "Failed to create Bitcoin invoice.");
         return;
@@ -473,7 +473,7 @@ export default function Subscribe() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [submitting, btcAvailable]);
+  }, [submitting, btcAvailable, appliedPromo?.code]);
 
   const handleDashCheckout = useCallback(async (planId: string) => {
     if (submitting || !dashAvailable || inFlightRef.current) return;
@@ -481,7 +481,7 @@ export default function Subscribe() {
     setSelectedPlan(planId);
     setError(null);
     try {
-      const result = await createDashSubscription(planId, undefined);
+      const result = await createDashSubscription(planId, undefined, undefined, appliedPromo?.code);
       if (!result.success || !result.checkoutUrl) {
         setError(result.error || "Failed to create Dash invoice.");
         return;
@@ -499,7 +499,7 @@ export default function Subscribe() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [submitting, dashAvailable]);
+  }, [submitting, dashAvailable, appliedPromo?.code]);
 
   async function handleTokensSubscribe(planId: string, planPrice: number) {
     if (submitting) return;

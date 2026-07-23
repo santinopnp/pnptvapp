@@ -86,7 +86,7 @@ class PushNotificationService {
     }
   }
 
-  static _buildPayload({ title, body, url, icon, tag }) {
+  static _buildPayload({ title, body, url, icon, image, tag }) {
     const payload = {
       title: title || 'PNPtv!',
       body: body || '',
@@ -94,6 +94,10 @@ class PushNotificationService {
       icon: icon || '/icon-192.png',
       badge: '/Logo2-50.png',
     };
+    // The Web Push spec's `image` field displays a large banner under the
+    // body — a good spot for the actor's avatar / a live-snapshot card.
+    // Chrome/Edge honor it; Safari ignores it (falls back to icon only).
+    if (image) payload.image = image;
     if (tag) payload.tag = tag;
     return JSON.stringify(payload);
   }
