@@ -350,6 +350,14 @@ class MeruLinkService {
    */
   async addLink(meruCode, meruLink, product = 'lifetime100') {
     try {
+      // Normalize casing — every read path (reserveRandomLink, availability,
+      // admin stats) filters on an exact-match lowercase product string.
+      // A row inserted as e.g. 'Lifetime100' silently orphans itself from
+      // every one of those queries: it's real, paid-for inventory that
+      // never surfaces as available and never gets reserved/sold. Lower-
+      // casing here, at the single shared insert path, is cheaper than
+      // relying on every caller to pass it in pre-normalized.
+      const normalizedProduct = String(product).toLowerCase();
       await query(
         `INSERT INTO meru_payment_links (code, meru_link, product, status)
          VALUES ($1, $2, $3, 'active')
@@ -357,10 +365,10 @@ class MeruLinkService {
            meru_link = EXCLUDED.meru_link,
            product = EXCLUDED.product,
            status = CASE WHEN meru_payment_links.status = 'used' THEN meru_payment_links.status ELSE 'active' END`,
-        [meruCode, meruLink, product]
+        [meruCode, meruLink, normalizedProduct]
       );
 
-      logger.info('Meru link added/updated in system', { code: meruCode, product });
+      logger.info('Meru link added/updated in system', { code: meruCode, product: normalizedProduct });
       return true;
     } catch (error) {
       logger.error('Error adding Meru link:', error);

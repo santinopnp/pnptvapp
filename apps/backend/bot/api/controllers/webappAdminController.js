@@ -2503,7 +2503,12 @@ const addMeruLinks = async (req, res) => {
       return res.status(400).json({ error: 'Maximum 100 links per request' });
     }
 
-    const cleanProduct = product.trim();
+    // Lowercase — every read path (reserve/availability/stats) filters on an
+    // exact-match lowercase product string. A row inserted here as e.g.
+    // 'Lifetime100' silently orphans itself from all of them: real, paid-for
+    // inventory that never surfaces as available. (This is exactly how 8
+    // codes ended up invisible under 'Lifetime100' vs the real 'lifetime100'.)
+    const cleanProduct = product.trim().toLowerCase();
     let added = 0;
 
     for (const rawUrl of links) {
