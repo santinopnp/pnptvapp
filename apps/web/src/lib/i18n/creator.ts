@@ -429,6 +429,21 @@ const strings = {
     surveyThankYou: "Thank you!",
     surveyFeedbackHelps: "Your feedback helps improve the experience.",
     surveyFailedToSubmit: "Failed to submit",
+
+    // Pre-live consent gate (wraps /creators/live)
+    preLiveTitle: "Before You Go Live",
+    preLiveSubtitle: "Please tick both boxes before starting your show",
+    preLiveConsentScriptedPre: "I confirm that my show follows ",
+    preLiveConsentScriptedStrong: "scripted prompts and agreed content only",
+    preLiveConsentScriptedPost: " — no unsolicited personal requests or real-time solicitation.",
+    preLiveConsentGuidelinesPre: "I have read and agree to the ",
+    preLiveConsentGuidelinesLink: "PNPtv! Community Guidelines",
+    preLiveConsentGuidelinesPost: " and will uphold them during my stream.",
+    preLiveWellnessTitle: "You are not alone 💜",
+    preLiveWellnessBody: "Our Wellness Center has resources and community support available right now.",
+    preLiveWellnessLink: "Visit the Wellness Center",
+    preLiveBack: "Go Back",
+    preLiveConfirm: "I Confirm — Go Live",
   },
   es: {
     signInRequired: "Inicia sesión para acceder al Panel de Creador",
@@ -835,6 +850,21 @@ const strings = {
     surveyThankYou: "¡Gracias!",
     surveyFeedbackHelps: "Tu opinión ayuda a mejorar la experiencia.",
     surveyFailedToSubmit: "Error al enviar",
+
+    // Pre-live consent gate (wraps /creators/live)
+    preLiveTitle: "Antes de Transmitir",
+    preLiveSubtitle: "Marca ambas casillas antes de iniciar tu show",
+    preLiveConsentScriptedPre: "Confirmo que mi show sigue ",
+    preLiveConsentScriptedStrong: "únicamente el guion y el contenido acordado",
+    preLiveConsentScriptedPost: " — sin solicitudes personales espontáneas ni negociaciones en tiempo real.",
+    preLiveConsentGuidelinesPre: "He leído y acepto las ",
+    preLiveConsentGuidelinesLink: "Normas de la Comunidad PNPtv!",
+    preLiveConsentGuidelinesPost: " y las respetaré durante mi transmisión.",
+    preLiveWellnessTitle: "No estás solo 💜",
+    preLiveWellnessBody: "Nuestro Centro de Bienestar tiene recursos y apoyo comunitario disponibles ahora mismo.",
+    preLiveWellnessLink: "Visita el Centro de Bienestar",
+    preLiveBack: "Volver",
+    preLiveConfirm: "Confirmo — Transmitir",
   },
 };
 
