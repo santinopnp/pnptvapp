@@ -46,6 +46,7 @@ import {
   unsubscribeFromCreator,
   prepareUsdcSubscription,
   getCreatorSubscriptionStatus,
+  type CreatorSubscriptionStatus,
   getWalletBalance,
   payCreatorSubWithTokens,
   createCreatorTip,
@@ -212,6 +213,20 @@ function DrmVideoPlayer({ src, drmContentId, poster, watermarkLabel }: DrmVideoP
       )}
     </div>
   );
+}
+
+function creatorTierLabel(type: CreatorPublicProfile["creator"]["creator_type"]): string {
+  switch (type) {
+    case "diamond":
+    case "full_time":
+      return "Diamond 💎";
+    case "ice":
+      return "Ice 🧊";
+    case "crystal":
+      return "Crystal ✨";
+    default:
+      return "Creator";
+  }
 }
 
 function formatPrice(usd: number): string {
@@ -758,6 +773,12 @@ export default function CreatorProfilePage() {
   const [showVideoConfirm, setShowVideoConfirm] = useState(false);
   const [unsubscribeLoading, setUnsubscribeLoading] = useState(false);
 
+  // Membership info banner — dropdown under the "Suscrito" pill (mockup: 💎 tier +
+  // Active badge, Plan/Renews/Perks rows, ghost Manage/Cancel)
+  const [showMembershipBanner, setShowMembershipBanner] = useState(false);
+  const [membershipStatus, setMembershipStatus] = useState<CreatorSubscriptionStatus | null>(null);
+  const [membershipLoading, setMembershipLoading] = useState(false);
+
   const [lightboxItem, setLightboxItem] = useState<PublicCreatorMediaItem | null>(null);
   const [channelsExpanded, setChannelsExpanded] = useState(false);
   const [showBookCall, setShowBookCall] = useState(false);
@@ -906,6 +927,19 @@ export default function CreatorProfilePage() {
       // silent — subscription status unchanged
     } finally {
       setUnsubscribeLoading(false);
+    }
+  }
+
+  function handleToggleMembershipBanner() {
+    if (!data) return;
+    const next = !showMembershipBanner;
+    setShowMembershipBanner(next);
+    if (next && !membershipStatus) {
+      setMembershipLoading(true);
+      getCreatorSubscriptionStatus(data.creator.id)
+        .then((res) => { if (res.success) setMembershipStatus(res); })
+        .catch(() => {})
+        .finally(() => setMembershipLoading(false));
     }
   }
 
@@ -1406,15 +1440,23 @@ export default function CreatorProfilePage() {
             )}
             {!creator.creator_subscription_paused && isSubscribed && (
               <>
-                {/* Two-per-row: Suscrito status (left) + Entrar al hangout (right).
-                    When there's no hangout to enter, Suscrito spans full width. */}
+                {/* Two-per-row: Suscrito status (left, tap toggles membership banner)
+                    + Entrar al hangout (right). No hangout → Suscrito spans full width. */}
                 <div className={`grid gap-2 ${hasHangout && hangout ? "grid-cols-2" : "grid-cols-1"}`}>
-                  <div
-                    className="flex items-center justify-center gap-1.5 px-3 py-3 rounded-[10px] text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25 min-h-[48px]"
+                  <button
+                    type="button"
+                    onClick={handleToggleMembershipBanner}
+                    aria-expanded={showMembershipBanner}
+                    className="flex items-center justify-center gap-1.5 px-3 py-3 rounded-[10px] text-sm font-semibold text-green-400 bg-green-500/15 border border-green-500/25 min-h-[48px] transition-colors"
                   >
                     <CheckCircle2 size={14} aria-hidden="true" />
                     Suscrito
-                  </div>
+                    <ChevronDown
+                      size={13}
+                      className={`transition-transform duration-200 ${showMembershipBanner ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </button>
                   {hasHangout && hangout && (
                     <button
                       onClick={() => navigate(`/hangouts/${hangout.id}`)}
@@ -1425,15 +1467,65 @@ export default function CreatorProfilePage() {
                     </button>
                   )}
                 </div>
-                <div className="flex justify-center pt-0.5">
-                  <button
-                    onClick={handleUnsubscribe}
-                    disabled={unsubscribeLoading}
-                    className="text-xs text-pnp-textSecondary underline decoration-dotted hover:text-pnp-textPrimary transition-colors disabled:opacity-50 px-1"
+
+                {/* Membership info banner — mockup: 💎 tier + Active badge, Plan/Renews/Perks, ghost Manage/Cancel */}
+                {showMembershipBanner && (
+                  <div
+                    className="rounded-[12px] p-3.5 space-y-2.5"
+                    style={{ background: "rgba(212,0,122,0.08)", border: "1px solid #D4007A" }}
                   >
-                    {unsubscribeLoading ? "Cancelando…" : "Gestionar suscripción"}
-                  </button>
-                </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-pnp-textPrimary">
+                        {creatorTierLabel(creator.creator_type)} membership
+                      </span>
+                      <span
+                        className="rounded-full font-bold text-green-400 bg-green-500/15 border border-green-500/25"
+                        style={{ padding: "3px 9px", fontSize: 10 }}
+                      >
+                        Active
+                      </span>
+                    </div>
+                    {membershipLoading ? (
+                      <p className="text-xs text-pnp-textSecondary">Cargando…</p>
+                    ) : (
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-pnp-textSecondary">Plan</span>
+                          <span className="text-pnp-textPrimary">
+                            {formatPrice(membershipStatus?.subscription?.price_usd ?? creator.creator_price_usd)}/mo · {creatorTierLabel(creator.creator_type)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-pnp-textSecondary">Renews</span>
+                          <span className="text-pnp-textPrimary">
+                            {membershipStatus?.subscription?.expires_at
+                              ? new Date(membershipStatus.subscription.expires_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+                              : "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-pnp-textSecondary">Perks</span>
+                          <span className="text-pnp-textPrimary">DMs · Content{hasHangout ? " · Afterhours" : ""}{hasCallPackages ? " · Calls" : ""}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => navigate("/creator-subscriptions")}
+                        className="flex-1 py-2 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors border border-white/10"
+                      >
+                        Manage
+                      </button>
+                      <button
+                        onClick={handleUnsubscribe}
+                        disabled={unsubscribeLoading}
+                        className="flex-1 py-2 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors border border-white/10 disabled:opacity-50"
+                      >
+                        {unsubscribeLoading ? "Cancelando…" : "Cancel"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 

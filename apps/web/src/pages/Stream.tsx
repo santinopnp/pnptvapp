@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
-import { Card, Skeleton } from "@pnptv/ui-kit";
+import { Card, Skeleton, Badge } from "@pnptv/ui-kit";
 import { useAuth } from "@/hooks/useAuth";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
@@ -716,6 +716,15 @@ function StreamInner() {
       console.warn("[LiveRules] Failed to persist acknowledgment — will retry on next load");
     }
   }, []);
+
+  // Mobile matches the new mockup, which has no rules-acknowledgment step — record
+  // the same server-side acknowledgment silently instead of showing the modal.
+  // Desktop is unaffected and still requires the explicit tap.
+  useEffect(() => {
+    if (rulesLoading || rulesAcknowledged) return;
+    if (typeof window === "undefined" || window.innerWidth >= 768) return;
+    handleAcknowledgeRules();
+  }, [rulesLoading, rulesAcknowledged, handleAcknowledgeRules]);
 
   // ── Raid: drive countdown and auto-navigate when a raid event arrives ────────
   useEffect(() => {
@@ -1473,8 +1482,8 @@ function StreamInner() {
         <meta name="description" content={stream.description || `Watch ${stream.name} live on PNPtv`} />
       </Helmet>
 
-      {/* Rules acknowledgment gate — shown to authenticated users who have not yet agreed */}
-      {!rulesAcknowledged && (
+      {/* Rules acknowledgment gate — desktop only; mobile auto-acknowledges (see effect above) to match the mockup */}
+      {!rulesAcknowledged && !(typeof window !== "undefined" && window.innerWidth < 768) && (
         <LiveRulesModal
           onAcknowledge={handleAcknowledgeRules}
           creatorName={creatorRulesName}
@@ -1876,7 +1885,13 @@ function StreamInner() {
               poster={stream.thumbnailUrl || undefined}
               overlay={overlay}
               onStats={isStreamOwner ? handlePlayerStats : undefined}
-              viewerUsername={user?.username ?? user?.firstName ?? undefined}
+              // No watermark on mobile — the new mobile design matches the mockup,
+              // which has none. Desktop keeps the anti-piracy watermark unchanged.
+              viewerUsername={
+                typeof window !== "undefined" && window.innerWidth < 768
+                  ? undefined
+                  : (user?.username ?? user?.firstName ?? undefined)
+              }
               className="!h-full !aspect-auto !rounded-none md:!aspect-video md:!h-auto md:!rounded-xl"
             />
           </div>
@@ -1905,10 +1920,10 @@ function StreamInner() {
               )}
             </div>
             {stream.isLive && (
-              <span className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full bg-red-500 text-white text-[10px] font-bold">
+              <Badge variant="accent" className="flex-shrink-0 flex items-center gap-1 font-bold">
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
                 LIVE
-              </span>
+              </Badge>
             )}
             <button
               onClick={() => navigate("/live")}
@@ -2001,7 +2016,39 @@ function StreamInner() {
             </div>
           )}
 
-          {/* Bottom row: message input + floating Tip button */}
+          {/* Right-side floating action rail — mirrors mockup's ♥ viewer count + ✨ Tip button */}
+          {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
+            <div
+              className="pointer-events-auto absolute right-3 flex flex-col items-center gap-3.5"
+              style={{ bottom: "calc(env(safe-area-inset-bottom,0px) + 76px)" }}
+            >
+              <div className="flex flex-col items-center gap-0.5">
+                <div
+                  className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-white"
+                  style={{ background: "rgba(255,255,255,0.15)" }}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 21s-6.7-4.35-9.3-8.28C.86 10.06 1.6 6.66 4.36 5.2 6.6 4 9.3 4.7 12 7.3 14.7 4.7 17.4 4 19.64 5.2c2.76 1.46 3.5 4.86 1.66 7.52C18.7 16.65 12 21 12 21z" />
+                  </svg>
+                </div>
+                {viewerCount > 0 && (
+                  <span className="text-[10px] text-white font-medium">
+                    {viewerCount >= 1000 ? `${(viewerCount / 1000).toFixed(1)}k` : viewerCount}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowTipSheet(true)}
+                aria-label="Tip and more"
+                className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-white text-lg shadow-lg active:scale-95 transition-transform"
+                style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#E69138)" }}
+              >
+                ✨
+              </button>
+            </div>
+          )}
+
+          {/* Bottom row: message input + Send */}
           {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
             <div className="pointer-events-auto flex items-end gap-2 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)]">
               <div className="flex-1 min-w-0">
@@ -2042,14 +2089,6 @@ function StreamInner() {
                   </button>
                 )}
               </div>
-              <button
-                onClick={() => setShowTipSheet(true)}
-                aria-label="Tip and more"
-                className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-white text-lg shadow-lg active:scale-95 transition-transform"
-                style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#E69138)" }}
-              >
-                ✨
-              </button>
             </div>
           )}
         </div>
@@ -3544,7 +3583,7 @@ function StreamInner() {
         onClose={() => { setShowTopUp(false); setOutOfTokens(false); }}
         onSuccess={(newBalance) => { setTokenBalance(newBalance); setOutOfTokens(false); }}
       />
-      {showTutorial && !rulesLoading && rulesAcknowledged && (
+      {showTutorial && !rulesLoading && rulesAcknowledged && !(typeof window !== "undefined" && window.innerWidth < 768) && (
         <TutorialOverlay section="stream" onDismiss={dismissTutorial} onDismissForever={dismissForever} />
       )}
     </div>
