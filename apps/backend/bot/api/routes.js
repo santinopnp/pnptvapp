@@ -16431,7 +16431,8 @@ app.get('/api/public/creator/:username',
               creator_subscriber_count, creator_verified,
               creator_subscription_paused, pnptv_id,
               creator_role, creator_enabled_at, created_at,
-              followers_count, following_count
+              followers_count, following_count,
+              amazon_wishlist_url
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
        LIMIT 1`,
@@ -16525,6 +16526,7 @@ app.get('/api/public/creator/:username',
            AND sp.reply_to_id IS NULL
            AND sp.repost_of_id IS NULL
            AND sp.content_tier = 'free'
+           AND COALESCE(sp.metadata->>'kind', '') NOT IN ('community_hype', 'channel_promo')
          ORDER BY sp.created_at DESC
          LIMIT 3`,
         [creatorId, viewerId]
@@ -16824,6 +16826,7 @@ app.get('/api/public/creator/:username',
         completedCallsCount,
         isPrime,
         memberSince: creator.creator_enabled_at || creator.created_at || null,
+        amazon_wishlist_url: creator.amazon_wishlist_url || null,
       },
       isSubscribed,
       isFollowing,

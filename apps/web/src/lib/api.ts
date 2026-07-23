@@ -1290,6 +1290,7 @@ export function updateProfile(
     contentDisclaimer: boolean;
     hasSeenTutorial: boolean;
     language: string;
+    amazonWishlistUrl: string | null;
   }>
 ): Promise<{ success: boolean }> {
   return request("/api/webapp/profile", { method: "PUT", body: fields });
@@ -9125,6 +9126,7 @@ export interface CreatorPublicProfile {
     completedCallsCount: number;
     isPrime: boolean;
     memberSince: string | null;
+    amazon_wishlist_url: string | null;
   };
   isSubscribed: boolean;
   isFollowing: boolean;

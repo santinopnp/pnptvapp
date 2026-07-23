@@ -37,6 +37,11 @@ import {
   MoreVertical,
   Flag,
   Ban,
+  Camera,
+  Pencil,
+  Gift,
+  ShoppingBag,
+  DollarSign,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -56,6 +61,9 @@ import {
   unblockUser,
   isUserBlocked,
   createUserReport,
+  updateProfile,
+  uploadAvatar,
+  uploadCoverPhoto,
   ApiError,
   getOwnChannels,
   type CreatorTipPayload,
@@ -810,6 +818,23 @@ export default function CreatorProfilePage() {
   // Publicaciones / Exclusivo tabs
   const [profileTab, setProfileTab] = useState<"pubs" | "excl">("pubs");
 
+  // ── Inline own-profile editing (bio, avatar, cover, Amazon wishlist URL) ──
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
+  const [savingBio, setSavingBio] = useState(false);
+  const [editingWishlist, setEditingWishlist] = useState(false);
+  const [wishlistDraft, setWishlistDraft] = useState("");
+  const [savingWishlist, setSavingWishlist] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const coverFileRef = useRef<HTMLInputElement | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement | null>(null);
+
+  // Gift ($20/$50/$100) vs Tip ($5/$10/$20) — same crypto endpoint, different presets/labels.
+  const [tipMode, setTipMode] = useState<"gift" | "tip">("gift");
+  const bookCallRef = useRef<HTMLDivElement>(null);
+
   // Watermark label for lightbox — shown on all unlocked media the viewer opens
   const watermarkLabel = user
     ? `${user.username ? '@' + user.username : user.firstName ?? 'member'} · pnptv.app`
@@ -826,6 +851,66 @@ export default function CreatorProfilePage() {
   }, [lightboxItem]);
 
   const subscribePanelRef = useRef<HTMLDivElement>(null);
+
+  const handleCoverUpload = useCallback(async (file: File) => {
+    setEditError(null);
+    setUploadingCover(true);
+    try {
+      const res = await uploadCoverPhoto(file);
+      if (res.success) {
+        setData((d) => (d ? { ...d, creator: { ...d.creator, cover_url: res.coverUrl } } : d));
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Cover upload failed");
+    } finally {
+      setUploadingCover(false);
+    }
+  }, []);
+
+  const handleAvatarUpload = useCallback(async (file: File) => {
+    setEditError(null);
+    setUploadingAvatar(true);
+    try {
+      const res = await uploadAvatar(file);
+      if (res.success) {
+        setData((d) => (d ? { ...d, creator: { ...d.creator, photo_url: res.photoUrl } } : d));
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Avatar upload failed");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, []);
+
+  const handleBioSave = useCallback(async () => {
+    setEditError(null);
+    setSavingBio(true);
+    try {
+      const trimmed = bioDraft.trim().slice(0, 500);
+      await updateProfile({ bio: trimmed });
+      setData((d) => (d ? { ...d, creator: { ...d.creator, bio: trimmed } } : d));
+      setEditingBio(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Bio save failed");
+    } finally {
+      setSavingBio(false);
+    }
+  }, [bioDraft]);
+
+  const handleWishlistSave = useCallback(async () => {
+    setEditError(null);
+    setSavingWishlist(true);
+    try {
+      const trimmed = wishlistDraft.trim();
+      await updateProfile({ amazonWishlistUrl: trimmed || null });
+      setData((d) => (d ? { ...d, creator: { ...d.creator, amazon_wishlist_url: trimmed || null } } : d));
+      setEditingWishlist(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Wishlist save failed");
+    } finally {
+      setSavingWishlist(false);
+    }
+  }, [wishlistDraft]);
 
   const load = useCallback(async () => {
     if (!username) return;
@@ -1148,10 +1233,11 @@ export default function CreatorProfilePage() {
   const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, exclusivePosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
   // Santino runs a bespoke booking + hangout flow off-platform, so his profile
-  // hides the standard "Santino's Subscribers" hangout CTA, the next-availability
-  // card, and the private-call packages section.
+  // hides the standard "Santino's Subscribers" hangout CTA and the
+  // next-availability card. Call packages are now surfaced through the unified
+  // action row (Book/Gift/Tip/Wishlist) below the subscription controls.
   const isSantinoProfile = String(creator.id) === "8599671840";
-  const hasCallPackages = activePackages.length > 0 && !isSantinoProfile;
+  const hasCallPackages = activePackages.length > 0;
   const cheapestPackage = hasCallPackages
     ? activePackages.reduce((a, b) => (a.price_usd < b.price_usd ? a : b))
     : null;
@@ -1267,6 +1353,33 @@ export default function CreatorProfilePage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
           </button>
+          {/* Edit cover button — own profile only */}
+          {isOwnProfile && (
+            <>
+              <input
+                ref={coverFileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleCoverUpload(file);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => coverFileRef.current?.click()}
+                disabled={uploadingCover}
+                aria-label="Cambiar foto de portada"
+                className="absolute top-3 right-3 flex items-center gap-1.5 rounded-full text-white text-xs font-semibold px-3 py-2 transition-opacity disabled:opacity-50"
+                style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.12)" }}
+              >
+                {uploadingCover ? <RefreshCw size={13} className="animate-spin" aria-hidden="true" /> : <Camera size={13} aria-hidden="true" />}
+                {uploadingCover ? "Subiendo…" : "Portada"}
+              </button>
+            </>
+          )}
           {/* Kebab menu — cover overlay (moved from wide action row to match mockup) */}
           {!isOwnProfile && (
             <div className="absolute top-3 right-3">
@@ -1344,6 +1457,35 @@ export default function CreatorProfilePage() {
                   linkToProfile={false}
                   showOnline={false}
                 />
+                {isOwnProfile && (
+                  <>
+                    <input
+                      ref={avatarFileRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleAvatarUpload(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => avatarFileRef.current?.click()}
+                      disabled={uploadingAvatar}
+                      aria-label="Cambiar foto de perfil"
+                      className="absolute inset-0 flex items-center justify-center rounded-full transition-opacity disabled:opacity-50"
+                      style={{ background: "rgba(0,0,0,0.55)", opacity: uploadingAvatar ? 1 : 0 }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = uploadingAvatar ? "1" : "0")}
+                    >
+                      {uploadingAvatar
+                        ? <RefreshCw size={20} className="animate-spin text-white" aria-hidden="true" />
+                        : <Camera size={20} className="text-white" aria-hidden="true" />}
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Right col — Hang with X + lock caption (only for other profiles, when a hangout exists) */}
@@ -1406,11 +1548,111 @@ export default function CreatorProfilePage() {
               ))}
             </div>
 
-            {/* Bio */}
-            {creator.bio && (
-              <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 mt-3">
-                {creator.bio}
-              </p>
+            {/* Bio — inline-editable when own profile */}
+            {isOwnProfile ? (
+              editingBio ? (
+                <div className="mt-3 space-y-2">
+                  <textarea
+                    value={bioDraft}
+                    onChange={(e) => setBioDraft(e.target.value.slice(0, 500))}
+                    rows={3}
+                    maxLength={500}
+                    placeholder="Cuéntale a tus fans quién eres…"
+                    className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+                    style={{ background: "var(--pnp-surface-hover, #2C2C2E)", border: "1px solid rgba(255,255,255,0.1)", color: "#EBEBF5", outline: "none" }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-pnp-textSecondary">{bioDraft.length}/500</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEditingBio(false); setEditError(null); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-white transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleBioSave}
+                        disabled={savingBio}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-pnp-accent transition-opacity disabled:opacity-50"
+                      >
+                        {savingBio ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 group relative">
+                  {creator.bio ? (
+                    <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 pr-8">
+                      {creator.bio}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-pnp-textSecondary/60 italic pr-8">
+                      Añade una biografía para que tus fans te conozcan.
+                    </p>
+                  )}
+                  <button
+                    onClick={() => { setBioDraft(creator.bio ?? ""); setEditingBio(true); }}
+                    aria-label="Editar biografía"
+                    className="absolute top-0 right-0 p-1.5 rounded-lg text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <Pencil size={12} aria-hidden="true" />
+                  </button>
+                </div>
+              )
+            ) : (
+              creator.bio && (
+                <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 mt-3">
+                  {creator.bio}
+                </p>
+              )
+            )}
+
+            {/* Amazon wishlist URL — own-profile-only inline editor */}
+            {isOwnProfile && (
+              editingWishlist ? (
+                <div className="mt-3 space-y-2">
+                  <input
+                    type="url"
+                    value={wishlistDraft}
+                    onChange={(e) => setWishlistDraft(e.target.value.slice(0, 500))}
+                    placeholder="https://www.amazon.com/hz/wishlist/ls/…"
+                    className="w-full rounded-xl px-3 py-2 text-sm"
+                    style={{ background: "var(--pnp-surface-hover, #2C2C2E)", border: "1px solid rgba(255,255,255,0.1)", color: "#EBEBF5", outline: "none" }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-pnp-textSecondary">Solo enlaces de amazon.com / amzn.to / a.co</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEditingWishlist(false); setEditError(null); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-white transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleWishlistSave}
+                        disabled={savingWishlist}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-pnp-accent transition-opacity disabled:opacity-50"
+                      >
+                        {savingWishlist ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setWishlistDraft(creator.amazon_wishlist_url ?? ""); setEditingWishlist(true); }}
+                  className="mt-3 flex items-center gap-1.5 text-xs text-pnp-textSecondary hover:text-white transition-colors"
+                >
+                  <ShoppingBag size={11} aria-hidden="true" />
+                  {creator.amazon_wishlist_url ? "Editar Amazon wishlist" : "Añadir Amazon wishlist"}
+                  <Pencil size={10} aria-hidden="true" />
+                </button>
+              )
+            )}
+
+            {editError && (
+              <p className="mt-2 text-xs" style={{ color: "#FF6B6B" }}>{editError}</p>
             )}
 
           </section>
@@ -1477,11 +1719,62 @@ export default function CreatorProfilePage() {
               </button>
             )}
 
+            {/* ── Action row — Book call · Gift · Tip · Wishlist ─────────────────
+                Sits below the subscription controls on every creator profile.
+                Buttons auto-hide when the creator has not enabled them
+                (no active call packages / no wishlist URL). */}
+            {!isOwnProfile && (hasCallPackages || creator.amazon_wishlist_url) && (
+              <div className="grid grid-cols-4 gap-2">
+                {hasCallPackages && (
+                  <button
+                    onClick={() => bookCallRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                    style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                    aria-label="Agendar llamada privada"
+                  >
+                    <PhoneCall size={16} aria-hidden="true" />
+                    <span className="text-[10px] font-semibold leading-tight">Llamada</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => { setTipMode("gift"); setTipAmount(50); setShowTipPanel(true); }}
+                  className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                  style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                  aria-label="Enviar regalo"
+                >
+                  <Gift size={16} aria-hidden="true" />
+                  <span className="text-[10px] font-semibold leading-tight">Regalo</span>
+                </button>
+                <button
+                  onClick={() => { setTipMode("tip"); setTipAmount(10); setShowTipPanel(true); }}
+                  className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                  style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                  aria-label="Enviar propina"
+                >
+                  <DollarSign size={16} aria-hidden="true" />
+                  <span className="text-[10px] font-semibold leading-tight">Propina</span>
+                </button>
+                {creator.amazon_wishlist_url && (
+                  <a
+                    href={creator.amazon_wishlist_url}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                    className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                    style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                    aria-label="Ver wishlist en Amazon"
+                  >
+                    <ShoppingBag size={16} aria-hidden="true" />
+                    <span className="text-[10px] font-semibold leading-tight">Wishlist</span>
+                  </a>
+                )}
+              </div>
+            )}
+
             {/* Book a Call — horizontal-scroll carousel of every enabled
-                call package. Replaces the previous hardcoded 30/60 pair and
-                the ghost "Channels" scroll button. Subscribed-only. */}
-            {isSubscribed && hasCallPackages && (
-              <div>
+                call package. Auto-scrolled to when the user taps "Llamada" in
+                the action row above. */}
+            {hasCallPackages && (
+              <div ref={bookCallRef}>
                 <div className="flex items-center gap-2 mb-2 px-1">
                   <PhoneCall size={13} aria-hidden="true" className="text-pnp-textSecondary" />
                   <span className="text-[11px] font-bold uppercase tracking-wide text-pnp-textSecondary">Book a call</span>
@@ -1927,36 +2220,28 @@ export default function CreatorProfilePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               <span className="text-sm font-semibold" style={{ color: "#34C759" }}>
-                ¡Regalo enviado! Gracias por apoyar a {creator.first_name || creator.username}.
+                ¡{tipMode === "gift" ? "Regalo" : "Propina"} enviad{tipMode === "gift" ? "o" : "a"}! Gracias por apoyar a {creator.first_name || creator.username}.
               </span>
             </div>
           )}
 
-          {!tipSuccess && (
-            <section>
-              {!showTipPanel ? (
-                <button
-                  onClick={() => setShowTipPanel(true)}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
-                  style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--pnp-text-primary)" }}
-                >
-                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Enviar Regalo
-                </button>
-              ) : (
+          {!tipSuccess && showTipPanel && (() => {
+            const isGift = tipMode === "gift";
+            const label = isGift ? "Regalo" : "Propina";
+            const presets = isGift ? [20, 50, 100, 200] : [1, 5, 10, 20];
+            return (
+              <section>
                 <div
                   className="rounded-2xl p-4 space-y-3"
                   style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)" }}
                 >
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-pnp-textPrimary">Enviar Regalo</p>
+                    <p className="text-sm font-semibold text-pnp-textPrimary">Enviar {label}</p>
                     <button
                       onClick={() => { setShowTipPanel(false); setTipError(null); }}
                       className="text-pnp-textSecondary hover:text-white transition-colors"
                       style={{ background: "none", border: "none", cursor: "pointer" }}
-                      aria-label="Close tip panel"
+                      aria-label="Cerrar panel"
                     >
                       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1964,19 +2249,17 @@ export default function CreatorProfilePage() {
                     </button>
                   </div>
 
-                  {/* Tip disclosure */}
                   <div
                     className="rounded-xl px-3 py-2 text-xs leading-relaxed"
                     style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.2)", color: "#34C759" }}
                   >
-                    💚 <strong>El 100% de tu regalo va directamente a {creator.first_name || creator.username}</strong> — sin comisión de plataforma. Los regalos están completamente exentos de comisión.
+                    💚 <strong>El 100% de tu {label.toLowerCase()} va directamente a {creator.first_name || creator.username}</strong> — sin comisión de plataforma.
                   </div>
 
-                  {/* Quick amount buttons */}
                   <div>
                     <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Elige el monto (USD):</p>
                     <div className="flex gap-2 flex-wrap">
-                      {[5, 10, 20, 50, 100].map((amt) => (
+                      {presets.map((amt) => (
                         <button
                           key={amt}
                           type="button"
@@ -2011,7 +2294,6 @@ export default function CreatorProfilePage() {
                     </div>
                   </div>
 
-                  {/* Optional message */}
                   <textarea
                     value={tipMessage}
                     onChange={(e) => setTipMessage(e.target.value.slice(0, 500))}
@@ -2035,16 +2317,16 @@ export default function CreatorProfilePage() {
                     disabled={tipPending || tipAmount < 1}
                     className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40 btn-gradient"
                   >
-                    {tipPending ? "Abriendo pago…" : `Enviar $${tipAmount} de Regalo en Crypto`}
+                    {tipPending ? "Abriendo pago…" : `Enviar $${tipAmount} de ${label} en Crypto`}
                   </button>
 
                   <p className="text-xs text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     Procesado por NowPayments. Paga con Bitcoin, Dash, USDT y más.
                   </p>
                 </div>
-              )}
-            </section>
-          )}
+              </section>
+            );
+          })()}
 
           {/* ── 7. PUBLICACIONES / EXCLUSIVO TABS ───────────────────────────── */}
           {(hasRecentPosts || hasExclusivePosts) && (
