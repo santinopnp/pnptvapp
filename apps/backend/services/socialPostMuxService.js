@@ -129,8 +129,11 @@ async function assertActiveCreator(userId) {
 
 async function createMuxUpload(userId) {
   await assertActiveCreator(userId);
-  const { id: uploadId, url: uploadUrl } = await muxService.createDirectUpload();
-  return { uploadId, uploadUrl };
+  // muxService.createDirectUpload returns { uploadId, uploadUrl } — NOT { id, url }.
+  // The prior `{ id: uploadId, url: uploadUrl }` destructure silently produced
+  // undefined values, leaving the frontend with no URL to PUT to (uploads never
+  // reached Mux) and leaking upload sessions that eventually timed out.
+  return await muxService.createDirectUpload();
 }
 
 // ── Step 2: finalize (create the social_posts row with mux_upload_id) ────────

@@ -2187,6 +2187,21 @@ const startBot = async () => {
       logger.warn(`Going-live poller failed to start: ${error.message}`);
     }
 
+    // Mux reconciler — every 30s polls Mux for any channel_videos /
+    // social_posts rows whose Mux upload hasn't been linked to an asset
+    // yet. Backstop for a missing/misconfigured webhook (2026-07-23:
+    // webhook not firing left 10 assets orphaned in Mux and blocked
+    // uploads for a week because the free-plan cap was hit).
+    // Disable with PNP_DISABLE_MUX_RECONCILER=1.
+    try {
+      const { startMuxReconciler } = require('../../services/muxReconcilerService');
+      startMuxReconciler();
+      logger.info('✓ Mux reconciler started');
+      logger.info('  Mux webhook URL (configure in dashboard): https://pnptv.app/api/webhooks/mux');
+    } catch (error) {
+      logger.warn(`Mux reconciler failed to start: ${error.message}`);
+    }
+
     // Onboarding reminder scheduler — DISABLED (spam prevention per admin request)
     logger.info('• Onboarding reminder scheduler skipped (disabled)');
 
