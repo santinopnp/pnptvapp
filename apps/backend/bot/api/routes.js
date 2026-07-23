@@ -1488,22 +1488,28 @@ const ageVerificationUpload = multer({
 
 // Avatar upload (profile picture) - 15MB max (iPhones shoot 6–15 MB HEIF/JPEG;
 // source is immediately resized to 256×256 so large files are safe).
+// heic|heif added — the comment already called out iPhone HEIF uploads and
+// IMAGE_MIMES/verifyMagicBytes downstream already accept them, but this
+// fileFilter regex never did, so a real HEIC file (iPhone default format
+// unless "Most Compatible" is set) was rejected here before ever reaching
+// that correct downstream check.
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const isImage = /^image\/(jpeg|jpg|png|webp|gif)$/i.test(file.mimetype || '');
+    const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/i.test(file.mimetype || '');
     if (isImage) return cb(null, true);
     cb(new Error('Only image files are allowed'));
   }
 });
 
 // Profile cover (banner) upload — 15MB max, images only. Wider aspect than avatar.
+// heic|heif added — see avatarUpload above for why.
 const coverUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const isImage = /^image\/(jpeg|jpg|png|webp|gif)$/i.test(file.mimetype || '');
+    const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/i.test(file.mimetype || '');
     if (isImage) return cb(null, true);
     cb(new Error('Only image files are allowed'));
   }
@@ -13908,20 +13914,35 @@ app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asy
 const btcpayWebhookController = require('./controllers/btcpayWebhookController');
 app.post('/api/webhooks/btcpay', webhookLimiter, asyncHandler(btcpayWebhookController.handleBtcpayWebhook));
 
-// Mux webhook — raw body required for HMAC signature verification
+// Mux webhook — signature verification needs the exact raw bytes Mux signed.
+// The global express.json() verify callback (~line 372) already captures
+// those into req.rawBody for every request. This route used to instead
+// mount its own express.raw({ type: 'application/json' }) — but that runs
+// AFTER the global json() parser has already consumed the request stream,
+// so it never saw real bytes: req.body was left as the already-parsed
+// object from the global parser, and req.body.toString() produced the
+// literal string "[object Object]", which can never match Mux's real
+// HMAC. Every single webhook call 401'd as a result (confirmed in prod
+// logs: Mux retrying indefinitely, no upload ever finishing processing).
+// Fixed to use req.rawBody, mirroring the working BTCPay webhook
+// (btcpayWebhookController.js).
 app.post('/api/webhooks/mux',
   webhookLimiter,
-  express.raw({ type: 'application/json' }),
   asyncHandler(async (req, res) => {
     const muxService = require('../../services/muxService');
     const channelVideoService = require('../../services/channelVideoService');
     const signature = req.headers['mux-signature'];
     const secret = process.env.MUX_WEBHOOK_SECRET;
-    if (!secret || !signature || !muxService.verifyWebhookSignature(req.body.toString(), signature, secret)) {
+    if (!req.rawBody) {
+      logger.error('Mux webhook rejected: rawBody missing — express.json verify callback not firing', { ip: req.ip });
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    const rawBody = req.rawBody.toString('utf8');
+    if (!secret || !signature || !muxService.verifyWebhookSignature(rawBody, signature, secret)) {
       return res.status(401).json({ error: 'Invalid signature' });
     }
     try {
-      const event = JSON.parse(req.body.toString());
+      const event = JSON.parse(rawBody);
       // Fan out to both handlers — each UPDATEs scoped by mux_upload_id /
       // mux_asset_id so only the owning table (channel_videos or
       // social_posts) reacts to the event.
