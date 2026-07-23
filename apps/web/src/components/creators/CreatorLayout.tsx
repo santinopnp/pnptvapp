@@ -126,6 +126,11 @@ const navItems: Array<{
     label: "My Benefits",
     icon: "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z",
   },
+  {
+    to: "/creators/tools",
+    label: "Tools",
+    icon: "M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75",
+  },
 ];
 
 export default function CreatorLayout() {
@@ -2588,6 +2593,184 @@ export function CreatorBenefits() {
             ))}
           </div>
         </div>
+      </div>
+    </>
+  );
+}
+
+// ── Creator Tools & Resources ────────────────────────────────────────────────
+// A curated shortlist of the software + hardware that most creators rely on.
+// PNPtv is not affiliated with any of these; links go straight to the vendor.
+
+type CreatorToolPricing = "Free" | "Freemium" | "Paid";
+
+interface CreatorTool {
+  name: string;
+  url: string;
+  description: string;
+  pricing: CreatorToolPricing;
+}
+
+interface CreatorToolSection {
+  icon: string;
+  title: string;
+  subtitle: string;
+  accent: string;
+  tools: CreatorTool[];
+}
+
+const CREATOR_TOOL_SECTIONS: CreatorToolSection[] = [
+  {
+    icon: "📹",
+    title: "Filming",
+    subtitle: "Broadcast and record video — desktop and mobile.",
+    accent: "#D4007A",
+    tools: [
+      { name: "OBS Studio",        url: "https://obsproject.com/",                         pricing: "Free",     description: "Open-source recorder + broadcaster. The standard for desktop streaming." },
+      { name: "Streamlabs Desktop", url: "https://streamlabs.com/",                        pricing: "Freemium", description: "OBS wrapper with overlays, alerts, and one-click scene setup." },
+      { name: "Blackmagic Camera",  url: "https://apps.apple.com/app/id6449580241",         pricing: "Free",     description: "Pro-grade video capture on iPhone — manual exposure, focus, LUTs." },
+      { name: "Filmic Pro",         url: "https://www.filmicpro.com/",                     pricing: "Paid",     description: "Cinematographer-grade mobile shooting. iOS + Android." },
+      { name: "DJI Mimo",           url: "https://www.dji.com/mimo",                       pricing: "Free",     description: "Pairs with DJI mics/gimbals — clean mobile capture on the go." },
+    ],
+  },
+  {
+    icon: "🎬",
+    title: "Video Editing",
+    subtitle: "Cut, color, caption. Pick one and stick with it.",
+    accent: "#E69138",
+    tools: [
+      { name: "CapCut",            url: "https://www.capcut.com/",                          pricing: "Freemium", description: "Mobile + desktop editor with AI subtitles, transitions, and templates." },
+      { name: "DaVinci Resolve",   url: "https://www.blackmagicdesign.com/products/davinciresolve", pricing: "Freemium", description: "Hollywood-grade color and edit suite. Free tier covers 99% of creators." },
+      { name: "Descript",          url: "https://www.descript.com/",                        pricing: "Freemium", description: "Edit video by editing a transcript. AI voice cleanup + filler-word removal." },
+      { name: "InShot",            url: "https://inshot.com/",                              pricing: "Freemium", description: "Fast mobile edits — reels, shorts, quick cuts." },
+      { name: "Adobe Premiere Rush", url: "https://www.adobe.com/products/premiere-rush.html", pricing: "Paid",  description: "Mobile-first cross-device editor with Adobe ecosystem sync." },
+    ],
+  },
+  {
+    icon: "🖼️",
+    title: "Photo & Thumbnails",
+    subtitle: "Cover art, promo cards, retouch.",
+    accent: "#5ED1C4",
+    tools: [
+      { name: "Canva",             url: "https://www.canva.com/",                           pricing: "Freemium", description: "Templates for thumbnails, banners, story cards, posters." },
+      { name: "Snapseed",          url: "https://snapseed.online/",                         pricing: "Free",     description: "Free mobile photo editor by Google — pro-level tools, no watermark." },
+      { name: "Lightroom Mobile",  url: "https://www.adobe.com/products/photoshop-lightroom-mobile.html", pricing: "Freemium", description: "Color grading + presets on phone. Great for matching your brand look." },
+      { name: "Remove.bg",         url: "https://www.remove.bg/",                           pricing: "Freemium", description: "One-click background removal — perfect for stickers, thumbnails, cutouts." },
+      { name: "Photopea",          url: "https://www.photopea.com/",                        pricing: "Free",     description: "Browser-based Photoshop clone. Opens PSDs. No signup." },
+    ],
+  },
+  {
+    icon: "🎧",
+    title: "Audio",
+    subtitle: "Clean voice = professional feel.",
+    accent: "#9B59B6",
+    tools: [
+      { name: "Audacity",          url: "https://www.audacityteam.org/",                    pricing: "Free",     description: "Free desktop audio editor — noise reduction, EQ, multi-track." },
+      { name: "Adobe Podcast (Enhance)", url: "https://podcast.adobe.com/enhance",          pricing: "Free",     description: "AI voice enhancer — makes any recording sound studio-quality in one click." },
+      { name: "Riverside.fm",      url: "https://riverside.fm/",                            pricing: "Freemium", description: "Remote recording with separate audio tracks per guest. Great for collabs." },
+      { name: "GarageBand",        url: "https://www.apple.com/mac/garageband/",            pricing: "Free",     description: "macOS + iOS audio production. Loops, effects, mixing." },
+      { name: "Krisp",             url: "https://krisp.ai/",                                pricing: "Freemium", description: "Real-time background noise + echo removal for live calls and streams." },
+    ],
+  },
+  {
+    icon: "🎥",
+    title: "Hardware Essentials",
+    subtitle: "The physical gear that makes the biggest visible difference.",
+    accent: "#3498DB",
+    tools: [
+      { name: "Ring light (Neewer 18\")", url: "https://neewer.com/",                       pricing: "Paid",     description: "Even, flattering front light. Adjustable color temperature. ~$50–120." },
+      { name: "Key light (Elgato Key Light Air)", url: "https://www.elgato.com/us/en/p/key-light-air", pricing: "Paid", description: "Studio-quality LED panel controlled from your phone. ~$130." },
+      { name: "Tripod (Manfrotto / Joby GorillaPod)", url: "https://joby.com/us-en/gorillapod/", pricing: "Paid", description: "Sturdy base for phone or camera. GorillaPod wraps anywhere. ~$30–100." },
+      { name: "Wireless lav mic (DJI Mic / Rode Wireless GO II)", url: "https://www.rode.com/microphones/wireless/wirelessgoii", pricing: "Paid", description: "Clean, close audio without cables. Battery-powered. ~$150–300." },
+      { name: "Green screen (Elgato Collapsible)", url: "https://www.elgato.com/us/en/p/green-screen", pricing: "Paid", description: "Pop-up chroma-key backdrop. Sets up in seconds. ~$150." },
+    ],
+  },
+  {
+    icon: "🤖",
+    title: "AI Tools",
+    subtitle: "Ship faster. Captions, cleanup, ideation.",
+    accent: "#FFB454",
+    tools: [
+      { name: "Runway ML",         url: "https://runwayml.com/",                            pricing: "Freemium", description: "AI video — bg removal, inpainting, generative fill, motion tracking." },
+      { name: "ElevenLabs",        url: "https://elevenlabs.io/",                           pricing: "Freemium", description: "Best-in-class voice cloning + text-to-speech. Great for intros/outros." },
+      { name: "Cleanup.pictures",  url: "https://cleanup.pictures/",                        pricing: "Freemium", description: "Erase objects, watermarks, or people from photos with one brushstroke." },
+      { name: "Whisper (via MacWhisper)", url: "https://goodsnooze.gumroad.com/l/macwhisper", pricing: "Freemium", description: "Fast, private transcription on your own machine. Export SRT captions." },
+      { name: "ChatGPT / Grok",    url: "https://chat.openai.com/",                         pricing: "Freemium", description: "Captions, hooks, hashtag research, DM script drafting." },
+    ],
+  },
+];
+
+const PRICING_BADGE_STYLE: Record<CreatorToolPricing, { bg: string; color: string; border: string }> = {
+  Free:     { bg: "rgba(52,199,89,0.12)",  color: "#34C759",  border: "rgba(52,199,89,0.25)" },
+  Freemium: { bg: "rgba(59,130,246,0.12)", color: "#60A5FA",  border: "rgba(59,130,246,0.25)" },
+  Paid:     { bg: "rgba(245,158,11,0.12)", color: "#F59E0B",  border: "rgba(245,158,11,0.25)" },
+};
+
+export function CreatorTools() {
+  return (
+    <>
+      <Helmet><title>Tools — Creator Studio — PNPtv!</title></Helmet>
+      <div className="p-4 lg:p-6 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-white">Creator Tools & Resources</h1>
+          <p className="text-sm text-pnp-textSecondary mt-1">
+            A curated shortlist of the software and gear most creators rely on. Every link opens the vendor directly — PNPtv is not affiliated and earns nothing from your choice.
+          </p>
+        </div>
+
+        {CREATOR_TOOL_SECTIONS.map((section) => (
+          <section key={section.title} aria-label={section.title}>
+            <div className="flex items-start gap-3 mb-3">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-lg"
+                style={{ background: `${section.accent}22`, border: `1px solid ${section.accent}40` }}
+              >
+                {section.icon}
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-white leading-tight">{section.title}</h2>
+                <p className="text-xs text-pnp-textSecondary mt-0.5">{section.subtitle}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {section.tools.map((tool) => {
+                const badge = PRICING_BADGE_STYLE[tool.pricing];
+                return (
+                  <a
+                    key={tool.name}
+                    href={tool.url}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                    className="group rounded-xl p-4 transition-colors hover:brightness-110"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-white leading-tight">{tool.name}</h3>
+                      <span
+                        className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0"
+                        style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }}
+                      >
+                        {tool.pricing}
+                      </span>
+                    </div>
+                    <p className="text-xs text-pnp-textSecondary mt-1.5 leading-relaxed">{tool.description}</p>
+                    <span className="inline-flex items-center gap-1 mt-2 text-[11px] font-semibold" style={{ color: section.accent }}>
+                      Open
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                      </svg>
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+
+        <p className="text-[11px] text-pnp-textSecondary/70 text-center pt-2">
+          Suggestion for the list? Message support and we'll consider it.
+        </p>
       </div>
     </>
   );

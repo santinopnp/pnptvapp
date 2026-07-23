@@ -207,14 +207,27 @@ function sanitizeInput(text, maxLength = 4096) {
  * @returns {Array} Array of default button configurations
  */
 function buildDefaultBroadcastButtons(lang = 'en') {
-  const options = getStandardButtonOptions();
-
-  // Return broadcast ads buttons by default
-  const plansButton = options.find(opt => opt.key === 'plans');
-  const profileButton = options.find(opt => opt.key === 'profile');
-  const nearbyButton = options.find(opt => opt.key === 'nearby');
-
-  return [plansButton, profileButton, nearbyButton].filter(Boolean);
+  const isEs = lang === 'es';
+  return [
+    {
+      key: 'get_prime',
+      text: isEs ? '💎 Obtener PRIME' : '💎 Get PRIME',
+      type: 'url',
+      target: 'https://pnptv.app/subscribe',
+    },
+    {
+      key: 'lifetime100',
+      text: '⭐ Lifetime100',
+      type: 'url',
+      target: 'https://pnptv.app/lifetime100',
+    },
+    {
+      key: 'crypto_guide',
+      text: isEs ? '🪙 Configurar Crypto' : '🪙 Get Set Up for Crypto',
+      type: 'url',
+      target: 'https://pnptv.app/crypto-guide',
+    },
+  ];
 }
 
 /**

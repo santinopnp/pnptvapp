@@ -939,16 +939,27 @@ const createPostWithMedia = async (req, res) => {
       if (ok) videoThumbnailUrl = `/uploads/posts/${thumbFilename}`;
     }
 
-    // Exclusive gate: exclusive posts must contain a video (any duration).
-    // 4-minute rule is now a soft suggestion — enforced by the compliance cron, not by upload.
+    // Exclusive gate: exclusive posts must contain a video ≥ 4 minutes.
+    // Prior to 2026-07-23 this was a soft warning that a cron reconciled later
+    // — meaning users could publish 30s "exclusive" videos and only find out
+    // hours later that their post was demoted. Enforced at upload now.
     if (isExclusive === 'true' || isExclusive === true) {
       if (mediaType !== 'video') {
         if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
         return res.status(400).json({ error: 'Exclusive content must be a video', code: 'EXCLUSIVE_VIDEO_REQUIRED' });
       }
       const durationSecs = await getVideoDurationSecs(finalFilePath);
-      if (durationSecs < 240) {
-        logger.info('Exclusive video shorter than 4-minute suggestion', { userId: user.id, durationSecs });
+      if (!Number.isFinite(durationSecs) || durationSecs < 240) {
+        if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
+        logger.info('Exclusive video rejected: shorter than 4-minute minimum', {
+          userId: user.id, durationSecs,
+        });
+        return res.status(400).json({
+          error: 'Exclusive videos must be at least 4 minutes long.',
+          code: 'EXCLUSIVE_MIN_DURATION',
+          minDurationSecs: 240,
+          durationSecs: Number.isFinite(durationSecs) ? Math.round(durationSecs) : null,
+        });
       }
     }
 

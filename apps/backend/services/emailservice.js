@@ -404,7 +404,17 @@ class EmailService {
           logger.info('Email sent via Hostinger API:', { to, subject });
           return { success: true, messageId, mode: 'hostinger-api' };
         } catch (apiErr) {
-          logger.warn('[email] Hostinger API failed, falling back to SMTP:', { error: apiErr.message, to });
+          // Rate-limit responses (4.7.1 / hostinger_out_ratelimit) are per-account,
+          // and SMTP hits the same account — falling back just piles on and
+          // triggers auth-blocking (535) as Hostinger flags the source. Fail
+          // fast for this case so the caller can retry later at their own cadence.
+          const msg = apiErr.message || '';
+          const rateLimited = /4\.7\.1|ratelimit|rate.?limit|too many|429/i.test(msg);
+          if (rateLimited) {
+            logger.warn('[email] Hostinger API rate-limited — SKIPPING SMTP fallback (same account):', { error: msg, to });
+            return { success: false, messageId: null, mode: 'rate-limited', error: msg };
+          }
+          logger.warn('[email] Hostinger API failed, falling back to SMTP:', { error: msg, to });
         }
       }
 

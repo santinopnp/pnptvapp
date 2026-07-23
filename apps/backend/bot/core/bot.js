@@ -2174,6 +2174,19 @@ const startBot = async () => {
       logger.warn(`Creator availability ping scheduler initialization failed: ${error.message}`);
     }
 
+    // Going-live auto-broadcast poller — 30s Restreamer state diff. On any
+    // offline→running transition, fires goingLiveBroadcastService.broadcastGoingLive
+    // (same code path as the manual "Broadcast Now" button, same 6h dedup).
+    // Fans out to bot DMs, linked Telegram groups, X, in-app feed, email,
+    // web push, and the Main Stage room. Disable with PNP_DISABLE_GOLIVE_POLLER=1.
+    try {
+      const { startGoLivePoller } = require('../../services/goingLiveBroadcastService');
+      startGoLivePoller(bot);
+      logger.info('✓ Going-live auto-broadcast poller started');
+    } catch (error) {
+      logger.warn(`Going-live poller failed to start: ${error.message}`);
+    }
+
     // Onboarding reminder scheduler — DISABLED (spam prevention per admin request)
     logger.info('• Onboarding reminder scheduler skipped (disabled)');
 

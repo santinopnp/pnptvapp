@@ -37,6 +37,11 @@ import {
   MoreVertical,
   Flag,
   Ban,
+  Camera,
+  Pencil,
+  Gift,
+  ShoppingBag,
+  DollarSign,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -57,7 +62,11 @@ import {
   unblockUser,
   isUserBlocked,
   createUserReport,
+  updateProfile,
+  uploadAvatar,
+  uploadCoverPhoto,
   ApiError,
+  getOwnChannels,
   type CreatorTipPayload,
   type CreatorPublicProfile,
   type PublicCreatorMediaItem,
@@ -69,11 +78,13 @@ import {
   type CreatorNextAvailability,
   type CreatorExclusiveTeaser,
   type ReportCategory,
+  type CreatorChannel,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import UploadVideoModal from "@/components/channels/UploadVideoModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -784,6 +795,11 @@ export default function CreatorProfilePage() {
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60 | undefined>(undefined);
 
+  // Own-profile upload FAB — populated lazily once we know this is the viewer's own profile.
+  const [ownChannels, setOwnChannels] = useState<CreatorChannel[]>([]);
+  const [showUploadChooser, setShowUploadChooser] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<CreatorChannel | null>(null);
+
   // Tip state
   const [showTipPanel, setShowTipPanel] = useState(false);
   const [tipAmount, setTipAmount] = useState<number>(10);
@@ -823,6 +839,23 @@ export default function CreatorProfilePage() {
   // Publicaciones / Exclusivo tabs
   const [profileTab, setProfileTab] = useState<"pubs" | "excl">("pubs");
 
+  // ── Inline own-profile editing (bio, avatar, cover, Amazon wishlist URL) ──
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
+  const [savingBio, setSavingBio] = useState(false);
+  const [editingWishlist, setEditingWishlist] = useState(false);
+  const [wishlistDraft, setWishlistDraft] = useState("");
+  const [savingWishlist, setSavingWishlist] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const coverFileRef = useRef<HTMLInputElement | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement | null>(null);
+
+  // Gift ($20/$50/$100) vs Tip ($5/$10/$20) — same crypto endpoint, different presets/labels.
+  const [tipMode, setTipMode] = useState<"gift" | "tip">("gift");
+  const bookCallRef = useRef<HTMLDivElement>(null);
+
   // Watermark label for lightbox — shown on all unlocked media the viewer opens
   const watermarkLabel = user
     ? `${user.username ? '@' + user.username : user.firstName ?? 'member'} · pnptv.app`
@@ -839,6 +872,66 @@ export default function CreatorProfilePage() {
   }, [lightboxItem]);
 
   const subscribePanelRef = useRef<HTMLDivElement>(null);
+
+  const handleCoverUpload = useCallback(async (file: File) => {
+    setEditError(null);
+    setUploadingCover(true);
+    try {
+      const res = await uploadCoverPhoto(file);
+      if (res.success) {
+        setData((d) => (d ? { ...d, creator: { ...d.creator, cover_url: res.coverUrl } } : d));
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Cover upload failed");
+    } finally {
+      setUploadingCover(false);
+    }
+  }, []);
+
+  const handleAvatarUpload = useCallback(async (file: File) => {
+    setEditError(null);
+    setUploadingAvatar(true);
+    try {
+      const res = await uploadAvatar(file);
+      if (res.success) {
+        setData((d) => (d ? { ...d, creator: { ...d.creator, photo_url: res.photoUrl } } : d));
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Avatar upload failed");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, []);
+
+  const handleBioSave = useCallback(async () => {
+    setEditError(null);
+    setSavingBio(true);
+    try {
+      const trimmed = bioDraft.trim().slice(0, 500);
+      await updateProfile({ bio: trimmed });
+      setData((d) => (d ? { ...d, creator: { ...d.creator, bio: trimmed } } : d));
+      setEditingBio(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Bio save failed");
+    } finally {
+      setSavingBio(false);
+    }
+  }, [bioDraft]);
+
+  const handleWishlistSave = useCallback(async () => {
+    setEditError(null);
+    setSavingWishlist(true);
+    try {
+      const trimmed = wishlistDraft.trim();
+      await updateProfile({ amazonWishlistUrl: trimmed || null });
+      setData((d) => (d ? { ...d, creator: { ...d.creator, amazon_wishlist_url: trimmed || null } } : d));
+      setEditingWishlist(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Wishlist save failed");
+    } finally {
+      setSavingWishlist(false);
+    }
+  }, [wishlistDraft]);
 
   const load = useCallback(async () => {
     if (!username) return;
@@ -1101,6 +1194,20 @@ export default function CreatorProfilePage() {
     };
   }, []);
 
+  // Own-profile upload FAB — fetch own channels only when the viewer is the creator.
+  // Public profiles never trigger this call, so /creator/channels stays authed-and-scoped.
+  const viewerId = user ? String(user.dbId || user.id) : null;
+  const profileCreatorId = data?.creator?.id != null ? String(data.creator.id) : null;
+  const viewingOwnProfile = !!viewerId && !!profileCreatorId && viewerId === profileCreatorId;
+  useEffect(() => {
+    if (!viewingOwnProfile) return;
+    let cancelled = false;
+    getOwnChannels()
+      .then((res) => { if (!cancelled && res.success) setOwnChannels(res.channels); })
+      .catch(() => { /* silent — FAB just stays hidden */ });
+    return () => { cancelled = true; };
+  }, [viewingOwnProfile]);
+
   // ── Loading ──
   if (isLoading) return <PageSkeleton />;
 
@@ -1160,10 +1267,11 @@ export default function CreatorProfilePage() {
   const { creator, channels, media, featuredVideos, hangouts, callPackages, recentPosts, exclusivePosts, socialLinks, nextAvailability } = data;
   const activePackages = callPackages.filter((p) => p.is_active);
   // Santino runs a bespoke booking + hangout flow off-platform, so his profile
-  // hides the standard "Santino's Subscribers" hangout CTA, the next-availability
-  // card, and the private-call packages section.
+  // hides the standard "Santino's Subscribers" hangout CTA and the
+  // next-availability card. Call packages are now surfaced through the unified
+  // action row (Book/Gift/Tip/Wishlist) below the subscription controls.
   const isSantinoProfile = String(creator.id) === "8599671840";
-  const hasCallPackages = activePackages.length > 0 && !isSantinoProfile;
+  const hasCallPackages = activePackages.length > 0;
   const cheapestPackage = hasCallPackages
     ? activePackages.reduce((a, b) => (a.price_usd < b.price_usd ? a : b))
     : null;
@@ -1279,6 +1387,33 @@ export default function CreatorProfilePage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
             </svg>
           </button>
+          {/* Edit cover button — own profile only */}
+          {isOwnProfile && (
+            <>
+              <input
+                ref={coverFileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleCoverUpload(file);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => coverFileRef.current?.click()}
+                disabled={uploadingCover}
+                aria-label="Cambiar foto de portada"
+                className="absolute top-3 right-3 flex items-center gap-1.5 rounded-full text-white text-xs font-semibold px-3 py-2 transition-opacity disabled:opacity-50"
+                style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.12)" }}
+              >
+                {uploadingCover ? <RefreshCw size={13} className="animate-spin" aria-hidden="true" /> : <Camera size={13} aria-hidden="true" />}
+                {uploadingCover ? "Subiendo…" : "Portada"}
+              </button>
+            </>
+          )}
           {/* Kebab menu — cover overlay (moved from wide action row to match mockup) */}
           {!isOwnProfile && (
             <div className="absolute top-3 right-3">
@@ -1356,6 +1491,35 @@ export default function CreatorProfilePage() {
                   linkToProfile={false}
                   showOnline={false}
                 />
+                {isOwnProfile && (
+                  <>
+                    <input
+                      ref={avatarFileRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleAvatarUpload(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => avatarFileRef.current?.click()}
+                      disabled={uploadingAvatar}
+                      aria-label="Cambiar foto de perfil"
+                      className="absolute inset-0 flex items-center justify-center rounded-full transition-opacity disabled:opacity-50"
+                      style={{ background: "rgba(0,0,0,0.55)", opacity: uploadingAvatar ? 1 : 0 }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = uploadingAvatar ? "1" : "0")}
+                    >
+                      {uploadingAvatar
+                        ? <RefreshCw size={20} className="animate-spin text-white" aria-hidden="true" />
+                        : <Camera size={20} className="text-white" aria-hidden="true" />}
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Right col — Hang with X + lock caption (only for other profiles, when a hangout exists) */}
@@ -1418,11 +1582,111 @@ export default function CreatorProfilePage() {
               ))}
             </div>
 
-            {/* Bio */}
-            {creator.bio && (
-              <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 mt-3">
-                {creator.bio}
-              </p>
+            {/* Bio — inline-editable when own profile */}
+            {isOwnProfile ? (
+              editingBio ? (
+                <div className="mt-3 space-y-2">
+                  <textarea
+                    value={bioDraft}
+                    onChange={(e) => setBioDraft(e.target.value.slice(0, 500))}
+                    rows={3}
+                    maxLength={500}
+                    placeholder="Cuéntale a tus fans quién eres…"
+                    className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+                    style={{ background: "var(--pnp-surface-hover, #2C2C2E)", border: "1px solid rgba(255,255,255,0.1)", color: "#EBEBF5", outline: "none" }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-pnp-textSecondary">{bioDraft.length}/500</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEditingBio(false); setEditError(null); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-white transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleBioSave}
+                        disabled={savingBio}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-pnp-accent transition-opacity disabled:opacity-50"
+                      >
+                        {savingBio ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 group relative">
+                  {creator.bio ? (
+                    <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 pr-8">
+                      {creator.bio}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-pnp-textSecondary/60 italic pr-8">
+                      Añade una biografía para que tus fans te conozcan.
+                    </p>
+                  )}
+                  <button
+                    onClick={() => { setBioDraft(creator.bio ?? ""); setEditingBio(true); }}
+                    aria-label="Editar biografía"
+                    className="absolute top-0 right-0 p-1.5 rounded-lg text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-colors"
+                  >
+                    <Pencil size={12} aria-hidden="true" />
+                  </button>
+                </div>
+              )
+            ) : (
+              creator.bio && (
+                <p className="text-sm text-pnp-textSecondary leading-relaxed line-clamp-3 mt-3">
+                  {creator.bio}
+                </p>
+              )
+            )}
+
+            {/* Amazon wishlist URL — own-profile-only inline editor */}
+            {isOwnProfile && (
+              editingWishlist ? (
+                <div className="mt-3 space-y-2">
+                  <input
+                    type="url"
+                    value={wishlistDraft}
+                    onChange={(e) => setWishlistDraft(e.target.value.slice(0, 500))}
+                    placeholder="https://www.amazon.com/hz/wishlist/ls/…"
+                    className="w-full rounded-xl px-3 py-2 text-sm"
+                    style={{ background: "var(--pnp-surface-hover, #2C2C2E)", border: "1px solid rgba(255,255,255,0.1)", color: "#EBEBF5", outline: "none" }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-pnp-textSecondary">Solo enlaces de amazon.com / amzn.to / a.co</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEditingWishlist(false); setEditError(null); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-pnp-textSecondary hover:text-white transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleWishlistSave}
+                        disabled={savingWishlist}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-pnp-accent transition-opacity disabled:opacity-50"
+                      >
+                        {savingWishlist ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setWishlistDraft(creator.amazon_wishlist_url ?? ""); setEditingWishlist(true); }}
+                  className="mt-3 flex items-center gap-1.5 text-xs text-pnp-textSecondary hover:text-white transition-colors"
+                >
+                  <ShoppingBag size={11} aria-hidden="true" />
+                  {creator.amazon_wishlist_url ? "Editar Amazon wishlist" : "Añadir Amazon wishlist"}
+                  <Pencil size={10} aria-hidden="true" />
+                </button>
+              )
+            )}
+
+            {editError && (
+              <p className="mt-2 text-xs" style={{ color: "#FF6B6B" }}>{editError}</p>
             )}
 
           </section>
@@ -1547,46 +1811,88 @@ export default function CreatorProfilePage() {
               </button>
             )}
 
-            {/* Book 30 min / 60 min — two half-width secondary buttons
-                (falls back to top-2 packages if creator doesn't offer exactly 30/60).
-                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
-            {isSubscribed && hasCallPackages && (() => {
-              const pkg30 = activePackages.find((p) => p.duration_minutes === 30);
-              const pkg60 = activePackages.find((p) => p.duration_minutes === 60);
-              // If exact matches missing, show the 2 cheapest packages instead
-              const fallback = [...activePackages].sort((a, b) => a.duration_minutes - b.duration_minutes).slice(0, 2);
-              const pair: PublicCallPackage[] = pkg30 && pkg60 ? [pkg30, pkg60] : fallback;
-              if (pair.length === 0) return null;
-              return (
-                <div className="flex gap-2">
-                  {pair.map((pkg) => (
+            {/* ── Action row — Book call · Gift · Tip · Wishlist ─────────────────
+                Sits below the subscription controls on every creator profile.
+                Buttons auto-hide when the creator has not enabled them
+                (no active call packages / no wishlist URL). */}
+            {!isOwnProfile && (hasCallPackages || creator.amazon_wishlist_url) && (
+              <div className="grid grid-cols-4 gap-2">
+                {hasCallPackages && (
+                  <button
+                    onClick={() => bookCallRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                    style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                    aria-label="Agendar llamada privada"
+                  >
+                    <PhoneCall size={16} aria-hidden="true" />
+                    <span className="text-[10px] font-semibold leading-tight">Llamada</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => { setTipMode("gift"); setTipAmount(50); setShowTipPanel(true); }}
+                  className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                  style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                  aria-label="Enviar regalo"
+                >
+                  <Gift size={16} aria-hidden="true" />
+                  <span className="text-[10px] font-semibold leading-tight">Regalo</span>
+                </button>
+                <button
+                  onClick={() => { setTipMode("tip"); setTipAmount(10); setShowTipPanel(true); }}
+                  className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                  style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                  aria-label="Enviar propina"
+                >
+                  <DollarSign size={16} aria-hidden="true" />
+                  <span className="text-[10px] font-semibold leading-tight">Propina</span>
+                </button>
+                {creator.amazon_wishlist_url && (
+                  <a
+                    href={creator.amazon_wishlist_url}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                    className="flex flex-col items-center justify-center gap-1 py-2.5 rounded-[10px] transition-colors hover:brightness-110 active:scale-[0.98]"
+                    style={{ background: "#161616", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" }}
+                    aria-label="Ver wishlist en Amazon"
+                  >
+                    <ShoppingBag size={16} aria-hidden="true" />
+                    <span className="text-[10px] font-semibold leading-tight">Wishlist</span>
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Book a Call — horizontal-scroll carousel of every enabled
+                call package. Auto-scrolled to when the user taps "Llamada" in
+                the action row above. */}
+            {hasCallPackages && (
+              <div ref={bookCallRef}>
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <PhoneCall size={13} aria-hidden="true" className="text-pnp-textSecondary" />
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-pnp-textSecondary">Book a call</span>
+                </div>
+                <div
+                  className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-1 -mx-1 px-1"
+                  role="list"
+                  aria-label="Available call packages"
+                >
+                  {activePackages.map((pkg) => (
                     <button
                       key={pkg.id}
+                      role="listitem"
                       onClick={() => { setBookCallDuration(pkg.duration_minutes as 30 | 60); setShowBookCall(true); }}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98] min-h-[44px]"
+                      className="snap-start flex-shrink-0 min-w-[120px] flex flex-col items-center justify-center gap-1 py-3 px-3.5 rounded-[10px] text-xs font-bold transition-all hover:opacity-90 active:scale-[0.98]"
                       style={{ border: "1px solid rgba(255,255,255,0.15)", background: "#161616", color: "#fff" }}
                     >
-                      <PhoneCall size={13} aria-hidden="true" />
-                      Buy {pkg.duration_minutes} min call
+                      <span className="text-white text-sm">{pkg.duration_minutes} min</span>
+                      <span className="text-[11px] font-semibold text-pnp-textSecondary">
+                        ${Number(pkg.price_usd).toFixed(pkg.price_usd % 1 === 0 ? 0 : 2)}
+                        {pkg.quantity > 1 && <> · x{pkg.quantity}</>}
+                      </span>
                     </button>
                   ))}
                 </div>
-              );
-            })()}
-
-            {/* Channels — ghost, full-width, scrolls to Canales section.
-                Subscribed-only: non-subscribers see a single Subscribe CTA. */}
-            {isSubscribed && hasChannels && (
-              <button
-                onClick={() => {
-                  const el = document.getElementById("creator-channels");
-                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-[10px] text-sm font-semibold transition-colors min-h-[44px]"
-                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "transparent", color: "rgba(255,255,255,0.75)" }}
-              >
-                Channels
-              </button>
+              </div>
             )}
 
             {/* Compact Follow chip (only if not own profile) — mockup omits
@@ -2006,36 +2312,28 @@ export default function CreatorProfilePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               <span className="text-sm font-semibold" style={{ color: "#34C759" }}>
-                ¡Regalo enviado! Gracias por apoyar a {creator.first_name || creator.username}.
+                ¡{tipMode === "gift" ? "Regalo" : "Propina"} enviad{tipMode === "gift" ? "o" : "a"}! Gracias por apoyar a {creator.first_name || creator.username}.
               </span>
             </div>
           )}
 
-          {!tipSuccess && (
-            <section>
-              {!showTipPanel ? (
-                <button
-                  onClick={() => setShowTipPanel(true)}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98]"
-                  style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--pnp-text-primary)" }}
-                >
-                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Enviar Regalo
-                </button>
-              ) : (
+          {!tipSuccess && showTipPanel && (() => {
+            const isGift = tipMode === "gift";
+            const label = isGift ? "Regalo" : "Propina";
+            const presets = isGift ? [20, 50, 100, 200] : [1, 5, 10, 20];
+            return (
+              <section>
                 <div
                   className="rounded-2xl p-4 space-y-3"
                   style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.1)" }}
                 >
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-pnp-textPrimary">Enviar Regalo</p>
+                    <p className="text-sm font-semibold text-pnp-textPrimary">Enviar {label}</p>
                     <button
                       onClick={() => { setShowTipPanel(false); setTipError(null); }}
                       className="text-pnp-textSecondary hover:text-white transition-colors"
                       style={{ background: "none", border: "none", cursor: "pointer" }}
-                      aria-label="Close tip panel"
+                      aria-label="Cerrar panel"
                     >
                       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -2043,19 +2341,17 @@ export default function CreatorProfilePage() {
                     </button>
                   </div>
 
-                  {/* Tip disclosure */}
                   <div
                     className="rounded-xl px-3 py-2 text-xs leading-relaxed"
                     style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.2)", color: "#34C759" }}
                   >
-                    💚 <strong>El 100% de tu regalo va directamente a {creator.first_name || creator.username}</strong> — sin comisión de plataforma. Los regalos están completamente exentos de comisión.
+                    💚 <strong>El 100% de tu {label.toLowerCase()} va directamente a {creator.first_name || creator.username}</strong> — sin comisión de plataforma.
                   </div>
 
-                  {/* Quick amount buttons */}
                   <div>
                     <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Elige el monto (USD):</p>
                     <div className="flex gap-2 flex-wrap">
-                      {[5, 10, 20, 50, 100].map((amt) => (
+                      {presets.map((amt) => (
                         <button
                           key={amt}
                           type="button"
@@ -2090,7 +2386,6 @@ export default function CreatorProfilePage() {
                     </div>
                   </div>
 
-                  {/* Optional message */}
                   <textarea
                     value={tipMessage}
                     onChange={(e) => setTipMessage(e.target.value.slice(0, 500))}
@@ -2114,16 +2409,16 @@ export default function CreatorProfilePage() {
                     disabled={tipPending || tipAmount < 1}
                     className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40 btn-gradient"
                   >
-                    {tipPending ? "Abriendo pago…" : `Enviar $${tipAmount} de Regalo en Crypto`}
+                    {tipPending ? "Abriendo pago…" : `Enviar $${tipAmount} de ${label} en Crypto`}
                   </button>
 
                   <p className="text-xs text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     Procesado por NowPayments. Paga con Bitcoin, Dash, USDT y más.
                   </p>
                 </div>
-              )}
-            </section>
-          )}
+              </section>
+            );
+          })()}
 
           {/* ── 7. PUBLICACIONES / EXCLUSIVO TABS ───────────────────────────── */}
           {(hasRecentPosts || hasExclusivePosts) && (
@@ -2268,6 +2563,99 @@ export default function CreatorProfilePage() {
           skipPackageStep={bookCallDuration !== undefined}
         />
       )}
+
+      {/* ── Own-profile Mux upload FAB + chooser + modal ─────────────────────
+          Renders only for the creator viewing their own page. FAB opens the
+          chooser sheet (público vs exclusivo); the chooser targets one of the
+          creator's own channels — free or subscription — and hands off to the
+          existing UploadVideoModal (Mux direct upload, resumable, thumbnail
+          picker). If the creator has only one channel, the chooser is skipped. */}
+      {viewingOwnProfile && ownChannels.length > 0 && (() => {
+        const freeCh = ownChannels.find((c) => c.accessType === "free") || null;
+        const subCh = ownChannels.find((c) => c.accessType === "subscription") || null;
+        const onlyOne = (freeCh && !subCh) || (subCh && !freeCh);
+        return (
+          <>
+            <button
+              type="button"
+              aria-label="Subir video"
+              onClick={() => {
+                if (onlyOne) { setUploadTarget(freeCh || subCh); return; }
+                setShowUploadChooser(true);
+              }}
+              className="fixed bottom-24 right-4 z-40 w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
+              style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)", boxShadow: "0 12px 28px rgba(255,51,119,0.40)", color: "#fff" }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+
+            {showUploadChooser && (
+              <div
+                className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+                style={{ background: "rgba(0,0,0,0.75)" }}
+                onClick={() => setShowUploadChooser(false)}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Elige tipo de video"
+                  className="w-full max-w-sm rounded-2xl p-5 space-y-3"
+                  style={{ background: "var(--pnp-surface-raised, #1e1e2e)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h3 className="text-base font-bold text-pnp-textPrimary">¿A dónde va el video?</h3>
+                  {freeCh && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowUploadChooser(false); setUploadTarget(freeCh); }}
+                      className="w-full text-left rounded-xl p-3 flex items-start gap-3 transition-colors hover:bg-white/5"
+                      style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)" }}
+                    >
+                      <div className="w-7 h-7 rounded-lg flex-shrink-0 mt-0.5" style={{ background: "linear-gradient(135deg,#5ED1C4,#7B61FF)" }} aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white">Público</p>
+                        <p className="text-[11px] text-pnp-textSecondary mt-0.5">Visible para todos en tu canal gratis</p>
+                      </div>
+                    </button>
+                  )}
+                  {subCh && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowUploadChooser(false); setUploadTarget(subCh); }}
+                      className="w-full text-left rounded-xl p-3 flex items-start gap-3 transition-colors hover:bg-white/5"
+                      style={{ border: "1px solid rgba(212,0,122,.35)", background: "rgba(212,0,122,.06)" }}
+                    >
+                      <div className="w-7 h-7 rounded-lg flex-shrink-0 mt-0.5" style={{ background: "linear-gradient(135deg,#FFB454,#D4007A)" }} aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white">Exclusivo · Solo suscriptores</p>
+                        <p className="text-[11px] text-pnp-textSecondary mt-0.5">Solo lo ven quienes pagan tu suscripción</p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {uploadTarget && (
+              <UploadVideoModal
+                channelId={uploadTarget.id}
+                channelName={uploadTarget.name}
+                channelSlug={uploadTarget.slug}
+                accessType={uploadTarget.accessType}
+                pricePerMonth={uploadTarget.priceUsd ?? null}
+                creatorUsername={uploadTarget.creatorUsername ?? null}
+                onClose={() => setUploadTarget(null)}
+                onPublished={() => {
+                  setUploadTarget(null);
+                  void load();
+                }}
+              />
+            )}
+          </>
+        );
+      })()}
 
       {/* ── Purchase confirmation modal ────────────────────────────────────────── */}
       {showVideoConfirm && (() => {

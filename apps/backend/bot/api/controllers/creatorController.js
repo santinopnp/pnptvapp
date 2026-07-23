@@ -507,6 +507,18 @@ const changeTier = async (req, res) => {
   }
 };
 
+// Payout method allowlist — must match the NowPayments accepted-currency set
+// used by the incoming-payments checkout (routes.js:11071) and the payout API
+// (nowpaymentsPayoutService.js). 'meru' is intentionally omitted here even
+// though the DB CHECK still accepts it for grandfathered rows — new enrollments
+// must pick a crypto token.
+const NP_PAYOUT_CURRENCIES = new Set([
+  'btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch',
+  'usdt', 'usdttrc20', 'usdtbsc',
+  'usdc', 'usdcbsc', 'usdcsol',
+  'dash', 'sol', 'doge',
+]);
+
 // POST /api/webapp/creator/enroll
 const submitEnrollment = async (req, res) => {
   try {
@@ -516,6 +528,15 @@ const submitEnrollment = async (req, res) => {
     if (!legalName?.trim())  return res.status(400).json({ error: 'Legal name is required' });
     if (!dateOfBirth)         return res.status(400).json({ error: 'Date of birth is required' });
     if (!idType)              return res.status(400).json({ error: 'ID type is required' });
+
+    // Payout method must be one of the NowPayments token codes. Meru is
+    // grandfathered at the DB level but not offered to new creators.
+    const methodLc = String(paymentMethod || '').toLowerCase();
+    if (!NP_PAYOUT_CURRENCIES.has(methodLc)) {
+      return res.status(400).json({
+        error: 'Choose a crypto payout token. Supported: Bitcoin, Ethereum, Litecoin, Monero, Bitcoin Cash, USDT, USDC, Dash, Solana, Dogecoin.',
+      });
+    }
 
     // Guard against excessively large base64 signature payloads
     const MAX_SIG_BYTES = 250 * 1024;

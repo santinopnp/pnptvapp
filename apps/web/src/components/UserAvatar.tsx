@@ -51,12 +51,21 @@ export function UserAvatar({
   const dot = DOT_PX[size];
   const initial = (displayName || "?").trim().charAt(0).toUpperCase() || "?";
 
+  // The @pnptv system account (id 8552451957) renders its full brand logo,
+  // which has padding/breathing room designed for a square. The default
+  // object-cover crop eats the edges. Use object-contain over a dark
+  // backdrop so the whole mark stays visible in the round frame.
+  const isPnptvLogo = id === "8552451957";
   const img = isValidPhotoUrl(photoUrl) ? (
     <img
       src={photoUrl}
       alt={displayName || "User"}
       loading="lazy"
-      className="w-full h-full rounded-full object-cover"
+      className={
+        isPnptvLogo
+          ? "w-full h-full rounded-full object-contain bg-black p-0.5"
+          : "w-full h-full rounded-full object-cover"
+      }
       onError={(e) => {
         const el = e.currentTarget;
         el.style.display = "none";

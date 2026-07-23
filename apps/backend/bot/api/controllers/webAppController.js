@@ -2371,10 +2371,21 @@ const updateProfile = async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
   // Server-side max-length validation
-  const MAX_LENGTHS = { username: 30, firstName: 100, lastName: 100, bio: 500, locationText: 200, xHandle: 50, instagramHandle: 50, tiktokHandle: 50, youtubeHandle: 100, country: 100 };
+  const MAX_LENGTHS = { username: 30, firstName: 100, lastName: 100, bio: 500, locationText: 200, xHandle: 50, instagramHandle: 50, tiktokHandle: 50, youtubeHandle: 100, country: 100, amazonWishlistUrl: 500 };
   for (const [key, max] of Object.entries(MAX_LENGTHS)) {
     if (req.body[key] && typeof req.body[key] === 'string' && req.body[key].length > max) {
       return res.status(400).json({ error: `${key} exceeds maximum length of ${max} characters` });
+    }
+  }
+
+  // Amazon wishlist URL must be an amazon-owned domain (matches DB check
+  // constraint in migration 327). Reject early with a clearer error message
+  // than the raw Postgres constraint violation.
+  if (req.body.amazonWishlistUrl !== undefined && req.body.amazonWishlistUrl !== null && req.body.amazonWishlistUrl !== '') {
+    const url = String(req.body.amazonWishlistUrl).trim();
+    const AMAZON_RE = /^https:\/\/(www\.)?(amazon\.(com|co\.uk|ca|com\.mx|com\.br|de|fr|it|es|co\.jp|com\.au|in)|amzn\.to|amzn\.eu|a\.co)\//i;
+    if (!AMAZON_RE.test(url)) {
+      return res.status(400).json({ error: 'Amazon wishlist URL must be a valid Amazon link (amazon.com, amzn.to, a.co, etc.)' });
     }
   }
 
@@ -2453,7 +2464,7 @@ const updateProfile = async (req, res) => {
   }
 
   try {
-    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country'];
+    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country', 'amazonWishlistUrl'];
     const colMap  = {
       username: 'username',
       firstName: 'first_name', lastName: 'last_name', bio: 'bio',
@@ -2464,6 +2475,7 @@ const updateProfile = async (req, res) => {
       language: 'language',
       dateOfBirth: 'date_of_birth',
       country: 'country',
+      amazonWishlistUrl: 'amazon_wishlist_url',
     };
 
     const sets = [];

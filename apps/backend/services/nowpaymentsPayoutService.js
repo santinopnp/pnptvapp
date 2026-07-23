@@ -61,7 +61,29 @@ async function getCreatorPayoutBalance(userId) {
   };
 }
 
-async function requestPayout({ userId, address, method }) {
+// Per-currency address validators. Each entry: NowPayments currency code →
+// { regex, label } where label is the human-readable name shown on error.
+// Kept minimal — NowPayments does its own validation before dispatch, but a
+// front-line check saves a round trip and gives the creator a clear message.
+const ADDRESS_VALIDATORS = {
+  btc:       { re: /^(bc1[a-z0-9]{39,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/, label: 'Bitcoin' },
+  btcln:     { re: /^.{6,}$/,                                                label: 'Bitcoin Lightning' }, // LNURL/LN-address; NowPayments validates
+  eth:       { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'Ethereum' },
+  ltc:       { re: /^(ltc1[a-z0-9]{39,71}|[LM3][a-km-zA-HJ-NP-Z1-9]{25,34})$/, label: 'Litecoin' },
+  xmr:       { re: /^[48][A-Za-z0-9]{94}$/,                                  label: 'Monero' },
+  bch:       { re: /^(bitcoincash:)?[qpQP][a-zA-Z0-9]{41}$|^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/, label: 'Bitcoin Cash' },
+  usdt:      { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDT (Ethereum ERC-20)' },
+  usdttrc20: { re: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,                            label: 'USDT (Tron TRC-20)' },
+  usdtbsc:   { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDT (BSC BEP-20)' },
+  usdc:      { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDC (Ethereum)' },
+  usdcbsc:   { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDC (BSC BEP-20)' },
+  usdcsol:   { re: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,                          label: 'USDC (Solana)' },
+  dash:      { re: /^X[1-9A-HJ-NP-Za-km-z]{33}$/,                            label: 'Dash' },
+  sol:       { re: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,                          label: 'Solana' },
+  doge:      { re: /^D[5-9A-HJ-NP-U1-9][1-9A-HJ-NP-Za-km-z]{32}$/,           label: 'Dogecoin' },
+};
+
+async function requestPayout({ userId, address, currency, method }) {
   // FIX 3: Email payouts are unsupported — only crypto wallet addresses accepted
   if (method === 'email') {
     throw Object.assign(
@@ -71,10 +93,21 @@ async function requestPayout({ userId, address, method }) {
   }
 
   if (!address || !address.trim()) throw new Error('Address is required');
-  const TRC20_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
-  if (!TRC20_RE.test(address.trim())) {
+
+  // Currency defaults to the historical usdttrc20 so existing callers that
+  // haven't been updated still work. New callers should pass the exact
+  // NowPayments currency code the creator picked at enrollment.
+  const currencyCode = String(currency || 'usdttrc20').toLowerCase();
+  const validator = ADDRESS_VALIDATORS[currencyCode];
+  if (!validator) {
     throw Object.assign(
-      new Error('Invalid USDT TRC-20 address — must start with T and be exactly 34 characters (base58).'),
+      new Error(`Unsupported payout currency "${currencyCode}".`),
+      { code: 'INVALID_PAYOUT_METHOD' }
+    );
+  }
+  if (!validator.re.test(address.trim())) {
+    throw Object.assign(
+      new Error(`Invalid ${validator.label} address format.`),
       { code: 'INVALID_ADDRESS' }
     );
   }
@@ -142,7 +175,7 @@ async function requestPayout({ userId, address, method }) {
       {
         withdrawals: [{
           address: address.trim(),
-          currency: 'usdttrc20',
+          currency: currencyCode,
           amount: parseFloat(totalUsd.toFixed(2)),
           ipn_callback_url: ipnCallbackUrl,
         }],
@@ -202,7 +235,7 @@ async function requestPayout({ userId, address, method }) {
       [
         userId,
         parseFloat(totalUsd.toFixed(2)),
-        'usdttrc20',
+        currencyCode,
         'crypto',
         address.trim(),
         batchId ? String(batchId) : null,

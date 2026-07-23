@@ -1730,6 +1730,33 @@ const broadcastLiveNow = async (req, res) => {
       channelRef = rows[0]?.live_channel || null;
     } catch { /* non-fatal */ }
 
+    if (!channelRef) {
+      return res.status(400).json({ success: false, error: 'No live channel configured for this creator' });
+    }
+
+    // Fan-out to followers + email blast to every app member is EXPENSIVE and
+    // spammy if the creator isn't actually streaming. Verify the Restreamer
+    // process for this channel is currently running AND pushing signal (bitrate
+    // > 0) before triggering. Uses the same criterion as the UI surfaces
+    // (fetchRunningLiveChannels in routes.js).
+    try {
+      const restreamerService = require('../../../services/restreamerService');
+      const processes = await restreamerService.listProcesses();
+      const proc = (processes || []).find(p => (p.reference || p.id) === channelRef || (p.reference || p.id) === `restreamer-ui:ingest:${channelRef}`);
+      const kbps = typeof proc?.state?.progress?.bitrate_kbit === 'number' ? proc.state.progress.bitrate_kbit : 0;
+      const isReallyLive = proc?.state?.exec === 'running' && kbps > 0;
+      if (!isReallyLive) {
+        logger.info('broadcastLiveNow: refused — stream not live', { creatorId, channelRef, exec: proc?.state?.exec, kbps });
+        return res.status(409).json({
+          success: false,
+          error: 'Your stream is not live yet. Start streaming to viewers first, then send the announcement.',
+        });
+      }
+    } catch (verifyErr) {
+      logger.warn('broadcastLiveNow: live-verification failed (blocking to be safe)', { creatorId, channelRef, error: verifyErr.message });
+      return res.status(503).json({ success: false, error: 'Could not verify stream status — try again in a moment.' });
+    }
+
     const bot = req.app.get('bot') || null;
     // broadcastGoingLive fans out DMs + push + feed post + linked-group posts
     // (all with the same branded snapshot). Group notification lives inside the

@@ -234,6 +234,7 @@ const CreatorSubscribers = lazy(() => import("@/components/creators/CreatorLayou
 const CreatorConsents = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorConsents })));
 const CreatorXCampaignsPage = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorXCampaigns })));
 const CreatorBenefits = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorBenefits })));
+const CreatorTools = lazy(() => import("@/components/creators/CreatorLayout").then(m => ({ default: m.CreatorTools })));
 const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorChannelsHub").then(m => ({ default: m.CreatorChannelsHub })));
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
 const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWizard"));
@@ -986,6 +987,7 @@ export const router = createBrowserRouter([
       { path: "documents", element: <Navigate to="/creators/documentation" replace /> },
       { path: "channels-hub", element: <ModuleLoader><CreatorChannelsHub /></ModuleLoader> },
       { path: "benefits", element: <ModuleLoader><CreatorBenefits /></ModuleLoader> },
+      { path: "tools", element: <ModuleLoader><CreatorTools /></ModuleLoader> },
       { path: "guidelines", element: <ModuleLoader><CreatorGuidelines /></ModuleLoader> },
     ],
   },
