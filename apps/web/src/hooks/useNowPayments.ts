@@ -120,7 +120,7 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
     };
   }, [order, isPolling, isSuccess, storageKey, onSuccess, onError]);
 
-  const startPayment = useCallback(async (planId: string, email?: string, creatorId?: string, isSubscription?: boolean, payCurrency?: string) => {
+  const startPayment = useCallback(async (planId: string, email?: string, creatorId?: string, isSubscription?: boolean, payCurrency?: string, promoCode?: string) => {
     setError(null);
     setIsSuccess(false);
 
@@ -130,7 +130,14 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ planId, email, creatorId, ...(returnUrl ? { returnUrl } : {}), ...(payCurrency ? { payCurrency } : {}) }),
+        body: JSON.stringify({
+          planId,
+          email,
+          creatorId,
+          ...(returnUrl ? { returnUrl } : {}),
+          ...(payCurrency ? { payCurrency } : {}),
+          ...(promoCode ? { promoCode } : {}),
+        }),
       });
 
       if (res.status === 401) {

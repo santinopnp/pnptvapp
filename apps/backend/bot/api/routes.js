@@ -6255,10 +6255,55 @@ app.post('/api/webapp/activate/meru', requireSessionAuth, asyncHandler(async (re
   }
 }));
 
+// Applies a promo code to a subscription checkout. Called by the crypto
+// checkout endpoints (usdc/subscribe, btc/create, dash/create) so the
+// invoice is created at the discounted price AND the redemption is
+// atomically claimed. Returns null when no promoCode was supplied.
+// Throws { httpStatus, message } for validation/eligibility failures so
+// the caller can propagate a clean error to the client.
+async function _resolveSubscriptionPromo({ userId, promoCode, planId, plan }) {
+  if (!promoCode) return null;
+  if (typeof promoCode !== 'string' || !/^[A-Za-z0-9_-]{3,64}$/.test(promoCode.trim())) {
+    throw { httpStatus: 400, message: 'Invalid promo code format', code: 'INVALID_PROMO_FORMAT' };
+  }
+  const PromoModel = require('../../models/promoModel');
+  const PromoService = require('../../services/promoService');
+
+  const promoDetails = await PromoService.getPromoForUser(promoCode.trim(), String(userId));
+  if (!promoDetails.success) {
+    throw { httpStatus: 400, message: promoDetails.message || 'This promo is not valid', code: 'PROMO_INVALID' };
+  }
+  const promo = promoDetails.promo;
+
+  // Enforce plan match unless the promo is "any plan"
+  if (!PromoModel.isAnyPlanPromo(promo) && String(promo.basePlanId) !== String(planId)) {
+    throw { httpStatus: 400, message: 'This promo does not apply to the selected plan', code: 'PROMO_PLAN_MISMATCH' };
+  }
+
+  const pricing = PromoModel.calculatePriceForPlan(promo, plan);
+  const claim = await PromoModel.claimSpot(promo.id, userId, pricing);
+  if (!claim.success) {
+    const msg = claim.error === 'already_claimed'
+      ? 'You have already used this promo'
+      : claim.error === 'promo_not_valid'
+      ? 'This promo is no longer available'
+      : 'Could not claim promo';
+    throw { httpStatus: 400, message: msg, code: claim.error?.toUpperCase() || 'PROMO_CLAIM_FAILED' };
+  }
+  return {
+    finalPrice: pricing.finalPrice,
+    originalPrice: pricing.originalPrice,
+    discountAmount: pricing.discountAmount,
+    promoId: promo.id,
+    promoCode: promo.code,
+    redemptionId: claim.redemption.id,
+  };
+}
+
 // Validate a promo code for the logged-in user without claiming the spot.
 // Returns pricing + eligibility so the Subscribe page can show strikethrough
 // price before the user commits. Redemption (spot claim) happens during
-// /api/webapp/payments/create when promoCode is passed in.
+// checkout when promoCode is passed to /api/webapp/payments/{usdc/subscribe,btc/create,dash/create}.
 app.get('/api/webapp/promos/:code', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   if (!user?.id) {
@@ -11446,7 +11491,7 @@ app.get('/api/webapp/payments/dash/available', dashAvailableLimiter, asyncHandle
 app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimiter, asyncHandler(async (req, res) => {
   const user = req.session.user;
 
-  const { planId, email, creatorId } = req.body;
+  const { planId, email, creatorId, promoCode } = req.body;
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
   if (typeof planId !== 'string' || planId.length > 100 || !/^[a-z0-9_-]+$/.test(planId)) {
     return res.status(400).json({ success: false, error: 'Invalid planId format' });
@@ -11509,8 +11554,19 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
       await EASFree.grantTrialPrime(userId);
       return res.json({ success: true, free: true, planName: plan.display_name || plan.name });
     }
-    // crypto payment_method = fixed promo price, no stacking discount
-    if (plan.payment_method === 'crypto') {
+    // Promo code, if supplied, takes precedence over the crypto discount.
+    // A "any-plan" percentage promo stacks on top of the base $ price only.
+    let promoApplied = null;
+    try {
+      promoApplied = await _resolveSubscriptionPromo({ userId, promoCode, planId, plan });
+    } catch (promoErr) {
+      return res.status(promoErr.httpStatus || 400).json({ success: false, error: promoErr.message, code: promoErr.code });
+    }
+    if (promoApplied) {
+      usdAmount = promoApplied.finalPrice;
+      discountInfo = { originalAmount: promoApplied.originalPrice, discountAmount: promoApplied.discountAmount, promoCode: promoApplied.promoCode };
+    } else if (plan.payment_method === 'crypto') {
+      // crypto payment_method = fixed promo price, no stacking discount
       usdAmount = basePrice;
     } else if (basePrice > 50) {
       usdAmount = Math.round(basePrice * 0.80 * 100) / 100;
@@ -11519,6 +11575,8 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
       usdAmount = basePrice;
     }
     planDisplayName = plan.display_name || plan.name;
+    // Attach the promo bundle for the INSERT below.
+    res.locals._promoApplied = promoApplied;
   }
 
   const orderId = `pnptv-sub-${userId}-${Date.now()}`;
@@ -11534,11 +11592,13 @@ app.post('/api/webapp/payments/dash/create', requireSessionAuth, dashCreateLimit
       redirectUrl: `${process.env.WEBAPP_URL || 'https://pnptv.app'}${isDonation ? '/donate' : '/subscribe'}`,
     });
 
+    const _promo = res.locals._promoApplied || null;
     await dbQuery(
-      `INSERT INTO dash_subscription_orders (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+      `INSERT INTO dash_subscription_orders (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
        ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [userId, planId, email || null, usdAmount, invoice.invoiceId, creatorId ? String(creatorId) : null]
+      [userId, planId, email || null, usdAmount, invoice.invoiceId, creatorId ? String(creatorId) : null,
+       _promo ? JSON.stringify({ provider: 'btcpay', promoId: _promo.promoId, promoCode: _promo.promoCode, redemptionId: _promo.redemptionId, originalPrice: _promo.originalPrice, discountAmount: _promo.discountAmount }) : null]
     );
 
     return res.json({
@@ -11952,7 +12012,7 @@ const btcSubscribeLimiter = rateLimit({
 // POST /api/webapp/payments/btc/create — create a BTCPay BTC+Lightning invoice for a subscription plan
 app.post('/api/webapp/payments/btc/create', requireSessionAuth, btcSubscribeLimiter, asyncHandler(async (req, res) => {
   const user = req.session.user;
-  const { planId, creatorId } = req.body;
+  const { planId, creatorId, promoCode } = req.body;
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
 
   const userId = String(user.telegram_id || user.id);
@@ -11961,6 +12021,7 @@ app.post('/api/webapp/payments/btc/create', requireSessionAuth, btcSubscribeLimi
   const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
 
   let usdAmount, planDisplayName;
+  let promoApplied = null;
 
   if (planId === 'creator_monthly') {
     if (!creatorId) return res.status(400).json({ success: false, error: 'creatorId is required for creator subscriptions' });
@@ -11976,7 +12037,15 @@ app.post('/api/webapp/payments/btc/create', requireSessionAuth, btcSubscribeLimi
     const plan = planRes.rows[0];
     if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
     const basePrice = parseFloat(plan.price);
-    usdAmount = (plan.payment_method === 'crypto' || basePrice <= 50) ? basePrice : Math.round(basePrice * 0.80 * 100) / 100;
+    // Promo code, if supplied, overrides the auto 20% crypto discount.
+    try {
+      promoApplied = await _resolveSubscriptionPromo({ userId, promoCode, planId, plan });
+    } catch (promoErr) {
+      return res.status(promoErr.httpStatus || 400).json({ success: false, error: promoErr.message, code: promoErr.code });
+    }
+    usdAmount = promoApplied
+      ? promoApplied.finalPrice
+      : ((plan.payment_method === 'crypto' || basePrice <= 50) ? basePrice : Math.round(basePrice * 0.80 * 100) / 100);
     planDisplayName = plan.display_name || plan.name;
   }
 
@@ -12019,10 +12088,21 @@ app.post('/api/webapp/payments/btc/create', requireSessionAuth, btcSubscribeLimi
      VALUES ($1, $2, $3, $4, 'pending', $5, $6)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [userId, planId, usdAmount, invoice.invoiceId, creatorId ? String(creatorId) : null,
-     JSON.stringify({ provider: 'btcpay_btc', flow: 'subscription', checkoutUrl: invoice.checkoutLink })]
+     JSON.stringify({
+       provider: 'btcpay_btc',
+       flow: 'subscription',
+       checkoutUrl: invoice.checkoutLink,
+       ...(promoApplied ? {
+         promoId: promoApplied.promoId,
+         promoCode: promoApplied.promoCode,
+         redemptionId: promoApplied.redemptionId,
+         originalPrice: promoApplied.originalPrice,
+         discountAmount: promoApplied.discountAmount,
+       } : {}),
+     })]
   );
 
-  logger.info('[BTC] Subscription invoice created', { userId, planId, orderId: invoice.invoiceId, usdAmount });
+  logger.info('[BTC] Subscription invoice created', { userId, planId, orderId: invoice.invoiceId, usdAmount, promoCode: promoApplied?.promoCode || null });
   return res.json({ success: true, invoiceId: invoice.invoiceId, checkoutUrl: invoice.checkoutLink, planName: planDisplayName, usdAmount });
 }));
 
@@ -12299,7 +12379,7 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
   }
 
   const user = req.session.user;
-  const { planId, email: rawEmail, returnUrl: rawReturnUrl, payCurrency: rawPayCurrency } = req.body;
+  const { planId, email: rawEmail, returnUrl: rawReturnUrl, payCurrency: rawPayCurrency, promoCode } = req.body;
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
 
   const ALLOWED_PAY_CURRENCIES = new Set(['btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'usdt', 'usdttrc20', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol', 'dash', 'sol', 'doge']);
@@ -12311,6 +12391,11 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
     return res.status(400).json({ success: false, error: 'Invalid email address' });
   }
   const email = rawEmail?.trim() || null;
+
+  // promoCode format check — full validation happens in _resolveSubscriptionPromo below.
+  if (promoCode != null && (typeof promoCode !== 'string' || !/^[A-Za-z0-9_-]{3,64}$/.test(promoCode.trim()))) {
+    return res.status(400).json({ success: false, error: 'Invalid promo code format' });
+  }
 
   const ALLOWED_RETURN_PATHS = new Set(['/subscribe', '/lifetime100']);
   const returnPath = (typeof rawReturnUrl === 'string' && ALLOWED_RETURN_PATHS.has(rawReturnUrl))
@@ -12334,11 +12419,17 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
   const plan = planRes.rows[0];
   if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
 
-  // Apply 20% crypto discount for non-crypto-fixed plans over $50
+  // Apply promo code (if supplied) OR the auto 20% crypto discount — promo wins.
   const basePrice = parseFloat(plan.price);
-  const usdAmount = (plan.payment_method === 'crypto' || basePrice <= 50)
-    ? basePrice
-    : Math.round(basePrice * 0.80 * 100) / 100;
+  let promoApplied = null;
+  try {
+    promoApplied = await _resolveSubscriptionPromo({ userId, promoCode, planId, plan });
+  } catch (promoErr) {
+    return res.status(promoErr.httpStatus || 400).json({ success: false, error: promoErr.message, code: promoErr.code });
+  }
+  const usdAmount = promoApplied
+    ? promoApplied.finalPrice
+    : ((plan.payment_method === 'crypto' || basePrice <= 50) ? basePrice : Math.round(basePrice * 0.80 * 100) / 100);
   const planDisplayName = plan.display_name || plan.name;
 
   // Resume existing pending subscription invoice (within 23 hours)
@@ -12391,10 +12482,23 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
      VALUES ($1, $2, $3, $4, $5, 'pending', $6)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [userId, planId, customerEmail, usdAmount, orderId,
-     JSON.stringify({ provider: 'nowpayments', flow: 'subscription', invoiceUrl, nowpaymentsPlanId, ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}) })]
+     JSON.stringify({
+       provider: 'nowpayments',
+       flow: 'subscription',
+       invoiceUrl,
+       nowpaymentsPlanId,
+       ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}),
+       ...(promoApplied ? {
+         promoId: promoApplied.promoId,
+         promoCode: promoApplied.promoCode,
+         redemptionId: promoApplied.redemptionId,
+         originalPrice: promoApplied.originalPrice,
+         discountAmount: promoApplied.discountAmount,
+       } : {}),
+     })]
   );
 
-  logger.info('[NOWPayments] Subscription invoice created', { userId, planId, orderId, usdAmount, payCurrency: validPayCurrency });
+  logger.info('[NOWPayments] Subscription invoice created', { userId, planId, orderId, usdAmount, payCurrency: validPayCurrency, promoCode: promoApplied?.promoCode || null });
 
   return res.json({ success: true, orderId, invoiceUrl, planName: planDisplayName, usdAmount, ...npPayInfo });
 }));
@@ -13586,6 +13690,20 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
     [order_id, `nowpayments:${payment_id}`]
   );
+
+  // Finalize promo redemption if this order carried one. Non-fatal — the
+  // grant succeeded and the payment is already marked completed; a stuck
+  // 'claimed' redemption is a metrics issue, not a service outage.
+  try {
+    const redemptionId = order?.metadata?.redemptionId;
+    if (redemptionId) {
+      const PromoService = require('../../services/promoService');
+      await PromoService.completePromoRedemption(redemptionId, String(order_id));
+      logger.info('[NOWPayments] Promo redemption completed', { order_id, redemptionId, promoCode: order.metadata?.promoCode });
+    }
+  } catch (promoErr) {
+    logger.warn('[NOWPayments] Promo redemption complete failed (non-fatal)', { order_id, error: promoErr.message });
+  }
 
   // Sync users.plan_id + plan_expiry for admin visibility — skip for creator_monthly.
   // NP-NOTE: tier + subscription_status are already synced by recomputeUserTier inside

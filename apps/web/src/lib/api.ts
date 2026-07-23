@@ -3280,6 +3280,7 @@ export function createDashSubscription(
   planId: string,
   email?: string,
   creatorId?: string,
+  promoCode?: string,
 ): Promise<{
   success: boolean;
   invoiceId: string;
@@ -3291,6 +3292,7 @@ export function createDashSubscription(
   const body: Record<string, string> = { planId };
   if (email) body.email = email;
   if (creatorId) body.creatorId = creatorId;
+  if (promoCode) body.promoCode = promoCode;
   return request("/api/webapp/payments/dash/create", {
     method: "POST",
     body,
@@ -7234,11 +7236,16 @@ export function getBtcAvailable(): Promise<{ available: boolean; configured: boo
 
 export function createBtcSubscription(
   planId: string,
-  creatorId?: string | number
+  creatorId?: string | number,
+  promoCode?: string,
 ): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; planName?: string; usdAmount?: number; error?: string }> {
   return request("/api/webapp/payments/btc/create", {
     method: "POST",
-    body: { planId, ...(creatorId ? { creatorId } : {}) },
+    body: {
+      planId,
+      ...(creatorId ? { creatorId } : {}),
+      ...(promoCode ? { promoCode } : {}),
+    },
   });
 }
 
