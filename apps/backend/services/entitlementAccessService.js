@@ -58,6 +58,42 @@ class EntitlementAccessService {
   }
 
   /**
+   * Check if user has an active PRIME entitlement granted by a "qualifying" plan —
+   * i.e. lifetime OR duration_days >= 30. Trials (prime-trial-3d, week-trial-pass,
+   * prime-week-pass-7d) do NOT qualify. Entitlements with source_plan_id IS NULL
+   * (admin grants / gifts) are grandfathered as qualifying.
+   *
+   * Used to gate access to Santino's Subscribers hangout (see paymentService.js:19).
+   *
+   * @param {string|number} userId
+   * @returns {Promise<boolean>}
+   */
+  static async hasQualifyingPrimeEntitlement(userId) {
+    if (!userId) return false;
+    try {
+      const { rows } = await query(`
+        SELECT 1
+        FROM user_entitlements ue
+        LEFT JOIN plans p ON p.id = ue.source_plan_id
+        WHERE ue.user_id = $1
+          AND ue.add_on_id = 'prime'
+          AND ue.is_consumed = false
+          AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+          AND (
+            ue.source_plan_id IS NULL
+            OR p.is_lifetime = true
+            OR p.duration_days >= 30
+          )
+        LIMIT 1
+      `, [String(userId)], { cache: false });
+      return rows.length > 0;
+    } catch (err) {
+      logger.error('EntitlementAccessService.hasQualifyingPrimeEntitlement failed', { userId, error: err.message });
+      return false;
+    }
+  }
+
+  /**
    * Get ALL active entitlements for a user. Returns array of entitlement objects.
    *
    * @param {string|number} userId

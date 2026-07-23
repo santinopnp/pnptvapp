@@ -631,6 +631,25 @@ const joinGroup = async (req, res) => {
 
     // Access gate — channel-linked hangouts use channel access rules; standalone use is_paid
     if (!isOwner) {
+      // Santino's Subscribers hangout (id=719 + its child topics): PRIME monthly and up only.
+      // Trials (prime-trial-3d, week-trial-pass, prime-week-pass-7d) do NOT qualify.
+      const isSantinoHangout = groupId === 719 || group.parent_group_id === 719;
+      if (isSantinoHangout) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
+        if (!qualifies) {
+          return res.status(402).json({
+            error: 'PRIME membership required',
+            errorEs: 'Se requiere membresía PRIME',
+            message: "Santino's Subscribers is for active PRIME monthly members and above. Trials and week passes do not qualify.",
+            messageEs: 'Los Suscriptores de Santino es para miembros PRIME mensuales activos y superiores. Las pruebas y pases semanales no califican.',
+            requiresPrime: true,
+            subscribeUrl: '/subscribe',
+            groupName: group.name,
+          });
+        }
+      }
+
       if (group.channel_id) {
         // Channel-linked: delegate to checkChannelAccess
         const { checkChannelAccess } = require('../../../services/accessService');

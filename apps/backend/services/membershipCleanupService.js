@@ -93,6 +93,15 @@ class MembershipCleanupService {
       // PRIME channel fully migrated to webapp 2026-04-28.
       // Channel kicks and auto-restore are both disabled — Telegram PRIME channel is dead.
 
+      // Step 2: Reconcile Santino's Subscribers hangout — kick non-qualifying PRIME members.
+      try {
+        const santino = await this.reconcileSantinoHangout({ dryRun: false, notify: true });
+        results.santinoReconcile = santino;
+      } catch (santErr) {
+        logger.error('Santino hangout reconcile failed (non-fatal)', { error: santErr.message });
+        results.santinoReconcile = { kicked: 0, failed: 1, error: santErr.message };
+      }
+
       results.endTime = new Date();
       const duration = (results.endTime - results.startTime) / 1000;
 
@@ -922,6 +931,120 @@ Type /subscribe to view membership plans and reactivate your access!`;
       results.errors++;
       results.endTime = new Date();
       return results;
+    }
+  }
+
+  /**
+   * Reconcile Santino's Subscribers hangout membership.
+   *
+   * Rule: only users with an active QUALIFYING PRIME entitlement (lifetime OR
+   * plan.duration_days >= 30) may remain. Trials (prime-trial-3d, week-trial-pass,
+   * prime-week-pass-7d) do NOT qualify. Admin-granted / gifted entitlements
+   * (source_plan_id IS NULL) are grandfathered.
+   *
+   * Group topology: parent group id = 719 + all rows where parent_group_id = 719.
+   *
+   * @param {Object} [opts]
+   * @param {boolean} [opts.dryRun=false] - When true, log the kick list but don't delete or notify.
+   * @param {boolean} [opts.notify=true]  - When true, send a Telegram DM to each kicked user (dry-run skips DMs).
+   * @returns {Promise<{scanned:number, kept:number, kicked:number, failed:number, dryRun:boolean, targets:Array}>}
+   */
+  static async reconcileSantinoHangout({ dryRun = false, notify = true } = {}) {
+    const SANTINO_GROUP_ID = 719;
+    const SANTINO_OWNER_ID = '8599671840'; // SantinoFurioso — actor for audit + must never be kicked
+    const results = { scanned: 0, kept: 0, kicked: 0, failed: 0, dryRun, targets: [] };
+
+    try {
+      const EntitlementAccessService = require('./entitlementAccessService');
+
+      // Pull every member of 719 + its child topics. LEFT JOIN users to grab
+      // telegram id + language for the DM notification.
+      const { rows: members } = await query(`
+        SELECT DISTINCT hgm.user_id, u.telegram, u.username, u.language
+        FROM hangout_group_members hgm
+        LEFT JOIN users u ON u.id::text = hgm.user_id::text
+        WHERE hgm.group_id IN (
+          SELECT id FROM hangout_groups WHERE id = $1 OR parent_group_id = $1
+        )
+      `, [SANTINO_GROUP_ID]);
+
+      results.scanned = members.length;
+
+      for (const m of members) {
+        const uid = String(m.user_id);
+
+        // Never kick Santino himself (owner).
+        if (uid === SANTINO_OWNER_ID) {
+          results.kept++;
+          continue;
+        }
+
+        const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(uid);
+        if (qualifies) {
+          results.kept++;
+          continue;
+        }
+
+        results.targets.push({ userId: uid, username: m.username || null, telegram: m.telegram || null });
+
+        if (dryRun) continue;
+
+        try {
+          // Delete membership from 719 + all child topics.
+          await query(
+            `DELETE FROM hangout_group_members
+             WHERE user_id = $1
+               AND group_id IN (
+                 SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2
+               )`,
+            [uid, SANTINO_GROUP_ID]
+          );
+
+          // Audit log — actor = SantinoFurioso, target = kicked user.
+          await query(
+            `INSERT INTO hangout_moderation_audit (group_id, actor_id, target_id, action, reason, metadata)
+             VALUES ($1, $2, $3, 'kick', $4, $5)`,
+            [
+              SANTINO_GROUP_ID,
+              SANTINO_OWNER_ID,
+              uid,
+              'PRIME membership expired or non-qualifying (trial/week pass)',
+              JSON.stringify({ source: 'MembershipCleanupService.reconcileSantinoHangout' }),
+            ]
+          ).catch((auditErr) => {
+            logger.warn('reconcileSantinoHangout: audit insert failed', { userId: uid, error: auditErr.message });
+          });
+
+          results.kicked++;
+
+          // Telegram DM — fire-and-forget, bilingual, includes a subscribe link.
+          if (notify && m.telegram && this.bot) {
+            const isEs = String(m.language || '').toLowerCase().startsWith('es');
+            const dmText = isEs
+              ? '👋 Fuiste removido de *Los Suscriptores de Santino* porque tu membresía PRIME calificada terminó o estabas en un pase de prueba.\n\n' +
+                '💎 Renueva con un pase mensual o superior para volver a entrar:\nhttps://pnptv.app/subscribe'
+              : '👋 You were removed from *Santino\'s Subscribers* because your qualifying PRIME membership ended or you were on a trial pass.\n\n' +
+                '💎 Renew with a monthly pass or higher to rejoin:\nhttps://pnptv.app/subscribe';
+            this.bot.telegram.sendMessage(m.telegram, dmText, { parse_mode: 'Markdown' })
+              .catch((dmErr) => {
+                if (!this.isBenignUserError(dmErr)) {
+                  logger.warn('reconcileSantinoHangout: DM failed', { userId: uid, telegram: m.telegram, error: dmErr.message });
+                }
+              });
+          }
+        } catch (kickErr) {
+          results.failed++;
+          logger.error('reconcileSantinoHangout: kick failed', { userId: uid, error: kickErr.message });
+        }
+      }
+
+      logger.info('reconcileSantinoHangout done', {
+        dryRun, scanned: results.scanned, kept: results.kept, kicked: results.kicked, failed: results.failed,
+      });
+      return results;
+    } catch (err) {
+      logger.error('reconcileSantinoHangout fatal', { error: err.message });
+      return { ...results, failed: results.failed + 1, error: err.message };
     }
   }
 

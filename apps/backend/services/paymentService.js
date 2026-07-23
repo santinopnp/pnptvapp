@@ -884,17 +884,27 @@ class PaymentService {
         }
       }
 
-      // Auto-join every PRIME entitlement holder into Santino's private hangout.
-      // Fires whenever any add-on granted by this plan is 'prime'.
+      // Auto-join qualifying PRIME entitlement holders into Santino's private hangout.
+      // Only lifetime plans or 30+ day plans qualify; trials and week passes do NOT.
       if (addOnsResult.rows.some(r => r.add_on_id === 'prime')) {
         try {
-          await query(
-            'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-            [PRIME_HANGOUT_GROUP_ID, userId, 'member']
+          const { rows: planRows } = await query(
+            `SELECT (is_lifetime = true OR duration_days >= 30) AS qualifies FROM plans WHERE id = $1`,
+            [planId]
           );
-          logger.info('Auto-joined PRIME hangout after prime grant', {
-            userId, groupId: PRIME_HANGOUT_GROUP_ID, planId,
-          });
+          if (planRows[0]?.qualifies) {
+            await query(
+              'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+              [PRIME_HANGOUT_GROUP_ID, userId, 'member']
+            );
+            logger.info('Auto-joined PRIME hangout after qualifying prime grant', {
+              userId, groupId: PRIME_HANGOUT_GROUP_ID, planId,
+            });
+          } else {
+            logger.info('Skipped PRIME hangout auto-join — non-qualifying plan (trial or week pass)', {
+              userId, planId,
+            });
+          }
         } catch (joinErr) {
           logger.warn('Failed to auto-join PRIME hangout after prime grant', { error: joinErr.message });
         }
