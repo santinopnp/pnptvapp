@@ -123,6 +123,8 @@ export interface PostCardProps {
   onAcceptDisclaimer?: () => Promise<void>;
   viewerCity?: string | null;
   viewerCountry?: string | null;
+  /** Suppress the Subscribe CTA banner on creator profiles (redundant there). */
+  hideCreatorCta?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -145,6 +147,7 @@ export default function PostCard({
   onAcceptDisclaimer,
   viewerCity,
   viewerCountry,
+  hideCreatorCta = false,
 }: PostCardProps) {
   const t = useI18n();
   const p = t.profile;
@@ -160,8 +163,11 @@ export default function PostCard({
     try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
     setPrimeUpsellDismissed(true);
   };
-  // Creator subscribe upsell — on FREE videos of active creators (not own, not PRIME-upsell creators)
+  // Creator subscribe upsell — on FREE posts of active creators.
+  // Retroactive rule (2026-07-24): applies to all media types, not just videos.
+  // `hideCreatorCta` suppresses on creator profile pages.
   const showCreatorSubscribeUpsell =
+    !hideCreatorCta &&
     !showPrimeUpsell &&
     !PRIME_UPSELL_CREATOR_IDS.has(post.author_id) &&
     post.author_creator_status === "active" &&
@@ -512,6 +518,24 @@ export default function PostCard({
     !isSubscribed &&
     post.exclusive_status === "teaser";
 
+  // X-style repost render: when this post is a community_hype, treat the
+  // ORIGINAL author as the card's primary author and show a small "🔥 hyped
+  // by [hyper]" banner above. Falls back gracefully if legacy metadata is
+  // missing any of the enriched fields.
+  const rawHypeMeta = post.metadata as Record<string, unknown> | null | undefined;
+  const isCommunityHype = rawHypeMeta?.kind === 'community_hype';
+  const hypeMeta = isCommunityHype ? {
+    originalAuthorId: (rawHypeMeta?.original_author_id as string) ?? null,
+    originalAuthorFirstName: (rawHypeMeta?.original_author_first_name as string | null) ?? null,
+    originalAuthorUsername: (rawHypeMeta?.original_author_username as string | null) ?? null,
+    originalAuthorPhotoUrl: (rawHypeMeta?.original_author_photo_url as string | null) ?? null,
+    originalPostId: rawHypeMeta?.original_post_id as number | undefined,
+    originalContent: (rawHypeMeta?.original_content as string | null) ?? null,
+    hyperFirstName: post.author_first_name || post.author_username || 'Someone',
+    hyperId: post.author_id,
+    hyperPhotoUrl: photoUrl,
+  } : null;
+
   return (
     <div className="relative glass-card-sm p-4 transition-all duration-300">
       {/* ── Exclusive lock overlay (non-owner, non-subscriber) ── */}
@@ -612,9 +636,31 @@ export default function PostCard({
         </div>
       )}
 
+      {/* X-style "reposted by" banner — only on community_hype posts. Shows
+          the hyper as the re-sharer while the card header below shows the
+          ORIGINAL author. */}
+      {hypeMeta && (
+        <button
+          onClick={() => hypeMeta.hyperId && onAuthorTap?.(hypeMeta.hyperId)}
+          className="flex items-center gap-1.5 mb-2 -mt-1 text-[11px] font-medium hover:underline"
+          style={{ color: "#FF9500" }}
+          aria-label={`Hyped by ${hypeMeta.hyperFirstName}`}
+        >
+          <span aria-hidden="true">🔥</span>
+          <span className="truncate">{hypeMeta.hyperFirstName} hyped this</span>
+        </button>
+      )}
+
       <div className="flex gap-3">
-        {/* Avatar */}
-        {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
+        {/* Avatar — for community_hype, show the ORIGINAL author (not the hyper) */}
+        {hypeMeta ? (
+          <UserAvatar
+            userId={hypeMeta.originalAuthorId || post.author_id}
+            photoUrl={hypeMeta.originalAuthorPhotoUrl}
+            displayName={hypeMeta.originalAuthorFirstName || hypeMeta.originalAuthorUsername}
+            size="md"
+          />
+        ) : post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
           // Channel-promo from system account — show channel initial, not Cristina emoji
           <div
             className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
@@ -641,7 +687,21 @@ export default function PostCard({
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
+            {hypeMeta ? (
+              <>
+                <button
+                  onClick={() => hypeMeta.originalAuthorId && onAuthorTap?.(hypeMeta.originalAuthorId)}
+                  className="font-semibold text-white text-sm truncate hover:underline"
+                >
+                  {hypeMeta.originalAuthorFirstName || hypeMeta.originalAuthorUsername || p.anonymous}
+                </button>
+                {hypeMeta.originalAuthorUsername && (
+                  <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    @{hypeMeta.originalAuthorUsername}
+                  </span>
+                )}
+              </>
+            ) : post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
               // Channel-promo from system account: show channel name as author label
               <span className="font-semibold text-white text-sm truncate">
                 {((post.metadata as Record<string, unknown>).channel_name as string | undefined) || "PNP Channels"}
@@ -654,7 +714,7 @@ export default function PostCard({
                 {post.author_first_name || post.author_username || p.anonymous}
               </button>
             )}
-            {post.author_username && post.author_id !== "8552451957" && (
+            {!hypeMeta && post.author_username && post.author_id !== "8552451957" && (
               <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{post.author_username}
               </span>
@@ -906,7 +966,7 @@ export default function PostCard({
             </div>
           ) : (
             <MentionText
-              text={translatedContent ?? localContent ?? post.content}
+              text={hypeMeta ? (hypeMeta.originalContent ?? '') : (translatedContent ?? localContent ?? post.content)}
               className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
               maxLength={200}
             />
@@ -1005,17 +1065,19 @@ export default function PostCard({
             );
           })()}
 
-          {/* Community hype — re-shared community media */}
+          {/* Community hype — re-shared community media. The card header
+              above already shows the original author + banner; here we just
+              render the reposted media. The whole media wrapper links to the
+              original post so likes/replies accrue there. */}
           {(() => {
             const m = post.metadata as Record<string, unknown> | undefined | null;
             if (!m || m.kind !== 'community_hype') return null;
-            const originalAuthor = (m.original_author_username as string) || 'someone';
             const mediaUrl = post.media_url || (m.original_media_url as string) || null;
             const mediaType = (m.original_media_type as string) || post.media_type;
             const thumbUrl = post.video_thumbnail_url || (m.original_video_thumbnail_url as string | undefined) || undefined;
-            const originalContent = m.original_content as string | undefined;
+            const originalPostHref = m.original_post_id ? `/social/post/${m.original_post_id}` : undefined;
             return (
-              <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
+              <div className="mt-3 rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
                 {mediaUrl && (
                   mediaType === 'video' ? (
                     <VideoPlayer
@@ -1030,7 +1092,7 @@ export default function PostCard({
                       poster={thumbUrl || undefined}
                     />
                   ) : (
-                    <a href={m.original_post_id ? `/social/post/${m.original_post_id}` : undefined} className="block cursor-pointer">
+                    <a href={originalPostHref} className="block cursor-pointer">
                       <img
                         src={mediaUrl}
                         alt="Hyped post"
@@ -1040,18 +1102,6 @@ export default function PostCard({
                     </a>
                   )
                 )}
-                <a
-                  href={m.original_post_id ? `/social/post/${m.original_post_id}` : undefined}
-                  className="block px-3 py-2 bg-white/4 hover:bg-white/8 transition-colors group"
-                >
-                  <p className="text-[10px] text-orange-400/80 font-medium flex items-center gap-1">
-                    🔥 Shared from @{originalAuthor}
-                    <span className="ml-auto text-white/30 group-hover:text-white/60 transition-colors text-[9px]">View original →</span>
-                  </p>
-                  {originalContent && (
-                    <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{originalContent}</p>
-                  )}
-                </a>
               </div>
             );
           })()}
@@ -1361,6 +1411,8 @@ export default function PostCard({
                           original_post_id: post.id,
                           original_author_id: String(post.author_id ?? ''),
                           original_author_username: post.author_username ?? null,
+                          original_author_first_name: post.author_first_name ?? null,
+                          original_author_photo_url: photoUrl ?? null,
                           original_media_url: post.media_url!,
                           original_media_type: post.media_type as 'video' | 'image',
                           original_video_thumbnail_url: post.video_thumbnail_url ?? null,
