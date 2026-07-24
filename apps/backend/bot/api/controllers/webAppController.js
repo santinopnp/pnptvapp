@@ -822,7 +822,11 @@ const passkeyFinish = async (req, res) => {
 // ── Passkey registration (authenticated user adding a new passkey) ─────────────
 
 const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'pnptv.app';
-const WEBAUTHN_ORIGIN = process.env.WEBAUTHN_ORIGIN || 'https://pnptv.app';
+// Accept both apex and www since Nginx serves the SPA on both hostnames.
+// SimpleWebAuthn accepts a string or array of strings for expectedOrigin.
+const WEBAUTHN_ORIGIN = process.env.WEBAUTHN_ORIGIN
+  ? process.env.WEBAUTHN_ORIGIN.split(',').map((s) => s.trim())
+  : ['https://pnptv.app', 'https://www.pnptv.app'];
 
 const passkeyRegisterBegin = async (req, res) => {
   const sessionUser = req.session?.user;
