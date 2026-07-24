@@ -677,7 +677,10 @@ const passkeyBegin = async (req, res) => {
     }).catch(() => {});
 
     logger.info('[Passkey] passkeyBegin: challenge issued');
-    return res.json({ success: true, options, stateToken });
+    // Alias `publicKey` mirrors `options` for the LandingPage client which
+    // reads response.publicKey. Keep `options` for parity with the register
+    // endpoint. Same object — do NOT clone.
+    return res.json({ success: true, options, publicKey: options, stateToken });
   } catch (err) {
     logger.error('[Passkey] passkeyBegin unexpected error:', err);
     return res.status(503).json({ success: false, error: 'passkey_unavailable' });
