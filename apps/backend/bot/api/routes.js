@@ -7989,7 +7989,7 @@ app.post('/api/webapp/internal/prime-videos/sync', asyncHandler(async (req, res)
   const provided = req.headers['x-prime-sync-secret'];
   if (!provided || provided !== expected) return res.status(401).json({ error: 'unauthorized' });
 
-  const PRIME_CHANNEL_ID = 5;
+  const PRIME_CHANNEL_ID = 209;
   const SANTINO_ID = '8599671840';
   const CMS = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
 
@@ -15526,7 +15526,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
 
 // ==========================================
 // PRIME CHANNEL — ADMIN MANAGEMENT
-// Videos are read/written directly from channel_videos (channel_id=5).
+// Videos are read/written directly from channel_videos (channel_id=209).
 // The Directus prime_videos upload endpoint is kept as dead code for safety.
 // ==========================================
 {
@@ -15536,7 +15536,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
     return res.status(status).json({ success: false, error: err.message || 'Internal error', code: err.code });
   }
 
-  // GET /api/webapp/admin/prime-videos — list all channel_videos for channel_id=5
+  // GET /api/webapp/admin/prime-videos — list all channel_videos for channel_id=209
   app.get('/api/webapp/admin/prime-videos', adminGuard, asyncHandler(async (req, res) => {
     const page  = Math.max(1, parseInt(req.query.page  || '1',   10));
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '100', 10)));
@@ -15545,13 +15545,13 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
     const { rows: items } = await getPool().query(
       `SELECT cv.*
          FROM channel_videos cv
-        WHERE cv.channel_id = 5
+        WHERE cv.channel_id = 209
         ORDER BY cv.created_at DESC
         LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     const { rows: countRows } = await getPool().query(
-      `SELECT COUNT(*) AS total FROM channel_videos WHERE channel_id = 5`
+      `SELECT COUNT(*) AS total FROM channel_videos WHERE channel_id = 209`
     );
     const total = parseInt(countRows[0]?.total || '0', 10);
 
@@ -15605,7 +15605,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
     if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid id' });
 
     const { rows } = await getPool().query(
-      `SELECT id, title, duration_sec AS duration, tags, description FROM channel_videos WHERE id = $1 AND channel_id = 5`,
+      `SELECT id, title, duration_sec AS duration, tags, description FROM channel_videos WHERE id = $1 AND channel_id = 209`,
       [id]
     );
     const row = rows[0];
@@ -15637,7 +15637,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
     if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid id' });
 
     const { rows } = await getPool().query(
-      `SELECT id, title, duration_sec AS duration, tags, description FROM channel_videos WHERE id = $1 AND channel_id = 5`,
+      `SELECT id, title, duration_sec AS duration, tags, description FROM channel_videos WHERE id = $1 AND channel_id = 209`,
       [id]
     );
     const row = rows[0];
@@ -15670,7 +15670,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
     if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid id' });
 
     const { rows } = await getPool().query(
-      `SELECT id, title, duration_sec AS duration, description FROM channel_videos WHERE id = $1 AND channel_id = 5`,
+      `SELECT id, title, duration_sec AS duration, description FROM channel_videos WHERE id = $1 AND channel_id = 209`,
       [id]
     );
     const row = rows[0];

@@ -124,13 +124,18 @@ async function main() {
   console.log(`[audit] mode=${COMMIT ? 'COMMIT' : 'DRY-RUN'} concurrency=${CONCURRENCY}`);
   console.log(`[audit] PUBLIC_UPLOADS_ROOT=${PUBLIC_UPLOADS_ROOT}`);
 
+  // Skip posts sitting in a system channel (PRIME etc.) — those are
+  // hand-curated and must never be auto-deleted by this probe. A single
+  // 5xx from cms.pnptv.app during the audit could otherwise wipe them.
   const { rows } = await query(
-    `SELECT id, user_id, media_url, media_type, created_at
-     FROM social_posts
-     WHERE media_type = 'video'
-       AND COALESCE(is_deleted, false) = false
-       AND media_url IS NOT NULL
-     ORDER BY created_at DESC`
+    `SELECT sp.id, sp.user_id, sp.media_url, sp.media_type, sp.created_at
+     FROM social_posts sp
+     LEFT JOIN creator_channels cc ON cc.id = sp.channel_id
+     WHERE sp.media_type = 'video'
+       AND COALESCE(sp.is_deleted, false) = false
+       AND sp.media_url IS NOT NULL
+       AND COALESCE(cc.is_system, false) = false
+     ORDER BY sp.created_at DESC`
   );
 
   console.log(`[audit] checking ${rows.length} video posts…`);
