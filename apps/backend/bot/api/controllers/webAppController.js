@@ -906,13 +906,17 @@ const passkeyRegisterFinish = async (req, res) => {
       return res.status(400).json({ success: false, error: 'verification_failed' });
     }
 
-    // SimpleWebAuthn v13+: credential info moved to registrationInfo.credential.*
+    // SimpleWebAuthn v13+: credential info moved to registrationInfo.credential.*.
+    // credential.id is ALREADY a base64url string in v13; only wrap in Buffer if a
+    // legacy Uint8Array shape came through (v12 fallback).
     const regInfo = verification.registrationInfo;
     const credentialID = regInfo.credential?.id ?? regInfo.credentialID;
     const credentialPublicKey = regInfo.credential?.publicKey ?? regInfo.credentialPublicKey;
     const { counter, aaguid } = regInfo;
 
-    const credentialIdB64 = Buffer.from(credentialID).toString('base64url');
+    const credentialIdB64 = typeof credentialID === 'string'
+      ? credentialID
+      : Buffer.from(credentialID).toString('base64url');
     const publicKeyB64 = Buffer.from(credentialPublicKey).toString('base64url');
 
     const insertRes = await query(
