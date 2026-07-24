@@ -77,6 +77,19 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
     exit 1
 fi
 
+# Regression guard: /login MUST fall through to the React SPA (LandingPage.tsx
+# inline passkey/magic-link/register). If a `location = /login` block appears
+# in the source config, refuse to deploy — that would resurrect the old
+# apps/public/login.html which linked "Create account" at auth.pnptv.app's
+# enrollment flow (not publicly enabled → "not authorized"). See the
+# 2026-07-23 signup outage and feedback_login_route_spa_only.md.
+if grep -qE '^\s*location\s*=\s*/login\s*\{' "$BACKEND_LOCATIONS"; then
+    error "REGRESSION: $BACKEND_LOCATIONS contains a 'location = /login' block."
+    error "  /login MUST fall through to the SPA. Remove the block before deploying."
+    error "  See feedback_login_route_spa_only.md."
+    exit 1
+fi
+
 # --- Step 1: Deploy shared server_proxy.conf (ATProto routes) ---
 
 info "Deploying shared server_proxy.conf ..."
@@ -231,6 +244,23 @@ if [ "$SPA_CODE" = "200" ]; then
     info "  pnptv.app/subscribe → $SPA_CODE (SPA)"
 else
     error "  pnptv.app/subscribe → $SPA_CODE (expected 200)"
+    FAILURES=$((FAILURES + 1))
+fi
+
+# pnptv.app/login — MUST serve the React SPA (inline passkey/magic-link/register),
+# NOT the deleted apps/public/login.html static page. If the old static page ever
+# resurfaces its <title> starts with "PNPtv! — Sign in"; the SPA title starts with
+# "PNPtv! — Gay PNP".
+LOGIN_BODY=$(curl -sk "https://pnptv.app/login" 2>/dev/null || echo "")
+if echo "$LOGIN_BODY" | grep -q '<title>PNPtv! — Gay PNP'; then
+    info "  pnptv.app/login → SPA (LandingPage)"
+elif echo "$LOGIN_BODY" | grep -q '<title>PNPtv! — Sign in'; then
+    error "  pnptv.app/login → served the OLD static login.html — regression!"
+    error "  Check that pnptv-app-proxy.conf has no 'location = /login' block"
+    error "  and that pnptv-bot has no app.get('/login',...) handler."
+    FAILURES=$((FAILURES + 1))
+else
+    error "  pnptv.app/login → unexpected response (neither SPA nor known static page)"
     FAILURES=$((FAILURES + 1))
 fi
 
