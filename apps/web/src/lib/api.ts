@@ -994,6 +994,7 @@ export type TokenActivationErrorCode =
 export function reserveTokenActivation(params: {
   packageKey: string;
   language?: string;
+  email?: string;
 }): Promise<TokenActivationReserveResult> {
   return request("/api/wallet/token-activation/reserve", {
     method: "POST",
@@ -1177,6 +1178,7 @@ export interface SocialPostItem {
   author_creator_type?: string;
   author_creator_verified?: boolean;
   author_creator_price?: number;
+  author_exclusive_video_count?: number;
   // Sharing control
   is_shareable?: boolean;
   // Tier-gating fields (free-tier users see blurred posts)

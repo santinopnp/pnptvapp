@@ -68,6 +68,15 @@ class SocialPostService {
               u.tier as author_tier,
               u.creator_status as author_creator_status, u.creator_type as author_creator_type,
               u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
@@ -499,6 +508,15 @@ class SocialPostService {
               u.tier as author_tier,
               u.creator_status as author_creator_status, u.creator_type as author_creator_type,
               u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
@@ -556,6 +574,15 @@ class SocialPostService {
               u.tier as author_tier,
               u.creator_status as author_creator_status, u.creator_type as author_creator_type,
               u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name
@@ -1151,6 +1178,15 @@ class SocialPostService {
               u.tier as author_tier,
               u.creator_status as author_creator_status, u.creator_type as author_creator_type,
               u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,

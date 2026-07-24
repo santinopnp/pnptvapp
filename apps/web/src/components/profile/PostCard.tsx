@@ -173,6 +173,7 @@ export default function PostCard({
     !PRIME_UPSELL_CREATOR_IDS.has(post.author_id) &&
     post.author_creator_status === "active" &&
     (post.author_creator_price ?? 0) > 0 &&
+    (post.author_exclusive_video_count ?? 0) > 0 &&
     !post.is_exclusive &&
     String(user?.id ?? "") !== String(post.author_id);
   const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;

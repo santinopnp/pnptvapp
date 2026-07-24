@@ -317,6 +317,7 @@ export default function SocialPostCard({
     !isSantinoAuthor &&
     post.author_creator_status === "active" &&
     ((post.author_creator_price as number | undefined) ?? 0) > 0 &&
+    ((post.author_exclusive_video_count as number | undefined) ?? 0) > 0 &&
     !post.is_exclusive &&
     !post.is_promoted &&
     !post.is_carousel &&
