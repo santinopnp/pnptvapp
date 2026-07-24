@@ -8189,7 +8189,7 @@ app.get('/api/webapp/discover/tags', async (req, res) => {
   }
 });
 
-app.get('/api/webapp/discover', async (req, res) => {
+app.get('/api/webapp/discover', softAuth, async (req, res) => {
   try {
     const tags = req.query.tags ? String(req.query.tags).split(',').filter(Boolean) : [];
     const q = String(req.query.q || '').trim().slice(0, 200);
@@ -8197,7 +8197,8 @@ app.get('/api/webapp/discover', async (req, res) => {
       ? req.query.entity : 'all';
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 12));
-    const results = await discoverService.discoverByTags(tags, q, entity, page, limit);
+    const viewerId = req.session?.user?.id || null;
+    const results = await discoverService.discoverByTags(tags, q, entity, page, limit, viewerId);
     res.json({ success: true, ...results });
   } catch (err) {
     console.error('discover:', err);
@@ -8254,13 +8255,39 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
       `SELECT g.id, g.name, g.description, g.is_paid,
               (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = g.id) AS member_count
          FROM hangout_groups g
-        WHERE g.is_public = true
-          AND g.is_main = false
+         LEFT JOIN creator_channels cc ON cc.id = g.channel_id
+        WHERE g.is_main = false
           AND g.is_wall_of_fame = false
+          AND g.parent_group_id IS NULL
           AND (g.name ILIKE $1 ESCAPE '\\' OR g.description ILIKE $1 ESCAPE '\\')
+          AND (
+            g.creator_id IS NULL OR g.creator_id = ''
+            OR g.creator_id = $3
+            OR (g.channel_id IS NOT NULL AND (
+              cc.access_type = 'free'
+              OR (cc.access_type = 'prime' AND EXISTS (
+                SELECT 1 FROM user_entitlements ue
+                WHERE ue.user_id = $3 AND ue.add_on_id = 'prime'
+                  AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+              ))
+              OR (cc.access_type IN ('subscription','paid') AND EXISTS (
+                SELECT 1 FROM creator_subscriptions cs
+                WHERE cs.subscriber_id = $3 AND cs.creator_id = g.creator_id
+                  AND cs.status = 'active'
+                  AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+              ))
+            ))
+            OR (g.channel_id IS NULL AND g.is_public = true)
+            OR (g.channel_id IS NULL AND g.is_public = false AND EXISTS (
+              SELECT 1 FROM creator_subscriptions cs
+              WHERE cs.subscriber_id = $3 AND cs.creator_id = g.creator_id
+                AND cs.status = 'active'
+                AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+            ))
+          )
         ORDER BY member_count DESC NULLS LAST
         LIMIT $2`,
-      [like, limit],
+      [like, limit, String(viewerId)],
     ),
     query(
       `SELECT p.id, p.content, u.username AS author_username
@@ -11006,7 +11033,7 @@ app.post('/api/wallet/meru-token-link', requireSessionAuth, asyncHandler(async (
   if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
   const { product, email } = req.body;
-  const VALID_PRODUCTS = { tokens_250: 250, tokens_500: 500 };
+  const VALID_PRODUCTS = { tokens_250: 1500, tokens_500: 3000 };
   if (!product || !VALID_PRODUCTS[product]) {
     return res.status(400).json({ success: false, error: 'product must be tokens_250 or tokens_500' });
   }
@@ -11028,13 +11055,13 @@ app.post('/api/wallet/meru-token-link', requireSessionAuth, asyncHandler(async (
 
 // POST /api/wallet/activate-meru-tokens — verify Meru payment and credit tokens
 // Input: { code: string, email: string, product: 'tokens_250' | 'tokens_500' }
-const meruTokenActivateLimiter = rateLimit({ windowMs: 60 * 1000, max: 6, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
+const meruTokenActivateLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
 app.post('/api/wallet/activate-meru-tokens', requireSessionAuth, meruTokenActivateLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
   const { code, email, product } = req.body;
-  const VALID_PRODUCTS = { tokens_250: 250, tokens_500: 500 };
+  const VALID_PRODUCTS = { tokens_250: 1500, tokens_500: 3000 };
 
   if (!code || typeof code !== 'string' || !/^[A-Za-z0-9_\-]+$/.test(code.trim()) || code.trim().length > 50) {
     return res.status(400).json({ success: false, error: 'Invalid activation code' });
@@ -12227,20 +12254,20 @@ app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, asyncHandl
 // Reserve → email activation code + Meru link → poll status → activate
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 3 reserves per hour per user — prevents link exhaustion from rapid fire
+// Meru card/bank flow doesn't touch card processors directly (no chargeback risk),
+// so limits are only for link-exhaustion protection, not fraud.
 const tokenActivationReserveLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 3,
+  max: 30,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   handler: (req, res) => res.status(429).json({ success: false, error: 'Too many reservation attempts. Try again in an hour.', code: 'RATE_LIMITED' }),
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// 10 activation attempts per hour per user
 const tokenActivationActivateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: 60,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   handler: (req, res) => res.status(429).json({ success: false, error: 'Too many activation attempts. Try again later.', code: 'RATE_LIMITED' }),
   standardHeaders: true,
@@ -12262,7 +12289,7 @@ const tokenActivationStatusLimiter = rateLimit({
 app.post('/api/wallet/token-activation/reserve', tokenActivationReserveLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const userId = String(user.telegram_id || user.id);
-  const { packageKey, language } = req.body || {};
+  const { packageKey, language, email: bodyEmail } = req.body || {};
   const lang = language === 'en' ? 'en' : 'es';
 
   const TokenActivationService = require('../../services/tokenActivationService');
@@ -12271,9 +12298,16 @@ app.post('/api/wallet/token-activation/reserve', tokenActivationReserveLimiter, 
     return res.status(400).json({ success: false, error: 'INVALID_PACKAGE', message: 'Invalid package key. Valid values: tokens_250, tokens_500' });
   }
 
-  const email = user.email;
-  if (!email || email.endsWith('@telegram.pnptv.app')) {
-    return res.status(422).json({ success: false, error: 'EMAIL_REQUIRED', message: 'A verified email address is required to use Meru payments. Please add one in Settings.' });
+  // Accept the email the user entered in the Meru flow; fall back to their
+  // account email. Telegram-shadow placeholders (@telegram.pnptv.app) are
+  // no longer blocked — the user just needs to give a reachable address so
+  // Meru can send the activation code.
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const cleanBodyEmail = typeof bodyEmail === 'string' ? bodyEmail.trim() : '';
+  const fallbackEmail = user.email && !user.email.endsWith('@telegram.pnptv.app') ? user.email : '';
+  const email = emailRe.test(cleanBodyEmail) ? cleanBodyEmail : fallbackEmail;
+  if (!email || !emailRe.test(email)) {
+    return res.status(422).json({ success: false, error: 'EMAIL_REQUIRED', message: 'Enter an email address so we can send the activation code.' });
   }
 
   const result = await TokenActivationService.reserveTokenActivation({ userId, packageKey, email, language: lang });
@@ -12331,22 +12365,30 @@ app.get('/api/wallet/token-activation/:activationCode/status', tokenActivationSt
   const userId = String(user.telegram_id || user.id);
   const { activationCode } = req.params;
 
-  if (!activationCode || typeof activationCode !== 'string' || activationCode.trim().length > 20) {
+  // Code is now the Meru URL suffix (case-sensitive, up to 64 chars, [A-Za-z0-9_-]).
+  const rawCode = typeof activationCode === 'string' ? activationCode.trim().replace(/\/+$/, '') : '';
+  if (!rawCode || rawCode.length > 64 || !/^[A-Za-z0-9_\-]+$/.test(rawCode)) {
     return res.status(400).json({ success: false, error: 'INVALID_CODE' });
   }
 
-  // Verify the caller owns this code before revealing status
+  // Verify the caller owns this code before revealing status. Match by either
+  // `code` (Meru URL suffix — new flow) or `activation_code` (legacy 12-char).
   const { query: dbQuery } = require('../../config/postgres');
   const { rows } = await dbQuery(
-    `SELECT reserved_for_user_id FROM meru_payment_links WHERE activation_code = $1 LIMIT 1`,
-    [activationCode.trim().toUpperCase()]
+    `SELECT reserved_for_user_id
+       FROM meru_payment_links
+      WHERE code = $1
+         OR activation_code = $1
+         OR activation_code = $2
+      LIMIT 1`,
+    [rawCode, rawCode.toUpperCase()]
   );
   if (rows.length > 0 && rows[0].reserved_for_user_id && String(rows[0].reserved_for_user_id) !== String(userId)) {
     return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
   }
 
   const TokenActivationService = require('../../services/tokenActivationService');
-  const status = await TokenActivationService.getTokenActivationStatus(activationCode.trim());
+  const status = await TokenActivationService.getTokenActivationStatus(rawCode);
   return res.json({ success: true, ...status });
 }));
 

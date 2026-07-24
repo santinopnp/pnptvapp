@@ -1481,26 +1481,34 @@ const discoverGroups = async (req, res) => {
     const isAdmin = user.role === 'admin' || user.role === 'superadmin';
     const accessFilter = isAdmin ? '' : `
          AND (
-           g.channel_id IS NULL
-           OR cc.access_type = 'free'
+           -- system hangouts (no creator) always visible
+           g.creator_id IS NULL OR g.creator_id = ''
+           -- owner always sees own hangout
            OR g.creator_id = $1
-           OR (
-             cc.access_type = 'prime' AND EXISTS (
+           -- channel-linked: gate on channel access
+           OR (g.channel_id IS NOT NULL AND (
+             cc.access_type = 'free'
+             OR (cc.access_type = 'prime' AND EXISTS (
                SELECT 1 FROM user_entitlements ue
-               WHERE ue.user_id = $1
-                 AND ue.add_on_id = 'prime'
+               WHERE ue.user_id = $1 AND ue.add_on_id = 'prime'
                  AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
-             )
-           )
-           OR (
-             cc.access_type IN ('subscription','paid') AND EXISTS (
+             ))
+             OR (cc.access_type IN ('subscription','paid') AND EXISTS (
                SELECT 1 FROM creator_subscriptions cs
-               WHERE cs.subscriber_id = $1
-                 AND cs.creator_id = g.creator_id
+               WHERE cs.subscriber_id = $1 AND cs.creator_id = g.creator_id
                  AND cs.status = 'active'
                  AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
-             )
-           )
+             ))
+           ))
+           -- no-channel + is_public=true → community room, visible
+           OR (g.channel_id IS NULL AND g.is_public = true)
+           -- no-channel + is_public=false → private, require active creator sub
+           OR (g.channel_id IS NULL AND g.is_public = false AND EXISTS (
+             SELECT 1 FROM creator_subscriptions cs
+             WHERE cs.subscriber_id = $1 AND cs.creator_id = g.creator_id
+               AND cs.status = 'active'
+               AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+           ))
          )`;
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,

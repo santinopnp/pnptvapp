@@ -37,7 +37,7 @@ async function getTagTaxonomy() {
  * @param {number}   limit     - Results per entity (max 24)
  * @returns {object} Keys matching requested entities, each an array of rows
  */
-async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 1, limit = 12) {
+async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 1, limit = 12, viewerId = null) {
   const hasTags = Array.isArray(tags) && tags.length > 0;
   const hasText = typeof textQuery === 'string' && textQuery.trim().length > 0;
 
@@ -75,7 +75,7 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 
   // --- hangouts ---
   if (shouldQuery('hangouts')) {
-    queries.hangouts = queryHangouts(hasTags, tags, hasText, likePattern, limit, offset);
+    queries.hangouts = queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId);
   }
 
   // Execute all sub-queries in parallel
@@ -219,8 +219,12 @@ function queryVideos(hasTags, tags, hasText, likePattern, limit, offset) {
   );
 }
 
-function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset) {
-  const conditions = ['hg.is_public = TRUE AND hg.is_main = FALSE AND hg.is_wall_of_fame = FALSE'];
+function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId = null) {
+  // NOTE: dropped the blanket is_public=TRUE filter — creators' *private* hangouts
+  // (is_public=false, no channel_id) are now gated on active creator subscription
+  // per the unified access rule, not silently omitted. This keeps them
+  // "discoverable" to actual subscribers on the general Discover surface.
+  const conditions = ['hg.is_main = FALSE AND hg.is_wall_of_fame = FALSE AND hg.parent_group_id IS NULL'];
   const params = [];
   let idx = 1;
 
@@ -235,6 +239,49 @@ function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset) {
       `(hg.name ILIKE $${idx} OR hg.description ILIKE $${idx + 1})`
     );
     idx += 2;
+  }
+
+  // Access filter — same rule as hangoutGroupController.discoverGroups.
+  // Unauth callers (viewerId null) only see system + community (public no-channel + free-channel).
+  if (viewerId) {
+    params.push(String(viewerId));
+    const vIdx = idx++;
+    conditions.push(`(
+      hg.creator_id IS NULL OR hg.creator_id = ''
+      OR hg.creator_id = $${vIdx}
+      OR (hg.channel_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM creator_channels cc WHERE cc.id = hg.channel_id AND (
+          cc.access_type = 'free'
+          OR (cc.access_type = 'prime' AND EXISTS (
+            SELECT 1 FROM user_entitlements ue
+            WHERE ue.user_id = $${vIdx} AND ue.add_on_id = 'prime'
+              AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+          ))
+          OR (cc.access_type IN ('subscription','paid') AND EXISTS (
+            SELECT 1 FROM creator_subscriptions cs
+            WHERE cs.subscriber_id = $${vIdx} AND cs.creator_id = hg.creator_id
+              AND cs.status = 'active'
+              AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+          ))
+        )
+      ))
+      OR (hg.channel_id IS NULL AND hg.is_public = true)
+      OR (hg.channel_id IS NULL AND hg.is_public = false AND EXISTS (
+        SELECT 1 FROM creator_subscriptions cs
+        WHERE cs.subscriber_id = $${vIdx} AND cs.creator_id = hg.creator_id
+          AND cs.status = 'active'
+          AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+      ))
+    )`);
+  } else {
+    // Anonymous: only system hangouts + community (public, no channel) + free channels.
+    conditions.push(`(
+      hg.creator_id IS NULL OR hg.creator_id = ''
+      OR (hg.channel_id IS NULL AND hg.is_public = true)
+      OR (hg.channel_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM creator_channels cc WHERE cc.id = hg.channel_id AND cc.access_type = 'free'
+      ))
+    )`);
   }
 
   params.push(limit, offset);
