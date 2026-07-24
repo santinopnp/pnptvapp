@@ -848,7 +848,12 @@ const passkeyRegisterBegin = async (req, res) => {
       userID: Buffer.from(String(sessionUser.id)),
       attestationType: 'none',
       authenticatorSelection: {
-        residentKey: 'preferred',
+        // 'required' forces a discoverable/resident key so the platform can
+        // offer the passkey during future passwordless login (no username hint).
+        // Without this, some authenticators skip resident storage and the
+        // login prompt silently returns NotAllowedError.
+        residentKey: 'required',
+        requireResidentKey: true,
         userVerification: 'preferred',
       },
       excludeCredentials,
