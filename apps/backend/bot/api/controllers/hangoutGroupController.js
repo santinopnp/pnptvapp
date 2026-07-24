@@ -1474,6 +1474,34 @@ const markAsRead = async (req, res) => {
 const discoverGroups = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   try {
+    // Hide hangouts linked to a paid creator channel from non-subscribers.
+    // PRIME-linked hangouts (Santino's Cult) require the 'prime' entitlement.
+    // Subscription/paid hangouts require an active creator sub with that owner.
+    // Admins bypass entirely.
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const accessFilter = isAdmin ? '' : `
+         AND (
+           g.channel_id IS NULL
+           OR cc.access_type = 'free'
+           OR g.creator_id = $1
+           OR (
+             cc.access_type = 'prime' AND EXISTS (
+               SELECT 1 FROM user_entitlements ue
+               WHERE ue.user_id = $1
+                 AND ue.add_on_id = 'prime'
+                 AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+             )
+           )
+           OR (
+             cc.access_type IN ('subscription','paid') AND EXISTS (
+               SELECT 1 FROM creator_subscriptions cs
+               WHERE cs.subscriber_id = $1
+                 AND cs.creator_id = g.creator_id
+                 AND cs.status = 'active'
+                 AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+             )
+           )
+         )`;
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,
               g.is_public, g.is_paid, g.price_usd, g.created_at, g.channel_id,
@@ -1493,7 +1521,7 @@ const discoverGroups = async (req, res) => {
          AND g.parent_group_id IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM hangout_group_members gm WHERE gm.group_id = g.id AND gm.user_id = $1
-         )
+         )${accessFilter}
        ORDER BY g.created_at DESC
        LIMIT 50`,
       [user.id]
