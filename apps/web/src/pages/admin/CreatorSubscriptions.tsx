@@ -14,6 +14,9 @@ import {
   getAdminWeeklyPayouts,
   markWeeklyPayoutPaid,
   getWeeklyPayoutReceiptUrl,
+  createManualPayoutProposal,
+  cancelManualPayoutProposal,
+  getAdminCreatorPayoutHistory,
   type CreatorSubscriptionSummary,
   type SubscriptionDetail,
   type CreatorDetailAdmin,
@@ -21,6 +24,7 @@ import {
   type CreatorPayoutSummary,
   type PlatformPayoutSummary,
   type AdminWeeklyPayoutRow,
+  type AdminCreatorPayoutHistoryRow,
 } from "@/lib/api";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -272,6 +276,14 @@ function CreatorDetailPanel({
   const [extendLoading, setExtendLoading] = useState(false);
   const [extendError, setExtendError] = useState<string | null>(null);
 
+  // Manual (emergency) advance state — sits on top of the weekly workflow.
+  const [manualNote, setManualNote] = useState("");
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualMsg, setManualMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [history, setHistory] = useState<AdminCreatorPayoutHistoryRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyErr, setHistoryErr] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -294,7 +306,25 @@ function CreatorDetailPanel({
     load();
   }, [load]);
 
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryErr(null);
+    try {
+      const res = await getAdminCreatorPayoutHistory(creatorId, 8);
+      setHistory(res.history || []);
+    } catch (err) {
+      setHistoryErr(err instanceof Error ? err.message : "Failed to load history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [creatorId]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
   const [showPayoutConfirm, setShowPayoutConfirm] = useState(false);
+  const [showManualConfirm, setShowManualConfirm] = useState(false);
 
   const handlePayout = async () => {
     setShowPayoutConfirm(false);
@@ -351,6 +381,43 @@ function CreatorDetailPanel({
       setExtendError(err instanceof Error ? err.message : "Extend failed");
     } finally {
       setExtendLoading(false);
+    }
+  };
+
+  const handleManualPropose = async () => {
+    setShowManualConfirm(false);
+    setManualLoading(true);
+    setManualMsg(null);
+    try {
+      const res = await createManualPayoutProposal(creatorId, manualNote.trim() || undefined);
+      setManualMsg({
+        kind: "ok",
+        text: `Adelanto enviado — ${fmtUsd(res.proposal.amountUsd)} propuesto al creador. Recibirá email + Telegram.`,
+      });
+      setManualNote("");
+      await Promise.all([load(), loadHistory()]);
+      onPayoutSuccess();
+    } catch (err) {
+      setManualMsg({
+        kind: "err",
+        text: err instanceof Error ? err.message : "No se pudo crear el adelanto",
+      });
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleCancelManual = async (approvalId: string) => {
+    if (!window.confirm("¿Cancelar este adelanto manual? El saldo vuelve al pool.")) return;
+    try {
+      await cancelManualPayoutProposal(approvalId);
+      await Promise.all([load(), loadHistory()]);
+      onPayoutSuccess();
+    } catch (err) {
+      setManualMsg({
+        kind: "err",
+        text: err instanceof Error ? err.message : "No se pudo cancelar",
+      });
     }
   };
 
@@ -436,6 +503,128 @@ function CreatorDetailPanel({
                 {payoutMsg}
               </div>
             )}
+
+            {/* Manual (emergency) advance */}
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div>
+                  <p className="text-sm font-semibold text-amber-300">Adelanto por emergencia</p>
+                  <p className="text-xs text-pnp-textSecondary">
+                    Envía el saldo disponible al creador para su aprobación fuera del ciclo semanal.
+                    Requiere saldo ≥ $10 y método de pago configurado.
+                  </p>
+                </div>
+                <a
+                  href={detail.creator.username ? `/c/${detail.creator.username}` : "#"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs px-2 py-1 rounded border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface transition-colors whitespace-nowrap"
+                >
+                  Ver perfil ↗
+                </a>
+              </div>
+              <textarea
+                value={manualNote}
+                onChange={(e) => setManualNote(e.target.value.slice(0, 500))}
+                placeholder="Motivo (opcional) — se muestra al creador en el email"
+                rows={2}
+                className="w-full text-sm rounded border border-pnp-border bg-pnp-background text-pnp-textPrimary px-3 py-2 mb-2 focus:outline-none focus:border-amber-500"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-pnp-textSecondary">
+                  {manualNote.length}/500 caracteres
+                </p>
+                <button
+                  onClick={() => setShowManualConfirm(true)}
+                  disabled={
+                    manualLoading ||
+                    parseFloat(String(detail.payoutSummary.pending_total)) < 10
+                  }
+                  className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                >
+                  {manualLoading ? "Enviando…" : "Enviar adelanto al creador"}
+                </button>
+              </div>
+              {manualMsg && (
+                <div
+                  className={`mt-3 px-3 py-2 rounded text-xs ${
+                    manualMsg.kind === "ok"
+                      ? "bg-green-500/10 border border-green-500/20 text-green-400"
+                      : "bg-red-500/10 border border-red-500/20 text-red-400"
+                  }`}
+                >
+                  {manualMsg.text}
+                </div>
+              )}
+            </div>
+
+            {/* Recent weekly payouts history */}
+            <div className="rounded-lg border border-pnp-border bg-pnp-surface p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-pnp-textPrimary">
+                  Historial de payouts (últimos 8)
+                </p>
+                <button
+                  onClick={() => loadHistory()}
+                  className="text-xs px-2 py-1 rounded border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-background transition-colors"
+                >
+                  ↻ Refrescar
+                </button>
+              </div>
+              {historyLoading ? (
+                <p className="text-xs text-pnp-textSecondary">Cargando…</p>
+              ) : historyErr ? (
+                <p className="text-xs text-red-400">{historyErr}</p>
+              ) : history.length === 0 ? (
+                <p className="text-xs text-pnp-textSecondary">Sin propuestas todavía.</p>
+              ) : (
+                <div className="space-y-2">
+                  {history.map((h) => (
+                    <div
+                      key={h.id}
+                      className="flex items-center justify-between text-xs rounded border border-pnp-border/60 bg-pnp-background px-3 py-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-pnp-textSecondary shrink-0">
+                          {fmtDate(h.createdAt)}
+                        </span>
+                        {h.isManual && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-semibold shrink-0">
+                            MANUAL
+                          </span>
+                        )}
+                        <span className="text-pnp-textPrimary font-semibold">
+                          {fmtUsd(h.balanceUsd)}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                            h.status === "paid"
+                              ? "bg-green-500/20 text-green-400"
+                              : h.status === "approved"
+                              ? "bg-blue-500/20 text-blue-400"
+                              : h.status === "proposed"
+                              ? "bg-amber-500/20 text-amber-300"
+                              : h.status === "rejected"
+                              ? "bg-red-500/20 text-red-400"
+                              : "bg-pnp-border text-pnp-textSecondary"
+                          }`}
+                        >
+                          {h.status.toUpperCase()}
+                        </span>
+                      </div>
+                      {h.isManual && h.status === "proposed" && (
+                        <button
+                          onClick={() => handleCancelManual(h.id)}
+                          className="text-[11px] text-red-400 hover:text-red-300 underline shrink-0"
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Monthly revenue */}
             <div>
@@ -529,6 +718,18 @@ function CreatorDetailPanel({
         onConfirm={handlePayout}
         onCancel={() => setShowPayoutConfirm(false)}
         loading={payoutLoading}
+      />
+
+      {/* Manual advance confirm */}
+      <ConfirmModal
+        open={showManualConfirm}
+        title="Enviar adelanto al creador"
+        message={`Se enviará una propuesta de ${detail ? fmtUsd(detail.payoutSummary.pending_total) : "$0.00"} a @${detail?.creator.username ?? ""} por email + Telegram. El creador debe aprobar antes de procesar el pago.`}
+        confirmLabel="Enviar propuesta"
+        variant="warning"
+        onConfirm={handleManualPropose}
+        onCancel={() => setShowManualConfirm(false)}
+        loading={manualLoading}
       />
 
       {/* Cancel confirm */}
@@ -842,8 +1043,23 @@ function WeeklyPayoutsLedger() {
               {rows.map((r) => (
                 <tr key={r.id} className="border-b border-pnp-border/50">
                   <td className="py-2 pr-3">
-                    <p className="text-pnp-textPrimary">{r.firstName || r.username || r.creatorId}</p>
+                    <p className="text-pnp-textPrimary flex items-center gap-2">
+                      {r.firstName || r.username || r.creatorId}
+                      {r.isManual && (
+                        <span
+                          title={r.adminNote || "Adelanto manual por emergencia"}
+                          className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-semibold"
+                        >
+                          MANUAL
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-pnp-textSecondary">@{r.username || "—"} · {r.email || ""}</p>
+                    {r.isManual && r.adminNote && (
+                      <p className="text-[11px] text-amber-400/80 mt-0.5 italic truncate max-w-xs">
+                        “{r.adminNote}”
+                      </p>
+                    )}
                   </td>
                   <td className="py-2 pr-3 text-pnp-textSecondary">{r.country || "—"}</td>
                   <td className="py-2 pr-3 text-right text-pnp-textPrimary font-semibold">${r.balanceUsd.toFixed(2)}</td>
@@ -861,6 +1077,21 @@ function WeeklyPayoutsLedger() {
                     {r.receiptUrl && (
                       <button onClick={() => viewReceipt(r.id)}
                         className="text-xs px-2 py-1 rounded bg-white/10 text-white hover:bg-white/20">Comprobante</button>
+                    )}
+                    {r.isManual && r.status === "proposed" && (
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm("¿Cancelar este adelanto manual? El saldo vuelve al pool.")) return;
+                          try {
+                            await cancelManualPayoutProposal(r.id);
+                            await load();
+                          } catch (e) {
+                            alert(e instanceof Error ? e.message : "No se pudo cancelar");
+                          }
+                        }}
+                        className="text-xs px-2 py-1 rounded bg-white/5 text-red-400 hover:bg-red-500/10">
+                        Cancelar
+                      </button>
                     )}
                   </td>
                 </tr>

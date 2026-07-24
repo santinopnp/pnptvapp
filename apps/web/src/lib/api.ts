@@ -1133,6 +1133,8 @@ export interface CommunityHypeMetadata {
   original_post_id: number;
   original_author_id: string;
   original_author_username: string | null;
+  original_author_first_name?: string | null;
+  original_author_photo_url?: string | null;
   original_media_url: string;
   original_media_type: "video" | "image";
   original_video_thumbnail_url?: string | null;
@@ -1616,12 +1618,17 @@ export function getPublicPost(
  */
 export const getSocialPost = getPublicPost;
 
+/** Feed filter variants for the 5-tab home feed (2026-07-23). */
+export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot";
+
 export function getSocialFeedPosts(
   cursor?: string,
-  limit = 20
-): Promise<{ success: boolean; posts: SocialPostItem[]; nextCursor: string | null; freeUserLimited?: boolean }> {
+  limit = 20,
+  filter: FeedFilter = "all"
+): Promise<{ success: boolean; posts: SocialPostItem[]; nextCursor: string | null; freeUserLimited?: boolean; needsLocation?: boolean; filter?: FeedFilter }> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
+  if (filter && filter !== "all") params.set("filter", filter);
   return request(`/api/webapp/social/feed?${params}`);
 }
 
@@ -3921,6 +3928,10 @@ export function suggestCreatorManualAI(): Promise<{ success: boolean; markdown: 
   return request("/api/webapp/creator/manual/ai-suggest", { method: "POST" });
 }
 
+export function getMyCreatorSubscriptionsCount(): Promise<{ success: boolean; count: number }> {
+  return request("/api/webapp/creator/subscriptions/mine/count");
+}
+
 export function provisionCreatorDefaults(): Promise<{
   success: boolean;
   freeChannelId?: number;
@@ -4784,7 +4795,9 @@ export interface WeeklyPayoutApproval {
   status: 'proposed' | 'approved' | 'rejected' | 'expired' | 'paid';
   approvedAt: string | null;
   createdAt: string;
-  deadlineAt: string;
+  deadlineAt: string | null;
+  isManual: boolean;
+  adminNote: string | null;
 }
 
 export function getWeeklyPayoutPending(): Promise<{ success: boolean; approval: WeeklyPayoutApproval | null }> {
@@ -4814,6 +4827,7 @@ export interface AdminWeeklyPayoutRow {
   email: string | null;
   country: string | null;
   language: string | null;
+  weekStart: string;
   balanceUsd: number;
   balanceCop: number | null;
   usdCopRate: number | null;
@@ -4826,6 +4840,24 @@ export interface AdminWeeklyPayoutRow {
   receiptUrl: string | null;
   txReference: string | null;
   adminNotes: string | null;
+  createdAt: string;
+  isManual: boolean;
+  adminNote: string | null;
+  createdByAdminId: string | null;
+}
+
+export interface AdminCreatorPayoutHistoryRow {
+  id: string;
+  weekStart: string;
+  balanceUsd: number;
+  balanceCop: number | null;
+  status: AdminWeeklyPayoutRow['status'];
+  approvedAt: string | null;
+  processedAt: string | null;
+  txReference: string | null;
+  receiptUrl: string | null;
+  isManual: boolean;
+  adminNote: string | null;
   createdAt: string;
 }
 
@@ -4868,6 +4900,42 @@ export async function markWeeklyPayoutPaid(
 
 export function getWeeklyPayoutReceiptUrl(id: string): Promise<{ success: boolean; url: string }> {
   return request(`/api/webapp/admin/creator-payouts/weekly/${id}/receipt`);
+}
+
+export function createManualPayoutProposal(
+  creatorId: string,
+  note?: string
+): Promise<{
+  success: boolean;
+  proposal: { id: string; weekStart: string; amountUsd: number; balanceCop: number; method: WeeklyPayoutMethodSnapshot };
+}> {
+  return request('/api/webapp/admin/creator-payouts/manual-propose', {
+    method: 'POST',
+    body: { creator_id: creatorId, note: note || null },
+  });
+}
+
+export function cancelManualPayoutProposal(
+  id: string,
+  reason?: string
+): Promise<{ success: boolean }> {
+  return request(`/api/webapp/admin/creator-payouts/weekly/${id}/cancel-manual`, {
+    method: 'POST',
+    body: { reason: reason || null },
+  });
+}
+
+export function getAdminCreatorPayoutHistory(
+  creatorId: string,
+  limit = 8
+): Promise<{
+  success: boolean;
+  balance: unknown;
+  history: AdminCreatorPayoutHistoryRow[];
+}> {
+  return request(
+    `/api/webapp/admin/creator-payouts/creator/${encodeURIComponent(creatorId)}/history?limit=${limit}`
+  );
 }
 
 // ── Creator invite links ──────────────────────────────────────────────────────
@@ -9264,6 +9332,13 @@ export interface PublicCreatorHangout {
   member_count: number;
 }
 
+export interface ViewerCreatorSubscription {
+  price_usd: number;
+  since: string;
+  expires_at: string;
+  status: string;
+}
+
 export interface CreatorPublicProfile {
   creator: {
     id: string;
@@ -9290,6 +9365,8 @@ export interface CreatorPublicProfile {
     amazon_wishlist_url: string | null;
   };
   isSubscribed: boolean;
+  /** Sub details when viewer is subscribed; null otherwise. */
+  viewerSubscription?: ViewerCreatorSubscription | null;
   isFollowing: boolean;
   media: PublicCreatorMediaItem[];
   channels: PublicCreatorChannel[];

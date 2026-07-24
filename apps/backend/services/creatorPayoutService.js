@@ -1186,9 +1186,9 @@ class CreatorPayoutService {
         const { rows: inserted } = await client.query(
           `INSERT INTO creator_weekly_payout_approvals
              (week_start, creator_id, balance_usd, balance_cop, usd_cop_rate,
-              payout_method_snapshot, source_earning_ids, status)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'proposed')
-           ON CONFLICT (week_start, creator_id) DO NOTHING
+              payout_method_snapshot, source_earning_ids, status, is_manual)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'proposed', false)
+           ON CONFLICT (week_start, creator_id) WHERE is_manual = false DO NOTHING
            RETURNING id`,
           [weekStart, creatorId, amountUsd, balanceCop, rateCop,
             JSON.stringify({ lane: method.lane, ...method.dest, label: method.label }),
@@ -1265,6 +1265,9 @@ class CreatorPayoutService {
    * Monday 16:00 Bogota cron. Any row still in 'proposed' state past the
    * deadline expires and its reserved earnings roll back to 'available' so
    * they're picked up in next week's batch.
+   *
+   * Manual (admin-initiated) proposals are intentionally excluded — the admin
+   * owns their lifecycle and can cancel them explicitly from the ledger UI.
    */
   static async runWeeklyApprovalDeadline() {
     logger.info('CreatorPayoutService: running weekly approval deadline sweep');
@@ -1277,6 +1280,7 @@ class CreatorPayoutService {
             SET status = 'expired', updated_at = NOW()
           WHERE status = 'proposed'
             AND week_start = $1
+            AND is_manual = false
         RETURNING id, creator_id, source_earning_ids`,
         [weekStart]
       );
@@ -1436,19 +1440,22 @@ class CreatorPayoutService {
   }
 
   /**
-   * Fetch the open weekly proposal for a creator (proposed OR approved this week).
+   * Fetch the open payout proposal for a creator (proposed OR approved).
+   * Includes both the weekly automatic row and any admin-initiated manual
+   * row still open — manual takes precedence when both exist so the emergency
+   * advance surfaces first in the banner.
    */
   static async getCreatorPendingApproval(creatorId) {
     const weekStart = this._mondayOfBogotaWeek();
     const { rows } = await query(
       `SELECT id, week_start, balance_usd, balance_cop, usd_cop_rate,
               payout_method_snapshot, approved_method_override, status,
-              approved_at, created_at
+              approved_at, created_at, is_manual, admin_note
          FROM creator_weekly_payout_approvals
         WHERE creator_id = $1
-          AND week_start = $2
           AND status IN ('proposed','approved')
-        ORDER BY created_at DESC
+          AND (is_manual = true OR week_start = $2)
+        ORDER BY is_manual DESC, created_at DESC
         LIMIT 1`,
       [creatorId, weekStart]
     );
@@ -1456,7 +1463,10 @@ class CreatorPayoutService {
   }
 
   /**
-   * Admin: list weekly payouts with filters. Joins creator info for display.
+   * Admin: list payouts for the given week. Includes both automatic (Monday
+   * cron) and manual (admin-initiated emergency) rows. Manuals for other
+   * weeks that are still open (proposed/approved) are also surfaced so the
+   * admin never loses track of pending exceptions.
    */
   static async getAdminWeeklyLedger({ weekStart, status, country }) {
     const params = [weekStart];
@@ -1465,14 +1475,16 @@ class CreatorPayoutService {
              a.payout_method_snapshot, a.approved_method_override, a.status,
              a.approved_at, a.processed_at, a.processed_by_admin_id,
              a.receipt_url, a.tx_reference, a.admin_notes, a.created_at,
+             a.is_manual, a.admin_note, a.created_by_admin_id,
              u.username, u.first_name, u.email, u.country, u.language
         FROM creator_weekly_payout_approvals a
         LEFT JOIN users u ON u.id = a.creator_id
-       WHERE a.week_start = $1
+       WHERE (a.week_start = $1
+              OR (a.is_manual = true AND a.status IN ('proposed','approved')))
     `;
     if (status) { params.push(status); sql += ` AND a.status = $${params.length}`; }
     if (country) { params.push(country); sql += ` AND u.country = $${params.length}`; }
-    sql += ' ORDER BY a.balance_usd DESC';
+    sql += ' ORDER BY a.is_manual DESC, a.balance_usd DESC';
     const { rows } = await query(sql, params);
     return rows;
   }
@@ -1486,6 +1498,221 @@ class CreatorPayoutService {
         WHERE week_start = $1
         GROUP BY status`,
       [weekStart]
+    );
+    return rows;
+  }
+
+  /**
+   * Admin: emergency off-cycle payout proposal for a single creator. Reuses
+   * the same table + notification path as the weekly cron, tagged is_manual.
+   * The row does NOT participate in the Monday deadline sweep — admin
+   * cancels it explicitly via cancelManualProposal if the creator goes
+   * unresponsive.
+   *
+   * Throws:
+   *   - INSUFFICIENT_BALANCE  — creator has < WEEKLY_MINIMUM_USD available
+   *   - MANUAL_ALREADY_OPEN   — an active manual proposal already exists
+   *   - NO_PAYOUT_METHOD      — creator hasn't configured any lane
+   */
+  static async runManualPayoutProposal(creatorId, adminId, { note } = {}) {
+    logger.info('CreatorPayoutService: manual payout proposal requested', { creatorId, adminId });
+
+    const { rows: existingRows } = await query(
+      `SELECT id FROM creator_weekly_payout_approvals
+        WHERE creator_id = $1 AND is_manual = true AND status IN ('proposed','approved')
+        LIMIT 1`,
+      [creatorId]
+    );
+    if (existingRows.length > 0) {
+      const err = new Error('Creator already has an open manual proposal');
+      err.code = 'MANUAL_ALREADY_OPEN';
+      throw err;
+    }
+
+    const { rows: userRows } = await query(`
+      SELECT id, email, username, first_name, language, country,
+             creator_dash_address, meru_account,
+             fiat_payout_method, fiat_payout_account,
+             creator_payout_destinations
+        FROM users WHERE id = $1
+    `, [creatorId]);
+    const user = userRows[0];
+    if (!user) {
+      const err = new Error('Creator not found');
+      err.code = 'CREATOR_NOT_FOUND';
+      throw err;
+    }
+
+    const method = this._pickPreferredMethod(user);
+    if (!method) {
+      const err = new Error('Creator has no payout method configured');
+      err.code = 'NO_PAYOUT_METHOD';
+      throw err;
+    }
+
+    const { rows: earningRows } = await query(`
+      SELECT id, amount_creator
+        FROM creator_earnings
+       WHERE creator_id = $1 AND status = 'available' AND paid_at IS NULL
+    `, [creatorId]);
+    if (earningRows.length === 0) {
+      const err = new Error('No available earnings to advance');
+      err.code = 'INSUFFICIENT_BALANCE';
+      throw err;
+    }
+    const amountUsd = earningRows.reduce((s, r) => s + Number(r.amount_creator || 0), 0);
+    if (amountUsd < WEEKLY_MINIMUM_USD) {
+      const err = new Error(`Balance below minimum $${WEEKLY_MINIMUM_USD}`);
+      err.code = 'INSUFFICIENT_BALANCE';
+      throw err;
+    }
+    const earningIds = earningRows.map((r) => r.id);
+
+    const rateCop = await this.getUsdCopRate();
+    const balanceCop = Math.round(amountUsd * rateCop);
+    const weekStart = this._mondayOfBogotaWeek();
+
+    const client = await require('../config/postgres').getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: reserved } = await client.query(
+        `UPDATE creator_earnings
+            SET status = 'in_payout',
+                metadata = COALESCE(metadata, '{}'::jsonb)
+                        || jsonb_build_object('manual_advance_week', $2::text)
+          WHERE id = ANY($1::uuid[])
+            AND status = 'available'
+            AND paid_at IS NULL
+          RETURNING id`,
+        [earningIds, weekStart]
+      );
+      if (reserved.length === 0) {
+        await client.query('ROLLBACK');
+        const err = new Error('Race lost while reserving earnings');
+        err.code = 'RESERVE_RACE';
+        throw err;
+      }
+      const reservedIds = reserved.map((r) => r.id);
+      const { rows: inserted } = await client.query(
+        `INSERT INTO creator_weekly_payout_approvals
+           (week_start, creator_id, balance_usd, balance_cop, usd_cop_rate,
+            payout_method_snapshot, source_earning_ids, status,
+            is_manual, admin_note, created_by_admin_id)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'proposed',
+                 true, $8, $9)
+         RETURNING id, week_start`,
+        [weekStart, creatorId, amountUsd, balanceCop, rateCop,
+          JSON.stringify({ lane: method.lane, ...method.dest, label: method.label }),
+          reservedIds, note || null, adminId || null]
+      );
+      await client.query('COMMIT');
+      const approvalId = inserted[0].id;
+
+      try {
+        const emailService = require('./emailservice');
+        if (user.email && emailService.isEmailSafe && emailService.isEmailSafe(user.email)) {
+          await emailService.sendCreatorWeeklyPayoutProposal({
+            to: user.email,
+            displayName: user.username || user.first_name || String(creatorId),
+            language: user.language || 'en',
+            approvalId,
+            balanceUsd: amountUsd,
+            balanceCop,
+            methodLabel: method.label,
+            country: user.country,
+            isEmergency: true,
+            adminNote: note || null,
+          });
+        }
+      } catch (emailErr) {
+        logger.warn('runManualPayoutProposal: email failed (non-fatal)', {
+          creatorId, error: emailErr.message,
+        });
+      }
+      try {
+        const { sendNotificationViaTelegram } = require('./notificationBotDelivery');
+        await sendNotificationViaTelegram(creatorId, {
+          type: 'payment',
+          entityType: 'weekly_payout_proposal',
+          entityId: String(approvalId),
+          message: (user.language || 'en').toLowerCase().startsWith('es')
+            ? `🚨 Adelanto de pago: $${amountUsd.toFixed(2)} USD listo para aprobar.`
+            : `🚨 Emergency advance: $${amountUsd.toFixed(2)} USD ready to approve.`,
+        });
+      } catch (dmErr) {
+        logger.warn('runManualPayoutProposal: DM failed (non-fatal)', {
+          creatorId, error: dmErr.message,
+        });
+      }
+
+      return { id: approvalId, weekStart, amountUsd, balanceCop, method };
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Admin: cancel an outstanding manual proposal (only if not paid). Releases
+   * the reserved earnings back to 'available' so they roll into next week's
+   * automatic cohort.
+   */
+  static async cancelManualProposal(approvalId, adminId, { reason } = {}) {
+    const client = await require('../config/postgres').getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `UPDATE creator_weekly_payout_approvals
+            SET status = 'rejected',
+                admin_notes = COALESCE(admin_notes, '') ||
+                  CASE WHEN $3::text IS NOT NULL AND $3 <> ''
+                       THEN '[cancel:' || $2 || '] ' || $3::text
+                       ELSE '[cancel:' || $2 || ']' END,
+                updated_at = NOW()
+          WHERE id = $1
+            AND is_manual = true
+            AND status = 'proposed'
+        RETURNING id, source_earning_ids`,
+        [approvalId, adminId, reason || null]
+      );
+      if (rows.length === 0) {
+        await client.query('ROLLBACK');
+        const err = new Error('Manual proposal not found or not cancellable');
+        err.code = 'NOT_CANCELLABLE';
+        throw err;
+      }
+      await client.query(
+        `UPDATE creator_earnings SET status = 'available'
+           WHERE id = ANY($1::uuid[]) AND status = 'in_payout'`,
+        [rows[0].source_earning_ids]
+      );
+      await client.query('COMMIT');
+      return rows[0];
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Admin: last N payout approvals for a specific creator (any status) —
+   * used by the creator-detail drawer to show recent history alongside the
+   * pending balance.
+   */
+  static async getCreatorPayoutHistory(creatorId, limit = 6) {
+    const { rows } = await query(
+      `SELECT id, week_start, balance_usd, balance_cop, status,
+              approved_at, processed_at, tx_reference, receipt_url,
+              is_manual, admin_note, created_at
+         FROM creator_weekly_payout_approvals
+        WHERE creator_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [creatorId, Math.min(Number(limit) || 6, 50)]
     );
     return rows;
   }

@@ -2298,6 +2298,8 @@ EmailService.prototype.sendCreatorWeeklyPayoutProposal = async function sendCrea
   balanceCop,
   methodLabel,
   country,
+  isEmergency,
+  adminNote,
 }) {
   const es = String(language || 'en').toLowerCase().startsWith('es');
   const base = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
@@ -2306,36 +2308,59 @@ EmailService.prototype.sendCreatorWeeklyPayoutProposal = async function sendCrea
   const usd = Number(balanceUsd || 0).toFixed(2);
   const cop = balanceCop ? Number(balanceCop).toLocaleString('es-CO') : null;
 
-  const subject = es
-    ? `Tu pago semanal PNPtv! está listo — $${usd} USD`
-    : `Your weekly PNPtv! payout is ready — $${usd} USD`;
+  const subject = isEmergency
+    ? (es
+        ? `🚨 Adelanto de pago PNPtv! — $${usd} USD listo para aprobar`
+        : `🚨 PNPtv! emergency advance — $${usd} USD ready to approve`)
+    : (es
+        ? `Tu pago semanal PNPtv! está listo — $${usd} USD`
+        : `Your weekly PNPtv! payout is ready — $${usd} USD`);
+
+  const noteBlock = adminNote
+    ? (es
+        ? `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px;margin:12px 0"><p style="margin:0;font-size:12px;color:#8a6d3b;font-weight:600">Nota del equipo:</p><p style="margin:4px 0 0;font-size:13px;color:#333">${adminNote}</p></div>`
+        : `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px;margin:12px 0"><p style="margin:0;font-size:12px;color:#8a6d3b;font-weight:600">Note from team:</p><p style="margin:4px 0 0;font-size:13px;color:#333">${adminNote}</p></div>`)
+    : '';
+
+  const introEs = isEmergency
+    ? 'Te habilitamos un <strong>adelanto excepcional</strong> de tu saldo disponible. Aprueba cuando quieras — no tiene deadline semanal.'
+    : 'Tu saldo acumulado esta semana está listo para aprobación.';
+  const introEn = isEmergency
+    ? 'We\'ve opened an <strong>exceptional advance</strong> of your available balance. Approve whenever you\'re ready — no weekly deadline.'
+    : 'Your weekly balance is ready for your approval.';
+  const deadlineEs = isEmergency
+    ? '<p style="color:#888;font-size:12px">Este adelanto queda abierto hasta que apruebes o rechaces.</p>'
+    : '<p><strong>Aprueba antes de las 4pm (Bogotá) para que se procese mañana martes.</strong> Puedes cambiar tu método al aprobar.</p><p style="color:#888;font-size:12px">Si no apruebas hoy, el saldo se acumula para la propuesta del próximo lunes — no se pierde.</p>';
+  const deadlineEn = isEmergency
+    ? '<p style="color:#888;font-size:12px">This advance stays open until you approve or reject.</p>'
+    : '<p><strong>Approve before 4pm (Bogota) so we can process tomorrow (Tuesday).</strong> You can change your payout method when you approve.</p><p style="color:#888;font-size:12px">If you don\'t approve today, the balance rolls over to next Monday\'s proposal — nothing is lost.</p>';
 
   const html = es
     ? `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
         <h2 style="color:#D4007A;margin:0 0 8px">Hola ${displayName},</h2>
-        <p>Tu saldo acumulado esta semana está listo para aprobación.</p>
+        <p>${introEs}</p>
+        ${noteBlock}
         <div style="background:#faf5f8;border:1px solid #f0d5e5;border-radius:12px;padding:20px;margin:16px 0">
           <p style="margin:0;font-size:12px;color:#888">Monto a pagar</p>
           <p style="margin:4px 0 0;font-size:28px;font-weight:700;color:#D4007A">$${usd} USD</p>
           ${showCop && cop ? `<p style="margin:2px 0 0;font-size:14px;color:#666">≈ COP $${cop}</p>` : ''}
           <p style="margin:12px 0 0;font-size:12px;color:#888">Método de pago actual: <strong>${methodLabel}</strong></p>
         </div>
-        <p><strong>Aprueba antes de las 4pm (Bogotá) para que se procese mañana martes.</strong> Puedes cambiar tu método al aprobar.</p>
+        ${deadlineEs}
         <p style="margin:24px 0"><a href="${url}" style="background:#D4007A;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Revisar y aprobar</a></p>
-        <p style="color:#888;font-size:12px">Si no apruebas hoy, el saldo se acumula para la propuesta del próximo lunes — no se pierde.</p>
       </div>`
     : `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
         <h2 style="color:#D4007A;margin:0 0 8px">Hi ${displayName},</h2>
-        <p>Your weekly balance is ready for your approval.</p>
+        <p>${introEn}</p>
+        ${noteBlock}
         <div style="background:#faf5f8;border:1px solid #f0d5e5;border-radius:12px;padding:20px;margin:16px 0">
           <p style="margin:0;font-size:12px;color:#888">Amount</p>
           <p style="margin:4px 0 0;font-size:28px;font-weight:700;color:#D4007A">$${usd} USD</p>
           ${showCop && cop ? `<p style="margin:2px 0 0;font-size:14px;color:#666">≈ COP $${cop}</p>` : ''}
           <p style="margin:12px 0 0;font-size:12px;color:#888">Current payout method: <strong>${methodLabel}</strong></p>
         </div>
-        <p><strong>Approve before 4pm (Bogota) so we can process tomorrow (Tuesday).</strong> You can change your payout method when you approve.</p>
+        ${deadlineEn}
         <p style="margin:24px 0"><a href="${url}" style="background:#D4007A;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Review and approve</a></p>
-        <p style="color:#888;font-size:12px">If you don't approve today, the balance rolls over to next Monday's proposal — nothing is lost.</p>
       </div>`;
 
   return this.send({ to, subject, html });

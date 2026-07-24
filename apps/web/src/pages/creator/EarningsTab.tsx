@@ -47,10 +47,13 @@ function WeeklyApprovalBanner({
   const es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
   const isApproved = approval.status === "approved";
   const isColombiaBalance = approval.balanceCop != null;
+  const isManual = !!approval.isManual;
 
-  const deadline = new Date(approval.deadlineAt).getTime();
-  const [msLeft, setMsLeft] = useState(deadline - Date.now());
+  // Manual (emergency) advances have no fixed deadline — admin controls lifecycle.
+  const deadline = approval.deadlineAt ? new Date(approval.deadlineAt).getTime() : null;
+  const [msLeft, setMsLeft] = useState(deadline ? deadline - Date.now() : 0);
   useEffect(() => {
+    if (!deadline) return;
     const t = setInterval(() => setMsLeft(deadline - Date.now()), 60_000);
     return () => clearInterval(t);
   }, [deadline]);
@@ -83,21 +86,28 @@ function WeeklyApprovalBanner({
     }
   }
 
+  const accentColor = isManual ? "#F59E0B" : (isApproved ? "#5ED1C4" : "#D4007A");
+  const accentBg = isManual ? "rgba(245,158,11,0.06)" : (isApproved ? "rgba(94,209,196,0.06)" : "rgba(212,0,122,0.06)");
+  const accentBorder = isManual ? "rgba(245,158,11,0.35)" : (isApproved ? "rgba(94,209,196,0.35)" : "rgba(212,0,122,0.35)");
+
+  const heading = isApproved
+    ? (es ? "Pago aprobado — el equipo lo procesará pronto" : "Approved — the team will process it soon")
+    : isManual
+      ? (es ? "🚨 Adelanto de pago disponible" : "🚨 Emergency payout advance available")
+      : (es ? "Aprobación semanal pendiente" : "Weekly approval pending");
+
+  const approveButtonDisabled = busy !== null || (!isManual && deadline != null && msLeft <= 0);
+
   return (
     <div
       ref={scrollRef}
       className="glass-card-sm p-4 border"
-      style={{
-        borderColor: isApproved ? "rgba(94,209,196,0.35)" : "rgba(212,0,122,0.35)",
-        background: isApproved ? "rgba(94,209,196,0.06)" : "rgba(212,0,122,0.06)",
-      }}
+      style={{ borderColor: accentBorder, background: accentBg }}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: isApproved ? "#5ED1C4" : "#D4007A" }}>
-            {isApproved
-              ? (es ? "Pago aprobado — se procesa el martes" : "Approved — will be processed Tuesday")
-              : (es ? "Aprobación semanal pendiente" : "Weekly approval pending")}
+          <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: accentColor }}>
+            {heading}
           </p>
           <p className="text-2xl font-bold text-white mt-1">${approval.balanceUsd.toFixed(2)} USD</p>
           {isColombiaBalance && (
@@ -106,16 +116,26 @@ function WeeklyApprovalBanner({
               {approval.usdCopRate ? ` · TRM ${approval.usdCopRate.toLocaleString("es-CO")}` : ""}
             </p>
           )}
+          {isManual && approval.adminNote && (
+            <p className="text-xs mt-2 italic" style={{ color: "#F59E0B" }}>
+              {es ? "Nota: " : "Note: "}“{approval.adminNote}”
+            </p>
+          )}
           <p className="text-xs mt-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             {es ? "Método: " : "Method: "}{methodLabel(approval.methodOverride || approval.method)}
           </p>
         </div>
-        {!isApproved && msLeft > 0 && (
+        {!isApproved && !isManual && deadline != null && msLeft > 0 && (
           <div className="text-right text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <p>{es ? "Aprueba antes de" : "Approve before"}</p>
             <p className="font-mono font-semibold text-white">4pm Bogotá</p>
             <p className="mt-0.5">{hoursLeft}h {minsLeft}m {es ? "restantes" : "left"}</p>
           </div>
+        )}
+        {!isApproved && isManual && (
+          <span className="text-[10px] font-bold uppercase px-2 py-1 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#F59E0B" }}>
+            {es ? "Excepción" : "Exception"}
+          </span>
         )}
       </div>
 
@@ -128,8 +148,9 @@ function WeeklyApprovalBanner({
           <button
             type="button"
             onClick={handleApprove}
-            disabled={busy !== null || msLeft <= 0}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-[#D4007A] text-white hover:bg-[#b8006a] disabled:opacity-50"
+            disabled={approveButtonDisabled}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: isManual ? "#F59E0B" : "#D4007A" }}
           >
             {busy === "approve" ? "…" : es ? "Aprobar" : "Approve"}
           </button>
@@ -145,9 +166,13 @@ function WeeklyApprovalBanner({
       )}
       {isApproved && (
         <p className="text-xs mt-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          {es
-            ? "El equipo procesará tu pago mañana martes y adjuntará el comprobante en tu historial."
-            : "The team will process your payout tomorrow (Tuesday) and attach a receipt to your history."}
+          {isManual
+            ? (es
+                ? "El equipo procesará tu adelanto en las próximas horas y adjuntará el comprobante en tu historial."
+                : "The team will process your advance in the next few hours and attach a receipt to your history.")
+            : (es
+                ? "El equipo procesará tu pago mañana martes y adjuntará el comprobante en tu historial."
+                : "The team will process your payout tomorrow (Tuesday) and attach a receipt to your history.")}
         </p>
       )}
     </div>

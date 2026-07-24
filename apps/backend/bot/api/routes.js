@@ -6563,6 +6563,10 @@ app.get('/api/webapp/admin/creator-payouts/weekly', adminGuard, asyncHandler(cre
 app.get('/api/webapp/admin/creator-payouts/weekly/export.csv', adminGuard, asyncHandler(creatorPayoutCtl.adminExportWeeklyCsv));
 app.post('/api/webapp/admin/creator-payouts/weekly/:id/mark-paid', adminGuard, weeklyReceiptUpload.single('receipt'), asyncHandler(creatorPayoutCtl.adminMarkPaid));
 app.get('/api/webapp/admin/creator-payouts/weekly/:id/receipt', adminGuard, asyncHandler(creatorPayoutCtl.adminGetReceipt));
+// Manual (emergency) off-cycle payout proposals — sits on top of the weekly workflow.
+app.post('/api/webapp/admin/creator-payouts/manual-propose', adminGuard, asyncHandler(creatorPayoutCtl.adminManualPropose));
+app.post('/api/webapp/admin/creator-payouts/weekly/:id/cancel-manual', adminGuard, asyncHandler(creatorPayoutCtl.adminCancelManual));
+app.get('/api/webapp/admin/creator-payouts/creator/:creatorId/history', adminGuard, asyncHandler(creatorPayoutCtl.adminCreatorPayoutHistory));
 
 // Grok Social Media Manager chat
 app.post('/api/webapp/admin/grok/manager-chat', adminGuard, asyncHandler(async (req, res) => {
@@ -15201,6 +15205,19 @@ app.put('/api/webapp/creator/next-show-date',
 
 // GET /api/webapp/creator/subscribers — handled by creatorRoutes.js (mounted above)
 
+// GET /api/webapp/creator/subscriptions/mine/count — viewer's own active subs count.
+// Used by the 5-tab feed to pick "Suscritos" vs "Hot" as the default tab.
+app.get('/api/webapp/creator/subscriptions/mine/count', requireSessionAuth, asyncHandler(async (req, res) => {
+  const uid = req.session.user.id;
+  const { rows } = await getPool().query(
+    `SELECT COUNT(*)::int AS count
+       FROM creator_subscriptions
+      WHERE subscriber_id = $1 AND status = 'active' AND expires_at > NOW()`,
+    [uid]
+  );
+  return res.json({ success: true, count: rows[0]?.count || 0 });
+}));
+
 // ==========================================
 // CREATOR USER MANUAL (public "how to book / what to expect")
 // ==========================================
@@ -16737,17 +16754,30 @@ app.get('/api/public/creator/:username',
     const viewerId = req.user?.id ? String(req.user.id) : null;
 
     // 2. Check if viewer is subscribed (only when authenticated and not self)
+    // Also fetch the sub details so the front-end can show them in the
+    // "Subscribed" pill's info modal (price, since, expires, next renewal).
     let isSubscribed = false;
+    let viewerSubscription = null;
     if (viewerId && viewerId !== creatorId) {
       try {
         const { rows: subRows } = await pool.query(
-          `SELECT 1 FROM creator_subscriptions
-           WHERE creator_id = $1 AND subscriber_id = $2
-             AND status = 'active' AND expires_at > NOW()
-           LIMIT 1`,
+          `SELECT price_usd, created_at, expires_at, status
+             FROM creator_subscriptions
+            WHERE creator_id = $1 AND subscriber_id = $2
+              AND status = 'active' AND expires_at > NOW()
+            ORDER BY expires_at DESC
+            LIMIT 1`,
           [creatorId, viewerId]
         );
-        isSubscribed = subRows.length > 0;
+        if (subRows.length > 0) {
+          isSubscribed = true;
+          viewerSubscription = {
+            price_usd: Number(subRows[0].price_usd || 0),
+            since: subRows[0].created_at,
+            expires_at: subRows[0].expires_at,
+            status: subRows[0].status,
+          };
+        }
       } catch (subErr) {
         logger.warn('Public creator profile: subscription check failed', { creatorId, viewerId, error: subErr.message });
       }
@@ -17121,6 +17151,7 @@ app.get('/api/public/creator/:username',
         amazon_wishlist_url: creator.amazon_wishlist_url || null,
       },
       isSubscribed,
+      viewerSubscription,
       isFollowing,
       media,
       channels,

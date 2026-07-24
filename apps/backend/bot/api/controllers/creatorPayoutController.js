@@ -118,7 +118,10 @@ exports.getPendingApproval = async (req, res) => {
         status: row.status,
         approvedAt: row.approved_at,
         createdAt: row.created_at,
-        deadlineAt: deadlineIsoForWeek(
+        isManual: !!row.is_manual,
+        adminNote: row.admin_note || null,
+        // Manual advances have no fixed deadline — admin controls their lifecycle.
+        deadlineAt: row.is_manual ? null : deadlineIsoForWeek(
           new Date(row.week_start).toISOString().slice(0, 10)
         ),
       },
@@ -195,6 +198,7 @@ exports.adminListWeekly = async (req, res) => {
         email: r.email,
         country: r.country,
         language: r.language,
+        weekStart: r.week_start,
         balanceUsd: Number(r.balance_usd),
         balanceCop: r.balance_cop != null ? Number(r.balance_cop) : null,
         usdCopRate: r.usd_cop_rate != null ? Number(r.usd_cop_rate) : null,
@@ -208,6 +212,9 @@ exports.adminListWeekly = async (req, res) => {
         txReference: r.tx_reference,
         adminNotes: r.admin_notes,
         createdAt: r.created_at,
+        isManual: !!r.is_manual,
+        adminNote: r.admin_note || null,
+        createdByAdminId: r.created_by_admin_id || null,
       })),
     });
   } catch (err) {
@@ -322,5 +329,82 @@ exports.adminGetReceipt = async (req, res) => {
   } catch (err) {
     logger.error('[creatorPayoutController.adminGetReceipt]', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to get receipt URL' });
+  }
+};
+
+// ── Manual (emergency) payout proposal ─────────────────────────────────────
+
+exports.adminManualPropose = async (req, res) => {
+  try {
+    const adminId = req.session?.user?.id;
+    const creatorId = (req.body?.creator_id || req.body?.creatorId || '').toString().trim();
+    const note = (req.body?.note || req.body?.admin_note || '').toString().trim().slice(0, 500);
+    if (!creatorId) {
+      return res.status(400).json({ success: false, error: 'creator_id is required' });
+    }
+    const result = await CreatorPayoutService.runManualPayoutProposal(creatorId, adminId, {
+      note: note || null,
+    });
+    return res.status(201).json({ success: true, proposal: result });
+  } catch (err) {
+    const map = {
+      MANUAL_ALREADY_OPEN: [409, 'A manual proposal is already open for this creator'],
+      INSUFFICIENT_BALANCE: [400, 'Available balance is below the minimum threshold'],
+      NO_PAYOUT_METHOD: [400, 'Creator has no payout method configured'],
+      CREATOR_NOT_FOUND: [404, 'Creator not found'],
+      RESERVE_RACE: [409, 'Balance changed while creating proposal, please retry'],
+    };
+    const hit = map[err.code];
+    if (hit) return res.status(hit[0]).json({ success: false, error: hit[1], code: err.code });
+    logger.error('[creatorPayoutController.adminManualPropose]', { error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to create manual proposal' });
+  }
+};
+
+exports.adminCancelManual = async (req, res) => {
+  try {
+    const adminId = req.session?.user?.id;
+    const { id } = req.params;
+    const reason = (req.body?.reason || '').toString().trim().slice(0, 300) || null;
+    await CreatorPayoutService.cancelManualProposal(id, adminId, { reason });
+    return res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'NOT_CANCELLABLE') {
+      return res.status(409).json({ success: false, error: 'Not a cancellable manual proposal' });
+    }
+    logger.error('[creatorPayoutController.adminCancelManual]', { error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to cancel proposal' });
+  }
+};
+
+exports.adminCreatorPayoutHistory = async (req, res) => {
+  try {
+    const { creatorId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 8, 50);
+    const [rows, balance] = await Promise.all([
+      CreatorPayoutService.getCreatorPayoutHistory(creatorId, limit),
+      getCreatorPayoutBalance(creatorId).catch(() => null),
+    ]);
+    return res.json({
+      success: true,
+      balance, // { availableUsd, totalPaidUsd, ... } if service supports it, else null
+      history: rows.map((r) => ({
+        id: r.id,
+        weekStart: r.week_start,
+        balanceUsd: Number(r.balance_usd),
+        balanceCop: r.balance_cop != null ? Number(r.balance_cop) : null,
+        status: r.status,
+        approvedAt: r.approved_at,
+        processedAt: r.processed_at,
+        txReference: r.tx_reference,
+        receiptUrl: r.receipt_url,
+        isManual: !!r.is_manual,
+        adminNote: r.admin_note || null,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    logger.error('[creatorPayoutController.adminCreatorPayoutHistory]', { error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to load history' });
   }
 };

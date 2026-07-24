@@ -498,6 +498,46 @@ export default function ActiveCreatorsTab() {
   const [promoteFormOpen, setPromoteFormOpen] = useState<string | null>(null);
   const [promoteLoading, setPromoteLoading] = useState<string | null>(null);
   const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runBulkLock = async (lock: boolean) => {
+    if (selected.size === 0 || bulkLoading) return;
+    setBulkLoading(true);
+    setBulkMsg(null);
+    const ids = Array.from(selected);
+    let ok = 0;
+    let fail = 0;
+    for (const id of ids) {
+      try {
+        const res = await setCreatorLock(id, lock);
+        if (res.success) {
+          ok++;
+          setCreators((prev) =>
+            prev.map((c) => (c.id === id ? { ...c, creator_locked: res.user.creator_locked } : c))
+          );
+        }
+      } catch {
+        fail++;
+      }
+    }
+    setBulkLoading(false);
+    setSelected(new Set());
+    setBulkMsg({
+      kind: fail === 0 ? "ok" : "err",
+      text: `${ok} actualizados${fail > 0 ? `, ${fail} fallaron` : ""}.`,
+    });
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -640,6 +680,56 @@ export default function ActiveCreatorsTab() {
         </div>
       )}
 
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div
+          className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 py-3 rounded-lg"
+          style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }}
+        >
+          <div className="text-sm text-white">
+            <span className="font-semibold">{selected.size}</span> seleccionados
+            <button
+              onClick={() => setSelected(new Set())}
+              className="ml-3 text-xs text-white/70 underline hover:text-white"
+            >
+              Limpiar
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => runBulkLock(true)}
+              disabled={bulkLoading}
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold text-white disabled:opacity-50"
+              style={{ background: "rgba(239,68,68,0.7)" }}
+            >
+              {bulkLoading ? "…" : "Lock onboarding"}
+            </button>
+            <button
+              onClick={() => runBulkLock(false)}
+              disabled={bulkLoading}
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold text-white disabled:opacity-50"
+              style={{ background: "rgba(94,209,196,0.7)" }}
+            >
+              {bulkLoading ? "…" : "Unlock onboarding"}
+            </button>
+          </div>
+        </div>
+      )}
+      {bulkMsg && (
+        <div
+          className="px-4 py-3 rounded-lg text-sm flex items-center justify-between"
+          style={{
+            background: bulkMsg.kind === "ok" ? "rgba(94,209,196,0.1)" : "rgba(239,68,68,0.1)",
+            color: bulkMsg.kind === "ok" ? "#5ED1C4" : "#FF453A",
+          }}
+        >
+          <span>{bulkMsg.text}</span>
+          <button onClick={() => setBulkMsg(null)} className="ml-3 text-xs underline">
+            Cerrar
+          </button>
+        </div>
+      )}
+
       {creators.map((creator) => {
         const suspended = creator.creator_status === "suspended";
         const eligible = creator.creator_status === "eligible";
@@ -667,6 +757,13 @@ export default function ActiveCreatorsTab() {
             }}
           >
             <div className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={selected.has(creator.id)}
+                onChange={() => toggleSelect(creator.id)}
+                aria-label={`Seleccionar ${displayName}`}
+                className="mt-3 h-4 w-4 accent-[#D4007A] cursor-pointer flex-shrink-0"
+              />
               <CreatorAvatar creator={creator} />
 
               <div className="flex-1 min-w-0">
