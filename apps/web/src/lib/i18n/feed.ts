@@ -66,6 +66,17 @@ const strings = {
     viewAllPosts: "View all posts",
     noPostsHome: "No posts yet",
     beFirstHome: "Be the first to post something!",
+    // Feed tabs
+    tabLatest: "Latest",
+    tabSubscribed: "Subscribed",
+    tabFollowing: "Following",
+    tabNew: "New",
+    tabNearby: "Nearby",
+    tabHot: "Hot right now",
+    editTabOrder: "Edit order",
+    doneEditingOrder: "Done",
+    resetTabOrder: "Reset",
+    dragToReorder: "Drag to reorder",
   },
   es: {
     socialFeedTitle: "PNP Feed",
@@ -126,6 +137,17 @@ const strings = {
     viewAllPosts: "Ver todas las publicaciones",
     noPostsHome: "Aún no hay publicaciones",
     beFirstHome: "¡Sé el primero en publicar algo!",
+    // Feed tabs
+    tabLatest: "Recientes",
+    tabSubscribed: "Suscritos",
+    tabFollowing: "Siguiendo",
+    tabNew: "Nuevos",
+    tabNearby: "Cerca",
+    tabHot: "Hot right now",
+    editTabOrder: "Editar orden",
+    doneEditingOrder: "Listo",
+    resetTabOrder: "Restablecer",
+    dragToReorder: "Arrastra para reordenar",
   },
 } as const;
 

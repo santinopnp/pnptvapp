@@ -142,15 +142,15 @@ function StreamNoTokensWall() {
         </svg>
       </div>
       <div>
-        <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Tokens requeridas</h2>
-        <p className="text-sm text-pnp-textSecondary max-w-xs">Los shows en vivo son de pago. Necesitas tokens para ver.</p>
+        <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Inicia sesión para ver</h2>
+        <p className="text-sm text-pnp-textSecondary max-w-xs">Los shows en vivo son de pago. Inicia sesión para comprar tokens y ver.</p>
       </div>
       <button
-        onClick={() => navigate('/tokens')}
+        onClick={() => navigate('/login')}
         className="px-6 py-3 rounded-xl text-sm font-bold text-white"
         style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
       >
-        Comprar tokens →
+        Iniciar sesión →
       </button>
       <button onClick={() => navigate(-1)} className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary">
         ← Go back
@@ -159,7 +159,7 @@ function StreamNoTokensWall() {
   );
 }
 
-function InsufficientTokensWall({ current, streamName }: { current?: number; streamName?: string }) {
+function InsufficientTokensWall({ current, streamName, onBuyTokens }: { current?: number; streamName?: string; onBuyTokens: () => void }) {
   const navigate = useNavigate();
   return (
     <div
@@ -189,7 +189,7 @@ function InsufficientTokensWall({ current, streamName }: { current?: number; str
         </p>
       </div>
       <button
-        onClick={() => navigate("/tokens")}
+        onClick={onBuyTokens}
         className="w-full py-3 rounded-xl text-sm font-bold text-white active:scale-95 transition-transform"
         style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
       >
@@ -1514,6 +1514,7 @@ function StreamInner() {
           <InsufficientTokensWall
             current={entryError === "INSUFFICIENT_TOKENS" ? (tokenBalance ?? undefined) : undefined}
             streamName={stream?.name}
+            onBuyTokens={() => setShowTopUp(true)}
           />
         </div>
       )}

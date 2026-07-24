@@ -6,6 +6,7 @@ import { NearbyBadge } from "@/components/NearbyBadge";
 import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import {
   getReplies,
   createReply,
@@ -172,6 +173,13 @@ export interface SocialPostCardProps {
   distanceKm?: number | null;
   initialShowReplies?: boolean;
   /**
+   * When true, the "Subscribe to <creator>" CTA banner is suppressed.
+   * Used on creator profiles where the same call-to-action is already the
+   * main pill above the wall — showing it on every post would be redundant.
+   * The banner is always shown in the community feed (default false).
+   */
+  hideCreatorCta?: boolean;
+  /**
    * Reply id to scroll to and highlight after replies load. Used when the user
    * arrives via a mention/tag notification whose real target was a comment on
    * this post — so they see the parent context AND their specific comment.
@@ -212,6 +220,7 @@ export default function SocialPostCard({
   distanceKm,
   initialShowReplies,
   highlightReplyId,
+  hideCreatorCta = false,
 }: SocialPostCardProps) {
   const { feed: t, lang } = useI18n();
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
@@ -298,13 +307,19 @@ export default function SocialPostCard({
     try { sessionStorage.setItem(primeUpsellKey, "1"); } catch { /* ignore */ }
     setPrimeUpsellDismissed(true);
   };
+  // Retroactive rule (2026-07-24): every free post from an active creator
+  // gets a Subscribe CTA in the community feed. Applies to all media types
+  // — text, image, video — not just videos as before. Suppressed on the
+  // creator's own profile via the `hideCreatorCta` prop (redundant there).
   const showCreatorSubscribeUpsell =
+    !hideCreatorCta &&
     !showPrimeUpsell &&
     !isSantinoAuthor &&
-    isVideoPost &&
     post.author_creator_status === "active" &&
     ((post.author_creator_price as number | undefined) ?? 0) > 0 &&
     !post.is_exclusive &&
+    !post.is_promoted &&
+    !post.is_carousel &&
     !isOwn;
   const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
   const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
@@ -314,6 +329,10 @@ export default function SocialPostCard({
     try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
     setCreatorUpsellDismissed(true);
   };
+
+  // Feed CTA banner (2026-07-24): opens the shared CreatorSubscribeWizard
+  // inline right under the post card — no navigation to the profile.
+  const [showFeedSubPanel, setShowFeedSubPanel] = useState(false);
 
   const handleWofToggle = useCallback(async () => {
     if (wofToggling) return;
@@ -1530,31 +1549,59 @@ export default function SocialPostCard({
                 </a>
               )}
 
-              {/* Creator subscribe upsell — other creators' free videos push their own subscription.
-                  Deep-links to /profile/<id>?action=subscribe&open=1 so CreatorProfilePage auto-kicks
-                  the confirmation → checkout flow instead of just landing on the profile. */}
+              {/* Creator subscribe upsell (2026-07-24): shown on every free post
+                  from an active creator in the community feed. Opens an INLINE
+                  checkout under the banner — no navigation to the profile — so
+                  subscribing is 1-tap. Suppressed on creator profile pages
+                  (hideCreatorCta=true) where the pill above the wall does the job. */}
               {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
-                <a
-                  href={`/profile/${post.author_id}?action=subscribe&open=1`}
-                  className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
-                  style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
-                >
-                  <span className="flex-1">
-                    {lang === "es"
-                      ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} para ver contenido exclusivo`
-                      : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} for exclusive content`}
-                  </span>
-                  <span aria-hidden="true">→</span>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
-                    aria-label="Dismiss"
-                    className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1"
-                    style={{ color: "#04252b" }}
-                  >
-                    ×
-                  </button>
-                </a>
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  {!showFeedSubPanel ? (
+                    <div
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold"
+                      style={{ background: "linear-gradient(90deg, #D4007A 0%, #E69138 100%)", color: "#fff" }}
+                    >
+                      <span className="flex-1">
+                        {lang === "es"
+                          ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} · $${Number(post.author_creator_price || 0).toFixed(0)}/mes — profile, channel, hangout & DM`
+                          : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} · $${Number(post.author_creator_price || 0).toFixed(0)}/mo — profile, channel, hangout & DM`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowFeedSubPanel(true)}
+                        className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-white/95 hover:bg-white transition-colors"
+                        style={{ color: "#D4007A" }}
+                      >
+                        {lang === "es" ? "Suscribirme" : "Subscribe"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={dismissCreatorUpsell}
+                        aria-label="Dismiss"
+                        className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors -mr-1"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <CreatorSubscribeWizard
+                      creatorId={String(post.author_id)}
+                      creatorName={post.author_first_name || post.author_username || undefined}
+                      username={post.author_username}
+                      priceUsd={Number(post.author_creator_price || 0)}
+                      lang={lang === "es" ? "es" : "en"}
+                      compact
+                      storageKey={`pnp_creator_sub_${post.author_id}`}
+                      onSuccess={() => {
+                        // Dismiss the upsell for this creator across the feed.
+                        try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+                        setCreatorUpsellDismissed(true);
+                        setShowFeedSubPanel(false);
+                      }}
+                      onClose={() => setShowFeedSubPanel(false)}
+                    />
+                  )}
+                </div>
               )}
             </>
           )}

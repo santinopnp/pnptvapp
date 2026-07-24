@@ -222,6 +222,10 @@ router.get('/enrollment', authGuard, creatorController.getEnrollment);
 // Legacy direct activation — admin-only; bypasses KYC enrollment flow
 router.post('/activate', adminGuard, creatorController.activateCreator);
 
+// Creator sets their own monthly subscription price ($1-$500). 2026-07-24 —
+// replaces the deprecated Ice/Crystal/Diamond tier switcher.
+router.put('/price', authGuard, creatorGuard, creatorController.setCreatorPrice);
+
 router.get('/dashboard', authGuard, creatorGuard, creatorController.getDashboard);
 
 // Creator wallet routes

@@ -154,7 +154,7 @@ class DmService {
               if (dmIntroUsed >= DM_INTRO_LIMIT) {
                 throw {
                   statusCode: 403,
-                  message: `You've used all ${DM_INTRO_LIMIT} free messages with this creator. Upgrade to PRIME for unlimited access.`,
+                  message: `You've used your ${DM_INTRO_LIMIT} free intro messages with this creator. Subscribe to unlock unlimited DMs (also unlocks their private hangout and paid channel).`,
                   code: 'CREATOR_DM_RESTRICTED',
                   remaining: 0,
                 };

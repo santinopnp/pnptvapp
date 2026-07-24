@@ -75,6 +75,12 @@ const strings = {
     saving: "Saving...",
     invalidDpnsHandle: "Invalid DPNS handle",
     viewPurchaseHistory: "View purchase history",
+    giftTokensLabel: "gift tokens",
+    santinoGiftLabel: "Santino gift tokens",
+    walletTooltip: (balance: number, gift: number) =>
+      gift > 0
+        ? `${balance} tokens · +${gift} gift tokens — tap to buy`
+        : `${balance} tokens — tap to buy`,
 
     // Buy tokens modal
     buyPnpTokensTitle: "Buy PNP Tokens with Dash",
@@ -487,6 +493,12 @@ const strings = {
     saving: "Guardando...",
     invalidDpnsHandle: "Identificador DPNS inválido",
     viewPurchaseHistory: "Ver historial de compras",
+    giftTokensLabel: "tokens de regalo",
+    santinoGiftLabel: "regalo de Santino",
+    walletTooltip: (balance: number, gift: number) =>
+      gift > 0
+        ? `${balance} tokens · +${gift} tokens de regalo — toca para comprar`
+        : `${balance} tokens — toca para comprar`,
 
     // Buy tokens modal
     buyPnpTokensTitle: "Comprar Tokens PNP con Dash",

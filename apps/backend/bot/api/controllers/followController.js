@@ -25,9 +25,17 @@ const followUser = async (req, res) => {
 
   try {
     // Check target exists
-    const targetRes = await query('SELECT id, username, first_name FROM users WHERE id = $1', [targetId]);
+    const targetRes = await query('SELECT id, username, first_name, creator_status FROM users WHERE id = $1', [targetId]);
     if (!targetRes.rows.length) return res.status(404).json({ error: 'User not found' });
     const target = targetRes.rows[0];
+
+    // Creators do not accept follows — only subscriptions. Enforced 2026-07-23.
+    if (target.creator_status === 'active') {
+      return res.status(400).json({
+        error: 'CANNOT_FOLLOW_CREATOR',
+        message: 'Creators only accept subscriptions. Subscribe to see their content.',
+      });
+    }
 
     // Block check — bidirectional: neither party can follow the other if a block exists
     const blockRes = await query(
@@ -304,7 +312,14 @@ const getFollowingFeed = async (req, res) => {
     );
 
     const hasMore = result.rows.length > limit;
-    const rawPosts = result.rows.slice(0, limit);
+    let rawPosts = result.rows.slice(0, limit);
+
+    // Apply discovery boost (creator=3, online=2, PRIME=1). Following feed
+    // previously skipped this, so creators you follow were lost among older
+    // posts. Boost only reorders — cursor pagination still resumes correctly.
+    try {
+      rawPosts = await require('../../../services/socialPostService')._applyDiscoveryBoost(rawPosts);
+    } catch { /* non-fatal */ }
 
     // Determine content_locked for exclusive posts the viewer cannot access (H-02)
     const allowedTiers = new Set(['free']);

@@ -846,14 +846,13 @@ function ChannelDetailView({
                 <div className="grid grid-cols-2 gap-2">
                   {([
                     { value: "free" as const, label: "Free", color: "#5ED1C4", bg: "rgba(94,209,196,0.15)" },
-                    { value: "subscription" as const, label: "Incl. with my subscription", color: "#D4007A", bg: "rgba(212,0,122,0.15)" },
-                    { value: "prime" as const, label: "Included with PRIME", color: "#A78BFA", bg: "rgba(167,139,250,0.15)" },
-                    { value: "paid" as const, label: "Paid (monthly)", color: "#E69138", bg: "rgba(230,145,56,0.15)" },
+                    { value: "subscription" as const, label: "Paid", color: "#D4007A", bg: "rgba(212,0,122,0.15)" },
                   ]).map(({ value, label, color, bg }) => (
                     <button
                       key={value}
                       type="button"
-                      onClick={() => setEditForm((p) => ({ ...p, accessType: value, priceUsd: value !== "paid" ? 0 : (p.priceUsd || 9.99) }))}
+                      disabled={channel?.accessType === "prime"}
+                      onClick={() => setEditForm((p) => ({ ...p, accessType: value, priceUsd: 0 }))}
                       className="py-2 px-3 rounded-lg text-xs font-medium transition-all border"
                       style={editForm.accessType === value
                         ? { background: bg, color, borderColor: color }
@@ -2317,14 +2316,12 @@ function ChannelsInner() {
                   <div className="grid grid-cols-2 gap-2">
                     {([
                       { value: "free" as const, label: "Free", color: "#5ED1C4", bg: "rgba(94,209,196,0.15)" },
-                      { value: "subscription" as const, label: "Incl. with my subscription", color: "#D4007A", bg: "rgba(212,0,122,0.15)" },
-                      { value: "prime" as const, label: "Included with PRIME", color: "#A78BFA", bg: "rgba(167,139,250,0.15)" },
-                      { value: "paid" as const, label: "Paid (monthly)", color: "#E69138", bg: "rgba(230,145,56,0.15)" },
+                      { value: "subscription" as const, label: "Paid", color: "#D4007A", bg: "rgba(212,0,122,0.15)" },
                     ]).map(({ value, label, color, bg }) => (
                       <button
                         key={value}
                         type="button"
-                        onClick={() => setCreateForm((p) => ({ ...p, accessType: value, priceUsd: value !== "paid" ? 0 : (p.priceUsd || 9.99) }))}
+                        onClick={() => setCreateForm((p) => ({ ...p, accessType: value, priceUsd: 0 }))}
                         className="py-2 px-3 rounded-lg text-xs font-medium transition-all border"
                         style={createForm.accessType === value
                           ? { background: bg, color, borderColor: color }

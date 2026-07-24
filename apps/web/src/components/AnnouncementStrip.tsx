@@ -107,7 +107,7 @@ const TIP_MESSAGES: RawMessage[] = [
   { category: "TIP", en: "Apply for creator and turn your cam into income.", es: "Solicita ser creador y convierte tu cámara en ingresos.", href: "/become-a-model" },
   { category: "TIP", en: "Book a 1-on-1 call with a creator from their profile.", es: "Reserva una llamada 1-a-1 con un creador desde su perfil.", href: "/creators" },
   { category: "TIP", en: "Schedule a hangout — invite exactly the people you want.", es: "Programa un hangout — invita exactamente a la gente que quieras.", href: "/chat" },
-  { category: "TIP", en: "PRIME videos load faster than ever. Open one now.", es: "Los videos PRIME cargan más rápido que nunca. Abre uno ya.", href: "/prime" },
+  { category: "TIP", en: "PRIME videos load faster than ever. Open one now.", es: "Los videos PRIME cargan más rápido que nunca. Abre uno ya.", href: "/videorama" },
   { category: "TIP", en: "Find people nearby on the map — cruising, made easy.", es: "Encuentra gente cerca en el mapa — cruising, sin complicarte.", href: "/nearby" },
 ];
 

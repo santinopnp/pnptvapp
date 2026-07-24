@@ -141,6 +141,15 @@ export default function Profile() {
   const { showTutorial, dismissTutorial, dismissForever } = useTutorial("profile");
   const { showTutorial: showCreatorTutorial, dismissTutorial: dismissCreatorTutorial, dismissForever: dismissCreatorForever } = useTutorial("creatorProfile");
 
+  // Creators' canonical profile is /c/:username — including their own self-view.
+  // Editing moves to Creator Settings, so Profile.tsx is only for regular members.
+  const authUserCreatorStatus = (user as (typeof user & { creator_status?: string }) | null)?.creator_status;
+  useEffect(() => {
+    if (isOwnProfile && authUserCreatorStatus === "active" && user?.username) {
+      navigate(`/c/${user.username}`, { replace: true });
+    }
+  }, [isOwnProfile, authUserCreatorStatus, user?.username, navigate]);
+
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [posts, setPosts] = useState<SocialPostItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -473,18 +482,11 @@ export default function Profile() {
           !cursor && isAuthenticated ? getFollowStatus(targetUserId).catch(() => null) : Promise.resolve(null),
         ]);
         if (!cursor) {
-          // Active creators get their own dedicated profile page at /c/:username
-          // — UNLESS the loaded profile is the viewer's own account, in which
-          // case send them back to /profile so they see the private self-view
-          // (edit controls, own settings, etc.). Prevents inconsistency where
-          // clicking your own @mention landed you on your public creator page.
+          // Active creators — including self — always land on /c/:username.
+          // The early useEffect above catches most cases; this handles the path
+          // where a member views another user by numeric ID and that user turns
+          // out to be a creator.
           if (res.profile.creatorStatus === "active" && res.profile.username) {
-            const isSelfByUsername = !!user?.username
-              && res.profile.username.toLowerCase() === user.username.toLowerCase();
-            if (isSelfByUsername) {
-              navigate("/profile", { replace: true });
-              return;
-            }
             navigate(`/c/${res.profile.username}`, { replace: true });
             return;
           }
@@ -1074,14 +1076,9 @@ export default function Profile() {
     );
   }
 
-  // Creators have exactly one public profile design — the mockup page at
-  // /c/:username. Every other entry point (creator cards, avatars, post
-  // authors, /profile/:userId legacy links) still lands here first; bounce
-  // to the canonical page so visitors never see the old Profile.tsx layout
-  // for a creator. The creator's OWN view stays on this page — /c/ has no
-  // edit affordances (avatar upload, bio, settings), so redirecting them
-  // too would strand them with no way to manage their profile.
-  if (!isOwnProfile && profile.creatorStatus === "active" && profile.username) {
+  // Creators — including the creator themselves — always land on /c/:username.
+  // Edit affordances live in Creator Studio → Settings.
+  if (profile.creatorStatus === "active" && profile.username) {
     return <Navigate to={`/c/${profile.username}`} replace />;
   }
 

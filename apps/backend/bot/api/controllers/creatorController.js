@@ -88,11 +88,19 @@ const getEligibility = async (req, res) => {
 };
 
 // POST /api/webapp/creator/activate
+// 2026-07-24: prefer explicit priceUsd; legacy `tier` string still accepted.
 const activateCreator = async (req, res) => {
   try {
-    const { tier, termsAccepted } = req.body || {};
-    const result = await CreatorService.activateCreator(req.user.id, tier, termsAccepted);
-    // Update session role so model routes work immediately without re-login
+    const { tier, priceUsd, termsAccepted } = req.body || {};
+    let arg;
+    if (Number.isFinite(Number(priceUsd))) {
+      arg = { priceUsd: Number(priceUsd) };
+    } else if (tier) {
+      arg = tier;
+    } else {
+      return res.status(400).json({ error: 'priceUsd (or legacy tier) is required' });
+    }
+    const result = await CreatorService.activateCreator(req.user.id, arg, termsAccepted);
     if (req.session?.user?.role !== undefined) {
       req.session.user.role = 'model';
     }
@@ -100,6 +108,17 @@ const activateCreator = async (req, res) => {
   } catch (err) {
     logger.error('activateCreator error', err);
     return res.status(400).json({ error: err.message });
+  }
+};
+
+// PUT /api/webapp/creator/price — creator sets their own monthly price.
+const setCreatorPrice = async (req, res) => {
+  try {
+    const priceUsd = Number(req.body?.priceUsd);
+    const result = await CreatorService.updateCreatorPrice(req.user.id, priceUsd);
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message, code: err.code });
   }
 };
 
@@ -1032,13 +1051,36 @@ const createChannel = async (req, res) => {
     }
     const trimmedName = name.trim().slice(0, 100);
 
-    // Access tier — creators choose:
-    //   free         — open to everyone
-    //   paid         — separate monthly fee for this specific channel
-    //   subscription — included with creator's profile subscription (Ice/Crystal/Diamond)
-    //   prime        — included with PRIME (any active prime entitlement unlocks)
-    const ALLOWED_ACCESS_TYPES = new Set(['free', 'paid', 'subscription', 'prime']);
-    const safeAccessType = ALLOWED_ACCESS_TYPES.has(accessType) ? accessType : 'free';
+    // Access tier — Phase 1 rule (2026-07-24): creators get exactly ONE
+    // paid channel (their canonical subscription channel, auto-provisioned).
+    // Free channels are deprecated. Additional paid/subscription channels are
+    // blocked pending Phase 2 (themed extra paid channels).
+    //   subscription — the canonical channel (auto-provisioned on onboarding)
+    //   paid         — [Phase 2 only] separate themed paid channel
+    //   prime        — included with PRIME (admin-only, no creator self-create)
+    const ALLOWED_ACCESS_TYPES = new Set(['paid', 'subscription', 'prime']);
+    const safeAccessType = ALLOWED_ACCESS_TYPES.has(accessType) ? accessType : 'subscription';
+
+    if (safeAccessType === 'free') {
+      return res.status(400).json({ error: 'Free channels are no longer supported. Post directly to your wall — free posts get a Subscribe CTA in the community feed.', code: 'FREE_CHANNELS_DEPRECATED' });
+    }
+
+    if (safeAccessType === 'subscription' || safeAccessType === 'paid') {
+      const dup = await query(
+        `SELECT id FROM creator_channels
+          WHERE creator_id = $1 AND is_active = true
+            AND access_type IN ('subscription', 'paid')`,
+        [req.user.id]
+      );
+      if (dup.rows.length > 0) {
+        return res.status(400).json({
+          error: 'You already have a paid channel. Phase 1 allows only one paid channel per creator; themed extra paid channels arrive in Phase 2.',
+          code: 'ONE_PAID_CHANNEL_LIMIT',
+          existingChannelId: dup.rows[0].id,
+        });
+      }
+    }
+
     let safePriceUsd = 0;
     if (safeAccessType === 'paid') {
       const parsed = Number(priceUsd);
@@ -2064,6 +2106,7 @@ const provisionDefaults = async (req, res) => {
 module.exports = {
   getEligibility,
   activateCreator,
+  setCreatorPrice,
   getDashboard,
   listApplications,
   approveApplication,

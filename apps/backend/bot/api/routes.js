@@ -9044,7 +9044,12 @@ app.get('/api/webapp/channels', softAuth, asyncHandler(async (req, res) => {
         params.push(`%${search}%`);
         paramIdx++;
       }
-      conditions.push(`(SELECT COUNT(*)::int FROM channel_videos cv WHERE cv.channel_id = cc.id AND cv.status = 'published') > 0`);
+      // PRIME + system channels are pinned regardless of video count (they may be post-driven).
+      conditions.push(`(
+        (SELECT COUNT(*)::int FROM channel_videos cv WHERE cv.channel_id = cc.id AND cv.status = 'published') > 0
+        OR cc.access_type = 'prime'
+        OR cc.is_system = true
+      )`);
 
       const countRes = await getPool().query(`SELECT COUNT(*)::int AS total FROM creator_channels cc WHERE ${conditions.join(' AND ')}`, params);
       const total = countRes.rows[0]?.total || 0;
@@ -9055,7 +9060,11 @@ app.get('/api/webapp/channels', softAuth, asyncHandler(async (req, res) => {
          FROM creator_channels cc
          JOIN users u ON u.id = cc.creator_id
          WHERE ${conditions.join(' AND ')}
-         ORDER BY cc.is_featured DESC, cc.post_count DESC, cc.created_at DESC
+         ORDER BY cc.is_system DESC,
+                  (cc.access_type = 'prime') DESC,
+                  cc.is_featured DESC,
+                  cc.post_count DESC,
+                  cc.created_at DESC
          LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
         [...params, limit, offset]
       );
@@ -12383,7 +12392,7 @@ app.get('/api/webapp/payments/usdc/available', usdcAvailableLimiter, asyncHandle
 
 const usdcPrepareLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 5,
+  max: 15,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   message: { success: false, error: 'Too many payment requests. Please wait a few minutes.' },
   standardHeaders: true,
@@ -16923,16 +16932,38 @@ app.get('/api/public/creator/:username',
       logger.warn('Public creator profile: availability fetch failed', { creatorId, error: availErr.message });
     }
 
-    // 9. Count total videos across all creator channels
+    // 9. Count total premium videos + total duration.
+    // Sources:
+    //   - channel_videos (VOD library, has duration_sec)
+    //   - social_posts with media_type='video' pinned to the creator's canonical
+    //     paid channel (feed videos, no duration column — count only)
+    // Total minutes is what the Subscribe CTA advertises so subscribers know
+    // the volume of premium content they're unlocking.
     let videoCount = 0;
+    let videoMinutes = 0;
     try {
-      const { rows: vcRows } = await pool.query(
-        `SELECT COUNT(*)::int AS cnt FROM channel_videos cv
-         JOIN creator_channels cc ON cc.id = cv.channel_id
-         WHERE cc.creator_id = $1 AND cv.is_deleted = false AND cv.status = 'published'`,
-        [creatorId]
-      );
-      videoCount = vcRows[0]?.cnt ?? 0;
+      const [vcRes, spRes] = await Promise.all([
+        pool.query(
+          `SELECT
+             COUNT(*)::int AS cnt,
+             COALESCE(SUM(cv.duration_sec), 0)::int AS total_seconds
+           FROM channel_videos cv
+           JOIN creator_channels cc ON cc.id = cv.channel_id
+           WHERE cc.creator_id = $1 AND cv.status = 'published'`,
+          [creatorId]
+        ),
+        pool.query(
+          `SELECT COUNT(*)::int AS cnt
+             FROM social_posts sp
+            WHERE sp.user_id = $1
+              AND sp.is_deleted = FALSE
+              AND sp.media_type = 'video'
+              AND sp.is_exclusive = TRUE`,
+          [creatorId]
+        ),
+      ]);
+      videoCount = (vcRes.rows[0]?.cnt ?? 0) + (spRes.rows[0]?.cnt ?? 0);
+      videoMinutes = Math.round((vcRes.rows[0]?.total_seconds ?? 0) / 60);
     } catch (_) { /* non-fatal */ }
 
     // 10. Count exclusive photos and videos in creator_media (gated by is_premium)
@@ -17140,6 +17171,7 @@ app.get('/api/public/creator/:username',
         creator_verified: creator.creator_verified || false,
         creator_subscription_paused: creator.creator_subscription_paused || false,
         videoCount: videoCount + exclusiveMediaVideoCount,
+        videoMinutes,
         photoCount,
         postCount,
         followerCount,

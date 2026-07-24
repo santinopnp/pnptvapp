@@ -355,27 +355,36 @@ class NearbyService {
         }
       });
 
-      // Sort: followed → PRIME → distance. Followers are the strongest signal
-      // (you asked to see them); PRIME breaks ties among non-followed users so
-      // paying members get visibility above identical-distance free users.
+      // Sort: followed → CREATOR → PRIME → distance. Creators sit above PRIME
+      // because follow-a-creator is disabled (2026-07-23) and this is their
+      // only nearby-discovery boost. Followers still lead — you asked to see them.
       try {
         const ids = privacyFiltered.map(u => String(u.user_id));
-        const [followRes, tierRes] = await Promise.all([
+        const [followRes, statusRes] = await Promise.all([
           query('SELECT following_id FROM user_follows WHERE follower_id=$1', [userId]),
           ids.length > 0
-            ? query(`SELECT id::text AS id, tier FROM users WHERE id = ANY($1::text[]) AND tier = 'PRIME'`, [ids])
+            ? query(`SELECT id::text AS id, tier, creator_status FROM users WHERE id = ANY($1::text[])`, [ids])
             : Promise.resolve({ rows: [] }),
         ]);
         const followedIds = new Set(followRes.rows.map(r => String(r.following_id)));
-        const primeIds = new Set(tierRes.rows.map(r => String(r.id)));
+        const primeIds = new Set();
+        const creatorIds = new Set();
+        for (const r of statusRes.rows) {
+          if (r.tier === 'PRIME') primeIds.add(String(r.id));
+          if (r.creator_status === 'active') creatorIds.add(String(r.id));
+        }
         privacyFiltered.forEach(u => {
           u.is_followed = followedIds.has(String(u.user_id));
+          u.is_creator = creatorIds.has(String(u.user_id));
           u.is_prime = primeIds.has(String(u.user_id));
         });
         privacyFiltered.sort((a, b) => {
           const aF = a.is_followed ? 0 : 1;
           const bF = b.is_followed ? 0 : 1;
           if (aF !== bF) return aF - bF;
+          const aC = a.is_creator ? 0 : 1;
+          const bC = b.is_creator ? 0 : 1;
+          if (aC !== bC) return aC - bC;
           const aP = a.is_prime ? 0 : 1;
           const bP = b.is_prime ? 0 : 1;
           if (aP !== bP) return aP - bP;

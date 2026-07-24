@@ -1589,6 +1589,15 @@ export function changeTier(tier: "ice" | "crystal" | "diamond"): Promise<{ succe
   return request("/api/webapp/creator/change-tier", { method: "POST", body: { tier } });
 }
 
+/**
+ * Set the creator's monthly subscription price ($1-$500).
+ * Replaces the deprecated Ice/Crystal/Diamond tier switcher (2026-07-24).
+ * Mirrors the price to the creator's canonical paid channel.
+ */
+export function setCreatorPrice(priceUsd: number): Promise<{ success: boolean; priceUsd: number }> {
+  return request("/api/webapp/creator/price", { method: "PUT", body: { priceUsd } });
+}
+
 export function getPublicProfile(
   userId: string,
   cursor?: string,
@@ -1619,7 +1628,7 @@ export function getPublicPost(
 export const getSocialPost = getPublicPost;
 
 /** Feed filter variants for the 5-tab home feed (2026-07-23). */
-export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot";
+export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot" | "latest";
 
 export function getSocialFeedPosts(
   cursor?: string,
@@ -9354,6 +9363,8 @@ export interface CreatorPublicProfile {
     creator_verified: boolean;
     creator_subscription_paused: boolean;
     videoCount?: number;
+    /** Total minutes of published video across all creator channels. */
+    videoMinutes?: number;
     photoCount?: number;
     postCount: number;
     followerCount: number;

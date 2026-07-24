@@ -119,11 +119,17 @@ class CreatorService {
   }
 
   // ── Tier Config ──────────────────────────────────────────────────────────────
-
+  // Deprecated 2026-07-24: preset Ice/Crystal/Diamond tiers were removed —
+  // creators now set their own price in [$1, $500]. Kept as a lookup for legacy
+  // creator_type strings persisted in DB (so existing "diamond" values still
+  // render nicely). All new activations write creator_type='custom'.
+  static PRICE_MIN = 1;
+  static PRICE_MAX = 500;
   static TIERS = {
     ice:     { price: 5.00,  label: 'Ice Profile' },
     crystal: { price: 10.00, label: 'Crystal Profile' },
     diamond: { price: 15.00, label: 'Diamond Profile' },
+    custom:  { price: null,  label: 'Custom' },
   };
 
   /**
@@ -156,8 +162,27 @@ class CreatorService {
 
   // ── Activate (Tiered) ─────────────────────────────────────────────────────
 
-  static async activateCreator(userId, tier = 'ice', termsAccepted = false) {
-    if (!this.TIERS[tier]) throw new Error('Invalid tier. Choose ice, crystal, or diamond.');
+  // Signature (2026-07-24 rewrite): accepts either a tier string (legacy) OR a
+  // custom price. New callers pass { priceUsd } explicitly; old callers passing
+  // a raw tier string still work.
+  static async activateCreator(userId, tierOrOpts = 'custom', termsAccepted = false) {
+    // Backwards compat: string arg = legacy tier
+    let tier = 'custom';
+    let priceUsd = null;
+    if (typeof tierOrOpts === 'string') {
+      if (this.TIERS[tierOrOpts]) {
+        tier = tierOrOpts;
+        priceUsd = this.TIERS[tier].price ?? 10;
+      } else {
+        throw new Error(`Unknown tier "${tierOrOpts}". Pass { priceUsd } instead.`);
+      }
+    } else if (tierOrOpts && typeof tierOrOpts === 'object') {
+      priceUsd = Number(tierOrOpts.priceUsd);
+      if (!Number.isFinite(priceUsd) || priceUsd < this.PRICE_MIN || priceUsd > this.PRICE_MAX) {
+        throw new Error(`Price must be between $${this.PRICE_MIN} and $${this.PRICE_MAX}`);
+      }
+      tier = 'custom';
+    }
     if (!termsAccepted) throw new Error('You must accept the Creator Terms & Conditions to activate.');
 
     const userRes = await query('SELECT creator_status FROM users WHERE id = $1', [userId]);
@@ -167,7 +192,7 @@ class CreatorService {
       throw new Error('User is not eligible to activate as a creator');
     }
 
-    const { price } = this.TIERS[tier];
+    const price = priceUsd;
 
     await query(
       `UPDATE users SET
@@ -208,7 +233,53 @@ class CreatorService {
 
     CreatorService.notifyCreatorActivated(userId, { actorId: String(userId), source: 'self' });
 
-    return { success: true, type: tier, price };
+    return { success: true, type: tier, price, priceUsd: price };
+  }
+
+  /**
+   * Update a creator's monthly subscription price. Mirrors the price to the
+   * creator's canonical paid channel so the channel-detail CTA stays in sync
+   * with the profile CTA. Also invalidates entitlement cache so downstream
+   * viewers immediately see the new price.
+   *
+   * @param {string|number} userId
+   * @param {number} priceUsd — in [PRICE_MIN, PRICE_MAX]
+   */
+  static async updateCreatorPrice(userId, priceUsd) {
+    const price = Number(priceUsd);
+    if (!Number.isFinite(price) || price < this.PRICE_MIN || price > this.PRICE_MAX) {
+      const err = new Error(`Price must be between $${this.PRICE_MIN} and $${this.PRICE_MAX}`);
+      err.code = 'INVALID_PRICE';
+      err.statusCode = 400;
+      throw err;
+    }
+    const userRes = await query(
+      `SELECT creator_status FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (!userRes.rows[0] || userRes.rows[0].creator_status !== 'active') {
+      const err = new Error('Only active creators can set a price');
+      err.code = 'NOT_ACTIVE_CREATOR';
+      err.statusCode = 403;
+      throw err;
+    }
+    await query(
+      `UPDATE users SET creator_price_usd = $2, creator_type = 'custom', updated_at = NOW() WHERE id = $1`,
+      [userId, price]
+    );
+    // Mirror to canonical subscription channel (do NOT touch prime-flagged ones — those unlock via PRIME).
+    await query(
+      `UPDATE creator_channels
+          SET price_usd = $2, updated_at = NOW()
+        WHERE creator_id = $1
+          AND access_type = 'subscription'
+          AND is_active = TRUE`,
+      [String(userId), price]
+    ).catch((err) => {
+      logger.warn('updateCreatorPrice: canonical channel sync failed (non-fatal)', { userId, error: err.message });
+    });
+    logger.info('updateCreatorPrice: price updated', { userId, price });
+    return { success: true, priceUsd: price };
   }
 
   // ── Full-Time Application ──────────────────────────────────────────────────
@@ -515,8 +586,13 @@ class CreatorService {
       const slug = (user.username || String(userId)).toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 60);
       const suffix = Math.random().toString(36).slice(2, 6);
 
-      let freeChannelId = existing.find((c) => c.access_type === 'free')?.id;
-      let subChannelId = existing.find((c) => c.access_type === 'subscription')?.id;
+      // Phase 1 rule (2026-07-24): creators get ONE canonical paid channel.
+      // Free channels are deprecated (all migrated + deleted in migration 333);
+      // we no longer auto-provision one. Non-exclusive posts stay off channels
+      // and get a Subscribe CTA banner in the feed instead. A second paid
+      // channel per creator is blocked at the create endpoint (createChannel).
+      const freeChannelId = null;
+      let subChannelId = existing.find((c) => c.access_type === 'subscription' || c.access_type === 'paid')?.id;
 
       const pool = getPool();
       const client = await pool.connect();
@@ -531,15 +607,6 @@ class CreatorService {
         // deleteChannel / addCollaborator. Wizard-provisioned defaults are
         // owned by the creator and must be visible + editable — they aren't
         // admin-managed. Default value (FALSE) is correct.
-        if (!freeChannelId) {
-          const { rows } = await client.query(
-            `INSERT INTO creator_channels (creator_id, name, slug, access_type, is_active)
-             VALUES ($1, $2, $3, 'free', true)
-             ON CONFLICT (slug) DO NOTHING RETURNING id`,
-            [userId, `${firstName} Free`, `${slug}-free-${suffix}`]
-          );
-          freeChannelId = rows[0]?.id;
-        }
 
         if (!subChannelId) {
           const priceUsd = user.creator_price_usd ? parseFloat(user.creator_price_usd) : 15;
@@ -1688,15 +1755,26 @@ class CreatorService {
 
   // ── Enrollment ──────────────────────────────────────────────────────────────
 
-  static async submitEnrollment(userId, { tier, paymentMethod, paymentAddress, paymentNetwork, signatureData }, idDocumentPath, ip) {
+  static async submitEnrollment(userId, { tier, priceUsd, paymentMethod, paymentAddress, paymentNetwork, signatureData }, idDocumentPath, ip) {
     const userRes = await query('SELECT creator_status FROM users WHERE id = $1', [userId]);
     const user = userRes.rows[0];
     if (!user) throw new Error('User not found');
     if (user.creator_status === 'active') throw new Error('Creator profile already active');
     if (user.creator_status === 'pending_review') throw new Error('Enrollment already submitted and under review');
 
-    const validTiers = { ice: 5.00, crystal: 10.00, diamond: 15.00 };
-    if (!validTiers[tier]) throw new Error('Invalid tier. Choose ice, crystal, or diamond.');
+    // 2026-07-24: legacy tiers deprecated. Accept an explicit priceUsd; if a
+    // legacy `tier` string is passed, map it to its old price for backwards
+    // compat with in-flight enrollment forms.
+    const LEGACY_PRICES = { ice: 5.00, crystal: 10.00, diamond: 15.00 };
+    let resolvedPrice = Number(priceUsd);
+    let creatorType = 'custom';
+    if (!Number.isFinite(resolvedPrice) && tier && LEGACY_PRICES[tier] != null) {
+      resolvedPrice = LEGACY_PRICES[tier];
+      creatorType = tier;
+    }
+    if (!Number.isFinite(resolvedPrice) || resolvedPrice < CreatorService.PRICE_MIN || resolvedPrice > CreatorService.PRICE_MAX) {
+      throw new Error(`Monthly price must be between $${CreatorService.PRICE_MIN} and $${CreatorService.PRICE_MAX}.`);
+    }
 
     // 'dash' is the canonical crypto payout path (BTCPay Pull Payments) since
     // the Daimo USDC retirement on 2026-04-21. usdc/usdt remain accepted for
@@ -1721,12 +1799,12 @@ class CreatorService {
          id_document_path = $7, signature_data = $8,
          submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL, admin_notes = NULL,
          updated_at = NOW()`,
-      [userId, tier, ip || null, paymentMethod, paymentAddress.trim(), paymentNetwork || null, idDocumentPath, signatureData]
+      [userId, creatorType, ip || null, paymentMethod, paymentAddress.trim(), paymentNetwork || null, idDocumentPath, signatureData]
     );
 
     await query(
       `UPDATE users SET creator_status = 'pending_review', creator_type = $2, creator_price_usd = $3 WHERE id = $1`,
-      [userId, tier, validTiers[tier]]
+      [userId, creatorType, resolvedPrice]
     );
 
     // Sync terms agreement back into model_applications so getMyConsents reflects
@@ -1953,61 +2031,11 @@ class CreatorService {
     return { success: true };
   }
 
+  // Deprecated 2026-07-24: tier-based auto-upgrade removed. Creators now set
+  // their own price directly (see updateCreatorPrice). Kept as a no-op so any
+  // scheduled job that used to call this doesn't crash.
   static async checkAndUpgradeTier(userId) {
-    const { rows } = await query(
-      `SELECT creator_type, creator_subscriber_count FROM users WHERE id = $1 AND creator_status = 'active'`,
-      [userId]
-    );
-    const user = rows[0];
-    if (!user) return { upgraded: false, from: null, to: null };
-
-    const tierOrder = ['ice', 'crystal', 'diamond'];
-    const thresholds = { ice: 10, crystal: 25 };
-    const prices = { ice: 5.00, crystal: 10.00, diamond: 15.00 };
-
-    const currentTier = user.creator_type;
-    const subscriberCount = user.creator_subscriber_count || 0;
-
-    if (currentTier === 'diamond') return { upgraded: false, from: 'diamond', to: 'diamond' };
-
-    const currentIndex = tierOrder.indexOf(currentTier);
-    if (currentIndex === -1) return { upgraded: false, from: currentTier, to: null };
-
-    const nextTier = tierOrder[currentIndex + 1];
-    if (!nextTier) return { upgraded: false, from: currentTier, to: null };
-
-    const threshold = thresholds[currentTier];
-    if (subscriberCount < threshold) return { upgraded: false, from: currentTier, to: nextTier };
-
-    const newPrice = prices[nextTier];
-
-    await query(
-      `UPDATE users SET creator_type = $2, creator_price_usd = $3, updated_at = NOW() WHERE id = $1`,
-      [userId, nextTier, newPrice]
-    );
-
-    await query(
-      `UPDATE creator_enrollments SET tier = $2, updated_at = NOW()
-       WHERE user_id = $1 AND status = 'approved'`,
-      [userId, nextTier]
-    );
-
-    try {
-      NotificationEmitter.emit({
-        type: 'creator_tier_upgraded',
-        category: 'commerce',
-        priority: 'high',
-        actorId: userId,
-        targetUserId: userId,
-        entityType: 'creator_tier',
-        entityId: userId,
-        message: `Congratulations! Your creator profile has been upgraded to ${nextTier} tier 🎉 Your new subscription price is $${newPrice}/mo for new subscribers.`,
-      });
-    } catch (_) {}
-
-    logger.info('Creator tier upgraded', { userId, from: currentTier, to: nextTier, subscriberCount });
-
-    return { upgraded: true, from: currentTier, to: nextTier };
+    return { upgraded: false, from: null, to: null, deprecated: true };
   }
 
   static async rejectEnrollment(enrollmentId, adminId, notes) {

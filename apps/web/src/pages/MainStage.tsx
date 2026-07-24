@@ -1302,7 +1302,7 @@ export default function MainStage() {
             <button
               onClick={() => setShowBuyTokens(true)}
               className="relative flex items-center gap-1 px-2 py-1 rounded-full bg-white/[0.06] border border-white/10 hover:bg-white/10 active:scale-95 transition-all min-h-[44px]"
-              title={`${tokenBalance} tokens${giftedBalance + santinoGiftBalance > 0 ? ` · +${giftedBalance + santinoGiftBalance} gifted` : ""} — tap to buy`}
+              title={t.live.walletTooltip(tokenBalance, giftedBalance + santinoGiftBalance)}
             >
               {tokenBalance < 500 && (
                 <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -1312,9 +1312,9 @@ export default function MainStage() {
               </div>
               <span className="text-[11px] font-semibold text-white/80 tabular-nums">{tokenBalance}</span>
               {(giftedBalance + santinoGiftBalance) > 0 && (
-                <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[9px] font-bold" style={{ background: "rgba(212,0,122,0.20)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.30)" }}>
+                <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[9px] font-bold" style={{ background: "rgba(212,0,122,0.20)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.30)" }} title={`+${giftedBalance + santinoGiftBalance} ${t.live.giftTokensLabel}`}>
                   <svg viewBox="0 0 24 24" className="w-2 h-2 fill-current flex-shrink-0"><path d="M20 7h-3.17A3 3 0 0 0 12 4.17 3 3 0 0 0 7.17 7H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-8-1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm-3 2a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm3 13H7v-8h5v8zm5 0h-3v-8h3v8z"/></svg>
-                  +{giftedBalance + santinoGiftBalance}
+                  +{giftedBalance + santinoGiftBalance} {t.live.giftTokensLabel}
                 </span>
               )}
             </button>

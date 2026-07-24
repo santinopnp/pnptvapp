@@ -115,13 +115,14 @@ class SocialPostService {
   }
 
   /**
-   * Stable re-sort by discovery score, combining author state + post engagement
-   * so popular content bubbles up over cold posts without wholly abandoning
-   * chronology. Score composition per post:
-   *   + 2  author is online (Redis presence)
-   *   + 1  author is PRIME tier
-   *   + 0.5 author is an active creator
-   *   + 3 * log1p(likes + reposts*2 + replies*3) / (ageHours + 2)^0.6
+   * Stable re-sort by discovery score, combining author state + post engagement.
+   * Canonical ranking (per 2026-07-23 rewrite):
+   *   live (8)  — set upstream when author is currently streaming
+   *   creator (3) — author.creator_status='active'  ← bumped from 0.5 to 3.0
+   *   online (2) — Redis presence
+   *   PRIME (1)  — tier=PRIME
+   * plus a decayed engagement term. Creators sit above online/PRIME because
+   * follow-a-creator was removed and this is their only discovery boost.
    * Cursor pagination is unaffected — we only re-order the fetched window.
    */
   static async _applyDiscoveryBoost(posts) {
@@ -152,9 +153,9 @@ class SocialPostService {
           : 24;
         const popularity = (engage / Math.pow(ageHours + 2, 0.6)) * 3;
         const score =
+          (isCreator ? 3 : 0) +
           (isOnline ? 2 : 0) +
           (isPrime ? 1 : 0) +
-          (isCreator ? 0.5 : 0) +
           popularity;
         return { p, idx, score };
       });
@@ -1113,6 +1114,145 @@ class SocialPostService {
     ).then(r => {
       query('UPDATE social_posts SET mastodon_id = $1 WHERE id = $2', [r.data.id, postId]).catch(() => {});
     }).catch(() => {});
+  }
+
+  // ── Filtered feed dispatcher (2026-07-23) ─────────────────────────────────
+  // Powers the 5-tab feed. `filter` in {all, subscribed, following, new, nearby, hot}.
+  // Shares the SELECT column list with getFeed; per-filter WHERE/JOIN additions.
+  static async getFeedFiltered({
+    userId, filter = 'all', cursor, limit = 20,
+    viewerTier, isAdmin = false, blockedIds = [],
+  }) {
+    const valid = ['all', 'subscribed', 'following', 'new', 'nearby', 'hot', 'latest'];
+    const f = valid.includes(filter) ? filter : 'all';
+
+    // All-branch delegates to the original getFeed for backwards compat + boost.
+    if (f === 'all') {
+      return SocialPostService.getFeed(userId, cursor, limit, viewerTier, isAdmin, blockedIds);
+    }
+
+    const lim = Math.min(Number(limit) || 20, 50);
+    const fetchLimit = lim + 10;
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    // ── SELECT + FROM template (shared) ────────────────────────────────────
+    const SELECT = `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.category,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+              sp.promoted_link2, sp.promoted_link2_label,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers`;
+
+    const FROM_JOIN = `FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id`;
+
+    const BASE_WHERE = `sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         AND (
+           u.role NOT IN ('model', 'creator')
+           OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
+           OR u.role IN ('admin', 'superadmin')
+         )`;
+
+    // ── Per-filter overrides ──────────────────────────────────────────────
+    const params = [userId, fetchLimit];
+    let extraJoin = '';
+    let extraWhere = '';
+    let orderBy = `ORDER BY sp.id DESC`;
+    const cursorClause = cursorId ? `AND sp.id < $${(() => { params.push(cursorId); return params.length; })()}` : '';
+
+    if (f === 'subscribed') {
+      // Only posts from creators the viewer has an active subscription to.
+      extraJoin = `JOIN creator_subscriptions cs ON cs.creator_id = sp.user_id AND cs.subscriber_id = $1 AND cs.status = 'active' AND cs.expires_at > NOW()`;
+    } else if (f === 'following') {
+      extraJoin = `JOIN user_follows uf ON uf.following_id = sp.user_id AND uf.follower_id = $1`;
+    } else if (f === 'new') {
+      // Regular members (non-creators) created within the last 14 days.
+      extraWhere = `AND u.created_at > NOW() - INTERVAL '14 days'
+        AND (u.creator_status IS NULL OR u.creator_status != 'active')`;
+    } else if (f === 'nearby') {
+      // Posts from users within ~50km using bounding-box haversine approx.
+      // Viewer must have a location on record; else return empty set.
+      const viewerLocRes = await query(
+        `SELECT location_lat::float AS lat, location_lng::float AS lng
+           FROM users WHERE id = $1`,
+        [userId]
+      );
+      const vLat = viewerLocRes.rows[0]?.lat;
+      const vLng = viewerLocRes.rows[0]?.lng;
+      if (vLat == null || vLng == null) {
+        return { posts: [], nextCursor: null, needsLocation: true };
+      }
+      // Bounding box: ±0.45° lat (~50 km), ±0.45/cos(lat) lng
+      const dLat = 0.45;
+      const dLng = 0.45 / Math.max(0.2, Math.cos(vLat * Math.PI / 180));
+      params.push(vLat - dLat, vLat + dLat, vLng - dLng, vLng + dLng);
+      const iLatMin = params.length - 3;
+      const iLatMax = params.length - 2;
+      const iLngMin = params.length - 1;
+      const iLngMax = params.length;
+      extraWhere = `AND u.location_lat IS NOT NULL AND u.location_lng IS NOT NULL
+        AND u.location_lat::float BETWEEN $${iLatMin} AND $${iLatMax}
+        AND u.location_lng::float BETWEEN $${iLngMin} AND $${iLngMax}`;
+    } else if (f === 'hot') {
+      // Last 48h; ordered by engagement score (server-side). Ignore cursor —
+      // 'hot' is a bounded window of ~30 posts, no infinite scroll.
+      extraWhere = `AND sp.created_at > NOW() - INTERVAL '48 hours'`;
+      orderBy = `ORDER BY (COALESCE(sp.likes_count,0) + COALESCE(sp.reposts_count,0)*2 + COALESCE(sp.replies_count,0)*3) DESC, sp.id DESC`;
+    }
+
+    // Append blockedIds param last, always
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+
+    const sql = `${SELECT}
+       ${FROM_JOIN}
+       ${extraJoin}
+       WHERE ${BASE_WHERE}
+         ${cursorClause}
+         ${extraWhere}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+       ${orderBy}
+       LIMIT $2`;
+
+    const { rows } = await query(sql, params);
+    let posts = sanitizePostRows(rows);
+
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+
+    // Boost applies to all filters except 'hot' (already engagement-sorted) and
+    // 'latest' (pure chronological — user explicitly asked for the newest first).
+    if (f !== 'hot' && f !== 'latest') {
+      posts = SocialPostService._diversifyFeed(posts);
+      posts = await SocialPostService._applyDiscoveryBoost(posts);
+    }
+
+    const page = posts.slice(0, lim);
+    // 'hot' does not paginate (small bounded window)
+    const nextCursor = f === 'hot' ? null
+      : (posts.length > lim ? String(page[page.length - 1].id) : null);
+
+    return { posts: page, nextCursor };
   }
 }
 

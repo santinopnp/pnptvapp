@@ -7,7 +7,6 @@ import {
   getSocialFeedPosts,
   getPostsByHashtag,
   getHangoutFeed,
-  getFollowingFeed,
   togglePostLike,
   deleteSocialPost,
   updateProfile,
@@ -16,6 +15,7 @@ import {
   type SocialPostItem,
   type LiveStream,
   type FeaturedPerformer,
+  type FeedFilter,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNearbyDistances } from "@/components/NearbyBadge";
@@ -158,8 +158,61 @@ export default function SocialFeedTabs({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [freeUserLimited, setFreeUserLimited] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  // Feed mode tab — "all" (default) or "following" (only when no filter is active)
-  const [feedMode, setFeedMode] = useState<"all" | "following">("all");
+  const [needsLocation, setNeedsLocation] = useState(false);
+  // Feed tabs. Default = 'latest' (pure chronological). User can pick another
+  // tab (persisted in localStorage) and can reorder the tab strip.
+  const FEED_STORAGE_KEY = "pnptv:feed:tab";
+  const FEED_ORDER_STORAGE_KEY = "pnptv:feed:tabOrder";
+  type TabKey = Exclude<FeedFilter, "all">;
+  const DEFAULT_TAB_ORDER: TabKey[] = ["latest", "subscribed", "following", "new", "nearby", "hot"];
+  const isTabKey = (v: unknown): v is TabKey =>
+    v === "latest" || v === "subscribed" || v === "following" || v === "new" || v === "nearby" || v === "hot";
+  const [feedMode, setFeedMode] = useState<TabKey>(() => {
+    try {
+      const saved = localStorage.getItem(FEED_STORAGE_KEY);
+      if (isTabKey(saved)) return saved;
+    } catch { /* ignore */ }
+    return "latest";
+  });
+  const [tabOrder, setTabOrder] = useState<TabKey[]>(() => {
+    try {
+      const raw = localStorage.getItem(FEED_ORDER_STORAGE_KEY);
+      if (!raw) return DEFAULT_TAB_ORDER;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return DEFAULT_TAB_ORDER;
+      const kept = parsed.filter(isTabKey) as TabKey[];
+      // Append any tab keys the user hasn't seen yet (e.g. we ship a new tab).
+      const missing = DEFAULT_TAB_ORDER.filter((k) => !kept.includes(k));
+      return [...kept, ...missing];
+    } catch {
+      return DEFAULT_TAB_ORDER;
+    }
+  });
+  const [isEditingTabs, setIsEditingTabs] = useState(false);
+  const dragKeyRef = useRef<TabKey | null>(null);
+
+  const persistTabOrder = useCallback((next: TabKey[]) => {
+    setTabOrder(next);
+    try { localStorage.setItem(FEED_ORDER_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }, []);
+
+  const moveTab = useCallback((from: TabKey, to: TabKey) => {
+    if (from === to) return;
+    setTabOrder((prev) => {
+      const fromIdx = prev.indexOf(from);
+      const toIdx = prev.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const next = prev.slice();
+      next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, from);
+      try { localStorage.setItem(FEED_ORDER_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  const resetTabOrder = useCallback(() => {
+    persistTabOrder(DEFAULT_TAB_ORDER);
+  }, [persistTabOrder]);
   const canShowTabs = !hashtagFilter && !hangoutGroupId && isAuthenticated;
 
   // Content disclaimer local mirror
@@ -169,7 +222,7 @@ export default function SocialFeedTabs({
   // top of the "all" feed. Skipped for hashtag/hangout-filtered feeds.
   const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
   const [onlinePerformers, setOnlinePerformers] = useState<FeaturedPerformer[]>([]);
-  const showRails = !hashtagFilter && !hangoutGroupId && feedMode === "all";
+  const showRails = !hashtagFilter && !hangoutGroupId && feedMode === "hot";
   useEffect(() => {
     if (!showRails) return;
     let cancelled = false;
@@ -220,13 +273,12 @@ export default function SocialFeedTabs({
 
   const loadFeed = useCallback(async (cursor?: string) => {
     try {
+      setNeedsLocation(false);
       const res = hangoutGroupId
         ? await getHangoutFeed(hangoutGroupId, cursor, 20)
         : hashtagFilter
           ? await getPostsByHashtag(hashtagFilter, cursor, 20)
-          : feedMode === "following" && isAuthenticated
-            ? await getFollowingFeed(cursor)
-            : await getSocialFeedPosts(cursor, 20);
+          : await getSocialFeedPosts(cursor, 20, feedMode);
       if (res.success) {
         if (cursor) {
           setPosts((prev) => [...prev, ...res.posts]);
@@ -234,7 +286,8 @@ export default function SocialFeedTabs({
           setPosts(res.posts);
         }
         setNextCursor(res.nextCursor);
-        if ('freeUserLimited' in res) setFreeUserLimited(!!res.freeUserLimited);
+        if ('freeUserLimited' in res) setFreeUserLimited(!!(res as { freeUserLimited?: boolean }).freeUserLimited);
+        if ('needsLocation' in res) setNeedsLocation(!!(res as { needsLocation?: boolean }).needsLocation);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load feed");
@@ -242,7 +295,7 @@ export default function SocialFeedTabs({
       setIsLoading(false);
       setLoadingMore(false);
     }
-  }, [hashtagFilter, hangoutGroupId, feedMode, isAuthenticated]);
+  }, [hashtagFilter, hangoutGroupId, feedMode]);
 
   // Reset and reload whenever the hashtag filter changes
   useEffect(() => {
@@ -444,20 +497,104 @@ export default function SocialFeedTabs({
         </div>
       )}
 
-      {/* All / Following tabs */}
+      {/* Feed selector (2026-07-24). Default = Latest. Users can reorder tabs
+          via the "Edit order" button; the order persists in localStorage. */}
       {canShowTabs && (
-        <div className="flex border-b border-pnp-border mb-4">
-          <button
-            onClick={() => { if (feedMode !== "all") { setFeedMode("all"); setPosts([]); setNextCursor(null); setIsLoading(true); } }}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${feedMode === "all" ? "text-white border-b-2 border-pnp-accent" : "text-pnp-textSecondary"}`}
+        <div className="flex items-center border-b border-pnp-border mb-4 gap-1">
+          <div
+            className="flex flex-1 overflow-x-auto no-scrollbar"
+            role="tablist"
+            aria-label="Feed filters"
           >
-            All
-          </button>
+            {tabOrder.map((key) => {
+              const label =
+                key === "latest"     ? t.tabLatest     :
+                key === "subscribed" ? t.tabSubscribed :
+                key === "following"  ? t.tabFollowing  :
+                key === "new"        ? t.tabNew        :
+                key === "nearby"     ? t.tabNearby     :
+                                       t.tabHot;
+              const isActive = feedMode === key;
+              return (
+                <button
+                  key={key}
+                  role="tab"
+                  aria-selected={isActive}
+                  draggable={isEditingTabs}
+                  onDragStart={(e) => {
+                    if (!isEditingTabs) return;
+                    dragKeyRef.current = key;
+                    e.dataTransfer.effectAllowed = "move";
+                    try { e.dataTransfer.setData("text/plain", key); } catch { /* ignore */ }
+                  }}
+                  onDragOver={(e) => {
+                    if (!isEditingTabs || !dragKeyRef.current) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => {
+                    if (!isEditingTabs) return;
+                    e.preventDefault();
+                    const from = dragKeyRef.current;
+                    if (from && from !== key) moveTab(from, key);
+                    dragKeyRef.current = null;
+                  }}
+                  onDragEnd={() => { dragKeyRef.current = null; }}
+                  onClick={() => {
+                    if (isEditingTabs) return;
+                    if (feedMode === key) return;
+                    setFeedMode(key);
+                    try { localStorage.setItem(FEED_STORAGE_KEY, key); } catch { /* ignore */ }
+                    setPosts([]);
+                    setNextCursor(null);
+                    setIsLoading(true);
+                  }}
+                  className={`flex-shrink-0 px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors ${isActive ? "text-white border-b-2 border-pnp-accent" : "text-pnp-textSecondary"} ${isEditingTabs ? "cursor-grab active:cursor-grabbing bg-white/[0.04] rounded-md mx-0.5 my-1" : ""}`}
+                  title={isEditingTabs ? t.dragToReorder : undefined}
+                >
+                  {isEditingTabs && (
+                    <span className="mr-1.5 text-pnp-textSecondary" aria-hidden="true">⋮⋮</span>
+                  )}
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1 pl-1 pr-1 flex-shrink-0">
+            {isEditingTabs && (
+              <button
+                type="button"
+                onClick={resetTabOrder}
+                className="text-[11px] font-medium text-pnp-textSecondary hover:text-white px-2 py-1"
+              >
+                {t.resetTabOrder}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsEditingTabs((v) => !v)}
+              className={`text-[11px] font-semibold px-2 py-1 rounded-md transition-colors ${isEditingTabs ? "text-white bg-pnp-accent" : "text-pnp-textSecondary hover:text-white"}`}
+              aria-pressed={isEditingTabs}
+            >
+              {isEditingTabs ? t.doneEditingOrder : t.editTabOrder}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Nearby: no location shared → CTA to enable */}
+      {canShowTabs && feedMode === "nearby" && needsLocation && !isLoading && (
+        <div className="rounded-2xl p-5 mb-4 text-center" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.2)" }}>
+          <p className="text-sm text-white font-semibold mb-2">Activa tu ubicación para ver publicaciones cercanas</p>
+          <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            El feed "Cerca" solo muestra usuarios dentro de ~50 km.
+          </p>
           <button
-            onClick={() => { if (feedMode !== "following") { setFeedMode("following"); setPosts([]); setNextCursor(null); setIsLoading(true); } }}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${feedMode === "following" ? "text-white border-b-2 border-pnp-accent" : "text-pnp-textSecondary"}`}
+            onClick={() => onNavigate("/settings")}
+            className="text-sm font-semibold px-4 py-2 rounded-lg text-white"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
           >
-            Following
+            Ir a ajustes
           </button>
         </div>
       )}

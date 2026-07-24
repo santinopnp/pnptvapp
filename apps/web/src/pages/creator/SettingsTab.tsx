@@ -20,12 +20,12 @@ import {
   getVideoUploadResume,
   clearVideoUploadResume,
   updateProfile,
-  changeTier,
   getProfile,
   getCreatorEligibilityStatus,
   getCreatorManual,
   saveCreatorManual,
   suggestCreatorManualAI,
+  setCreatorPrice,
   type CreatorDashboard as DashboardData,
   type CreatorMediaItem,
   type StreamRecording,
@@ -52,12 +52,6 @@ function fmtBytes(bytes: number | null): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
-
-const TIERS: { key: "ice" | "crystal" | "diamond"; label: string; price: number; emoji: string }[] = [
-  { key: "ice", label: "Ice", price: 5, emoji: "❄" },
-  { key: "crystal", label: "Crystal", price: 10, emoji: "🔮" },
-  { key: "diamond", label: "Diamond", price: 15, emoji: "💎" },
-];
 
 interface SettingsTabProps {
   dashboard: DashboardData & { success: boolean };
@@ -113,27 +107,36 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Tier state ───────────────────────────────────────────────────────────────
-  const [selectedTier, setSelectedTier] = useState<"ice" | "crystal" | "diamond">(
-    (dashboard.creatorType as "ice" | "crystal" | "diamond") || "ice"
+  // ── Price editor ─────────────────────────────────────────────────────────────
+  // 2026-07-24: Ice/Crystal/Diamond tiers deprecated. Creators now set their
+  // own monthly price in [$1, $500]. Value mirrors to their canonical paid
+  // channel automatically via CreatorService.updateCreatorPrice.
+  const PRICE_MIN = 1;
+  const PRICE_MAX = 500;
+  const [priceInput, setPriceInput] = useState<string>(
+    dashboard.priceUsd != null ? String(dashboard.priceUsd) : "10"
   );
-  const [tierSaving, setTierSaving] = useState(false);
-  const [tierError, setTierError] = useState<string | null>(null);
-  const [tierSuccess, setTierSuccess] = useState<string | null>(null);
+  const [priceSaving, setPriceSaving] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [priceSuccess, setPriceSuccess] = useState<string | null>(null);
 
-  const handleChangeTier = async (tier: "ice" | "crystal" | "diamond") => {
-    if (tier === selectedTier) return;
-    setTierError(null);
-    setTierSuccess(null);
-    setTierSaving(true);
+  const handleSavePrice = async () => {
+    setPriceError(null);
+    setPriceSuccess(null);
+    const price = Number(priceInput);
+    if (!Number.isFinite(price) || price < PRICE_MIN || price > PRICE_MAX) {
+      setPriceError(`Price must be between $${PRICE_MIN} and $${PRICE_MAX}.`);
+      return;
+    }
+    setPriceSaving(true);
     try {
-      await changeTier(tier);
-      setSelectedTier(tier);
-      setTierSuccess(`Tier updated to ${tier.charAt(0).toUpperCase() + tier.slice(1)}.`);
+      await setCreatorPrice(price);
+      setPriceInput(String(price));
+      setPriceSuccess(`Price updated to $${price.toFixed(2)}/mo.`);
     } catch (err) {
-      setTierError(err instanceof Error ? err.message : "Failed to change tier.");
+      setPriceError(err instanceof Error ? err.message : "Failed to update price.");
     } finally {
-      setTierSaving(false);
+      setPriceSaving(false);
     }
   };
 
@@ -921,46 +924,50 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         </button>
       </div>
 
-      {/* Tier selector */}
+      {/* Monthly subscription price editor (replaces the deprecated
+          Ice/Crystal/Diamond tier switcher, 2026-07-24). */}
       {dashboard.creatorType !== "full_time" && (
         <div className="glass-card-sm p-5">
-          <p className="text-sm font-semibold text-white mb-1">{t.creatorTierTitle}</p>
-          <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.creatorTierDesc}</p>
-          <div className="flex gap-2">
-            {TIERS.map((tier) => {
-              const isCurrent = selectedTier === tier.key;
-              return (
-                <button
-                  key={tier.key}
-                  onClick={() => handleChangeTier(tier.key as "ice" | "crystal" | "diamond")}
-                  disabled={tierSaving}
-                  className="flex-1 py-2.5 rounded-lg text-xs font-semibold text-center transition-all disabled:opacity-50"
-                  style={{
-                    background: isCurrent
-                      ? "linear-gradient(135deg, #D4007A, #E69138)"
-                      : "rgba(255,255,255,0.04)",
-                    color: isCurrent ? "#fff" : "#8E8E93",
-                    border: isCurrent
-                      ? "1px solid transparent"
-                      : "1px solid rgba(255,255,255,0.08)",
-                    cursor: tierSaving ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {tier.emoji} {tier.label}
-                  <span className="block text-[10px] font-normal mt-0.5 opacity-70">${tier.price}/mes</span>
-                  {isCurrent && <span className="block text-[10px] font-normal opacity-60">{t.tierCurrent}</span>}
-                </button>
-              );
-            })}
+          <p className="text-sm font-semibold text-white mb-1">Monthly subscription price</p>
+          <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            You set the price. Between ${PRICE_MIN} and ${PRICE_MAX}/mo. Subscribers unlock your
+            profile, paid channel, private hangout and DMs. The price is mirrored to your paid
+            channel automatically.
+          </p>
+          <div className="flex items-stretch gap-2">
+            <div className="flex items-center rounded-lg px-3 flex-1 gap-2 border" style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)" }}>
+              <span className="text-sm font-bold text-white/70">$</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={PRICE_MIN}
+                max={PRICE_MAX}
+                step="0.01"
+                value={priceInput}
+                onChange={(e) => { setPriceInput(e.target.value); setPriceError(null); setPriceSuccess(null); }}
+                disabled={priceSaving}
+                className="flex-1 bg-transparent py-2 text-sm text-white outline-none placeholder-white/30 disabled:opacity-50"
+                placeholder="10.00"
+              />
+              <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>USD / mo</span>
+            </div>
+            <button
+              onClick={handleSavePrice}
+              disabled={priceSaving}
+              className="px-5 py-2 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            >
+              {priceSaving ? "Saving…" : "Save price"}
+            </button>
           </div>
-          {tierSuccess && (
-            <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(94,209,196,0.1)", color: "#5ED1C4" }}>
-              {tierSuccess}
+          {priceSuccess && (
+            <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(52,199,89,0.14)", color: "#34C759" }}>
+              {priceSuccess}
             </div>
           )}
-          {tierError && (
+          {priceError && (
             <div className="mt-3 px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>
-              {tierError}
+              {priceError}
             </div>
           )}
         </div>
@@ -1371,7 +1378,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         )}
       </div>
 
-      {/* ── User Manual ────────────────────────────────────────────────── */}
+      {/* ── About me ───────────────────────────────────────────────────── */}
       <div
         className="rounded-2xl p-6"
         style={{
@@ -1380,13 +1387,13 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         }}
       >
         <div className="flex items-baseline justify-between mb-2">
-          <h2 className="text-lg font-semibold text-white">User manual</h2>
+          <h2 className="text-lg font-semibold text-white">About me</h2>
           <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             {manualMarkdown.length} / {MANUAL_MAX}
           </span>
         </div>
         <p className="text-sm mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          A public overview subscribers see on your profile: how to book, what you offer, boundaries.
+          A public overview visitors see at the top of your profile: how to book, what you offer, boundaries.
           Markdown supported (## headings, - bullets).
         </p>
 
@@ -1430,7 +1437,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-50"
             style={{ background: "var(--pnp-accent, #D4007A)" }}
           >
-            {manualSaving ? "Saving…" : "Save manual"}
+            {manualSaving ? "Saving…" : "Save About me"}
           </button>
         </div>
       </div>

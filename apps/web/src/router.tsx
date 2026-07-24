@@ -108,6 +108,28 @@ function CreatorUsernameRedirect() {
   return <Navigate to={`/c/${username}`} replace />;
 }
 
+// Guard the `/:username` catch-all against dead top-level routes. Without this
+// any unmatched path (e.g. `/tokens`, `/prime`) is treated as a username →
+// `/api/webapp/social/profile/tokens` → 404 → "Profile Not Found" screen.
+// Reserved segments here are known-dead routes historically hit from stale
+// links, plus common typos of real routes. Extend as new dead links appear.
+const RESERVED_USERNAME_SEGMENTS = new Set([
+  "tokens", "wallet", "coins", "balance",
+  "prime", "premium", "pro",
+  "home", "index", "feed",
+  "login", "logout", "signin", "signup", "register",
+  "api", "static", "assets", "public",
+  "undefined", "null",
+]);
+
+function UsernameProfileGate({ children }: { children: React.ReactNode }) {
+  const { username } = useParams<{ username: string }>();
+  if (username && RESERVED_USERNAME_SEGMENTS.has(username.toLowerCase())) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 function MessagesToDmRedirect() {
   const { userId } = useParams();
   return <Navigate to={`/dm/${userId}`} replace />;
@@ -736,9 +758,11 @@ export const router = createBrowserRouter([
       {
         path: ":username",
         element: (
-          <ModuleLoader>
-            <Profile />
-          </ModuleLoader>
+          <UsernameProfileGate>
+            <ModuleLoader>
+              <Profile />
+            </ModuleLoader>
+          </UsernameProfileGate>
         ),
       },
     ],

@@ -421,7 +421,7 @@ class AuthentikService {
         }
       }
     } catch (err) {
-      logger.warn('[Authentik] syncUserGroups failed (non-fatal):', err.message);
+      logger.warn('[Authentik] syncUserGroups failed (non-fatal):', { error: err.message });
     }
   }
 

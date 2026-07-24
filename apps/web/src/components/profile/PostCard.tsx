@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 // NearbyBadge removed — PostCard shows city name inline instead
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
@@ -182,6 +183,7 @@ export default function PostCard({
     try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
     setCreatorUpsellDismissed(true);
   };
+  const [showFeedSubPanel, setShowFeedSubPanel] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // Edit post state (owner only) — mirrors SocialPostCard
   const [isEditing, setIsEditing] = useState(false);
@@ -1173,23 +1175,50 @@ export default function PostCard({
                     </a>
                   )}
                   {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
-                    <a
-                      href={`/profile/${post.author_id}?action=subscribe&open=1`}
-                      className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-opacity hover:opacity-90"
-                      style={{ background: "linear-gradient(90deg, #5ED1C4 0%, #2DD4BF 100%)", color: "#04252b" }}
-                    >
-                      <span className="flex-1">Subscribe to {post.author_first_name || post.author_username || "this creator"} for exclusive content</span>
-                      <span aria-hidden="true">→</span>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissCreatorUpsell(); }}
-                        aria-label="Dismiss"
-                        className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors -mr-1"
-                        style={{ color: "#04252b" }}
-                      >
-                        ×
-                      </button>
-                    </a>
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {!showFeedSubPanel ? (
+                        <div
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold"
+                          style={{ background: "linear-gradient(90deg, #D4007A 0%, #E69138 100%)", color: "#fff" }}
+                        >
+                          <span className="flex-1">
+                            Subscribe to {post.author_first_name || post.author_username || "this creator"} · ${Number(post.author_creator_price || 0).toFixed(0)}/mo — profile, channel, hangout & DM
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowFeedSubPanel(true)}
+                            className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-white/95 hover:bg-white transition-colors"
+                            style={{ color: "#D4007A" }}
+                          >
+                            Subscribe
+                          </button>
+                          <button
+                            type="button"
+                            onClick={dismissCreatorUpsell}
+                            aria-label="Dismiss"
+                            className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors -mr-1"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : (
+                        <CreatorSubscribeWizard
+                          creatorId={String(post.author_id)}
+                          creatorName={post.author_first_name || post.author_username || undefined}
+                          username={post.author_username}
+                          priceUsd={Number(post.author_creator_price || 0)}
+                          lang={(userLang === "es" ? "es" : "en")}
+                          compact
+                          storageKey={`pnp_creator_sub_${post.author_id}`}
+                          onSuccess={() => {
+                            try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+                            setCreatorUpsellDismissed(true);
+                            setShowFeedSubPanel(false);
+                          }}
+                          onClose={() => setShowFeedSubPanel(false)}
+                        />
+                      )}
+                    </div>
                   )}
                 </>
               ) : (

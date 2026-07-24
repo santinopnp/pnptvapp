@@ -81,12 +81,20 @@ const getUserPhotoFromDb = async (userId) => {
 // Resolve the creator's canonical free or subscription channel id.
 // Returns null if the creator has no channel of that type (rare edge-case: channel deleted).
 async function resolveCreatorChannel(userId, isExclusive) {
-  const accessType = isExclusive ? 'subscription' : 'free';
+  // Phase 1 rule (2026-07-24): creators have exactly ONE paid channel — the
+  // canonical subscription channel — and no free channel. Non-exclusive posts
+  // stay off channels entirely (they live on the creator's wall only, with
+  // the feed showing a Subscribe CTA banner). Exclusive posts auto-mirror
+  // into the canonical paid channel so subscribers see a curated premium feed.
+  if (!isExclusive) return null;
   const { rows } = await dbQuery(
     `SELECT id FROM creator_channels
-      WHERE creator_id = $1 AND access_type = $2 AND is_active = true
-      ORDER BY is_system DESC, id ASC LIMIT 1`,
-    [String(userId), accessType]
+      WHERE creator_id = $1
+        AND access_type IN ('subscription', 'paid')
+        AND is_active = true
+      ORDER BY created_at ASC
+      LIMIT 1`,
+    [String(userId)]
   );
   return rows[0]?.id ?? null;
 }
@@ -106,14 +114,17 @@ const getFeed = async (req, res) => {
     // Fetch the viewer's blocked list from DB to exclude their posts (C-08)
     const blockedRes = await dbQuery('SELECT blocked FROM users WHERE id = $1', [user.id]);
     const blockedIds = (blockedRes.rows[0]?.blocked || []).map(Number);
-    const result = await SocialPostService.getFeed(
-      user.id,
-      isFreeUser ? undefined : req.query.cursor,
-      isFreeUser ? FREE_FEED_LIMIT : req.query.limit,
-      viewerTier, isAdmin, blockedIds
-    );
+    // 5-tab feed dispatcher (2026-07-23). No filter param → 'all' (legacy).
+    const filter = String(req.query.filter || 'all');
+    const result = await SocialPostService.getFeedFiltered({
+      userId: user.id,
+      filter,
+      cursor: isFreeUser ? undefined : req.query.cursor,
+      limit: isFreeUser ? FREE_FEED_LIMIT : req.query.limit,
+      viewerTier, isAdmin, blockedIds,
+    });
     if (isFreeUser) result.nextCursor = null;
-    return res.json({ success: true, freeUserLimited: isFreeUser, ...result });
+    return res.json({ success: true, freeUserLimited: isFreeUser, filter, ...result });
   } catch (err) {
     logger.error('getFeed error', err);
     return res.status(500).json({ error: 'Failed to load feed' });

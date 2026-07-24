@@ -162,7 +162,7 @@ async function searchUsersForMention(searchQuery, limit = 8) {
     `SELECT id, username, photo_file_id AS avatar_url, creator_status
      FROM users
      WHERE LOWER(username) LIKE $1 AND subscription_status != 'banned'
-     ORDER BY (tier = 'PRIME') DESC, COALESCE(followers_count, 0) DESC, username
+     ORDER BY (creator_status = 'active') DESC, (tier = 'PRIME') DESC, COALESCE(followers_count, 0) DESC, username
      LIMIT $2`,
     [`${searchQuery.toLowerCase()}%`, limit]
   );
