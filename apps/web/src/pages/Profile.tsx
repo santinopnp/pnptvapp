@@ -1807,9 +1807,12 @@ export default function Profile() {
             </>
           ) : (
             <>
-              {/* Primary row — always: [Follow] [Message] [⋯] */}
+              {/* Primary row — always: [Follow] [Message] [⋯]
+                  Creators cannot be followed (backend returns CANNOT_FOLLOW_CREATOR);
+                  they accept subscriptions only. Hide the button so users don't hit
+                  a hard 400. */}
               <div className="flex gap-2">
-                {isAuthenticated && (
+                {isAuthenticated && profile.creatorStatus !== "active" && (
                   <button
                     onClick={handleFollow}
                     disabled={followLoading}

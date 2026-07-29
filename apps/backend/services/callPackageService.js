@@ -39,11 +39,14 @@ async function createPackage(creatorId, { durationMinutes, quantity, priceUsd, t
     'SELECT sku FROM call_packages WHERE creator_id = $1 AND sku = $2',
     [creatorId, sku]
   );
+  // Random suffix (Date.now() alone collides when two requests land in the same
+  // millisecond — add 6 hex chars so concurrent inserts get distinct SKUs).
+  const uniqueSuffix = () => `${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   if (existing.rows.length > 0) {
-    sku = `${sku}-${Date.now().toString(36).toUpperCase()}`;
+    sku = `${sku}-${uniqueSuffix()}`;
   }
 
-  // MED-02: Handle 23505 unique violation by retrying with timestamp suffix
+  // MED-02: Handle 23505 unique violation by retrying with a fresh suffix
   try {
     const result = await query(
       `INSERT INTO call_packages (creator_id, duration_minutes, quantity, price_usd, sku, title)
@@ -55,8 +58,8 @@ async function createPackage(creatorId, { durationMinutes, quantity, priceUsd, t
     return result.rows[0];
   } catch (err) {
     if (err.code === '23505') {
-      // Unique violation — retry with timestamp suffix
-      sku = `${sku}-${Date.now().toString(36).toUpperCase()}`;
+      // Unique violation — retry with a fresh (timestamp+random) suffix
+      sku = `${sku}-${uniqueSuffix()}`;
       const result = await query(
         `INSERT INTO call_packages (creator_id, duration_minutes, quantity, price_usd, sku, title)
          VALUES ($1, $2, $3, $4, $5, $6)

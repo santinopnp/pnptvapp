@@ -283,6 +283,16 @@ async function joinBooking(req, res) {
       return res.status(403).json({ success: false, error: 'This booking is no longer active' });
     }
 
+    // Defensive: booking rows should always have both parties. If either is
+    // missing we cannot safely decide moderator status, so refuse to mint a token.
+    if (!credit.creator_id || !credit.member_id) {
+      logger.error('[callBookingController] joinBooking: booking has null party', {
+        bookingId, creditId: credit.id,
+        creator_id: credit.creator_id, member_id: credit.member_id,
+      });
+      return res.status(500).json({ success: false, error: 'Booking data invalid' });
+    }
+
     const roomName = `booking-${credit.booking_uuid || credit.id}`;
     const isModerator = userId === String(credit.creator_id);
 
