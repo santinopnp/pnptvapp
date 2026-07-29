@@ -5,6 +5,7 @@ import { StepDots } from "@pnptv/ui-kit";
 import { getOwnChannels, provisionCreatorDefaults, uploadCreatorMediaFile, listOwnCreatorMedia, getCreatorSetupStatus, getCreatorConsents, type CreatorChannel, type CreatorMediaItem, type ChannelVideo } from "@/lib/api";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
 import { CreatorConsents } from "@/components/creators/CreatorLayout";
+import { useI18n } from "@/lib/i18n";
 
 const WIZARD_STORAGE_KEY = "pnptv_studio_wizard_v1";
 const TOTAL_STEPS = 6;
@@ -52,6 +53,7 @@ function TipCallout({ children }: { children: React.ReactNode }) {
 
 export default function CreatorStudioWizard() {
   const navigate = useNavigate();
+  const { creator: t } = useI18n();
 
   const [wizardDone, setWizardDone] = useState(() => {
     try { return localStorage.getItem(WIZARD_STORAGE_KEY) === "done"; } catch { return false; }
@@ -125,11 +127,11 @@ export default function CreatorStudioWizard() {
       await provisionCreatorDefaults();
       loadChannels();
     } catch {
-      setProvisionError("Something went wrong. Try again.");
+      setProvisionError(t.wizProvisionError);
     } finally {
       setProvisioning(false);
     }
-  }, [loadChannels]);
+  }, [loadChannels, t]);
 
   const finishWizard = useCallback(() => {
     try { localStorage.setItem(WIZARD_STORAGE_KEY, "done"); } catch { /* ignore */ }
@@ -146,16 +148,16 @@ export default function CreatorStudioWizard() {
   if (wizardDone) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6" style={{ background: "var(--pnp-background, #121212)" }}>
-        <Helmet><title>Creator Studio — PNPtv!</title></Helmet>
-        <p className="text-sm text-pnp-textSecondary">You've already finished the setup wizard.</p>
+        <Helmet><title>{t.wizPageTitle}</title></Helmet>
+        <p className="text-sm text-pnp-textSecondary">{t.wizAlreadyDone}</p>
         <button
           onClick={() => { setStep(1); setWizardDone(false); }}
           className="text-sm font-semibold text-pnp-accent"
         >
-          Run it again →
+          {t.wizRunAgain}
         </button>
         <button onClick={() => navigate("/creators")} className="text-xs text-pnp-textSecondary hover:text-white/60 transition-colors">
-          ← Back to dashboard
+          {t.wizBackToDashboard}
         </button>
       </div>
     );
@@ -163,14 +165,14 @@ export default function CreatorStudioWizard() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--pnp-background, #121212)" }}>
-      <Helmet><title>Creator Studio — Get set up to sell — PNPtv!</title></Helmet>
+      <Helmet><title>{t.wizPageTitleSetup}</title></Helmet>
       <div className="max-w-lg mx-auto px-4 py-8 space-y-5">
 
         {/* Header */}
         <div>
-          <p className="text-[10px] font-bold tracking-[.12em]" style={{ color: "#D4007A" }}>CREATOR STUDIO</p>
-          <h1 className="text-xl font-bold text-white mt-1">Get set up to sell</h1>
-          <p className="text-xs text-pnp-textSecondary mt-1">Step {step} of {TOTAL_STEPS}</p>
+          <p className="text-[10px] font-bold tracking-[.12em]" style={{ color: "#D4007A" }}>{t.wizHeaderTag}</p>
+          <h1 className="text-xl font-bold text-white mt-1">{t.wizTitle}</h1>
+          <p className="text-xs text-pnp-textSecondary mt-1">{t.wizStepOf(step, TOTAL_STEPS)}</p>
         </div>
 
         {/* Progress bar */}
@@ -192,9 +194,9 @@ export default function CreatorStudioWizard() {
         {step === 1 && (
           <div className="rounded-[14px] p-[18px]" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
             <StepIconSquare step={1} />
-            <h2 className="text-base font-bold text-white mt-3.5">Download OBS</h2>
+            <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep1Title}</h2>
             <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-              OBS Studio is the free app you&apos;ll use to stream your live shows on PNPtv. Install it on your computer — once you have it, hit Next.
+              {t.wizStep1Body}
             </p>
             <a
               href="https://obsproject.com"
@@ -203,7 +205,7 @@ export default function CreatorStudioWizard() {
               className="inline-block mt-3.5 px-4 py-2.5 rounded-lg text-xs font-bold"
               style={{ border: "1px solid rgba(123,97,255,.5)", background: "rgba(123,97,255,.12)", color: "#A78BFA" }}
             >
-              Download OBS Studio ↗
+              {t.wizStep1DownloadBtn}
             </a>
 
             {/* Monetization context: PNP Live */}
@@ -211,12 +213,12 @@ export default function CreatorStudioWizard() {
               className="mt-3.5 rounded-xl px-3.5 py-3"
               style={{ background: "rgba(212,0,122,.07)", border: "1px solid rgba(212,0,122,.25)" }}
             >
-              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#D4007A" }}>La forma más rápida de monetizar</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#D4007A" }}>{t.wizStep1MonetizeTag}</p>
               <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
-                Hacer streaming en <span className="text-white font-medium">PNP Live</span> es el camino más directo: solo ponete en línea y atraé viewers a tu show. Para entrar, los usuarios necesitan tokens ya comprados. Después de <span className="text-white font-medium">15 minutos gratuitos</span> se descuenta <span className="text-white font-medium">1 token por minuto</span> de su saldo para poder quedarse.
+                {t.wizStep1MonetizeBody1Pre}<span className="text-white font-medium">{t.wizStep1MonetizeBody1Live}</span>{t.wizStep1MonetizeBody1Mid}<span className="text-white font-medium">{t.wizStep1MonetizeBody1Free}</span>{t.wizStep1MonetizeBody1Post}<span className="text-white font-medium">{t.wizStep1MonetizeBody1Rate}</span>{t.wizStep1MonetizeBody1End}
               </p>
               <p className="text-[11px] text-pnp-textSecondary leading-relaxed mt-1.5">
-                También podés recibir <span className="text-white font-medium">tips en vivo</span> y agendar <span className="text-white font-medium">llamadas privadas</span> pagas. Configurás todo eso desde <span className="text-white font-medium">PNP Live</span> en el menú lateral.
+                {t.wizStep1MonetizeBody2Pre}<span className="text-white font-medium">{t.wizStep1MonetizeBody2Tips}</span>{t.wizStep1MonetizeBody2Mid}<span className="text-white font-medium">{t.wizStep1MonetizeBody2Calls}</span>{t.wizStep1MonetizeBody2Post}<span className="text-white font-medium">{t.wizStep1MonetizeBody2PnpLive}</span>{t.wizStep1MonetizeBody2End}
               </p>
             </div>
           </div>
@@ -226,9 +228,9 @@ export default function CreatorStudioWizard() {
         {step === 2 && (
           <div className="rounded-[14px] p-[18px]" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
             <StepIconSquare step={2} />
-            <h2 className="text-base font-bold text-white mt-3.5">Sube tus mejores fotos</h2>
+            <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep2Title}</h2>
             <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-              Aparecen en la fila de FOTOS en la parte superior de tu perfil. Elige shots que muestren tu vibra y los fetiches que te gustan.
+              {t.wizStep2Body}
             </p>
 
             <label
@@ -239,7 +241,7 @@ export default function CreatorStudioWizard() {
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
               </svg>
               <span className="text-xs font-semibold" style={{ color: "#D4007A" }}>
-                {photoUploading ? "Subiendo…" : "Elegir fotos"}
+                {photoUploading ? t.wizStep2UploadingLabel : t.wizStep2ChooseLabel}
               </span>
               <input
                 type="file"
@@ -263,7 +265,7 @@ export default function CreatorStudioWizard() {
                     }
                   }
                   setOwnMedia((prev) => [...newItems, ...prev]);
-                  if (failed > 0) setPhotoUploadError(`${failed} foto${failed > 1 ? "s" : ""} no se pudo subir.`);
+                  if (failed > 0) setPhotoUploadError(t.wizStep2UploadFailed(failed));
                   setPhotoUploading(false);
                   e.target.value = "";
                 }}
@@ -275,7 +277,7 @@ export default function CreatorStudioWizard() {
             )}
 
             {mediaLoading && (
-              <p className="mt-3 text-[11px] text-pnp-textSecondary">Cargando tus fotos…</p>
+              <p className="mt-3 text-[11px] text-pnp-textSecondary">{t.wizStep2Loading}</p>
             )}
             {!mediaLoading && ownMedia.length > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-1.5">
@@ -285,7 +287,7 @@ export default function CreatorStudioWizard() {
                       <img src={m.thumbUrl || m.url || ""} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <span className="text-[10px] text-white/30">Foto</span>
+                        <span className="text-[10px] text-white/30">{t.wizStep2PhotoAlt}</span>
                       </div>
                     )}
                   </div>
@@ -293,11 +295,11 @@ export default function CreatorStudioWizard() {
               </div>
             )}
             {!mediaLoading && ownMedia.length === 0 && !photoUploading && (
-              <p className="mt-3 text-[11px] text-pnp-textSecondary">Aún no tienes fotos — sube la primera arriba.</p>
+              <p className="mt-3 text-[11px] text-pnp-textSecondary">{t.wizStep2EmptyState}</p>
             )}
 
             <TipCallout>
-              Elige fotos que muestren lo bueno que va a ser tu show — y los fetiches que te gustan.
+              {t.wizStep2Tip}
             </TipCallout>
           </div>
         )}
@@ -306,19 +308,19 @@ export default function CreatorStudioWizard() {
         {step === 3 && (
           <div className="rounded-[14px] p-[18px]" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
             <StepIconSquare step={3} />
-            <h2 className="text-base font-bold text-white mt-3.5">Sube tu primer video</h2>
+            <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep3Title}</h2>
             <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-              Los videos que subes a un canal aparecen en la fila de VIDEOS de tu perfil. Los teasers cortos venden mejor — caliente y directo al grano.
+              {t.wizStep3Body}
             </p>
 
             {channelsLoading && (
-              <p className="mt-3.5 text-[11px] text-pnp-textSecondary">Cargando tus canales…</p>
+              <p className="mt-3.5 text-[11px] text-pnp-textSecondary">{t.wizStep3LoadingChannels}</p>
             )}
 
             {!channelsLoading && channels.length === 0 && (
               <div className="mt-3.5 rounded-xl px-3.5 py-3" style={{ background: "#111", border: "1px solid #2A2A2A" }}>
                 <p className="text-[11px] text-pnp-textSecondary">
-                  Tus canales se configuran en el siguiente paso. Vuelve aquí después del paso 4 para subir videos.
+                  {t.wizStep3ChannelsEmpty}
                 </p>
                 <button
                   onClick={handleProvision}
@@ -326,7 +328,7 @@ export default function CreatorStudioWizard() {
                   className="mt-2 self-start px-4 py-2.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
                   style={{ background: "#D4007A" }}
                 >
-                  {provisioning ? "Configurando…" : "Configurar mis canales →"}
+                  {provisioning ? t.wizStep3ProvisioningBtn : t.wizStep3ProvisionBtn}
                 </button>
               </div>
             )}
@@ -335,7 +337,7 @@ export default function CreatorStudioWizard() {
               <>
                 {channels.length > 1 && (
                   <div className="mt-3.5">
-                    <p className="text-[10px] font-bold text-pnp-textSecondary mb-1.5">SUBIR A</p>
+                    <p className="text-[10px] font-bold text-pnp-textSecondary mb-1.5">{t.wizStep3UploadToLabel}</p>
                     <div className="flex flex-col gap-1.5">
                       {channels.map((ch) => (
                         <button
@@ -389,31 +391,31 @@ export default function CreatorStudioWizard() {
               className="mt-3.5 rounded-xl px-3.5 py-3"
               style={{ background: "rgba(123,97,255,.07)", border: "1px solid rgba(123,97,255,.25)" }}
             >
-              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#A78BFA" }}>El modelo: OnlyFans + Telegram + X en uno</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#A78BFA" }}>{t.wizStep3EcosystemTag}</p>
               <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
-                PNPtv fusiona tres ecosistemas que ya conocen tus fans en uno solo:
+                {t.wizStep3EcosystemIntro}
               </p>
               <div className="flex flex-col gap-1.5 mt-2">
                 <div className="flex items-start gap-2">
                   <span className="text-sm flex-shrink-0">𝕏</span>
-                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">Posts free en tu muro = tu <span className="text-white font-medium">timeline público</span> para que te descubran.</p>
+                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{t.wizStep3EcosystemXPre}<span className="text-white font-medium">{t.wizStep3EcosystemXBold}</span>{t.wizStep3EcosystemXPost}</p>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-sm flex-shrink-0">✈️</span>
-                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">Canal de suscripción = tu <span className="text-white font-medium">canal privado de Telegram</span> — solo entran los que pagan.</p>
+                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{t.wizStep3EcosystemSubPre}<span className="text-white font-medium">{t.wizStep3EcosystemSubBold}</span>{t.wizStep3EcosystemSubPost}</p>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-sm flex-shrink-0">🔒</span>
-                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">Muro de videos exclusivos = tu <span className="text-white font-medium">OnlyFans</span> — membresía mensual, $5–$15/mes según tu tier.</p>
+                  <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{t.wizStep3EcosystemOnlyPre}<span className="text-white font-medium">{t.wizStep3EcosystemOnlyBold}</span>{t.wizStep3EcosystemOnlyPost}</p>
                 </div>
               </div>
               <p className="text-[11px] text-pnp-textSecondary leading-relaxed mt-2">
-                Un solo pago da acceso a <span className="text-white font-medium">todo</span>: canal, hangout y muro. Tus fans no tienen que comprar tres cosas distintas.
+                {t.wizStep3EcosystemUnifiedPre}<span className="text-white font-medium">{t.wizStep3EcosystemUnifiedBold}</span>{t.wizStep3EcosystemUnifiedPost}
               </p>
             </div>
 
             <TipCallout>
-              Elige teasers que vendan la vibra de tu show — cortos, calientes y directos al grano.
+              {t.wizStep3Tip}
             </TipCallout>
           </div>
         )}
@@ -422,11 +424,11 @@ export default function CreatorStudioWizard() {
         {step === 4 && (
           <div className="rounded-[14px] p-[18px]" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
             <StepIconSquare step={4} />
-            <h2 className="text-base font-bold text-white mt-3.5">Tu muro = tu feed. Automático.</h2>
+            <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep4Title}</h2>
             <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-              PNPtv está diseñado para funcionar como los ecosistemas que ya conocen tus fans —
-              <span className="text-white font-semibold"> X / Twitter</span> y{" "}
-              <span className="text-white font-semibold">Telegram</span> — sin obligarlos a aprender algo nuevo ni sacarlos de su rutina.
+              {t.wizStep4Body1}
+              <span className="text-white font-semibold">{t.wizStep4BodyX}</span>{t.wizStep4BodyAnd}
+              <span className="text-white font-semibold">{t.wizStep4BodyTelegram}</span>{t.wizStep4BodyEnd}
             </p>
 
             {/* Mirroring flow visual */}
@@ -434,51 +436,51 @@ export default function CreatorStudioWizard() {
               {/* Free row */}
               <div className="flex items-center gap-2.5 px-3.5 py-3" style={{ background: "#111", borderBottom: "1px solid #1E1E1E" }}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#5ED1C4" }}>Post free en tu muro</p>
-                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">Texto, foto, video corto</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#5ED1C4" }}>{t.wizStep4FreeTag}</p>
+                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">{t.wizStep4FreeSubtag}</p>
                 </div>
                 <svg className="w-4 h-4 flex-shrink-0 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
                 <div className="flex-shrink-0 text-right">
-                  <p className="text-[10px] font-bold" style={{ color: "#5ED1C4" }}>Canal Gratis</p>
-                  <p className="text-[10px] text-pnp-textSecondary">visible para todos</p>
+                  <p className="text-[10px] font-bold" style={{ color: "#5ED1C4" }}>{t.wizStep4FreeArrow}</p>
+                  <p className="text-[10px] text-pnp-textSecondary">{t.wizStep4FreeVisible}</p>
                 </div>
               </div>
               {/* Paid row */}
               <div className="flex items-center gap-2.5 px-3.5 py-3" style={{ background: "#111" }}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#FFB454" }}>Post exclusivo en tu muro</p>
-                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">Video con candado (~4 min recomendado)</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#FFB454" }}>{t.wizStep4PaidTag}</p>
+                  <p className="text-[11px] text-pnp-textSecondary mt-0.5">{t.wizStep4PaidSubtag}</p>
                 </div>
                 <svg className="w-4 h-4 flex-shrink-0 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
                 <div className="flex-shrink-0 text-right">
-                  <p className="text-[10px] font-bold" style={{ color: "#FFB454" }}>Canal de Pago</p>
-                  <p className="text-[10px] text-pnp-textSecondary">solo suscriptores</p>
+                  <p className="text-[10px] font-bold" style={{ color: "#FFB454" }}>{t.wizStep4PaidArrow}</p>
+                  <p className="text-[10px] text-pnp-textSecondary">{t.wizStep4PaidVisible}</p>
                 </div>
               </div>
             </div>
 
             <p className="text-[11px] text-pnp-textSecondary mt-3 leading-relaxed">
-              No tienes que hacer nada extra. Publicas desde tu perfil como siempre, y la app separa el contenido automáticamente. Libre = canal público. Exclusivo = canal de suscripción.
+              {t.wizStep4Explanation}
             </p>
 
             {/* Ecosystem analogy */}
             <div className="mt-3.5 rounded-xl px-3.5 py-3" style={{ background: "rgba(123,97,255,.07)", border: "1px solid rgba(123,97,255,.2)" }}>
-              <p className="text-[10px] font-bold uppercase tracking-wide mb-2" style={{ color: "#A78BFA" }}>¿Por qué funciona así?</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide mb-2" style={{ color: "#A78BFA" }}>{t.wizStep4WhyWorksTag}</p>
               <div className="flex flex-col gap-2">
                 <div className="flex items-start gap-2">
                   <span className="text-sm mt-px">𝕏</span>
                   <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
-                    Tu <span className="text-white font-medium">canal gratis</span> es como tu timeline público en X — los fans te descubren, ven tus teasers, te siguen.
+                    {t.wizStep4WhyBody1Pre}<span className="text-white font-medium">{t.wizStep4WhyBody1Bold}</span>{t.wizStep4WhyBody1Post}
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-sm mt-px">✈️</span>
                   <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
-                    Tu <span className="text-white font-medium">canal de suscripción</span> es como tu canal privado de Telegram — solo entran los que pagan, y ahí está lo bueno.
+                    {t.wizStep4WhyBody2Pre}<span className="text-white font-medium">{t.wizStep4WhyBody2Bold}</span>{t.wizStep4WhyBody2Post}
                   </p>
                 </div>
               </div>
@@ -486,16 +488,16 @@ export default function CreatorStudioWizard() {
 
             {/* Subscription unification */}
             <div className="mt-3 rounded-xl px-3.5 py-3" style={{ background: "rgba(94,209,196,.06)", border: "1px solid rgba(94,209,196,.2)" }}>
-              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#5ED1C4" }}>Una sola suscripción</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "#5ED1C4" }}>{t.wizStep4OneSubTag}</p>
               <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
-                Cuando alguien se suscribe a tu perfil, automáticamente tiene acceso a tu canal de pago <span className="text-white font-medium">y</span> a tu hangout privado. No hay que comprar dos cosas. Un cobro = todo el acceso.
+                {t.wizStep4OneSubBodyPre}<span className="text-white font-medium">{t.wizStep4OneSubBodyBold}</span>{t.wizStep4OneSubBodyPost}
               </p>
             </div>
 
             {/* Channel list */}
             {!channelsLoading && channels.length === 0 && (
               <div className="mt-3.5 flex flex-col gap-2">
-                <p className="text-[11px] text-pnp-textSecondary">Tus canales aún no están creados.</p>
+                <p className="text-[11px] text-pnp-textSecondary">{t.wizStep4ChannelsMissing}</p>
                 {provisionError && <p className="text-[11px] text-red-400">{provisionError}</p>}
                 <button
                   onClick={handleProvision}
@@ -503,13 +505,13 @@ export default function CreatorStudioWizard() {
                   className="self-start px-4 py-2.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
                   style={{ background: "#D4007A" }}
                 >
-                  {provisioning ? "Configurando…" : "Crear mis canales →"}
+                  {provisioning ? t.wizStep3ProvisioningBtn : t.wizStep4CreateChannelsBtn}
                 </button>
               </div>
             )}
             {!channelsLoading && channels.length > 0 && (
               <div className="flex flex-col gap-1.5 mt-3.5">
-                <p className="text-[10px] font-bold text-pnp-textSecondary uppercase tracking-wide mb-0.5">Tus canales</p>
+                <p className="text-[10px] font-bold text-pnp-textSecondary uppercase tracking-wide mb-0.5">{t.wizStep4YourChannelsHeader}</p>
                 {channels.map((ch) => {
                   const isPaid = ch.accessType === "subscription" || ch.accessType === "paid";
                   return (
@@ -529,7 +531,7 @@ export default function CreatorStudioWizard() {
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-white truncate">{ch.name}</p>
                         <p className="text-[10px] text-pnp-textSecondary mt-0.5 truncate">
-                          {isPaid ? "Posts exclusivos → aquí automático" : "Posts free → aquí automático"}
+                          {isPaid ? t.wizStep4PaidPostsHint : t.wizStep4FreePostsHint}
                         </p>
                       </div>
                       <span
@@ -540,7 +542,7 @@ export default function CreatorStudioWizard() {
                             : { background: "rgba(94,209,196,.15)", color: "#5ED1C4" }
                         }
                       >
-                        {isPaid ? "PAGO" : "GRATIS"}
+                        {isPaid ? t.wizStep4PaidBadge : t.wizStep4FreeBadge}
                       </span>
                     </div>
                   );
@@ -549,7 +551,7 @@ export default function CreatorStudioWizard() {
             )}
 
             <TipCallout>
-              Publica teasers free con frecuencia para que el algoritmo te muestre a más gente. Reserva el contenido largo y explícito para el canal de pago — eso es lo que convierte seguidores en suscriptores.
+              {t.wizStep4Tip}
             </TipCallout>
           </div>
         )}
@@ -557,18 +559,19 @@ export default function CreatorStudioWizard() {
         {/* Step 5: Private hangout */}
         {step === 5 && (() => {
           const subChannel = channels.find((ch) => ch.accessType === "subscription" && ch.hangoutGroupId);
+          const chips = [t.wizStep5ChipCalls, t.wizStep5ChipPrivateShows, t.wizStep5ChipCustomVideos, t.wizStep5ChipTips];
           return (
             <div className="rounded-[14px] p-[18px]" style={{ border: "1px solid rgba(94,209,196,.35)", background: "rgba(94,209,196,.06)" }}>
               <StepIconSquare step={5} />
-              <h2 className="text-base font-bold text-white mt-3.5">Your private hangout</h2>
+              <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep5Title}</h2>
               <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-                This hangout is invisible and automatically adds your active paid members — from your paid channel or your profile subscription.
+                {t.wizStep5Body}
               </p>
               <p className="text-xs text-pnp-textSecondary mt-2.5 leading-relaxed">
-                Use it to engage with your clients and upsell add-ons:
+                {t.wizStep5Upsell}
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2.5">
-                {["Calls", "Private shows", "Custom videos", "Tips"].map((chip) => (
+                {chips.map((chip) => (
                   <span
                     key={chip}
                     className="px-3 py-1.5 rounded-full text-[10px] font-semibold text-white"
@@ -584,11 +587,11 @@ export default function CreatorStudioWizard() {
                   className="mt-4 px-4 py-2.5 rounded-lg text-xs font-bold text-white"
                   style={{ background: "rgba(94,209,196,.2)", border: "1px solid rgba(94,209,196,.4)", color: "#5ED1C4" }}
                 >
-                  Open My Subscriber Hangout →
+                  {t.wizStep5OpenHangoutBtn}
                 </button>
               ) : (
                 <div className="mt-4 flex flex-col gap-2">
-                  <p className="text-[11px] text-pnp-textSecondary">No subscriber hangout yet.</p>
+                  <p className="text-[11px] text-pnp-textSecondary">{t.wizStep5NoHangout}</p>
                   {provisionError && <p className="text-[11px] text-red-400">{provisionError}</p>}
                   <button
                     onClick={handleProvision}
@@ -596,7 +599,7 @@ export default function CreatorStudioWizard() {
                     className="self-start px-4 py-2.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
                     style={{ background: "#D4007A" }}
                   >
-                    {provisioning ? "Setting up…" : "Create My Subscriber Hangout →"}
+                    {provisioning ? t.wizStep5CreatingBtn : t.wizStep5CreateHangoutBtn}
                   </button>
                 </div>
               )}
@@ -611,9 +614,9 @@ export default function CreatorStudioWizard() {
           const statusBadge = (status: "accepted" | "verified" | "pending" | null) => {
             if (!status) return null;
             const colors = {
-              accepted: { bg: "rgba(52,199,89,0.15)", color: "#34C759", label: "Accepted" },
-              verified: { bg: "rgba(94,209,196,0.15)", color: "#5ED1C4", label: "Verified" },
-              pending: { bg: "rgba(245,158,11,0.15)", color: "#F59E0B", label: "Pendiente" },
+              accepted: { bg: "rgba(52,199,89,0.15)", color: "#34C759", label: t.wizStep6StatusAccepted },
+              verified: { bg: "rgba(94,209,196,0.15)", color: "#5ED1C4", label: t.wizStep6StatusVerified },
+              pending: { bg: "rgba(245,158,11,0.15)", color: "#F59E0B", label: t.wizStep6StatusPending },
             };
             const c = colors[status];
             return (
@@ -634,53 +637,53 @@ export default function CreatorStudioWizard() {
             }>;
           }> = [
             {
-              title: "Acuerdos de plataforma",
+              title: t.wizStep6PlatformSection,
               items: [
                 {
-                  title: "Términos de Servicio",
-                  description: "Reglas de uso, estándares de comunidad y resolución de disputas.",
+                  title: t.wizStep6TermsOfService,
+                  description: t.wizStep6TosDesc,
                   status: docConsents?.terms_accepted ? "accepted" : null,
-                  actionLabel: "Leer",
+                  actionLabel: t.wizStep6ReadBtn,
                   onAction: () => window.open("/terms", "_blank"),
                 },
                 {
-                  title: "Política de Privacidad",
-                  description: "Cómo PNPtv! recopila, usa y protege tus datos.",
+                  title: t.wizStep6PrivacyPolicy,
+                  description: t.wizStep6PpDesc,
                   status: docConsents?.privacy_accepted ? "accepted" : null,
-                  actionLabel: "Leer",
+                  actionLabel: t.wizStep6ReadBtn,
                   onAction: () => window.open("/privacy", "_blank"),
                 },
                 {
-                  title: "Términos del Programa de Creadores",
-                  description: "División de ingresos (70/30), calendario de pagos, propiedad del contenido, política de desactivación.",
+                  title: t.wizStep6CreatorTerms,
+                  description: t.wizStep6CreatorTermsDesc,
                   status: docConsents?.creator_terms_agreed || isDone("creator_terms") ? "accepted" : "pending",
-                  actionLabel: "Ver y Aceptar",
+                  actionLabel: t.wizStep6ViewAcceptBtn,
                   onAction: () => navigate("/creators/consents"),
                 },
               ],
             },
             {
-              title: "Cumplimiento de contenido",
+              title: t.wizStep6ContentSection,
               items: [
                 {
-                  title: "Guías de Comunidad",
-                  description: "Reglas de contenido, tipos de canales, sistema de strikes y estándares de comunidad.",
+                  title: t.wizStep6CommunityGuidelines,
+                  description: t.wizStep6CommunityGuidelinesDesc,
                   status: null,
-                  actionLabel: "Leer",
+                  actionLabel: t.wizStep6ReadBtn,
                   onAction: () => navigate("/creators/guidelines"),
                 },
                 {
-                  title: "Aviso de Contenido",
-                  description: "Confirma que los accesorios y sustancias mostrados son simulados, solo con fines de entretenimiento.",
+                  title: t.wizStep6ContentNotice,
+                  description: t.wizStep6ContentNoticeDesc,
                   status: docConsents?.content_disclaimer ? "accepted" : "pending",
-                  actionLabel: "Ver y Aceptar",
+                  actionLabel: t.wizStep6ViewAcceptBtn,
                   onAction: () => navigate("/creators/consents"),
                 },
                 {
-                  title: "Verificación de Identidad 2257",
-                  description: "Verificación de edad y cumplimiento de registros (18 U.S.C. § 2257).",
+                  title: t.wizStep6Verification2257,
+                  description: t.wizStep6Verification2257Desc,
                   status: isDone("identity") ? "verified" : "pending",
-                  actionLabel: isDone("identity") ? "Ver" : "Completar",
+                  actionLabel: isDone("identity") ? t.wizStep6ViewBtn : t.wizStep6CompleteBtn,
                   onAction: () => navigate("/creators/apply"),
                 },
               ],
@@ -690,9 +693,9 @@ export default function CreatorStudioWizard() {
           return (
             <div className="rounded-[14px] p-[18px]" style={{ background: "#161616", border: "1px solid #2A2A2A" }}>
               <StepIconSquare step={6} />
-              <h2 className="text-base font-bold text-white mt-3.5">Tus documentos</h2>
+              <h2 className="text-base font-bold text-white mt-3.5">{t.wizStep6Title}</h2>
               <p className="text-xs text-pnp-textSecondary mt-2 leading-relaxed">
-                Acuerdos y registros de cumplimiento. Los que ya están firmados se muestran tal como están — no se resetean al revisar este paso.
+                {t.wizStep6Body}
               </p>
 
               <div className="mt-4 space-y-4">
@@ -741,14 +744,14 @@ export default function CreatorStudioWizard() {
             className="flex-1 py-3 rounded-lg text-sm font-semibold text-white disabled:opacity-35"
             style={{ border: "1px solid rgba(255,255,255,.15)", background: "#161616" }}
           >
-            ← Back
+            {t.wizBackBtn}
           </button>
           <button
             onClick={wizNext}
             className="flex-[2] py-3 rounded-lg text-sm font-bold text-white transition-all active:scale-95"
             style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
           >
-            {step === TOTAL_STEPS ? "Finish" : "Next →"}
+            {step === TOTAL_STEPS ? t.wizFinishBtn : t.wizNextBtn}
           </button>
         </div>
       </div>
@@ -756,7 +759,7 @@ export default function CreatorStudioWizard() {
       {/* ── Documents & Consents ─────────────────────────────────────────── */}
       <div className="mt-6">
         <p className="text-[11px] font-bold uppercase tracking-widest mb-4" style={{ color: "rgba(255,255,255,0.45)" }}>
-          Documents & Consents
+          {t.wizDocsConsentsFooter}
         </p>
         <CreatorConsents />
       </div>

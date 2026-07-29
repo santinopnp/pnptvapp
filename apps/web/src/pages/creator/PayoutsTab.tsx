@@ -78,9 +78,9 @@ function statusLabelKey(status: string, t: CreatorStrings): string {
 
 // ── Balance card skeleton ─────────────────────────────────────────────────────
 
-function BalanceSkeleton() {
+function BalanceSkeleton({ label }: { label: string }) {
   return (
-    <div className="glass-card-sm p-5 animate-pulse" aria-busy="true" aria-label="Loading balance">
+    <div className="glass-card-sm p-5 animate-pulse" aria-busy="true" aria-label={label}>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <div className="h-3 w-16 rounded bg-white/10" />
@@ -139,7 +139,7 @@ interface BalanceCardProps {
 }
 
 function BalanceCard({ balance, loading, error, onRetry, onCashout, t }: BalanceCardProps) {
-  if (loading) return <BalanceSkeleton />;
+  if (loading) return <BalanceSkeleton label={t.modalLoadingBalance} />;
 
   if (error) {
     return (
@@ -373,16 +373,16 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
 
   const handleSubmit = async () => {
     if (!selectedDest) {
-      setSubmitError(`Add a ${selectedMeta?.label || lane} destination on the Settings tab first.`);
+      setSubmitError(t.modalAddDestFirst(selectedMeta?.label || lane));
       return;
     }
     if (!amountValid) {
       setSubmitError(
         amountNum < MIN_CASHOUT_USD
-          ? `Minimum cashout is $${MIN_CASHOUT_USD}.`
+          ? t.modalMinCashout(MIN_CASHOUT_USD)
           : amountNum > balance.available_usd
-            ? `Amount exceeds available balance ($${balance.available_usd.toFixed(2)}).`
-            : "Invalid amount."
+            ? t.modalAmountExceedsBalance(balance.available_usd.toFixed(2))
+            : t.modalInvalidAmount
       );
       return;
     }
@@ -442,7 +442,7 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
 
         <div className="px-5 pb-6 overflow-y-auto flex-1">
           {/* Lane picker */}
-          <p className="text-xs font-semibold text-white mb-2">Payout method</p>
+          <p className="text-xs font-semibold text-white mb-2">{t.modalPayoutMethod}</p>
           <div className="space-y-2 mb-4">
             {LANE_META.map((meta) => {
               const dest = destForLane(meta.id, destinations);
@@ -471,7 +471,7 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
                     style={{ color: enabled ? "#8E8E93" : "rgba(142,142,147,0.5)" }}>
                     {destPreview
                       ? (destPreview.length > 18 ? destPreview.slice(0, 8) + "…" + destPreview.slice(-6) : destPreview)
-                      : "Add in Settings"}
+                      : t.modalAddInSettings}
                   </span>
                 </button>
               );
@@ -479,7 +479,7 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
           </div>
 
           {/* Amount input */}
-          <p className="text-xs font-semibold text-white mb-1">Amount (USD)</p>
+          <p className="text-xs font-semibold text-white mb-1">{t.modalAmountUsd}</p>
           <div className="relative mb-1">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-sm">$</span>
             <input
@@ -489,12 +489,12 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
               step="0.01"
               value={amountStr}
               onChange={(e) => { setAmountStr(e.target.value); setSubmitError(null); }}
-              placeholder={`${MIN_CASHOUT_USD}.00 – ${balance.available_usd.toFixed(2)}`}
+              placeholder={t.modalAmountPlaceholder(MIN_CASHOUT_USD, balance.available_usd.toFixed(2))}
               className="w-full pl-7 pr-3 py-2.5 rounded-lg text-sm text-white placeholder-white/30 bg-white/5 border border-white/10 focus:outline-none focus:border-white/30"
             />
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Min ${MIN_CASHOUT_USD}. Manual settlement — funds arrive within 24–72h.
+            {t.modalMinManualNote(MIN_CASHOUT_USD)}
           </p>
 
           {submitError && (
@@ -516,10 +516,10 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
           >
             {submitting
-              ? <span className="inline-flex items-center gap-2"><Loader size={14} className="animate-spin" /> Submitting…</span>
+              ? <span className="inline-flex items-center gap-2"><Loader size={14} className="animate-spin" /> {t.modalSubmitting}</span>
               : selectedMeta
-                ? `Request $${amountNum > 0 ? amountNum.toFixed(2) : "0.00"} via ${selectedMeta.label}`
-                : "Request cashout"}
+                ? t.modalRequestVia(amountNum > 0 ? amountNum.toFixed(2) : "0.00", selectedMeta.label)
+                : t.modalRequestCashout}
           </button>
         </div>
       </div>
@@ -554,11 +554,11 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
     if (payoutMethod === "dash") {
       const trimmed = dashAddress.trim();
       if (!trimmed) {
-        setDashAddressError("Please enter your Dash wallet address.");
+        setDashAddressError(t.legacyDashRequired);
         return;
       }
       if (!DASH_ADDRESS_REGEX.test(trimmed)) {
-        setDashAddressError("Invalid Dash address. Mainnet addresses start with X (or 7) and are 34 characters long.");
+        setDashAddressError(t.legacyDashInvalid);
         return;
       }
     }
@@ -577,15 +577,14 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
       }
       const res = await requestWithdrawal(payoutMethod, paymentDetails);
       const successMsg = payoutMethod === 'dash' || (payoutMethod as string) === 'dash_btcpay'
-        ? 'You will receive a Dash claim link by email shortly.'
-        : 'Our team will process this bank transfer within 1–3 business days.';
+        ? t.legacyDashSuccess
+        : t.legacyBankSuccess;
       setWithdrawSuccess(
-        t.withdrawAmount(res.data.withdrawal.amountUsd.toFixed(2)) +
-          ` requested successfully. ${successMsg}`
+        t.legacyWithdrawSuccessLine(t.withdrawAmount(res.data.withdrawal.amountUsd.toFixed(2)), successMsg)
       );
       await onReload();
     } catch (err) {
-      setWithdrawError(err instanceof Error ? err.message : "Failed to request withdrawal");
+      setWithdrawError(err instanceof Error ? err.message : t.legacyWithdrawFailed);
     } finally {
       setWithdrawing(false);
     }
@@ -603,7 +602,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
         {/* Payout method selector */}
         <div className="mb-4">
           <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Payout Method
+            {t.legacyPayoutMethodLabel}
           </label>
           <div className="flex gap-2">
             <button
@@ -616,7 +615,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
                 color: payoutMethod === "bank_transfer" ? "#5ED1C4" : "#8E8E93",
               }}
             >
-              Bank Transfer
+              {t.legacyBankTransferBtn}
             </button>
             <button
               type="button"
@@ -628,7 +627,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
                 color: payoutMethod === "dash" ? "#008DE4" : "#8E8E93",
               }}
             >
-              Dash
+              {t.legacyDashBtn}
             </button>
           </div>
         </div>
@@ -638,25 +637,21 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
             className="mb-4 px-3 py-3 rounded-lg text-xs"
             style={{ background: "rgba(255,255,255,0.04)", color: "var(--pnp-text-secondary, #8E8E93)", lineHeight: "1.6" }}
           >
-            <strong style={{ color: "#fff", display: "block", marginBottom: 4 }}>Bank Transfer</strong>
-            To receive payouts via bank transfer, contact{" "}
-            <a href="mailto:support@pnptv.app" style={{ color: "#5ED1C4" }}>
-              support@pnptv.app
-            </a>{" "}
-            to provide your banking details securely. Our team will process the transfer within 1–3 business days after approval.
+            <strong style={{ color: "#fff", display: "block", marginBottom: 4 }}>{t.legacyBankTransferTitle}</strong>
+            {t.legacyBankTransferBody}
           </div>
         )}
 
         {payoutMethod === "dash" && (
           <div className="mb-4">
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              Dash Wallet Address
+              {t.legacyDashAddressLabel}
             </label>
             <input
               type="text"
               value={dashAddress}
               onChange={(e) => { setDashAddress(e.target.value); setDashAddressError(null); }}
-              placeholder="e.g. Xa1bc2d3e... (34 chars, starts with X or 7)"
+              placeholder={t.legacyDashAddressPlaceholder}
               className="w-full text-xs px-3 py-2 rounded-lg border outline-none font-mono"
               style={{
                 background: "rgba(255,255,255,0.05)",
@@ -668,7 +663,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
               <p className="mt-1 text-xs" style={{ color: "#ef4444" }}>{dashAddressError}</p>
             )}
             <p className="mt-1 text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              You'll receive an email with a claim link. Open it, paste this Dash address, and BTCPay sends the funds on-chain. Your USD balance is converted to Dash at the live exchange rate at claim time.
+              {t.legacyDashHelpBody}
             </p>
           </div>
         )}
@@ -718,7 +713,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
                            w.status === "pending" ? "#FFB454" : "#8E8E93",
                   }}
                 >
-                  {w.status}
+                  {statusLabelKey(w.status, t)}
                 </span>
               </div>
             ))}
@@ -732,7 +727,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
         title={t.withdrawConfirmTitle}
         message={
           payoutMethod === "dash"
-            ? `Request payout of $${withdrawable.toFixed(2)} in Dash to ${dashAddress.trim()}?`
+            ? t.legacyWithdrawDashConfirmMsg(withdrawable.toFixed(2), dashAddress.trim())
             : t.withdrawConfirmMsg(withdrawable.toFixed(2))
         }
         confirmLabel={t.withdrawBtn}

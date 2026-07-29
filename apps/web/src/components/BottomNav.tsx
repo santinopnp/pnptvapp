@@ -2,16 +2,18 @@ import React, { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useI18n } from "@/lib/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Classic nav — unchanged, shown to all users except the preview account
 // ─────────────────────────────────────────────────────────────────────────────
 
-const classicNavItems = [
+type ClassicNavId = "feed" | "hangouts" | "explore" | "channels" | "live";
+
+const classicNavItems: Array<{ id: ClassicNavId; to: string; icon: React.ReactNode }> = [
   {
     id: "feed",
     to: "/?view=feed",
-    label: "Feed",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
@@ -21,7 +23,6 @@ const classicNavItems = [
   {
     id: "hangouts",
     to: "/?view=hangouts",
-    label: "Hangouts",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -31,7 +32,6 @@ const classicNavItems = [
   {
     id: "explore",
     to: "/nearby",
-    label: "Connect",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
@@ -41,7 +41,6 @@ const classicNavItems = [
   {
     id: "channels",
     to: "/channels",
-    label: "Channels",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -51,7 +50,6 @@ const classicNavItems = [
   {
     id: "live",
     to: "/live",
-    label: "Live",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -64,6 +62,7 @@ function ClassicNav() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const viewParam = searchParams.get("view");
+  const { nav } = useI18n();
 
   const getIsActive = (item: (typeof classicNavItems)[number]) => {
     if (item.id === "feed") {
@@ -78,10 +77,15 @@ function ClassicNav() {
   };
 
   return (
-    <nav className="glass-nav border-t border-pnp-border safe-area-bottom" translate="no" lang="en">
+    <nav className="glass-nav border-t border-pnp-border safe-area-bottom">
       <div className="flex items-center justify-around h-16 w-full max-w-lg mx-auto px-1">
         {classicNavItems.map((item) => {
           const active = getIsActive(item);
+          const label = item.id === "feed" ? nav.feed
+            : item.id === "hangouts" ? nav.hangouts
+            : item.id === "explore" ? nav.explore
+            : item.id === "channels" ? nav.channels
+            : nav.live;
           return (
             <NavLink
               key={item.id}
@@ -94,7 +98,7 @@ function ClassicNav() {
               }
             >
               {item.icon}
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <span className="text-[10px] font-medium">{label}</span>
             </NavLink>
           );
         })}
@@ -181,6 +185,7 @@ const IslandDivider = () => <div className="w-px h-7 bg-white/10 mx-1" />;
 // ── Meet Pigs Sheet ──────────────────────────────────────────────────────────
 function MeetPigsSheet({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
+  const { nav } = useI18n();
   const go = useCallback((to: string) => { onClose(); navigate(to); }, [onClose, navigate]);
 
   return (
@@ -188,9 +193,9 @@ function MeetPigsSheet({ onClose }: { onClose: () => void }) {
       <div className="bg-[#0A0A0F] rounded-t-[28px] border-t border-white/10 px-5 pt-4 pb-10 safe-area-bottom overflow-y-auto overscroll-contain"
         style={{ maxHeight: "85dvh" }}>
         <div className="w-9 h-1 rounded-full bg-white/20 mx-auto mb-5" />
-        <h2 className="text-[21px] font-black text-center text-pnp-textPrimary mb-1">Meet the Pigs 🐷</h2>
+        <h2 className="text-[21px] font-black text-center text-pnp-textPrimary mb-1">{nav.sheetMeetPigsTitle || "Meet the Pigs 🐷"}</h2>
         <p className="text-[13px] text-center text-pnp-textSecondary mb-6 leading-relaxed">
-          Hang out with the community or<br />connect with someone nearby
+          {nav.sheetMeetPigsSubtitle || "Hang out with the community or connect with someone nearby"}
         </p>
 
         <div className="flex flex-col gap-3">
@@ -208,18 +213,18 @@ function MeetPigsSheet({ onClose }: { onClose: () => void }) {
               <span className="flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-full"
                 style={{ background: "rgba(212,0,122,.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,.3)" }}>
                 <span className="w-1.5 h-1.5 rounded-full bg-[#D4007A] inline-block" />
-                LIVE
+                {nav.sheetBadgeLive || "LIVE"}
               </span>
             </div>
             <p className="text-[17px] font-black mb-1" style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              PNP Hangouts
+              {nav.sheetPnpHangoutsTitle || "PNP Hangouts"}
             </p>
             <p className="text-[12px] text-pnp-textSecondary leading-relaxed mb-3">
-              Join group chat rooms, hang out with the community, share music, and vibe together in real time.
+              {nav.sheetPnpHangoutsDesc || "Join group chat rooms, hang out with the community, share music, and vibe together in real time."}
             </p>
             <span className="inline-flex items-center gap-1.5 text-[12px] font-bold px-4 py-2 rounded-full"
               style={{ background: "rgba(212,0,122,.15)", color: "#D4007A" }}>
-              Enter Hangouts
+              {nav.sheetPnpHangoutsCta || "Enter Hangouts"}
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
@@ -242,16 +247,16 @@ function MeetPigsSheet({ onClose }: { onClose: () => void }) {
                 <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <circle cx="12" cy="12" r="3" /><path strokeLinecap="round" strokeLinejoin="round" d="M4.929 4.929a10 10 0 0114.142 0M7.757 7.757a6 6 0 018.486 0" />
                 </svg>
-                NEARBY
+                {nav.sheetBadgeNearby || "NEARBY"}
               </span>
             </div>
-            <p className="text-[17px] font-black text-[#22C55E] mb-1">PNP Connect</p>
+            <p className="text-[17px] font-black text-[#22C55E] mb-1">{nav.sheetPnpConnectTitle || "PNP Connect"}</p>
             <p className="text-[12px] text-pnp-textSecondary leading-relaxed mb-3">
-              Find PNP members and models near you. Browse profiles, go 1-on-1, or book a private call.
+              {nav.sheetPnpConnectDesc || "Find PNP members and models near you. Browse profiles, go 1-on-1, or book a private call."}
             </p>
             <span className="inline-flex items-center gap-1.5 text-[12px] font-bold px-4 py-2 rounded-full"
               style={{ background: "rgba(34,197,94,.12)", color: "#22C55E" }}>
-              Explore Nearby
+              {nav.sheetPnpConnectCta || "Explore Nearby"}
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
@@ -266,26 +271,27 @@ function MeetPigsSheet({ onClose }: { onClose: () => void }) {
 // ── Content Sheet ────────────────────────────────────────────────────────────
 function ContentSheet({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
+  const { nav } = useI18n();
   const go = useCallback((to: string) => { onClose(); navigate(to); }, [onClose, navigate]);
 
   const cards = [
     {
       icon: "📺",
-      title: "Live Shows",
-      desc: "Watch active PNP streams happening right now",
-      cta: "Watch now",
+      title: nav.sheetCardLiveShowsTitle || "Live Shows",
+      desc: nav.sheetCardLiveShowsDesc || "Watch active PNP streams happening right now",
+      cta: nav.sheetCardLiveShowsCta || "Watch now",
       to: "/live",
       accentColor: "#D4007A",
       bg: "rgba(212,0,122,.1)",
       border: "rgba(212,0,122,.3)",
       iconBg: "rgba(212,0,122,.15)",
-      badge: <span className="flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(212,0,122,.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,.3)" }}><span className="w-1.5 h-1.5 rounded-full bg-[#D4007A] inline-block" />LIVE</span>,
+      badge: <span className="flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(212,0,122,.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,.3)" }}><span className="w-1.5 h-1.5 rounded-full bg-[#D4007A] inline-block" />{nav.sheetBadgeLive || "LIVE"}</span>,
     },
     {
       icon: "📞",
-      title: "Private Calls",
-      desc: "Pick a model and book a 1-on-1 session directly",
-      cta: "Book now",
+      title: nav.sheetCardPrivateCallsTitle || "Private Calls",
+      desc: nav.sheetCardPrivateCallsDesc || "Pick a model and book a 1-on-1 session directly",
+      cta: nav.sheetCardPrivateCallsCta || "Book now",
       to: "/nearby?mode=calls",
       accentColor: "#7B61FF",
       bg: "rgba(123,97,255,.1)",
@@ -295,21 +301,21 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
     },
     {
       icon: "📡",
-      title: "PNP Channels",
-      desc: "Videos, series and exclusive content drops",
-      cta: "Browse",
+      title: nav.sheetCardChannelsTitle || "PNP Channels",
+      desc: nav.sheetCardChannelsDesc || "Videos, series and exclusive content drops",
+      cta: nav.sheetCardChannelsCta || "Browse",
       to: "/channels",
       accentColor: "#FFB454",
       bg: "rgba(255,180,84,.08)",
       border: "rgba(255,180,84,.25)",
       iconBg: "rgba(255,180,84,.12)",
-      badge: <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(34,197,94,.12)", color: "#22C55E", border: "1px solid rgba(34,197,94,.25)" }}>FREE+</span>,
+      badge: <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(34,197,94,.12)", color: "#22C55E", border: "1px solid rgba(34,197,94,.25)" }}>{nav.sheetBadgeFreePlus || "FREE+"}</span>,
     },
     {
       icon: "⭐",
-      title: "Creators",
-      desc: "Find your favourite PNP Model and follow them",
-      cta: "Explore",
+      title: nav.sheetCardCreatorsTitle || "Creators",
+      desc: nav.sheetCardCreatorsDesc || "Find your favourite PNP Model and follow them",
+      cta: nav.sheetCardCreatorsCta || "Explore",
       to: "/models",
       accentColor: "#22C55E",
       bg: "rgba(34,197,94,.08)",
@@ -324,14 +330,14 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
       <div className="bg-[#0A0A0F] rounded-t-[28px] border-t border-white/10 px-5 pt-4 pb-10 safe-area-bottom overflow-y-auto overscroll-contain"
         style={{ maxHeight: "85dvh" }}>
         <div className="w-9 h-1 rounded-full bg-white/20 mx-auto mb-5" />
-        <h2 className="text-[21px] font-black text-center text-pnp-textPrimary mb-1">What are you into? 🎬</h2>
+        <h2 className="text-[21px] font-black text-center text-pnp-textPrimary mb-1">{nav.sheetContentTitle || "What are you into? 🎬"}</h2>
         <p className="text-[13px] text-center text-pnp-textSecondary mb-5 leading-relaxed">
-          Tune in live or explore content at your own pace
+          {nav.sheetContentSubtitle || "Tune in live or explore content at your own pace"}
         </p>
 
         {/* Live section */}
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">🔴 Live</span>
+          <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">{nav.sheetContentSectionLive || "🔴 Live"}</span>
           <div className="flex-1 h-px bg-white/8" />
         </div>
         <div className="grid grid-cols-2 gap-3 mb-4 min-[340px]:grid-cols-2 grid-cols-1">
@@ -358,7 +364,7 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
 
         {/* Content section */}
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">🎞 Content</span>
+          <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">{nav.sheetContentSectionContent || "🎞 Content"}</span>
           <div className="flex-1 h-px bg-white/8" />
         </div>
         <div className="grid grid-cols-2 gap-3 min-[340px]:grid-cols-2 grid-cols-1">
@@ -391,19 +397,20 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
 function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode?: (mode: NavMode) => void }) {
   const navigate = useNavigate();
   const { user, isAdmin, isCreatorAdmin } = useAuth();
+  const { nav } = useI18n();
   const go = useCallback((to: string) => { onClose(); navigate(to); }, [onClose, navigate]);
 
   const initials = user?.displayName?.charAt(0)?.toUpperCase() || user?.username?.charAt(0)?.toUpperCase() || "?";
-  const tierLabel = user?.tier === "prime" ? "PRIME" : user?.tier === "member" ? "MEMBER" : "FREE";
+  const tierLabel = user?.tier === "prime" ? (nav.tierPrime || "PRIME") : user?.tier === "member" ? (nav.tierMember || "MEMBER") : (nav.tierFree || "FREE");
   const tierColor = user?.tier === "prime" ? "#FFB454" : user?.tier === "member" ? "#60A5FA" : "#8A8A9A";
   const tierBg = user?.tier === "prime" ? "rgba(255,180,84,.12)" : user?.tier === "member" ? "rgba(96,165,250,.1)" : "rgba(255,255,255,.05)";
   const tierBorder = user?.tier === "prime" ? "rgba(255,180,84,.3)" : user?.tier === "member" ? "rgba(96,165,250,.2)" : "rgba(255,255,255,.1)";
 
   const menuItems = [
-    { icon: "👤", label: "Your Profile", sub: "View & edit your page", to: "/profile", color: "#D4007A", bg: "rgba(212,0,122,.12)" },
-    { icon: "🌟", label: "My Access", sub: "Active plans & entitlements", to: "/my-access", color: "#FFB454", bg: "rgba(255,180,84,.1)" },
-    { icon: "⚙️", label: "Settings", sub: "Account, privacy & notifications", to: "/settings", color: "#8A8A9A", bg: "rgba(255,255,255,.06)" },
-    { icon: "💚", label: "Wellness Center", sub: "Self-care & harm reduction tools", to: "/self-care", color: "#22C55E", bg: "rgba(34,197,94,.1)" },
+    { icon: "👤", label: nav.youProfileLabel || nav.profile, sub: nav.youProfileSub || "", to: "/profile", color: "#D4007A", bg: "rgba(212,0,122,.12)" },
+    { icon: "🌟", label: nav.myAccess, sub: nav.youMyAccessSub || "", to: "/my-access", color: "#FFB454", bg: "rgba(255,180,84,.1)" },
+    { icon: "⚙️", label: nav.settings, sub: nav.youSettingsSub || "", to: "/settings", color: "#8A8A9A", bg: "rgba(255,255,255,.06)" },
+    { icon: "💚", label: nav.youWellnessLabel || nav.selfCare, sub: nav.youWellnessSub || "", to: "/self-care", color: "#22C55E", bg: "rgba(34,197,94,.1)" },
   ];
 
   return (
@@ -450,8 +457,8 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
             <div className="mt-1 pt-1 border-t border-white/8">
               <div className="flex items-center justify-between px-3 py-3 rounded-[14px]">
                 <div>
-                  <p className="text-[14px] font-semibold text-pnp-textPrimary">Navigation</p>
-                  <p className="text-[11px] text-pnp-textSecondary">Switch styles</p>
+                  <p className="text-[14px] font-semibold text-pnp-textPrimary">{nav.youNavigation || "Navigation"}</p>
+                  <p className="text-[11px] text-pnp-textSecondary">{nav.youSwitchStyles || "Switch styles"}</p>
                 </div>
                 <div className="flex items-center gap-0.5 p-1 rounded-full"
                   style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)" }}>
@@ -460,13 +467,13 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
                     className="px-3 py-1 rounded-full text-[11px] font-bold transition-all"
                     style={{ background: "transparent", color: "#8A8A9A" }}
                   >
-                    Classic
+                    {nav.youNavClassic || "Classic"}
                   </button>
                   <button
                     className="px-3 py-1 rounded-full text-[11px] font-bold"
                     style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "#fff" }}
                   >
-                    🚢 Cruise
+                    {nav.youNavCruise || "🚢 Cruise"}
                   </button>
                 </div>
               </div>
@@ -480,10 +487,10 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
                   className="w-full flex items-center gap-4 px-3 py-3 rounded-[14px] transition-all active:bg-white/5 text-left">
                   <div className="w-10 h-10 rounded-[11px] flex items-center justify-center text-[18px]" style={{ background: "rgba(255,180,84,.1)" }}>🎬</div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-semibold" style={{ color: "#FFB454" }}>Creator Studio</p>
-                    <p className="text-[11px] text-pnp-textSecondary">Content, earnings & live</p>
+                    <p className="text-[14px] font-semibold" style={{ color: "#FFB454" }}>{nav.youCreatorStudio || "Creator Studio"}</p>
+                    <p className="text-[11px] text-pnp-textSecondary">{nav.youCreatorStudioSub || "Content, earnings & live"}</p>
                   </div>
-                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(255,180,84,.15)", color: "#FFB454", border: "1px solid rgba(255,180,84,.3)" }}>CREATOR</span>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(255,180,84,.15)", color: "#FFB454", border: "1px solid rgba(255,180,84,.3)" }}>{nav.youBadgeCreator || "CREATOR"}</span>
                   <svg className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                 </button>
               )}
@@ -492,10 +499,10 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
                   className="w-full flex items-center gap-4 px-3 py-3 rounded-[14px] transition-all active:bg-white/5 text-left">
                   <div className="w-10 h-10 rounded-[11px] flex items-center justify-center text-[18px]" style={{ background: "rgba(123,97,255,.1)" }}>🛡️</div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-semibold" style={{ color: "#7B61FF" }}>Admin Panel</p>
-                    <p className="text-[11px] text-pnp-textSecondary">Manage platform</p>
+                    <p className="text-[14px] font-semibold" style={{ color: "#7B61FF" }}>{nav.youAdminPanel || "Admin Panel"}</p>
+                    <p className="text-[11px] text-pnp-textSecondary">{nav.youAdminPanelSub || "Manage platform"}</p>
                   </div>
-                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(123,97,255,.15)", color: "#7B61FF", border: "1px solid rgba(123,97,255,.3)" }}>ADMIN</span>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(123,97,255,.15)", color: "#7B61FF", border: "1px solid rgba(123,97,255,.3)" }}>{nav.youBadgeAdmin || "ADMIN"}</span>
                   <svg className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                 </button>
               )}
@@ -509,6 +516,7 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
 
 // ── Cruise switch FAB — shown in Classic mode for santinofurioso ─────────────
 function CruiseSwitchFAB({ onSwitch }: { onSwitch: () => void }) {
+  const { nav } = useI18n();
   return (
     <button
       onClick={onSwitch}
@@ -522,7 +530,7 @@ function CruiseSwitchFAB({ onSwitch }: { onSwitch: () => void }) {
         boxShadow: "0 4px 16px rgba(0,0,0,.5)",
       }}
     >
-      🚢 Cruise Mode
+      {nav.cruiseModeFab || "🚢 Cruise Mode"}
     </button>
   );
 }
@@ -532,6 +540,7 @@ function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => 
   const [sheet, setSheet] = useState<ActiveSheet>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const { nav } = useI18n();
 
   // Close any open sheet on route change
   useEffect(() => { setSheet(null); }, [location.pathname, location.search]);
@@ -576,7 +585,7 @@ function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => 
       >
         {/* Home */}
         <IslandBtn
-          label="Home"
+          label={nav.islandHome || "Home"}
           active={isHome && sheet === null}
           onClick={() => { setSheet(null); navigate("/"); }}
           icon={
@@ -590,7 +599,7 @@ function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => 
 
         {/* Meet Pigs */}
         <IslandBtn
-          label="Pigs"
+          label={nav.islandPigs || "Pigs"}
           active={sheet === "pigs"}
           onClick={() => toggle("pigs")}
           icon={
@@ -605,7 +614,7 @@ function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => 
 
         {/* Content */}
         <IslandBtn
-          label="Content"
+          label={nav.islandContent || "Content"}
           active={sheet === "content"}
           onClick={() => toggle("content")}
           icon={
@@ -620,7 +629,7 @@ function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => 
 
         {/* You */}
         <IslandBtn
-          label="You"
+          label={nav.islandYou || "You"}
           active={sheet === "you"}
           hasNotif
           onClick={() => toggle("you")}

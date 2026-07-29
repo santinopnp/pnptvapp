@@ -1247,13 +1247,17 @@ export default function SocialPostCard({
                           onNavigate(channelPromoCta.href);
                         }
                       }}>
-                        <img
-                          src={post.media_url || post.video_thumbnail_url!}
-                          alt={channelName || "Channel promo"}
-                          className="w-full object-cover rounded-xl"
-                          loading="lazy"
-                          onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
-                        />
+                        {(post.media_url || post.video_thumbnail_url) ? (
+                          <img
+                            src={post.media_url || post.video_thumbnail_url || undefined}
+                            alt={channelName || "Channel promo"}
+                            className="w-full object-cover rounded-xl"
+                            loading="lazy"
+                            onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="w-full aspect-video rounded-xl bg-gradient-to-br from-white/10 to-white/5" />
+                        )}
                         <div className="absolute inset-0 flex items-center justify-center rounded-xl">
                           <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm border border-white/20">
                             <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">

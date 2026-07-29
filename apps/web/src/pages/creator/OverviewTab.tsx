@@ -36,9 +36,9 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
         style={{ border: "1px solid rgba(212,0,122,.35)" }}
       >
         <div>
-          <p className="text-sm font-semibold text-white">Get set up to sell</p>
+          <p className="text-sm font-semibold text-white">{t.overviewGetSetupTitle}</p>
           <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            OBS, contenido, canales, hangout — 5 pasos.
+            {t.overviewGetSetupDesc}
           </p>
         </div>
         <span className="text-sm font-bold flex-shrink-0" style={{ color: "#FF4DA6" }}>→</span>
@@ -50,9 +50,9 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
         style={{ border: "1px solid rgba(94,209,196,.3)" }}
       >
         <div>
-          <p className="text-sm font-semibold text-white">Documentation</p>
+          <p className="text-sm font-semibold text-white">{t.overviewDocumentation}</p>
           <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Consents, legal agreements, 2257, ID uploads y payout config.
+            {t.overviewDocumentationDesc}
           </p>
         </div>
         <span className="text-sm font-bold flex-shrink-0" style={{ color: "#5ED1C4" }}>→</span>
@@ -67,7 +67,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
           </svg>
-          My profile
+          {t.overviewMyProfile}
         </button>
         <button
           onClick={() => user?.username && navigate(`/c/${user.username}`)}
@@ -79,7 +79,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
-          Public preview
+          {t.overviewPublicPreview}
         </button>
       </div>
 
@@ -125,11 +125,11 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
                     : t.creatorTypeDefault}
                 </p>
                 <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  ${(dashboard.priceUsd ?? 0).toFixed(2)}/month &middot; {t.revenueSplit}
+                  {t.overviewPricePerMonth((dashboard.priceUsd ?? 0).toFixed(2))} &middot; {t.revenueSplit}
                 </p>
               </div>
               {dashboard.verified && (
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="#5ED1C4" aria-label="Verified">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="#5ED1C4" aria-label={t.overviewVerifiedAria}>
                   <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
               )}
@@ -141,8 +141,8 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     {subCount >= threshold
-                      ? `Auto-upgrade to ${nextTierCfg.name} ready`
-                      : `${threshold - subCount} more subscriber${threshold - subCount !== 1 ? "s" : ""} to ${nextTierCfg.name}`}
+                      ? t.overviewAutoUpgradeReady(nextTierCfg.name)
+                      : t.overviewMoreSubsToNext(threshold - subCount, nextTierCfg.name)}
                   </span>
                   <span className="text-[11px] font-semibold" style={{ color: subCount >= threshold ? "#5ED1C4" : "#fff" }}>
                     {subCount}/{threshold}
@@ -162,7 +162,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
               </div>
             )}
             {isStructuredTier && !threshold && tierId === "diamond" && (
-              <p className="text-[11px] mt-1" style={{ color: "#5ED1C4" }}>Top tier — you have reached Diamond</p>
+              <p className="text-[11px] mt-1" style={{ color: "#5ED1C4" }}>{t.overviewDiamondTopTier}</p>
             )}
           </div>
         );
@@ -189,7 +189,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
 
       {/* Revenue streams */}
       <div className="glass-card-sm mb-4 p-4">
-        <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Tus fuentes de ingreso</p>
+        <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.overviewRevenueStreamsTitle}</p>
         <div className="space-y-2">
           {isPerformer && (
             <div
@@ -201,7 +201,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-white">PNP Live</p>
                 <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  1 token/min por viewer activo · Tips en vivo · Llamadas privadas
+                  {t.overviewPnpLiveDesc}
                 </p>
               </div>
               <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>
@@ -217,7 +217,7 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-white">PNP Channels</p>
                 <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  Canales de video · Contenido exclusivo · Subscriptores
+                  {t.overviewPnpChannelsDesc}
                 </p>
               </div>
               <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>
@@ -230,9 +230,9 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
           >
             <span className="text-xl flex-shrink-0">💳</span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white">Membresías · Contenido exclusivo</p>
+              <p className="text-xs font-semibold text-white">{t.overviewMembershipsTitle}</p>
               <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                ${(dashboard.priceUsd ?? 0).toFixed(2)}/mes · {dashboard.exclusivePostCount ?? 0} post{(dashboard.exclusivePostCount ?? 0) !== 1 ? "s" : ""} exclusivo{(dashboard.exclusivePostCount ?? 0) !== 1 ? "s" : ""} · Canal + hangout
+                {t.overviewMembershipsDesc((dashboard.priceUsd ?? 0).toFixed(2), dashboard.exclusivePostCount ?? 0)}
               </p>
             </div>
             <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#D4007A" }}>→</span>

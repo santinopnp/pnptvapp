@@ -65,6 +65,9 @@ const en = {
   // Mobile PRIME CTA banner
   primeCtaUpgrade: "Upgrade to PRIME — DMs, video calls & more",
   primeCtaUnlock: "Unlock PRIME — DMs, video calls & more",
+
+  modelsCardTitle: "Models",
+  modelsCardDesc: "Find and follow your favorite creators",
 };
 
 const es: typeof en = {
@@ -121,6 +124,9 @@ const es: typeof en = {
 
   primeCtaUpgrade: "Actualiza a PRIME — DMs, videollamadas y más",
   primeCtaUnlock: "Desbloquea PRIME — DMs, videollamadas y más",
+
+  modelsCardTitle: "Modelos",
+  modelsCardDesc: "Encuentra y sigue a tus creadores favoritos",
 };
 
 const strings = {

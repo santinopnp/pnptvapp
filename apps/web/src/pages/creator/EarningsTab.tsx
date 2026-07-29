@@ -10,14 +10,15 @@ import {
   rejectWeeklyPayout,
 } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
+import { useI18n } from "@/lib/i18n";
 
 function fmtCop(v: number | null | undefined): string {
   if (v == null) return "";
   return v.toLocaleString("es-CO");
 }
 
-function methodLabel(method: WeeklyPayoutApproval["method"] | null): string {
-  if (!method) return "—";
+function methodLabel(method: WeeklyPayoutApproval["method"] | null, none: string): string {
+  if (!method) return none;
   const lane = method.lane || "";
   const val = method.address || method.handle || method.key || method.account || "";
   const laneName: Record<string, string> = {
@@ -42,9 +43,9 @@ function WeeklyApprovalBanner({
   onDone: () => void;
   scrollRef: React.RefObject<HTMLDivElement>;
 }) {
+  const { creator: t, lang } = useI18n();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const es = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
   const isApproved = approval.status === "approved";
   const isColombiaBalance = approval.balanceCop != null;
   const isManual = !!approval.isManual;
@@ -54,8 +55,8 @@ function WeeklyApprovalBanner({
   const [msLeft, setMsLeft] = useState(deadline ? deadline - Date.now() : 0);
   useEffect(() => {
     if (!deadline) return;
-    const t = setInterval(() => setMsLeft(deadline - Date.now()), 60_000);
-    return () => clearInterval(t);
+    const ti = setInterval(() => setMsLeft(deadline - Date.now()), 60_000);
+    return () => clearInterval(ti);
   }, [deadline]);
   const hoursLeft = Math.max(0, Math.floor(msLeft / 3_600_000));
   const minsLeft = Math.max(0, Math.floor((msLeft % 3_600_000) / 60_000));
@@ -67,20 +68,20 @@ function WeeklyApprovalBanner({
       await approveWeeklyPayout(approval.id);
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Approval failed");
+      setError(e instanceof Error ? e.message : t.approvalFailed);
     } finally {
       setBusy(null);
     }
   }
   async function handleReject() {
-    if (!confirm(es ? "¿Rechazar este pago y devolver saldo a disponible?" : "Reject this payout and return the balance to available?")) return;
+    if (!confirm(t.approvalRejectConfirm)) return;
     setBusy("reject");
     setError(null);
     try {
       await rejectWeeklyPayout(approval.id);
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Reject failed");
+      setError(e instanceof Error ? e.message : t.approvalRejectFailed);
     } finally {
       setBusy(null);
     }
@@ -91,12 +92,13 @@ function WeeklyApprovalBanner({
   const accentBorder = isManual ? "rgba(245,158,11,0.35)" : (isApproved ? "rgba(94,209,196,0.35)" : "rgba(212,0,122,0.35)");
 
   const heading = isApproved
-    ? (es ? "Pago aprobado — el equipo lo procesará pronto" : "Approved — the team will process it soon")
+    ? t.approvalHeadingApproved
     : isManual
-      ? (es ? "🚨 Adelanto de pago disponible" : "🚨 Emergency payout advance available")
-      : (es ? "Aprobación semanal pendiente" : "Weekly approval pending");
+      ? t.approvalHeadingManual
+      : t.approvalHeadingPending;
 
   const approveButtonDisabled = busy !== null || (!isManual && deadline != null && msLeft <= 0);
+  const numberLocale = lang === "es" ? "es-CO" : "en-US";
 
   return (
     <div
@@ -113,28 +115,28 @@ function WeeklyApprovalBanner({
           {isColombiaBalance && (
             <p className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
               ≈ COP ${fmtCop(approval.balanceCop)}
-              {approval.usdCopRate ? ` · TRM ${approval.usdCopRate.toLocaleString("es-CO")}` : ""}
+              {approval.usdCopRate ? t.approvalCurrencyTrmLabel(approval.usdCopRate.toLocaleString(numberLocale)) : ""}
             </p>
           )}
           {isManual && approval.adminNote && (
             <p className="text-xs mt-2 italic" style={{ color: "#F59E0B" }}>
-              {es ? "Nota: " : "Note: "}“{approval.adminNote}”
+              {t.approvalNoteLabel}“{approval.adminNote}”
             </p>
           )}
           <p className="text-xs mt-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {es ? "Método: " : "Method: "}{methodLabel(approval.methodOverride || approval.method)}
+            {t.approvalMethodLabel}{methodLabel(approval.methodOverride || approval.method, t.approvalMethodNone)}
           </p>
         </div>
         {!isApproved && !isManual && deadline != null && msLeft > 0 && (
           <div className="text-right text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            <p>{es ? "Aprueba antes de" : "Approve before"}</p>
-            <p className="font-mono font-semibold text-white">4pm Bogotá</p>
-            <p className="mt-0.5">{hoursLeft}h {minsLeft}m {es ? "restantes" : "left"}</p>
+            <p>{t.approvalApproveBefore}</p>
+            <p className="font-mono font-semibold text-white">{t.approvalDeadlineBogota}</p>
+            <p className="mt-0.5">{t.approvalTimeLeft(hoursLeft, minsLeft)}</p>
           </div>
         )}
         {!isApproved && isManual && (
           <span className="text-[10px] font-bold uppercase px-2 py-1 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#F59E0B" }}>
-            {es ? "Excepción" : "Exception"}
+            {t.approvalException}
           </span>
         )}
       </div>
@@ -152,7 +154,7 @@ function WeeklyApprovalBanner({
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: isManual ? "#F59E0B" : "#D4007A" }}
           >
-            {busy === "approve" ? "…" : es ? "Aprobar" : "Approve"}
+            {busy === "approve" ? "…" : t.approvalApproveBtn}
           </button>
           <button
             type="button"
@@ -160,19 +162,13 @@ function WeeklyApprovalBanner({
             disabled={busy !== null}
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-50"
           >
-            {busy === "reject" ? "…" : es ? "Rechazar" : "Reject"}
+            {busy === "reject" ? "…" : t.approvalRejectBtn}
           </button>
         </div>
       )}
       {isApproved && (
         <p className="text-xs mt-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          {isManual
-            ? (es
-                ? "El equipo procesará tu adelanto en las próximas horas y adjuntará el comprobante en tu historial."
-                : "The team will process your advance in the next few hours and attach a receipt to your history.")
-            : (es
-                ? "El equipo procesará tu pago mañana martes y adjuntará el comprobante en tu historial."
-                : "The team will process your payout tomorrow (Tuesday) and attach a receipt to your history.")}
+          {isManual ? t.approvalManualProcessMsg : t.approvalWeeklyProcessMsg}
         </p>
       )}
     </div>
@@ -184,14 +180,14 @@ interface EarningsTabProps {
   t: CreatorStrings;
 }
 
-function statusBadge(status: string) {
+function statusBadge(status: string, t: CreatorStrings) {
   if (status === 'sent' || status === 'completed') {
-    return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-500/20 text-teal-400">Sent</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-500/20 text-teal-400">{t.payoutStatusSent}</span>;
   }
   if (status === 'failed') {
-    return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400">Failed</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400">{t.payoutStatusFailed}</span>;
   }
-  return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-400">Processing</span>;
+  return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-400">{t.payoutStatusProcessing}</span>;
 }
 
 export function EarningsTab({ earnings, t }: EarningsTabProps) {
@@ -278,7 +274,7 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
           .catch(() => {});
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Payout request failed';
+      const msg = err instanceof Error ? err.message : t.payoutRequestFailed;
       setWithdrawError(msg);
     } finally {
       setWithdrawLoading(false);
@@ -341,7 +337,7 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
             {[0, 1, 2].map(i => <div key={i} className="h-4 rounded-full bg-white/5 animate-pulse" />)}
           </div>
         ) : trends.length === 0 ? (
-          <p className="text-xs text-white/40">No earnings in the last {period} months</p>
+          <p className="text-xs text-white/40">{t.earningsNoTrendsPeriod(period)}</p>
         ) : (
           <div className="space-y-2">
             {trends.map((trend, i) => {
@@ -367,18 +363,18 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
       </div>
 
       <div className="glass-card-sm p-4 space-y-3">
-        <p className="text-sm font-semibold text-white">Withdraw Earnings</p>
+        <p className="text-sm font-semibold text-white">{t.withdrawEarningsTitle}</p>
 
         {balanceLoading ? (
           <div className="h-12 rounded-lg bg-white/5 animate-pulse" />
         ) : balanceError ? (
           <div className="space-y-2">
-            <p className="text-xs text-red-400">Could not load your balance. Check your connection and try again.</p>
+            <p className="text-xs text-red-400">{t.withdrawBalanceLoadError}</p>
             <button
               onClick={fetchBalance}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/10 text-white hover:bg-white/20 transition-colors"
             >
-              Retry
+              {t.withdrawRetryBtn}
             </button>
           </div>
         ) : balance ? (
@@ -387,18 +383,18 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
               <div>
                 <p className="text-2xl font-bold" style={{ color: "#5ED1C4" }}>
                   ${balance.available_usd.toFixed(2)}
-                  <span className="text-sm font-normal ml-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>available</span>
+                  <span className="text-sm font-normal ml-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.withdrawAvailableLabel}</span>
                 </p>
                 {balance.holding_count > 0 && (
                   <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    ${balance.holding_usd.toFixed(2)} releasing
+                    {t.withdrawReleasingLabel(balance.holding_usd.toFixed(2))}
                     {balance.earliest_available_at
-                      ? ` ${new Date(balance.earliest_available_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-                      : ' soon'}
+                      ? t.withdrawReleasingDate(new Date(balance.earliest_available_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }))
+                      : t.withdrawReleasingSoon}
                   </p>
                 )}
                 {balance.in_payout_usd > 0 && (
-                  <p className="text-xs mt-0.5 text-amber-400">${balance.in_payout_usd.toFixed(2)} in transit</p>
+                  <p className="text-xs mt-0.5 text-amber-400">{t.withdrawInTransitLabel(balance.in_payout_usd.toFixed(2))}</p>
                 )}
               </div>
 
@@ -412,17 +408,17 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
                       : 'bg-white/10 text-white/30 cursor-not-allowed'
                   }`}
                 >
-                  {balance.available_usd < 5 ? 'Min. $5.00' : 'Withdraw All'}
+                  {balance.available_usd < 5 ? t.withdrawMin5Btn : t.withdrawAllBtn}
                 </button>
               )}
             </div>
 
             {withdrawSuccess && (
               <div className="rounded-xl p-3 bg-teal-500/10 border border-teal-500/20">
-                <p className="text-sm font-semibold text-teal-400">Payout initiated</p>
+                <p className="text-sm font-semibold text-teal-400">{t.withdrawPayoutInitiated}</p>
                 {withdrawSuccess.payoutId && (
                   <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    ID: {withdrawSuccess.payoutId}
+                    {t.withdrawPayoutIdLabel(withdrawSuccess.payoutId)}
                   </p>
                 )}
               </div>
@@ -431,10 +427,10 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
             {showWithdraw && !withdrawSuccess && (
               <form onSubmit={handleWithdrawSubmit} className="space-y-3 pt-1 border-t border-white/10">
                 <div>
-                  <p className="text-xs font-medium text-white/60 mb-1.5">USDT TRC-20 wallet address</p>
+                  <p className="text-xs font-medium text-white/60 mb-1.5">{t.withdrawAddressLabel}</p>
                   <input
                     type="text"
-                    placeholder="T…"
+                    placeholder={t.withdrawAddressPlaceholder}
                     value={withdrawAddress}
                     onChange={e => setWithdrawAddress(e.target.value)}
                     required
@@ -443,7 +439,7 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
                 </div>
 
                 <div className="flex items-center justify-between text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  <span>Withdrawing</span>
+                  <span>{t.withdrawWithdrawingLabel}</span>
                   <span className="font-semibold text-white">${balance.available_usd.toFixed(2)}</span>
                 </div>
 
@@ -457,46 +453,46 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
                     onClick={() => { setShowWithdraw(false); setWithdrawError(''); setWithdrawAddress(''); }}
                     className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 text-white/60 hover:bg-white/10 transition-colors"
                   >
-                    Cancel
+                    {t.withdrawCancelBtn}
                   </button>
                   <button
                     type="submit"
                     disabled={withdrawLoading || !withdrawAddress.trim()}
                     className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-[#D4007A] text-white hover:bg-[#b8006a] disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
                   >
-                    {withdrawLoading ? 'Sending…' : 'Confirm Withdrawal'}
+                    {withdrawLoading ? t.withdrawSendingBtn : t.withdrawConfirmBtn}
                   </button>
                 </div>
               </form>
             )}
           </>
         ) : (
-          <p className="text-xs text-white/40">Balance unavailable</p>
+          <p className="text-xs text-white/40">{t.withdrawBalanceUnavailable}</p>
         )}
       </div>
 
       <div className="glass-card-sm p-4 space-y-3">
-        <p className="text-sm font-semibold text-white">Recent Payouts</p>
+        <p className="text-sm font-semibold text-white">{t.recentPayoutsTitle}</p>
         {payoutsLoading ? (
           <div className="space-y-2">
             {[0, 1, 2].map(i => <div key={i} className="h-10 rounded-lg bg-white/5 animate-pulse" />)}
           </div>
         ) : payouts.length === 0 ? (
-          <p className="text-xs text-white/40">No payouts yet</p>
+          <p className="text-xs text-white/40">{t.recentPayoutsEmpty}</p>
         ) : (
           <div className="space-y-2">
             {payouts.map(p => (
               <div key={p.id} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
                 <div className="flex items-center gap-2">
-                  {statusBadge(p.status)}
+                  {statusBadge(p.status, t)}
                   <div>
                     <p className="text-xs font-medium text-white">${Number(p.amount_usd).toFixed(2)}</p>
-                    <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>USDT TRC-20</p>
+                    <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.recentPayoutsUsdtTrc20}</p>
                   </div>
                 </div>
                 <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {p.requested_at
-                    ? new Date(p.requested_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                    ? new Date(p.requested_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })
                     : '—'}
                 </span>
               </div>

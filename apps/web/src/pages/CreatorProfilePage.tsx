@@ -47,6 +47,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import PostCard from "@/components/profile/PostCard";
 
@@ -92,6 +93,7 @@ export default function CreatorProfilePage() {
   const [posts, setPosts] = useState<SocialPostItem[]>([]);
   const [postsCursor, setPostsCursor] = useState<string | null>(null);
   const [postsLoading, setPostsLoading] = useState(false);
+  const [postsError, setPostsError] = useState<string | null>(null);
   const [manualMarkdown, setManualMarkdown] = useState<string>("");
   const [manualLoaded, setManualLoaded] = useState(false);
 
@@ -141,12 +143,15 @@ export default function CreatorProfilePage() {
     if (!data?.creator?.id) return;
     const creatorId = data.creator.id;
     setPostsLoading(true);
+    setPostsError(null);
     getPublicProfile(creatorId)
       .then((res) => {
         setPosts(res.posts || []);
         setPostsCursor(res.nextCursor);
       })
-      .catch(() => {})
+      .catch((err) => {
+        setPostsError(err instanceof Error ? err.message : "Could not load posts");
+      })
       .finally(() => setPostsLoading(false));
 
     if (isAuthenticated && String(user?.dbId || user?.id) !== creatorId) {
@@ -164,6 +169,13 @@ export default function CreatorProfilePage() {
       .catch(() => setManualMarkdown(""))
       .finally(() => setManualLoaded(true));
   }, [manualExpanded, manualLoaded, data?.creator?.id]);
+  // Reset manual state when navigating to a different creator so the previous
+  // creator's manual doesn't linger during the fetch of the new one.
+  useEffect(() => {
+    setManualLoaded(false);
+    setManualMarkdown("");
+    setManualExpanded(false);
+  }, [data?.creator?.id]);
 
   // Close kebab on outside click
   useEffect(() => {
@@ -677,7 +689,30 @@ export default function CreatorProfilePage() {
             {postsLoading && posts.length === 0 && (
               <div className="text-center py-8 text-white/40 text-sm">Cargando…</div>
             )}
-            {!postsLoading && posts.length === 0 && (
+            {!postsLoading && postsError && posts.length === 0 && (
+              <div
+                className="text-center py-10 rounded-xl"
+                style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+              >
+                <p className="text-sm mb-2">No pudimos cargar las publicaciones.</p>
+                <button
+                  onClick={() => {
+                    if (!data?.creator?.id) return;
+                    const id = data.creator.id;
+                    setPostsLoading(true);
+                    setPostsError(null);
+                    getPublicProfile(id)
+                      .then((res) => { setPosts(res.posts || []); setPostsCursor(res.nextCursor); })
+                      .catch((err) => setPostsError(err instanceof Error ? err.message : "Could not load posts"))
+                      .finally(() => setPostsLoading(false));
+                  }}
+                  className="text-xs px-3 py-1 rounded border border-white/20 hover:border-white/40"
+                >
+                  Reintentar
+                </button>
+              </div>
+            )}
+            {!postsLoading && !postsError && posts.length === 0 && (
               <div
                 className="text-center py-10 rounded-xl"
                 style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
@@ -810,7 +845,7 @@ export default function CreatorProfilePage() {
             id: creator.id,
             username: creator.username,
             photo_url: creator.photo_url,
-            creator_type: (creator.creator_type as never) || "diamond",
+            creator_type: (["ice","crystal","diamond","occasional","full_time"].includes(creator.creator_type as string) ? creator.creator_type : "diamond") as CreatorType,
             creator_price_usd: creator.creator_price_usd,
             bio: creator.bio,
           }}
