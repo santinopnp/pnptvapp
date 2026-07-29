@@ -1648,11 +1648,42 @@ const chunkUpload = multer({
     },
     filename: (req, _file, cb) => {
       const idx = String(parseInt(req.body.chunkIndex || '0', 10)).padStart(6, '0');
+      // Reject duplicate/replay chunks: if this index was already written,
+      // accepting a second copy silently overwrites at the same offset, and
+      // assembly reads different bytes than what the client claimed to send.
+      const uploadId = (req.body.uploadId || req.headers['x-upload-id'] || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (uploadId) {
+        try {
+          if (fs.existsSync(path.join(CHUNK_DIR, uploadId, `${idx}.part`))) {
+            const err = new Error('CHUNK_DUPLICATE');
+            err.code = 'CHUNK_DUPLICATE';
+            return cb(err);
+          }
+        } catch { /* fs check failure — fall through and let multer write */ }
+      }
       cb(null, `${idx}.part`);
     },
   }),
   limits: { fileSize: 110 * 1024 * 1024 }, // 110 MB — 10% headroom over 100 MB chunks
 });
+
+// Wraps chunkUpload.single('chunk') so filename-callback errors map to
+// meaningful HTTP responses instead of a generic 500.
+const chunkUploadSingle = (req, res, next) => {
+  chunkUpload.single('chunk')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'CHUNK_DUPLICATE') {
+        return res.status(409).json({ success: false, error: 'Chunk already received', code: 'CHUNK_DUPLICATE' });
+      }
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ success: false, error: 'Chunk too large (max 110 MB)' });
+      }
+      return next(err);
+    }
+    next();
+  });
+};
 
 const creatorVideoUpload = multer({
   storage: multer.diskStorage({
@@ -2799,6 +2830,28 @@ const magicLinkVerifyLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Passkey finish is the actual attack surface (challenge verification). Tighter than
+// the generic authLimiter so a bot can't burn thousands of assertions per window.
+const passkeyFinishLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.ip,
+  handler: (req, res) => res.status(429).json({ authenticated: false, error: 'Too many passkey attempts. Try again shortly.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Direct message send limiter — 20 messages / minute per authenticated user
+// (falls back to IP for unauthenticated edge cases). Prevents spam and mass-DM abuse.
+const dmSendLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => (req.session?.user?.id ? `u:${req.session.user.id}` : req.ip),
+  handler: (req, res) => res.status(429).json({ success: false, error: 'You are sending messages too quickly. Slow down.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Web App Authentication
 app.get('/api/webapp/auth/telegram/start', asyncHandler(webAppController.telegramStart));
 app.get('/api/webapp/auth/telegram/callback', asyncHandler(webAppController.telegramCallback));
@@ -2810,9 +2863,13 @@ app.post('/api/webapp/auth/email/register', (_req, res) => res.status(410).json(
 app.post('/api/webapp/auth/email/login', (_req, res) => res.status(410).json({ error: 'Password login has been removed. Use magic link or passkey.' }));
 app.post('/api/webapp/auth/oidc/token-exchange', authLimiter, asyncHandler(webAppController.oidcTokenExchange));
 app.post('/api/webapp/auth/magic/start', magicLinkLimiter, asyncHandler(webAppController.magicLinkStart));
+// GET renders an interstitial that auto-POSTs. Consumption happens on POST so
+// email link-scanners (which fetch the URL to preview it) can't burn the token
+// before the user clicks. See webAppController.magicLinkVerify comment.
 app.get('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkVerify));
+app.post('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(webAppController.magicLinkConfirm));
 app.get('/api/webapp/auth/passkey/begin', authLimiter, asyncHandler(webAppController.passkeyBegin));
-app.post('/api/webapp/auth/passkey/finish', authLimiter, asyncHandler(webAppController.passkeyFinish));
+app.post('/api/webapp/auth/passkey/finish', passkeyFinishLimiter, asyncHandler(webAppController.passkeyFinish));
 // Passkey management (for authenticated users adding/removing passkeys)
 app.get('/api/webapp/auth/passkey/register/begin', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterBegin));
 app.post('/api/webapp/auth/passkey/register/finish', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterFinish));
@@ -4531,7 +4588,7 @@ app.get('/api/webapp/social/feed/following',           requireSessionAuth, async
 // Web App Direct Messages
 app.get('/api/webapp/messages/threads', requireSessionAuth, asyncHandler(directMessagesController.getThreads));
 app.get('/api/webapp/messages/thread/:otherUserId', requireSessionAuth, asyncHandler(directMessagesController.getMessages));
-app.post('/api/webapp/messages/send', requireSessionAuth, asyncHandler(directMessagesController.sendMessage));
+app.post('/api/webapp/messages/send', requireSessionAuth, dmSendLimiter, asyncHandler(directMessagesController.sendMessage));
 app.delete('/api/webapp/messages/:messageId', requireSessionAuth, asyncHandler(directMessagesController.deleteMessage));
 app.put('/api/webapp/messages/thread/:otherUserId/read', requireSessionAuth, asyncHandler(directMessagesController.markThreadAsRead));
 
@@ -9388,7 +9445,7 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
          ON CONFLICT (btcpay_invoice_id) DO UPDATE
            SET status = dash_subscription_orders.status
          RETURNING id`,
-        [userId, email || null, hangoutPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl })]
+        [userId, email || null, hangoutPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl, nowpaymentsInvoiceId: String(npInvoiceId) })]
       );
       return res.json({
         success: true,
@@ -9521,7 +9578,7 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
          ON CONFLICT (btcpay_invoice_id) DO UPDATE
            SET status = dash_subscription_orders.status
          RETURNING id`,
-        [userId, email || null, channelPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl })]
+        [userId, email || null, channelPrice, orderId, JSON.stringify({ ...scopeMetadata, provider: 'nowpayments', invoiceUrl, nowpaymentsInvoiceId: String(npInvoiceId) })]
       );
       return res.json({
         success: true,
@@ -10332,7 +10389,7 @@ app.post('/api/webapp/live/enter', requireSessionAuth, asyncHandler(async (req, 
   if (role === 'admin' || role === 'superadmin') {
     const redis = getRedis();
     const freeUntil = Date.now() + 15 * 60 * 1000;
-    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), 'EX', 16 * 60);
     return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
   }
 
@@ -10345,7 +10402,7 @@ app.post('/api/webapp/live/enter', requireSessionAuth, asyncHandler(async (req, 
   if (ownerRow.rows.length > 0) {
     const redis = getRedis();
     const freeUntil = Date.now() + 15 * 60 * 1000;
-    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+    await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), 'EX', 16 * 60);
     return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
   }
 
@@ -10363,7 +10420,7 @@ app.post('/api/webapp/live/enter', requireSessionAuth, asyncHandler(async (req, 
 
   const redis = getRedis();
   const freeUntil = Date.now() + 15 * 60 * 1000;
-  await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), { EX: 16 * 60 });
+  await redis.set(`live:viewer:freeuntil:${userId}:${channelRef}`, String(freeUntil), 'EX', 16 * 60);
   return res.json({ success: true, freeUntil: new Date(freeUntil).toISOString(), freeMinutes: 15 });
 }));
 
@@ -12610,6 +12667,7 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
        flow: 'subscription',
        invoiceUrl,
        nowpaymentsPlanId,
+       ...(npPayInfo?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo.nowpaymentsInvoiceId } : {}),
        ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}),
        ...(promoApplied ? {
          promoId: promoApplied.promoId,
@@ -12789,7 +12847,13 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
       usdAmount,
       orderId,
       creatorId ? String(creatorId) : null,
-      JSON.stringify({ provider: 'nowpayments', flow: 'hosted', invoiceUrl, ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}) }),
+      JSON.stringify({
+        provider: 'nowpayments',
+        flow: 'hosted',
+        invoiceUrl,
+        ...(npPayInfo2?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo2.nowpaymentsInvoiceId } : {}),
+        ...(validPayCurrency ? { payCurrency: validPayCurrency } : {}),
+      }),
     ]
   );
 
@@ -12954,7 +13018,7 @@ app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLi
       parsedAmount,
       orderId,
       creatorUserId,
-      JSON.stringify({ provider: 'nowpayments', flow: 'tip', creatorUsername, message: sanitizedMessage, invoiceUrl }),
+      JSON.stringify({ provider: 'nowpayments', flow: 'tip', creatorUsername, message: sanitizedMessage, invoiceUrl, ...(nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId) } : {}) }),
     ]
   );
 
@@ -14424,7 +14488,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   // POST /api/webapp/channels/:channelId/videos/chunk
   app.post('/api/webapp/channels/:channelId/videos/chunk',
     requireSessionAuth,
-    chunkUpload.single('chunk'),
+    chunkUploadSingle,
     asyncHandler(async (req, res) => {
       const { uploadId, chunkIndex, totalChunks } = req.body;
       if (!uploadId || chunkIndex === undefined || !totalChunks) {
@@ -16022,7 +16086,7 @@ app.post('/api/webapp/creators/media/upload-video/init',
 
 app.post('/api/webapp/creators/media/upload-video/chunk',
   requireSessionAuth, creatorGuard,
-  chunkUpload.single('chunk'),
+  chunkUploadSingle,
   asyncHandler(async (req, res) => {
     const { uploadId, chunkIndex, totalChunks } = req.body;
     if (!uploadId || chunkIndex === undefined || !totalChunks) {

@@ -601,6 +601,11 @@ const magicLinkStart = async (req, res) => {
   }
 };
 
+// GET renders an interstitial that auto-POSTs. Email link-scanners (Hostinger,
+// Outlook Safe Links, corporate AV, etc.) fetch the link before the user does;
+// if we consumed the token on GET, the scanner would burn every link and the
+// user's own click would 'expired'. Scanners don't execute JS or submit forms,
+// so putting the actual consume behind POST keeps them from burning tokens.
 const magicLinkVerify = async (req, res) => {
   const APP_URL = APP_ORIGIN();
   const fail = (code) => res.redirect(`${APP_URL}/login?magic_error=${code}`);
@@ -609,11 +614,55 @@ const magicLinkVerify = async (req, res) => {
     if (!token) return fail('missing');
 
     const redis = getRedis();
-    const key = `${MAGIC_LINK_PREFIX}${token}`;
-    const raw = await redis.get(key);
+    const raw = await redis.get(`${MAGIC_LINK_PREFIX}${token}`);
     if (!raw) return fail('expired');
-    // Single-use: delete immediately.
-    await redis.del(key);
+
+    const safeToken = token.replace(/[^A-Za-z0-9_\-]/g, '');
+    res.set('Cache-Control', 'no-store');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    return res.send(`<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Signing you in…</title>
+<style>
+html,body{margin:0;padding:0;background:#0a0a14;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+.wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center}
+.card{max-width:420px;background:#121220;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:32px}
+p{margin:0 0 20px;font-size:15px;line-height:1.5;color:rgba(255,255,255,0.85)}
+button{padding:14px 32px;background:linear-gradient(135deg,#D4007A,#E69138);color:#fff;border:0;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer}
+.spin{width:24px;height:24px;border:3px solid rgba(255,255,255,0.15);border-top-color:#E69138;border-radius:50%;animation:s 1s linear infinite;margin:0 auto 16px}
+@keyframes s{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="wrap"><div class="card">
+<div class="spin"></div>
+<p>Signing you in to PNPtv!…</p>
+<form id="f" method="POST" action="/api/webapp/auth/magic/verify">
+<input type="hidden" name="token" value="${safeToken}">
+<noscript><p>JavaScript is disabled. Tap the button to continue.</p><button type="submit">Continue sign-in</button></noscript>
+</form>
+<script>document.getElementById('f').submit();</script>
+</div></div></body></html>`);
+  } catch (error) {
+    logger.error('[magic-link] verify (GET) error', error);
+    return fail('server_error');
+  }
+};
+
+const magicLinkConfirm = async (req, res) => {
+  const APP_URL = APP_ORIGIN();
+  const fail = (code) => res.redirect(`${APP_URL}/login?magic_error=${code}`);
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token
+                : typeof req.query?.token === 'string' ? req.query.token
+                : '';
+    if (!token) return fail('missing');
+
+    const redis = getRedis();
+    const key = `${MAGIC_LINK_PREFIX}${token}`;
+    const raw = await redis.getdel(key);
+    if (!raw) return fail('expired');
 
     let payload;
     try { payload = JSON.parse(raw); } catch { return fail('invalid'); }
@@ -648,7 +697,7 @@ const magicLinkVerify = async (req, res) => {
     logger.info(`[magic-link] sign-in: user ${user.id}`);
     return res.redirect(`${APP_URL}/login?magic_verified=1`);
   } catch (error) {
-    logger.error('[magic-link] verify error', error);
+    logger.error('[magic-link] confirm error', error);
     return fail('server_error');
   }
 };
@@ -702,11 +751,10 @@ const passkeyFinish = async (req, res) => {
     }
 
     const redis = getRedis();
-    const expectedChallenge = await redis.get(`passkey:login:${stateToken}`);
+    const expectedChallenge = await redis.getdel(`passkey:login:${stateToken}`);
 
     // ── Local verification path (passkeys registered via PNPtv UI) ───────────
     if (expectedChallenge) {
-      await redis.del(`passkey:login:${stateToken}`);
       // Clean up the Authentik fallback state too (best-effort).
       redis.del(`passkey:login:ak:${stateToken}`).catch(() => {});
 
@@ -899,11 +947,10 @@ const passkeyRegisterFinish = async (req, res) => {
   try {
     const redis = getRedis();
     const regKey = `passkey:reg:${sessionUser.id}`;
-    const expectedChallenge = await redis.get(regKey);
+    const expectedChallenge = await redis.getdel(regKey);
     if (!expectedChallenge) {
       return res.status(400).json({ success: false, error: 'expired' });
     }
-    await redis.del(regKey);
 
     let verification;
     try {
@@ -1369,7 +1416,7 @@ const emailLogin = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'No account found with this email. Please register first.' });
+      return res.status(401).json({ error: 'Incorrect email or password.' });
     }
 
     const user = result.rows[0];
@@ -1382,7 +1429,7 @@ const emailLogin = async (req, res) => {
 
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) {
-      return res.status(401).json({ error: 'Incorrect password.' });
+      return res.status(401).json({ error: 'Incorrect email or password.' });
     }
 
     // Check if email is verified
@@ -3212,6 +3259,7 @@ module.exports = {
   telegramConfirmLogin,
   magicLinkStart,
   magicLinkVerify,
+  magicLinkConfirm,
   passkeyBegin,
   passkeyFinish,
   passkeyRegisterBegin,

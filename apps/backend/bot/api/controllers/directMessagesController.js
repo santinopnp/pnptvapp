@@ -25,7 +25,9 @@ async function getThreads(req, res) {
       });
     }
 
-    // Get all threads where user is either user_a or user_b
+    // Get all threads where user is either user_a or user_b.
+    // Exclude threads whose partner is blocked in either direction so blocked users
+    // do not surface in the conversation list.
     const result = await query(
       `SELECT
         CASE
@@ -48,7 +50,12 @@ async function getThreads(req, res) {
           ELSE dt.user_a
         END = u.id
       )
-      WHERE dt.user_a = $1 OR dt.user_b = $1
+      WHERE (dt.user_a = $1 OR dt.user_b = $1)
+        AND NOT EXISTS (
+          SELECT 1 FROM blocked_users bu
+          WHERE (bu.user_id = $1 AND bu.blocked_user_id = u.id)
+             OR (bu.user_id = u.id AND bu.blocked_user_id = $1)
+        )
       ORDER BY dt.last_message_at DESC
       LIMIT 100`,
       [userId]
@@ -100,6 +107,22 @@ async function getMessages(req, res) {
       return res.status(400).json({
         success: false,
         error: 'otherUserId is required'
+      });
+    }
+
+    // Block gate: refuse to return message history if either party has blocked the other.
+    const blockCheck = await query(
+      `SELECT 1 FROM blocked_users
+        WHERE (user_id = $1 AND blocked_user_id = $2)
+           OR (user_id = $2 AND blocked_user_id = $1)
+        LIMIT 1`,
+      [userId, otherUserId]
+    );
+    if (blockCheck.rows.length > 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'BLOCKED',
+        message: 'This conversation is blocked'
       });
     }
 

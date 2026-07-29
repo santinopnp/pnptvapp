@@ -3533,12 +3533,31 @@ async function validateUserGroupAccess(userId, groupId, language, res) {
 
 async function checkPaidHangoutAccess(groupId, user, res) {
   const { rows: [grp] } = await query(
-    `SELECT id, is_paid, price_usd FROM hangout_groups WHERE id = $1`,
+    `SELECT id, is_paid, price_usd, parent_group_id FROM hangout_groups WHERE id = $1`,
     [groupId]
   );
   if (!grp) { res.status(404).json({ error: 'Group not found' }); return false; }
+
+  const ownerMod = await isOwnerOrMod(groupId, user.id);
+
+  // Santino's Subscribers hangout (id=719 + its child topics): PRIME monthly and up only.
+  // Mirrors the joinGroup gate so start/join call cannot be reached via a stale membership.
+  const isSantinoHangout = groupId === 719 || grp.parent_group_id === 719;
+  if (isSantinoHangout && !ownerMod) {
+    const EntitlementAccessService = require('../../../services/entitlementAccessService');
+    const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
+    if (!qualifies) {
+      res.status(402).json({
+        error: 'PRIME membership required',
+        code: 'PRIME_REQUIRED',
+        requiresPrime: true,
+        subscribeUrl: '/subscribe',
+      });
+      return false;
+    }
+  }
+
   if (grp.is_paid && parseFloat(grp.price_usd || 0) > 0) {
-    const ownerMod = await isOwnerOrMod(groupId, user.id);
     if (!ownerMod) {
       const EntitlementAccessService = require('../../../services/entitlementAccessService');
       const result = await EntitlementAccessService.hasResourceAccess(String(user.id), 'hangout', String(groupId));

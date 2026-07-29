@@ -1278,15 +1278,25 @@ const updateChannel = async (req, res) => {
       updates.push(`bridge_enabled = $${idx++}`); params.push(bridgeEnabled === true);
     }
 
-    // Access tier + price (creator-set: free | paid | subscription | prime)
+    // Access tier + price. Creator self-service is limited to paid | subscription per
+    // Phase 1: free channels were removed (migration 333) and prime is admin-only
+    // (system channel 209, never demotable). Reject any other transition with 403.
     if (accessType !== undefined || priceUsd !== undefined) {
-      const ALLOWED_ACCESS_TYPES = new Set(['free', 'paid', 'subscription', 'prime']);
-      const newAccessType = accessType !== undefined
-        ? (ALLOWED_ACCESS_TYPES.has(accessType) ? accessType : null)
-        : chRes.rows[0].access_type;
-      if (newAccessType === null) {
-        return res.status(400).json({ error: 'Invalid accessType. Must be free, paid, subscription, or prime.' });
+      const CREATOR_ALLOWED = new Set(['paid', 'subscription']);
+      const currentAccessType = chRes.rows[0].access_type;
+      if (accessType !== undefined && !CREATOR_ALLOWED.has(accessType)) {
+        return res.status(403).json({
+          error: 'Creators can only set access to paid or subscription.',
+          code: 'ACCESS_TYPE_FORBIDDEN',
+        });
       }
+      if (currentAccessType === 'prime' || chRes.rows[0].is_system) {
+        return res.status(403).json({
+          error: 'System channels cannot be reconfigured.',
+          code: 'SYSTEM_CHANNEL_LOCKED',
+        });
+      }
+      const newAccessType = accessType !== undefined ? accessType : currentAccessType;
       let newPrice = 0;
       if (newAccessType === 'paid') {
         const rawPrice = priceUsd !== undefined ? priceUsd : chRes.rows[0].price_usd;
@@ -1601,13 +1611,9 @@ const acceptCreatorTerms = async (req, res) => {
   try {
     const userId = req.user.id;
     if (!userId) return res.status(400).json({ error: 'User ID missing' });
-    const version = process.env.CREATOR_TERMS_VERSION || '2026-01-01';
     await query(
-      `UPDATE users
-         SET creator_terms_accepted_at = NOW(),
-             creator_terms_version = $2::varchar
-       WHERE id = $1`,
-      [userId, version]
+      `UPDATE users SET creator_terms_accepted_at = NOW() WHERE id = $1`,
+      [userId]
     );
     return res.json({ success: true });
   } catch (err) {
