@@ -288,67 +288,6 @@ async function notifyLinkedGroups(bot, creatorId, channelRef, creatorName, custo
 }
 
 /**
- * Email blast to every app member with a real email address.
- * Silently no-ops if emailService is unavailable.
- * Dedup is inherited from the parent broadcastGoingLive 6h Redis key.
- *
- * @param {string|number} creatorId
- * @param {string} creatorName
- * @param {string} channelRef
- * @param {string|null} customMessage
- */
-async function sendMemberEmailBlast(creatorId, creatorName, channelRef, customMessage) {
-  let emailService;
-  try {
-    emailService = require('./emailservice');
-  } catch {
-    return 0;
-  }
-
-  const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
-  const watchUrl = channelRef
-    ? `${appUrl}/live/${encodeURIComponent(channelRef)}`
-    : `${appUrl}/live`;
-
-  const { rows: members } = await query(
-    `SELECT email, first_name, username, language
-     FROM users
-     WHERE email IS NOT NULL
-       AND email NOT LIKE '%telegram.pnptv.app'
-       AND email != ''
-       AND is_deleted IS NOT TRUE
-       AND COALESCE(tier, 'free') != 'banned'
-     ORDER BY id`
-  );
-  if (members.length === 0) return 0;
-
-  const bodyEn = customMessage
-    ? `${customMessage}\n\n👉 ${watchUrl}`
-    : `${creatorName} is streaming LIVE right now on PNPtv! Don't miss it.\n\n👉 ${watchUrl}`;
-  const bodyEs = customMessage
-    ? `${customMessage}\n\n👉 ${watchUrl}`
-    : `¡${creatorName} está EN VIVO ahora mismo en PNPtv! No te lo pierdas.\n\n👉 ${watchUrl}`;
-
-  const result = await emailService.sendBroadcastEmails(members, {
-    subjectEn:   `🔴 ${creatorName} is LIVE on PNPtv! Watch now`,
-    subjectEs:   `🔴 ${creatorName} está EN VIVO en PNPtv! Míralo ahora`,
-    preheaderEn: 'Stream is live — join before the room fills up.',
-    preheaderEs: 'La transmisión está en vivo — únete antes de que se llene.',
-    messageEn:   bodyEn,
-    messageEs:   bodyEs,
-    buttons: [{ text: 'Watch Now', textEs: 'Ver Ahora', url: watchUrl, primary: true }],
-  }).catch((err) => {
-    logger.warn('goingLiveBroadcast: email blast error', { creatorId, error: err.message });
-    return { sent: 0, failed: 0 };
-  });
-
-  logger.info('goingLiveBroadcast: email blast complete', {
-    creatorId, channelRef, sent: result.sent, failed: result.failed,
-  });
-  return result.sent;
-}
-
-/**
  * Announce a live creator to the Main Stage room and record them as
  * currently-live so any client (existing or joining later) can render a
  * "creators live now" surface. Non-blocking; silently no-ops if socket.io
@@ -470,14 +409,7 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
       });
     });
 
-    // 3. Email blast — all app members with real emails
-    setImmediate(() => {
-      sendMemberEmailBlast(creatorId, creatorName, channelRef, customMessage).catch((err) => {
-        logger.warn('goingLiveBroadcast: emailBlast error', { creatorId, error: err.message });
-      });
-    });
-
-    // 4. Main Stage announcement — socket event + Redis-recorded live entry
+    // 3. Main Stage announcement — socket event + Redis-recorded live entry
     setImmediate(() => {
       notifyMainStage(creatorId, creatorName, channelRef).catch((err) => {
         logger.warn('goingLiveBroadcast: notifyMainStage error', { creatorId, error: err.message });
@@ -487,7 +419,7 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
     // ── Follower-targeted channels ────────────────────────────────────────────
 
     if (dmFollowers.length === 0 && pushFollowers.length === 0) {
-      logger.info('goingLiveBroadcast: no opted-in followers — feed+X+groups+email dispatched', { creatorId });
+      logger.info('goingLiveBroadcast: no opted-in followers — feed+X+groups dispatched', { creatorId });
       return { dispatched: 0, skippedDedup: false };
     }
 

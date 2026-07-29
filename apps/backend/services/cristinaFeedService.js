@@ -297,7 +297,7 @@ async function announceLiveStream(creatorId, creatorName, channelRef) {
     );
 
     // Broadcast to all connected clients
-    const io = socketSingleton.getIO();
+    const io = socketSingleton.get();
     if (io && post) {
       io.emit('feed:new_post', { post });
     }

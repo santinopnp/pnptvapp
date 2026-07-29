@@ -1247,6 +1247,7 @@ class CreatorService {
           content: null,
           media_url: null,
           media_urls: null,
+          video_thumbnail_url: null,
         };
       }
 
@@ -1258,6 +1259,7 @@ class CreatorService {
         content: null,
         media_url: null,
         media_urls: null,
+        video_thumbnail_url: null,
       };
     });
   }

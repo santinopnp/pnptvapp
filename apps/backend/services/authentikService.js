@@ -320,22 +320,37 @@ class AuthentikService {
         isNew = true;
         password = AuthentikService.generatePassword();
 
-        // 2. Create user in Authentik
-        const createRes = await axios.post(`${AUTHENTIK_URL}/api/v3/core/users/`, {
-          username: username,
-          name: telegramUser.first_name || username,
-          email: email,
-          type: 'internal',
-          is_active: true,
-          path: 'users/telegram',
-          attributes: {
-            telegram_id: telegramId,
-            provisioned_via: 'telegram_bot',
-            provisioned_at: new Date().toISOString(),
+        // 2. Create user in Authentik — retry with a random suffix if the desired
+        // username collides (concurrent provisioning race between webapp + bot).
+        let createRes = null;
+        let attemptUsername = username;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          try {
+            createRes = await axios.post(`${AUTHENTIK_URL}/api/v3/core/users/`, {
+              username: attemptUsername,
+              name: telegramUser.first_name || attemptUsername,
+              email: email,
+              type: 'internal',
+              is_active: true,
+              path: 'users/telegram',
+              attributes: {
+                telegram_id: telegramId,
+                provisioned_via: 'telegram_bot',
+                provisioned_at: new Date().toISOString(),
+              }
+            }, {
+              headers: { 'Authorization': `Bearer ${AUTHENTIK_TOKEN}` }
+            });
+            break;
+          } catch (createErr) {
+            const usernameConflict = Array.isArray(createErr.response?.data?.username)
+              && createErr.response.data.username.some((m) => /must be unique/i.test(String(m)));
+            if (!usernameConflict || attempt === 3) throw createErr;
+            attemptUsername = `${username}_${Math.random().toString(36).slice(2, 6)}`;
+            logger.warn('[Authentik] Username collision, retrying with suffix', { original: username, next: attemptUsername });
           }
-        }, {
-          headers: { 'Authorization': `Bearer ${AUTHENTIK_TOKEN}` }
-        });
+        }
+        username = attemptUsername;
         authentikUser = createRes.data;
 
         // 3. Set the generated password

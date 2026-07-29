@@ -411,13 +411,29 @@ const createPost = async (req, res) => {
     if (!channelId && !replyToId && !repostOfId && !hangoutGroupId && user.creator_status === 'active') {
       channelId = await resolveCreatorChannel(user.id, false).catch(() => null);
     }
+    // Guard: exclusive post from a creator with no paid channel would be orphaned
+    // (visible as locked in feeds but with no channel entry for subscribers to hit)
+    if (exclusive && !channelId && user.creator_status === 'active') {
+      return res.status(400).json({
+        error: 'Set up your paid channel before posting exclusive content.',
+        code: 'NO_PAID_CHANNEL',
+      });
+    }
 
     const post = await SocialPostService.createPost(user.id, content.trim(), null, null, replyToId, repostOfId, false, exclusive, shareable, null, null, null, hangoutGroupId, null, rawCategory || null);
 
-    // Assign to channel and update post_count
+    // Assign to channel + refresh post_count atomically (single statement so a
+    // partial failure can't leave counter out of sync with the post's channel_id).
     if (channelId) {
-      await dbQuery('UPDATE social_posts SET channel_id = $1 WHERE id = $2', [channelId, post.id]);
-      await dbQuery('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channelId]);
+      await dbQuery(
+        `WITH assign AS (
+           UPDATE social_posts SET channel_id = $1 WHERE id = $2 RETURNING channel_id
+         )
+         UPDATE creator_channels
+            SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false)
+          WHERE id = $1`,
+        [channelId, post.id]
+      );
       post.channel_id = channelId;
     }
 
@@ -1033,15 +1049,30 @@ const createPostWithMedia = async (req, res) => {
     if (!channelId && !replyToId && !repostOfId && !hangoutGroupId && user.creator_status === 'active') {
       channelId = await resolveCreatorChannel(user.id, exclusive).catch(() => null);
     }
+    // Guard: exclusive without a paid channel would orphan the post
+    if (exclusive && !channelId && user.creator_status === 'active') {
+      if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
+      return res.status(400).json({
+        error: 'Set up your paid channel before posting exclusive content.',
+        code: 'NO_PAID_CHANNEL',
+      });
+    }
 
     const post = await SocialPostService.createPost(
       user.id, content.toString().trim(), mediaUrl, mediaType, replyToId, repostOfId, false, exclusive, shareable, videoThumbnailUrl, vTitle, vDesc, hangoutGroupId, null, rawCategory || null
     );
 
-    // Assign to channel and update post_count
+    // Assign to channel + refresh post_count atomically (see notes above).
     if (channelId) {
-      await dbQuery('UPDATE social_posts SET channel_id = $1 WHERE id = $2', [channelId, post.id]);
-      await dbQuery('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channelId]);
+      await dbQuery(
+        `WITH assign AS (
+           UPDATE social_posts SET channel_id = $1 WHERE id = $2 RETURNING channel_id
+         )
+         UPDATE creator_channels
+            SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false)
+          WHERE id = $1`,
+        [channelId, post.id]
+      );
       post.channel_id = channelId;
     }
 
@@ -1098,6 +1129,10 @@ const createPostWithMedia = async (req, res) => {
     return res.json({ success: true, post: fullPost });
   } catch (err) {
     logger.error('createPostWithMedia error', err);
+    // Clean up both the multer temp file (in case sharp/watermark/thumb crashed
+    // before we renamed it to finalFilePath) AND the processed output. Both
+    // unlinks are idempotent — a missing file is not an error.
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
     if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
     return res.status(500).json({ error: 'Failed to create post' });
   }
@@ -1388,6 +1423,18 @@ const createPostWithMultiMedia = async (req, res) => {
     if (!channelId && !replyToId && !repostOfId && user.creator_status === 'active') {
       channelId = await resolveCreatorChannel(user.id, exclusive).catch(() => null);
     }
+    // Guard: exclusive without a paid channel would orphan the post
+    if (exclusive && !channelId && user.creator_status === 'active') {
+      // Clean up any staged files before rejecting
+      for (const item of mediaItems) {
+        const p = item?.url && path.join(uploadDir, path.basename(item.url));
+        if (p) await fs.unlink(p).catch(() => {});
+      }
+      return res.status(400).json({
+        error: 'Set up your paid channel before posting exclusive content.',
+        code: 'NO_PAID_CHANNEL',
+      });
+    }
 
     const result = await dbQuery(
       `INSERT INTO social_posts
@@ -1487,6 +1534,11 @@ const createPostWithMultiMedia = async (req, res) => {
     return res.json({ success: true, post: fullPost });
   } catch (err) {
     logger.error('createPostWithMultiMedia error', err);
+    // Clean up multer temp files (multi-file uploads land in req.files) plus
+    // any processed outputs staged in uploadDir. Idempotent unlinks.
+    if (Array.isArray(req.files)) {
+      await Promise.all(req.files.map(f => f?.path ? fs.unlink(f.path).catch(() => {}) : null));
+    }
     await Promise.all(writtenFilePaths.map(p => fs.unlink(p).catch(() => {})));
     return res.status(500).json({ error: 'Failed to create post' });
   }

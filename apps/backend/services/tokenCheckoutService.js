@@ -589,6 +589,7 @@ class TokenCheckoutService {
           tokens: pkg.tokens,
           bonusTokens: Math.max(0, pkg.tokens - pkg.usd * 100),
           invoiceUrl,
+          ...(npPayInfo?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo.nowpaymentsInvoiceId } : {}),
           ...(payCurrency ? { payCurrency } : {}),
           ...(presaleDiscount ? { presale_discount: true, original_usd: pkg.usd } : {}),
         }),

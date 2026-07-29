@@ -959,9 +959,11 @@ class PaymentRecoveryService {
                 ? { Authorization: `Bearer ${results._jwtToken}`, 'x-api-key': apiKey }
                 : { 'x-api-key': apiKey };
 
-              // For invoice-based flows (call packages, subscriptions via /invoice),
-              // NowPayments indexes payments by invoice_id — not order_id. Try invoice_id
-              // lookup first using the value stored in DSO metadata.
+              // NowPayments' /v1/payment/ list endpoint rejects invoice_id / order_id
+              // as query params (400 INVALID_REQUEST_PARAMS). The only supported filter
+              // that narrows the search is dateFrom, so we fetch a page of recent
+              // payments starting just before this order was created and match locally
+              // on invoice_id (preferred) or order_id.
               const rowMetaRaw = row.metadata;
               const rowMetaParsed = rowMetaRaw && typeof rowMetaRaw === 'object'
                 ? rowMetaRaw
@@ -970,43 +972,24 @@ class PaymentRecoveryService {
                     : null);
               const nowpaymentsInvoiceId = rowMetaParsed?.nowpaymentsInvoiceId;
 
-              if (nowpaymentsInvoiceId) {
-                try {
-                  const invResp = await axios.get(`${npEnv}/payment/`, {
-                    params: { invoice_id: nowpaymentsInvoiceId, limit: 1, orderBy: 'DESC' },
-                    headers: searchHeaders,
-                    timeout: 10000,
-                  });
-                  const invData = invResp.data?.data?.[0] || invResp.data?.payments?.[0];
-                  if (invData?.payment_id) {
-                    paymentId = String(invData.payment_id);
-                    await query(
-                      `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-                      [row.order_id, `nowpayments:${paymentId}:reconciler_invoice_lookup`]
-                    ).catch(() => {});
-                  }
-                } catch (invErr) {
-                  logger.debug('NOWPayments reconciler: invoice_id lookup failed, falling back to order_id', {
-                    orderId: row.order_id, invoiceId: nowpaymentsInvoiceId, status: invErr.response?.status,
-                  });
-                }
-              }
-
-              // Fallback: look up by order_id (works for direct-payment flows)
-              if (!paymentId) {
-                const searchResp = await axios.get(`${npEnv}/payment/`, {
-                  params: { order_id: row.order_id, limit: 1, orderBy: 'DESC' },
-                  headers: searchHeaders,
-                  timeout: 10000,
-                });
-                const data = searchResp.data?.data?.[0] || searchResp.data?.payments?.[0];
-                if (data?.payment_id) {
-                  paymentId = String(data.payment_id);
-                  await query(
-                    `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
-                    [row.order_id, `nowpayments:${paymentId}:reconciler_lookup`]
-                  ).catch(() => {});
-                }
+              const dateFromIso = new Date(new Date(row.created_at).getTime() - 5 * 60 * 1000).toISOString();
+              const listResp = await axios.get(`${npEnv}/payment/`, {
+                params: { dateFrom: dateFromIso, limit: 500, orderBy: 'DESC' },
+                headers: searchHeaders,
+                timeout: 15000,
+              });
+              const payments = listResp.data?.data || listResp.data?.payments || [];
+              const match = payments.find((p) => {
+                if (nowpaymentsInvoiceId && String(p.invoice_id) === String(nowpaymentsInvoiceId)) return true;
+                if (p.order_id && String(p.order_id) === String(row.order_id)) return true;
+                return false;
+              });
+              if (match?.payment_id) {
+                paymentId = String(match.payment_id);
+                await query(
+                  `UPDATE dash_subscription_orders SET notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
+                  [row.order_id, `nowpayments:${paymentId}:reconciler_lookup`]
+                ).catch(() => {});
               }
             } catch (lookupErr) {
               const httpStatus = lookupErr.response?.status;
@@ -1147,8 +1130,8 @@ class PaymentRecoveryService {
                   [row.order_id, `nowpayments:reconciler:tokens:${paymentId}:credited:${tokensToCredit}`]
                 );
                 try {
-                  const { io: ioInst } = require('./socketSingleton');
-                  ioInst?.getIO()?.to(`user:${order.user_id}`).emit('wallet:updated', { balance: newBalance, credited: tokensToCredit });
+                  const io = require('./socketSingleton').get();
+                  io?.to(`user:${order.user_id}`).emit('wallet:updated', { balance: newBalance, credited: tokensToCredit });
                 } catch (_) { /* non-fatal */ }
                 // Send confirmation email + admin Telegram notification
                 setImmediate(async () => {
