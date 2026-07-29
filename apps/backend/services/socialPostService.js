@@ -40,17 +40,20 @@ class SocialPostService {
    * @param {boolean}  isAdmin     - True when the viewer has an admin/superadmin role
    * @param {number[]} blockedIds  - Array of user IDs the viewer has blocked (C-08)
    */
-  static async getFeed(userId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+  static async getFeed(userId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = [], viewerGeoTags = []) {
     const lim = Math.min(Number(limit) || 20, 50);
     const fetchLimit = lim + 10;
     const cursorId = cursor ? parseInt(cursor, 10) : null;
 
-    // Build parameterized query — $1=userId, $2=fetchLimit, [$3=cursorId], $N=blockedIds
+    // Build parameterized query — $1=userId, $2=fetchLimit, [$3=cursorId], $N=blockedIds, $N+1=viewerGeoTags
     const params = [userId, fetchLimit];
     if (cursorId) params.push(cursorId);
     const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
     params.push(blockedParam);
-    const blockedParamIdx = params.length; // last param index
+    const blockedParamIdx = params.length;
+    const geoTagsParam = Array.isArray(viewerGeoTags) ? viewerGeoTags : [];
+    params.push(geoTagsParam);
+    const geoParamIdx = params.length;
     const cursorClause = cursorId ? `AND sp.id < $3` : '';
 
     const { rows } = await query(
@@ -91,6 +94,7 @@ class SocialPostService {
          AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
          ${cursorClause}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
          AND (
            u.role NOT IN ('model', 'creator')
            OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
@@ -1148,20 +1152,21 @@ class SocialPostService {
   // Shares the SELECT column list with getFeed; per-filter WHERE/JOIN additions.
   static async getFeedFiltered({
     userId, filter = 'all', cursor, limit = 20,
-    viewerTier, isAdmin = false, blockedIds = [],
+    viewerTier, isAdmin = false, blockedIds = [], viewerGeoTags = [],
   }) {
     const valid = ['all', 'subscribed', 'following', 'new', 'nearby', 'hot', 'latest'];
     const f = valid.includes(filter) ? filter : 'all';
 
     // All-branch delegates to the original getFeed for backwards compat + boost.
     if (f === 'all') {
-      return SocialPostService.getFeed(userId, cursor, limit, viewerTier, isAdmin, blockedIds);
+      return SocialPostService.getFeed(userId, cursor, limit, viewerTier, isAdmin, blockedIds, viewerGeoTags);
     }
 
     const lim = Math.min(Number(limit) || 20, 50);
     const fetchLimit = lim + 10;
     const cursorId = cursor ? parseInt(cursor, 10) : null;
     const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+    const geoTagsParam = Array.isArray(viewerGeoTags) ? viewerGeoTags : [];
 
     // ── SELECT + FROM template (shared) ────────────────────────────────────
     const SELECT = `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
@@ -1254,9 +1259,11 @@ class SocialPostService {
       orderBy = `ORDER BY (COALESCE(sp.likes_count,0) + COALESCE(sp.reposts_count,0)*2 + COALESCE(sp.replies_count,0)*3) DESC, sp.id DESC`;
     }
 
-    // Append blockedIds param last, always
+    // Append blockedIds param, then viewerGeoTags — always.
     params.push(blockedParam);
     const blockedParamIdx = params.length;
+    params.push(geoTagsParam);
+    const geoParamIdx = params.length;
 
     const sql = `${SELECT}
        ${FROM_JOIN}
@@ -1265,6 +1272,7 @@ class SocialPostService {
          ${cursorClause}
          ${extraWhere}
          AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
        ${orderBy}
        LIMIT $2`;
 

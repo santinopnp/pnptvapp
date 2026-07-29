@@ -228,6 +228,7 @@ async function getNearbyUsers(req, res) {
 
     // Find nearby users using Haversine formula
     // Distance in meters
+    const viewerGeoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
     const result = await query(
       `SELECT
         u.id,
@@ -262,9 +263,10 @@ async function getNearbyUsers(req, res) {
           UNION
           SELECT user_id FROM blocked_users WHERE blocked_user_id = $1
         )
+        AND NOT (COALESCE(u.hide_from_regions, '{}') && $6::text[])
       ORDER BY distance ASC
       LIMIT $5`,
-      [userId, userLat, userLon, radius, limit]
+      [userId, userLat, userLon, radius, limit, viewerGeoTags]
     );
 
     res.json({

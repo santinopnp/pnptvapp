@@ -518,6 +518,30 @@ function classifyGeo(ip) {
   return { blocked: false, country, region };
 }
 
+// Resolves the viewer's geo tags for the per-user hide_from_regions filter
+// (migration 335). Two granularities: bare country ("US") and country-state
+// ("US-FL"). The Postgres && operator matches either against the creator's
+// hide_from_regions array, so a single filter clause covers both. Returns
+// [] when the IP can't be geolocated — creators are then never hidden,
+// which is the safe fail-open default.
+function computeViewerGeoTags(ip) {
+  if (!ip) return [];
+  const cleanIp = ip.replace(/^::ffff:/, '');
+  const lookup = geoip.lookup(cleanIp);
+  if (!lookup || !lookup.country) return [];
+  const tags = [lookup.country];
+  if (lookup.region) tags.push(`${lookup.country}-${lookup.region}`);
+  return tags;
+}
+app.use((req, res, next) => {
+  try {
+    req.viewerGeoTags = computeViewerGeoTags(req.ip);
+  } catch {
+    req.viewerGeoTags = [];
+  }
+  next();
+});
+
 // Bypass endpoint — must be registered BEFORE the geo-block middleware so that
 // it is also reachable when the geo-block would otherwise fire (belt-and-
 // suspenders alongside the GEO_BLOCK_BYPASS_PATHS regex above).
@@ -8198,7 +8222,7 @@ app.get('/api/webapp/discover', softAuth, async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 12));
     const viewerId = req.session?.user?.id || null;
-    const results = await discoverService.discoverByTags(tags, q, entity, page, limit, viewerId);
+    const results = await discoverService.discoverByTags(tags, q, entity, page, limit, viewerId, req.viewerGeoTags || []);
     res.json({ success: true, ...results });
   } catch (err) {
     console.error('discover:', err);

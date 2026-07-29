@@ -37,7 +37,7 @@ async function getTagTaxonomy() {
  * @param {number}   limit     - Results per entity (max 24)
  * @returns {object} Keys matching requested entities, each an array of rows
  */
-async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 1, limit = 12, viewerId = null) {
+async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 1, limit = 12, viewerId = null, viewerGeoTags = []) {
   const hasTags = Array.isArray(tags) && tags.length > 0;
   const hasText = typeof textQuery === 'string' && textQuery.trim().length > 0;
 
@@ -48,6 +48,7 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 
   const offset = (page - 1) * limit;
   const likePattern = hasText ? `%${textQuery.replace(/[%_\\]/g, '\\$&')}%` : null;
+  const geoTags = Array.isArray(viewerGeoTags) ? viewerGeoTags : [];
 
   const queries = {};
 
@@ -55,17 +56,17 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 
   // --- members ---
   if (shouldQuery('members')) {
-    queries.members = queryMembers(hasTags, tags, hasText, likePattern, limit, offset);
+    queries.members = queryMembers(hasTags, tags, hasText, likePattern, limit, offset, geoTags);
   }
 
   // --- creators ---
   if (shouldQuery('creators')) {
-    queries.creators = queryCreators(hasTags, tags, hasText, likePattern, limit, offset);
+    queries.creators = queryCreators(hasTags, tags, hasText, likePattern, limit, offset, geoTags);
   }
 
   // --- channels ---
   if (shouldQuery('channels')) {
-    queries.channels = queryChannels(hasTags, tags, hasText, likePattern, limit, offset);
+    queries.channels = queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTags);
   }
 
   // --- videos ---
@@ -75,7 +76,7 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 
   // --- hangouts ---
   if (shouldQuery('hangouts')) {
-    queries.hangouts = queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId);
+    queries.hangouts = queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId, geoTags);
   }
 
   // Execute all sub-queries in parallel
@@ -94,7 +95,7 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 // Sub-query builders — each returns a pg query promise
 // ---------------------------------------------------------------------------
 
-function queryMembers(hasTags, tags, hasText, likePattern, limit, offset) {
+function queryMembers(hasTags, tags, hasText, likePattern, limit, offset, geoTags = []) {
   const conditions = ['u.is_deleted = FALSE'];
   const params = [];
   let idx = 1;
@@ -112,6 +113,10 @@ function queryMembers(hasTags, tags, hasText, likePattern, limit, offset) {
     idx += 3;
   }
 
+  // Region privacy — hide users who opted out of being seen from viewer's region.
+  params.push(geoTags);
+  conditions.push(`NOT (COALESCE(u.hide_from_regions, '{}') && $${idx++}::text[])`);
+
   params.push(limit, offset);
 
   return query(
@@ -124,7 +129,7 @@ function queryMembers(hasTags, tags, hasText, likePattern, limit, offset) {
   );
 }
 
-function queryCreators(hasTags, tags, hasText, likePattern, limit, offset) {
+function queryCreators(hasTags, tags, hasText, likePattern, limit, offset, geoTags = []) {
   const conditions = ["u.role IN ('creator', 'model') AND u.is_deleted = FALSE"];
   const params = [];
   let idx = 1;
@@ -141,6 +146,9 @@ function queryCreators(hasTags, tags, hasText, likePattern, limit, offset) {
     );
     idx += 3;
   }
+
+  params.push(geoTags);
+  conditions.push(`NOT (COALESCE(u.hide_from_regions, '{}') && $${idx++}::text[])`);
 
   params.push(limit, offset);
 
@@ -159,7 +167,7 @@ function queryCreators(hasTags, tags, hasText, likePattern, limit, offset) {
   );
 }
 
-function queryChannels(hasTags, tags, hasText, likePattern, limit, offset) {
+function queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTags = []) {
   const conditions = ['cc.is_active = TRUE'];
   const params = [];
   let idx = 1;
@@ -176,6 +184,13 @@ function queryChannels(hasTags, tags, hasText, likePattern, limit, offset) {
     );
     idx += 2;
   }
+
+  // Region privacy — hide channels whose owning creator opted out of viewer's region.
+  params.push(geoTags);
+  conditions.push(`NOT EXISTS (
+    SELECT 1 FROM users uch WHERE uch.id::text = cc.creator_id
+      AND COALESCE(uch.hide_from_regions, '{}') && $${idx++}::text[]
+  )`);
 
   params.push(limit, offset);
 
@@ -219,7 +234,7 @@ function queryVideos(hasTags, tags, hasText, likePattern, limit, offset) {
   );
 }
 
-function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId = null) {
+function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewerId = null, geoTags = []) {
   // NOTE: dropped the blanket is_public=TRUE filter — creators' *private* hangouts
   // (is_public=false, no channel_id) are now gated on active creator subscription
   // per the unified access rule, not silently omitted. This keeps them
@@ -283,6 +298,17 @@ function queryHangouts(hasTags, tags, hasText, likePattern, limit, offset, viewe
       ))
     )`);
   }
+
+  // Region privacy — hide hangouts whose owning creator opted out of viewer's region.
+  // System hangouts (creator_id NULL/'') skip the check.
+  params.push(geoTags);
+  conditions.push(`(
+    hg.creator_id IS NULL OR hg.creator_id = ''
+    OR NOT EXISTS (
+      SELECT 1 FROM users uhg WHERE uhg.id::text = hg.creator_id
+        AND COALESCE(uhg.hide_from_regions, '{}') && $${idx++}::text[]
+    )
+  )`);
 
   params.push(limit, offset);
 

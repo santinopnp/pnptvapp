@@ -1070,6 +1070,7 @@ export interface UserProfile {
   city?: string | null;
   country?: string | null;
   privacy?: Record<string, boolean>;
+  hideFromRegions?: string[];
   xHandle?: string;
   instagramHandle?: string;
   tiktokHandle?: string;
@@ -1319,6 +1320,7 @@ export function updateProfile(
     hasSeenTutorial: boolean;
     language: string;
     amazonWishlistUrl: string | null;
+    hideFromRegions: string[];
   }>
 ): Promise<{ success: boolean }> {
   return request("/api/webapp/profile", { method: "PUT", body: fields });

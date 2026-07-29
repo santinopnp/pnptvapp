@@ -2191,6 +2191,7 @@ const getProfile = async (req, res) => {
               u.instagram, u.tiktok, u.youtube, u.email,
               u.terms_accepted, u.wof_photo_consent, u.content_disclaimer, u.created_at,
               u.date_of_birth, u.city, u.country, u.privacy,
+              u.hide_from_regions,
               u.creator_status, u.creator_type, u.creator_price_usd,
               u.creator_verified, u.creator_featured, u.creator_subscriber_count,
               u.colombia_badge,
@@ -2259,6 +2260,7 @@ const getProfile = async (req, res) => {
         country: p.country || null,
         email: p.email || null,
         privacy: p.privacy || {},
+        hideFromRegions: Array.isArray(p.hide_from_regions) ? p.hide_from_regions : [],
         autoShareToX: !!(p.privacy?.autoShareToX),
         creatorStatus: p.creator_status || 'none',
         creatorType: p.creator_type || null,
@@ -2480,7 +2482,7 @@ const updateProfile = async (req, res) => {
   }
 
   try {
-    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country', 'amazonWishlistUrl'];
+    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country', 'amazonWishlistUrl', 'hideFromRegions'];
     const colMap  = {
       username: 'username',
       firstName: 'first_name', lastName: 'last_name', bio: 'bio',
@@ -2492,6 +2494,7 @@ const updateProfile = async (req, res) => {
       dateOfBirth: 'date_of_birth',
       country: 'country',
       amazonWishlistUrl: 'amazon_wishlist_url',
+      hideFromRegions: 'hide_from_regions',
     };
 
     const sets = [];
@@ -2529,6 +2532,17 @@ const updateProfile = async (req, res) => {
           // Store as DATE or null; empty string clears the field
           const rawDob = req.body[key];
           vals.push((!rawDob || rawDob === '') ? null : rawDob);
+        } else if (key === 'hideFromRegions') {
+          // Region-hide toggle — accept array of ISO tags like ["US","US-FL","CO"].
+          // Reject unknown formats server-side so a bad client can't smuggle raw
+          // strings that would then break the array-overlap filter later.
+          const raw = req.body[key];
+          const arr = Array.isArray(raw) ? raw : [];
+          const clean = arr
+            .map((s) => String(s || '').trim().toUpperCase())
+            .filter((s) => /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/.test(s))
+            .slice(0, 100);
+          vals.push(clean);
         } else {
           // Allow clearing fields (null / empty string → null)
           vals.push(req.body[key] === '' ? null : req.body[key]);

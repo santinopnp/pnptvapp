@@ -122,6 +122,7 @@ const getFeed = async (req, res) => {
       cursor: isFreeUser ? undefined : req.query.cursor,
       limit: isFreeUser ? FREE_FEED_LIMIT : req.query.limit,
       viewerTier, isAdmin, blockedIds,
+      viewerGeoTags: req.viewerGeoTags || [],
     });
     if (isFreeUser) result.nextCursor = null;
     return res.json({ success: true, freeUserLimited: isFreeUser, filter, ...result });
@@ -1546,6 +1547,22 @@ const getPublicProfile = async (req, res) => {
       ]);
       if (viewerBlocked || targetBlocked) {
         return res.status(403).json({ success: false, error: 'Profile unavailable', code: 'BLOCKED' });
+      }
+    }
+
+    // Region privacy — target user has opted out of being seen from the viewer's
+    // region. Behave like the profile doesn't exist (404) so the viewer can't
+    // tell whether the user was hidden vs deleted. Owner viewing their own
+    // profile always sees it (String equality check above already scoped block
+    // to non-self, mirror that here).
+    const geoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+    if (geoTags.length > 0 && String(viewerId || '') !== String(userId)) {
+      const { rows: hideRows } = await dbQuery(
+        `SELECT 1 FROM users WHERE id = $1 AND COALESCE(hide_from_regions, '{}') && $2::text[] LIMIT 1`,
+        [userId, geoTags]
+      );
+      if (hideRows.length > 0) {
+        return res.status(404).json({ error: 'User not found' });
       }
     }
 

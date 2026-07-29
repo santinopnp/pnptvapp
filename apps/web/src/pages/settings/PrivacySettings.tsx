@@ -7,8 +7,58 @@ import {
   getBlockedUsers,
   unblockUser,
   acceptTerms,
+  updateProfile,
   type BlockedUser,
 } from "@/lib/api";
+
+// ── Region-hide options ──────────────────────────────────────────────────────
+// Countries curated to the top markets PNPtv sees traffic from. Adding a new
+// entry is just a matter of extending this list; the backend accepts any
+// ISO-3166 alpha-2 tag so admins can drop in region tags via SQL if needed.
+const COUNTRY_OPTIONS: { code: string; label: string }[] = [
+  { code: "US", label: "United States (all)" },
+  { code: "CA", label: "Canada" },
+  { code: "MX", label: "Mexico" },
+  { code: "CO", label: "Colombia" },
+  { code: "VE", label: "Venezuela" },
+  { code: "BR", label: "Brazil" },
+  { code: "AR", label: "Argentina" },
+  { code: "CL", label: "Chile" },
+  { code: "PE", label: "Peru" },
+  { code: "EC", label: "Ecuador" },
+  { code: "ES", label: "Spain" },
+  { code: "GB", label: "United Kingdom" },
+  { code: "IE", label: "Ireland" },
+  { code: "DE", label: "Germany" },
+  { code: "FR", label: "France" },
+  { code: "IT", label: "Italy" },
+  { code: "NL", label: "Netherlands" },
+  { code: "AU", label: "Australia" },
+  { code: "NZ", label: "New Zealand" },
+  { code: "PH", label: "Philippines" },
+  { code: "TH", label: "Thailand" },
+  { code: "JP", label: "Japan" },
+  { code: "KR", label: "South Korea" },
+];
+
+const US_STATE_OPTIONS: { code: string; label: string }[] = [
+  ["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],["CA","California"],
+  ["CO","Colorado"],["CT","Connecticut"],["DE","Delaware"],["DC","District of Columbia"],
+  ["FL","Florida"],["GA","Georgia"],["HI","Hawaii"],["ID","Idaho"],["IL","Illinois"],
+  ["IN","Indiana"],["IA","Iowa"],["KS","Kansas"],["KY","Kentucky"],["LA","Louisiana"],
+  ["ME","Maine"],["MD","Maryland"],["MA","Massachusetts"],["MI","Michigan"],["MN","Minnesota"],
+  ["MS","Mississippi"],["MO","Missouri"],["MT","Montana"],["NE","Nebraska"],["NV","Nevada"],
+  ["NH","New Hampshire"],["NJ","New Jersey"],["NM","New Mexico"],["NY","New York"],
+  ["NC","North Carolina"],["ND","North Dakota"],["OH","Ohio"],["OK","Oklahoma"],["OR","Oregon"],
+  ["PA","Pennsylvania"],["RI","Rhode Island"],["SC","South Carolina"],["SD","South Dakota"],
+  ["TN","Tennessee"],["TX","Texas"],["UT","Utah"],["VT","Vermont"],["VA","Virginia"],
+  ["WA","Washington"],["WV","West Virginia"],["WI","Wisconsin"],["WY","Wyoming"],
+].map(([code, label]) => ({ code: `US-${code}`, label: `US · ${label}` }));
+
+const REGION_LABELS: Record<string, string> = Object.fromEntries([
+  ...COUNTRY_OPTIONS.map((c) => [c.code, c.label]),
+  ...US_STATE_OPTIONS.map((s) => [s.code, s.label]),
+]);
 
 // ── PrivacySettings ───────────────────────────────────────────────────────────
 
@@ -26,6 +76,9 @@ export default function PrivacySettings() {
   const [termsAccepted, setTermsAccepted] = useState<boolean | null>(null);
   const [reconfirming, setReconfirming] = useState(false);
   const [reconfirmed, setReconfirmed] = useState(false);
+  const [hiddenRegions, setHiddenRegions] = useState<string[]>([]);
+  const [regionSaving, setRegionSaving] = useState(false);
+  const [regionSavedAt, setRegionSavedAt] = useState<number>(0);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -41,12 +94,42 @@ export default function PrivacySettings() {
       if (profileRes?.profile) {
         setCreatorStatus(profileRes.profile.creatorStatus ?? "");
         setTermsAccepted(profileRes.profile.acceptedTerms ?? null);
+        setHiddenRegions(profileRes.profile.hideFromRegions ?? []);
       }
       setBlockedLoading(false);
     });
 
     return () => { cancelled = true; };
   }, [isAuthenticated]);
+
+  const persistRegions = useCallback(async (next: string[]) => {
+    setRegionSaving(true);
+    try {
+      await updateProfile({ hideFromRegions: next });
+      setRegionSavedAt(Date.now());
+    } catch { /* silent — chip UI still reflects last user action */ }
+    setRegionSaving(false);
+  }, []);
+
+  const addRegion = useCallback((tag: string) => {
+    const clean = tag.trim().toUpperCase();
+    if (!/^[A-Z]{2}(-[A-Z0-9]{1,3})?$/.test(clean)) return;
+    setHiddenRegions((prev) => {
+      if (prev.includes(clean)) return prev;
+      const next = [...prev, clean];
+      void persistRegions(next);
+      return next;
+    });
+  }, [persistRegions]);
+
+  const removeRegion = useCallback((tag: string) => {
+    setHiddenRegions((prev) => {
+      if (!prev.includes(tag)) return prev;
+      const next = prev.filter((t) => t !== tag);
+      void persistRegions(next);
+      return next;
+    });
+  }, [persistRegions]);
 
   const handleReconfirm = useCallback(async () => {
     if (reconfirming || reconfirmed) return;
@@ -96,6 +179,91 @@ export default function PrivacySettings() {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Hide me from these regions ── */}
+      <div className="glass-card-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+            Hide me from these regions
+          </h2>
+          {regionSaving && (
+            <span className="text-[10px] text-white/40">Saving…</span>
+          )}
+          {!regionSaving && regionSavedAt > 0 && Date.now() - regionSavedAt < 3000 && (
+            <span className="text-[10px]" style={{ color: "#4ADE80" }}>Saved</span>
+          )}
+        </div>
+        <p className="text-xs leading-relaxed mb-4" style={{ color: "rgba(255,255,255,0.6)" }}>
+          People browsing from any region you list here won't see your profile, posts, channels, or find you in Nearby. Add a country (e.g. Colombia) to hide from that whole country, or a US state (e.g. US Florida) to hide from just one state. You'll still be visible everywhere else.
+        </p>
+
+        {/* Current chips */}
+        {hiddenRegions.length === 0 ? (
+          <p className="text-xs italic mb-4" style={{ color: "var(--pnp-text-secondary)" }}>
+            No regions hidden — you're visible worldwide.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {hiddenRegions.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => removeRegion(tag)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-opacity hover:opacity-80"
+                style={{
+                  background: "rgba(212,0,122,0.12)",
+                  border: "1px solid rgba(212,0,122,0.3)",
+                  color: "#D4007A",
+                }}
+                aria-label={`Remove ${tag}`}
+              >
+                <span>{REGION_LABELS[tag] || tag}</span>
+                <span className="text-sm leading-none">×</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Add-country + Add-US-state selects */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addRegion(e.target.value);
+              e.target.value = "";
+            }}
+            className="w-full rounded-lg px-3 py-2.5 text-sm"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "#fff",
+            }}
+          >
+            <option value="">+ Add country</option>
+            {COUNTRY_OPTIONS.filter((c) => !hiddenRegions.includes(c.code)).map((c) => (
+              <option key={c.code} value={c.code}>{c.label}</option>
+            ))}
+          </select>
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addRegion(e.target.value);
+              e.target.value = "";
+            }}
+            className="w-full rounded-lg px-3 py-2.5 text-sm"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "#fff",
+            }}
+          >
+            <option value="">+ Add US state</option>
+            {US_STATE_OPTIONS.filter((s) => !hiddenRegions.includes(s.code)).map((s) => (
+              <option key={s.code} value={s.code}>{s.label}</option>
+            ))}
+          </select>
         </div>
       </div>
 
