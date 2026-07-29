@@ -68,12 +68,12 @@ volumes:
       type: none
       o: bind
       device: /opt/pnptvapp/infrastructure/data/pnptv/walg-backups
-  vol_pg_btcpay:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /opt/pnptvapp/infrastructure/data/btcpay/postgres
+#  vol_pg_btcpay:
+#    driver: local
+#    driver_opts:
+#      type: none
+#      o: bind
+#      device: /opt/pnptvapp/infrastructure/data/btcpay/postgres
   vol_uptime_kuma:
     driver: local
     driver_opts:
@@ -629,6 +629,10 @@ services:
       # This is INDEPENDENT of BOT_ONBOARDING_ENABLED, which is the "secondary
       # instance" flag that disables all schedulers/workers.
       BOT_WIZARD_ENABLED: "true"
+      # BTCPay teardown WIP (2026-07-29) — empty API_KEY makes btcpay.isConfigured
+      # return false so the boot health check skips instead of exit(1). Revert
+      # both lines when BTCPay is either fully removed or reinstated.
+      BTCPAY_API_KEY: ""
       BTCPAY_URL: http://btcpay-server:23000
       RESTREAMER_URL: http://restreamer:8080
       RESTREAMER_PUBLIC_URL: https://live.pnptv.app
@@ -645,8 +649,6 @@ services:
         condition: service_healthy
       directus:
         condition: service_healthy
-      btcpay-server:
-        condition: service_started
     deploy:
       resources:
         limits:
@@ -694,118 +696,118 @@ services:
           cpus: '1.5'
           memory: 1500m
 
-  pg-btcpay:
-    image: postgres:16-alpine
-    container_name: pg-btcpay
-    restart: unless-stopped
-    volumes:
-      - vol_pg_btcpay:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: btcpayserver
-      POSTGRES_USER: btcpay
-      POSTGRES_PASSWORD: ${BTCPAY_POSTGRES_PASSWORD}
-    networks:
-      - pnptvapp_net
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512m
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U btcpay -d btcpayserver"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+#  pg-btcpay:
+#    image: postgres:16-alpine
+#    container_name: pg-btcpay
+#    restart: unless-stopped
+#    volumes:
+#      - vol_pg_btcpay:/var/lib/postgresql/data
+#    environment:
+#      POSTGRES_DB: btcpayserver
+#      POSTGRES_USER: btcpay
+#      POSTGRES_PASSWORD: ${BTCPAY_POSTGRES_PASSWORD}
+#    networks:
+#      - pnptvapp_net
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '0.5'
+#          memory: 512m
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U btcpay -d btcpayserver"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#      start_period: 30s
 
-  dashd:
-    image: dashpay/dashd:21
-    container_name: dashd
-    restart: unless-stopped
-    command: dashd
-    volumes:
-      - ./infrastructure/data/btcpay/dashd:/home/dash/.dashcore
-    networks:
-      - pnptvapp_net
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 2g
-    healthcheck:
-      test: ["CMD-SHELL", "dash-cli -conf=/home/dash/.dashcore/dash.conf getblockchaininfo || exit 1"]
-      interval: 60s
-      timeout: 15s
-      retries: 5
-      start_period: 120s
+#  dashd:
+#    image: dashpay/dashd:21
+#    container_name: dashd
+#    restart: unless-stopped
+#    command: dashd
+#    volumes:
+#      - ./infrastructure/data/btcpay/dashd:/home/dash/.dashcore
+#    networks:
+#      - pnptvapp_net
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '1.0'
+#          memory: 2g
+#    healthcheck:
+#      test: ["CMD-SHELL", "dash-cli -conf=/home/dash/.dashcore/dash.conf getblockchaininfo || exit 1"]
+#      interval: 60s
+#      timeout: 15s
+#      retries: 5
+#      start_period: 120s
 
-  btcpay-nbxplorer:
-    image: nicolasdorier/nbxplorer:2.5.30
-    container_name: btcpay-nbxplorer
-    restart: unless-stopped
-    volumes:
-      - ./infrastructure/data/btcpay/nbxplorer:/datadir
-    environment:
-      NBXPLORER_NETWORK: mainnet
-      NBXPLORER_CHAINS: "DASH"
-      NBXPLORER_BIND: 0.0.0.0:24444
-      NBXPLORER_DASHNODEENDPOINT: dashd:9999
-      NBXPLORER_DASHNODERPCURL: http://dashd:9998/
-      NBXPLORER_DASHNODERPCAUTH: ${NBXPLORER_DASH_RPC_AUTH:-}
-      NBXPLORER_POSTGRES: "Host=pg-btcpay;Database=nbxplorer;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
-    networks:
-      - pnptvapp_net
-    depends_on:
-      pg-btcpay:
-        condition: service_healthy
-      dashd:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512m
-    # No healthcheck — nbxplorer .NET runtime image has no curl/wget
+#  btcpay-nbxplorer:
+#    image: nicolasdorier/nbxplorer:2.5.30
+#    container_name: btcpay-nbxplorer
+#    restart: unless-stopped
+#    volumes:
+#      - ./infrastructure/data/btcpay/nbxplorer:/datadir
+#    environment:
+#      NBXPLORER_NETWORK: mainnet
+#      NBXPLORER_CHAINS: "DASH"
+#      NBXPLORER_BIND: 0.0.0.0:24444
+#      NBXPLORER_DASHNODEENDPOINT: dashd:9999
+#      NBXPLORER_DASHNODERPCURL: http://dashd:9998/
+#      NBXPLORER_DASHNODERPCAUTH: ${NBXPLORER_DASH_RPC_AUTH:-}
+#      NBXPLORER_POSTGRES: "Host=pg-btcpay;Database=nbxplorer;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
+#    networks:
+#      - pnptvapp_net
+#    depends_on:
+#      pg-btcpay:
+#        condition: service_healthy
+#      dashd:
+#        condition: service_started
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '0.5'
+#          memory: 512m
+#    # No healthcheck — nbxplorer .NET runtime image has no curl/wget
 
-  btcpay-server:
-    image: btcpayserver/btcpayserver:2.3.5
-    container_name: btcpay-server
-    restart: unless-stopped
-    expose:
-      - "23000"
-    volumes:
-      - ./infrastructure/data/btcpay/server:/datadir
-      - ./infrastructure/data/btcpay/nbxplorer:/root/.nbxplorer:ro
-    environment:
-      BTCPAY_POSTGRES: "Host=pg-btcpay;Database=btcpayserver;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
-      BTCPAY_NETWORK: mainnet
-      BTCPAY_ROOTPATH: /
-      BTCPAY_DASHEXPLORERURL: http://btcpay-nbxplorer:24444/
-      BTCPAY_BIND: 0.0.0.0:23000
-      BTCPAY_CHAINS: "DASH"
-      BTCPAY_NBXPLORERDEFAULTCOOKIEFILE: /root/.nbxplorer/Main/.cookie
-      BTCPAY_OIDC__ENABLED: "true"
-      BTCPAY_OIDC__PROVIDERURL: https://auth.pnptv.app/application/o/btcpay/
-      BTCPAY_OIDC__CLIENTID: btcpay
-      BTCPAY_OIDC__CLIENTSECRET: "${BTCPAY_OIDC_CLIENT_SECRET:-}"
-      BTCPAY_EXTERNALURL: "https://btcpay.pnptv.app"
-    networks:
-      - pnptvapp_net
-    depends_on:
-      - pg-btcpay
-      - btcpay-nbxplorer
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1g
-    # No healthcheck — BTCPay .NET runtime image has no curl/wget
+#  btcpay-server:
+#    image: btcpayserver/btcpayserver:2.3.5
+#    container_name: btcpay-server
+#    restart: unless-stopped
+#    expose:
+#      - "23000"
+#    volumes:
+#      - ./infrastructure/data/btcpay/server:/datadir
+#      - ./infrastructure/data/btcpay/nbxplorer:/root/.nbxplorer:ro
+#    environment:
+#      BTCPAY_POSTGRES: "Host=pg-btcpay;Database=btcpayserver;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
+#      BTCPAY_NETWORK: mainnet
+#      BTCPAY_ROOTPATH: /
+#      BTCPAY_DASHEXPLORERURL: http://btcpay-nbxplorer:24444/
+#      BTCPAY_BIND: 0.0.0.0:23000
+#      BTCPAY_CHAINS: "DASH"
+#      BTCPAY_NBXPLORERDEFAULTCOOKIEFILE: /root/.nbxplorer/Main/.cookie
+#      BTCPAY_OIDC__ENABLED: "true"
+#      BTCPAY_OIDC__PROVIDERURL: https://auth.pnptv.app/application/o/btcpay/
+#      BTCPAY_OIDC__CLIENTID: btcpay
+#      BTCPAY_OIDC__CLIENTSECRET: "${BTCPAY_OIDC_CLIENT_SECRET:-}"
+#      BTCPAY_EXTERNALURL: "https://btcpay.pnptv.app"
+#    networks:
+#      - pnptvapp_net
+#    depends_on:
+#      - pg-btcpay
+#      - btcpay-nbxplorer
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '1.0'
+#          memory: 1g
+#    # No healthcheck — BTCPay .NET runtime image has no curl/wget
 
 
-  # ===========================================
-  # UPTIME KUMA — Status page & uptime monitoring
-  # https://status.pnptv.app
-  # ===========================================
+#  # ===========================================
+#  # UPTIME KUMA — Status page & uptime monitoring
+#  # https://status.pnptv.app
+#  # ===========================================
   uptime-kuma:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
