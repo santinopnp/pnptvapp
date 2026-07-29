@@ -543,8 +543,12 @@ function computeViewerGeoTagsFromReq(req) {
 app.use((req, res, next) => {
   try {
     req.viewerGeoTags = computeViewerGeoTagsFromReq(req);
-  } catch {
+  } catch (e) {
     req.viewerGeoTags = [];
+    logger.warn(`[viewerGeo] compute failed: ${e.message}`);
+  }
+  if (req.path.startsWith('/api/webapp/discover') || req.path.startsWith('/api/webapp/social/profile')) {
+    logger.info(`[gt] p=${req.path} xri=${req.headers['x-real-ip']||'-'} xff=${req.headers['x-forwarded-for']||'-'} ip=${req.ip} tags=${JSON.stringify(req.viewerGeoTags)}`);
   }
   next();
 });
