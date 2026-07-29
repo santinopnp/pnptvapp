@@ -3,6 +3,7 @@ import Hls from "hls.js";
 import { Badge, Skeleton } from "@pnptv/ui-kit";
 import { StreamOverlayLayer, type StreamOverlayConfig } from "@/components/StreamOverlayLayer";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { VideoDisclaimerFooter } from "@/components/VideoPlayer";
 import { useI18n } from "@/lib/i18n";
 
 export interface LivePlayerStats {
@@ -334,6 +335,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
   // The <video> element must always remain in the DOM so videoRef is populated
   // when useEffect fires. Status overlays are absolutely positioned on top.
   return (
+    <>
     <div className={`relative aspect-video overflow-hidden rounded-xl bg-black ${className}`}>
       <video
         ref={videoRef}
@@ -466,5 +468,7 @@ export function LivePlayer({ src, title, poster, className = "", overlay, onStat
         </div>
       )}
     </div>
+    <VideoDisclaimerFooter />
+    </>
   );
 }

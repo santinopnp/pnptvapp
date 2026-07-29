@@ -6,12 +6,22 @@
  * All standard <video> props pass through; `src` may point to an .m3u8 or an
  * mp4/webm. Used across social feed cards so posts uploaded via the browser→Mux
  * pipeline (mux_playback_id → stream.mux.com/*.m3u8) play everywhere.
+ *
+ * When `creatorDisclaimer` is true (creator-authored content), a bilingual
+ * compliance overlay appears when playback ends, linking to /self-care.
+ * Layout note: opting into the overlay wraps the <video> in a positioned
+ * container that inherits `className` and `style`.
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import Hls from "hls.js";
+import { useI18n } from "@/lib/i18n";
 
-type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement>;
+type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
+  /** When true, render an end-of-video compliance overlay for creator content. */
+  creatorDisclaimer?: boolean;
+};
 
 function isHlsSource(src: string | undefined | null): boolean {
   if (!src) return false;
@@ -19,9 +29,10 @@ function isHlsSource(src: string | undefined | null): boolean {
 }
 
 export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
-  ({ src, ...rest }, ref) => {
+  ({ src, creatorDisclaimer = false, onEnded, onPlay, className, style, ...rest }, ref) => {
     const localRef = useRef<HTMLVideoElement | null>(null);
     const hlsRef = useRef<Hls | null>(null);
+    const [showDisclaimer, setShowDisclaimer] = useState(false);
 
     const setRefs = (el: HTMLVideoElement | null) => {
       localRef.current = el;
@@ -63,7 +74,109 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     // avoid a double-load.
     const passThroughSrc = isHlsSource(src) ? undefined : (src ?? undefined);
 
-    return <video ref={setRefs} src={passThroughSrc} {...rest} />;
+    const handleEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (creatorDisclaimer) setShowDisclaimer(true);
+      onEnded?.(e);
+    };
+
+    const handlePlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (showDisclaimer) setShowDisclaimer(false);
+      onPlay?.(e);
+    };
+
+    // Fast path: existing callers (no disclaimer) get exactly the previous behavior.
+    if (!creatorDisclaimer) {
+      return (
+        <video
+          ref={setRefs}
+          src={passThroughSrc}
+          className={className}
+          style={style}
+          onEnded={handleEnded}
+          onPlay={handlePlay}
+          {...rest}
+        />
+      );
+    }
+
+    return (
+      <div className={className} style={{ position: "relative", ...(style || {}) }}>
+        <video
+          ref={setRefs}
+          src={passThroughSrc}
+          className="w-full h-full object-contain bg-black"
+          onEnded={handleEnded}
+          onPlay={handlePlay}
+          {...rest}
+        />
+        {showDisclaimer && (
+          <VideoDisclaimerOverlay
+            onReplay={() => {
+              setShowDisclaimer(false);
+              localRef.current?.play().catch(() => {});
+            }}
+            onDismiss={() => setShowDisclaimer(false)}
+          />
+        )}
+      </div>
+    );
   }
 );
 VideoPlayer.displayName = "VideoPlayer";
+
+function VideoDisclaimerOverlay({ onReplay, onDismiss }: { onReplay: () => void; onDismiss: () => void }) {
+  const t = useI18n();
+  return (
+    <div
+      className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
+      style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(4px)" }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-white text-sm font-semibold uppercase tracking-wider opacity-70">
+        {t.common.videoDisclaimerTitle}
+      </div>
+      <p className="text-white text-sm leading-relaxed max-w-md">
+        {t.common.videoDisclaimerBody}
+      </p>
+      <div className="flex flex-wrap gap-2 justify-center mt-2">
+        <Link
+          to="/self-care"
+          className="px-4 py-2 rounded-full bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-400 transition-colors"
+        >
+          {t.common.videoDisclaimerCta}
+        </Link>
+        <button
+          type="button"
+          onClick={onReplay}
+          className="px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold hover:bg-white/20 transition-colors"
+        >
+          {t.common.videoDisclaimerReplay}
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="px-4 py-2 rounded-full text-white/60 text-sm hover:text-white/90 transition-colors"
+        >
+          {t.common.videoDisclaimerDismiss}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Persistent one-line disclaimer footer for live streams and other surfaces
+ * where an end-of-video overlay doesn't apply.
+ */
+export function VideoDisclaimerFooter({ className = "" }: { className?: string }) {
+  const t = useI18n();
+  return (
+    <div className={`text-[11px] leading-snug text-white/50 px-3 py-2 ${className}`}>
+      {t.common.videoDisclaimerBody}{" "}
+      <Link to="/self-care" className="text-emerald-400 hover:text-emerald-300 underline">
+        {t.common.videoDisclaimerCta}
+      </Link>
+      .
+    </div>
+  );
+}

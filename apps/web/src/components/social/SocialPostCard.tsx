@@ -280,7 +280,7 @@ export default function SocialPostCard({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isOwn = String(post.author_id) === currentUserId;
-  const hasRealPostId = Number.isFinite(post.id) && post.id > 0;
+  const hasRealPostId = Number(post.id) > 0;
   const canDelete = hasRealPostId && (isOwn || isAdmin);
   const { user } = useAuth();
   const { isPrime } = useTier();
@@ -1404,6 +1404,7 @@ export default function SocialPostCard({
                           disablePictureInPicture
                           onContextMenu={(e) => e.preventDefault()}
                           playsInline
+                          creatorDisclaimer={post.author_creator_status === "active"}
                           className="w-full max-h-[360px] object-contain bg-black"
                           preload="metadata"
                           poster={thumbUrl || undefined}
@@ -1475,6 +1476,7 @@ export default function SocialPostCard({
                             disablePictureInPicture
                             onContextMenu={(e) => e.preventDefault()}
                             playsInline
+                            creatorDisclaimer={post.author_creator_status === "active"}
                             className="w-full max-h-[480px] rounded-lg object-contain bg-black"
                             preload="metadata"
                             poster={post.video_thumbnail_url || undefined}
@@ -2044,6 +2046,7 @@ export default function SocialPostCard({
                 playsInline
                 controlsList="nodownload"
                 preload="metadata"
+                creatorDisclaimer
                 onError={() => setChannelPromoPlayerError(true)}
                 className="w-full bg-black"
                 style={{ maxHeight: "60vh" }}

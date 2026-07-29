@@ -74,6 +74,13 @@ const strings = {
     seeAll: "See all",
     pageNotFound: "Page not found",
     copyrightNotice: "© {year} PNPtv. All rights reserved.",
+
+    // Creator video disclaimer (shown after playback + as footer on live)
+    videoDisclaimerTitle: "About this video",
+    videoDisclaimerBody: "All performers are 18+. Any props shown are props only. PNPtv does not encourage substance use. If you're struggling with addiction, please seek professional help.",
+    videoDisclaimerCta: "Visit the Self-Care Center",
+    videoDisclaimerReplay: "Watch again",
+    videoDisclaimerDismiss: "Dismiss",
   },
   es: {
     // Buttons
@@ -150,6 +157,13 @@ const strings = {
     seeAll: "Ver todo",
     pageNotFound: "Página no encontrada",
     copyrightNotice: "© {year} PNPtv. Todos los derechos reservados.",
+
+    // Descargo de responsabilidad de video (creadores)
+    videoDisclaimerTitle: "Acerca de este video",
+    videoDisclaimerBody: "Todos los intérpretes son mayores de 18 años. Cualquier objeto mostrado es utilería. PNPtv no fomenta el consumo de sustancias. Si estás lidiando con adicción, por favor busca ayuda profesional.",
+    videoDisclaimerCta: "Visita el Centro de Autocuidado",
+    videoDisclaimerReplay: "Ver de nuevo",
+    videoDisclaimerDismiss: "Cerrar",
   },
   pt: {
     save: "Salvar",
