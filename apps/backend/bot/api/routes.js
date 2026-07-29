@@ -524,9 +524,16 @@ function classifyGeo(ip) {
 // hide_from_regions array, so a single filter clause covers both. Returns
 // [] when the IP can't be geolocated — creators are then never hidden,
 // which is the safe fail-open default.
-function computeViewerGeoTags(ip) {
-  if (!ip) return [];
-  const cleanIp = ip.replace(/^::ffff:/, '');
+//
+// IP resolution order matches the /api/webapp/geo pattern — req.ip alone
+// returns the Docker peer address inside this deployment because express
+// `trust proxy` isn't set, so the nginx-forwarded headers must come first.
+function computeViewerGeoTagsFromReq(req) {
+  const raw = req.headers['x-real-ip']
+    || (req.headers['x-forwarded-for'] || '').split(',')[0]?.trim()
+    || req.ip;
+  if (!raw) return [];
+  const cleanIp = String(raw).replace(/^::ffff:/, '');
   const lookup = geoip.lookup(cleanIp);
   if (!lookup || !lookup.country) return [];
   const tags = [lookup.country];
@@ -535,7 +542,7 @@ function computeViewerGeoTags(ip) {
 }
 app.use((req, res, next) => {
   try {
-    req.viewerGeoTags = computeViewerGeoTags(req.ip);
+    req.viewerGeoTags = computeViewerGeoTagsFromReq(req);
   } catch {
     req.viewerGeoTags = [];
   }
