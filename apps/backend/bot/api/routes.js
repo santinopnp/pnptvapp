@@ -8233,7 +8233,9 @@ app.get('/api/webapp/discover', softAuth, async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 12));
     const viewerId = req.session?.user?.id || null;
-    const results = await discoverService.discoverByTags(tags, q, entity, page, limit, viewerId, req.viewerGeoTags || []);
+    const _rgt = req.viewerGeoTags || [];
+    const results = await discoverService.discoverByTags(tags, q, entity, page, limit, viewerId, _rgt);
+    logger.info(`[disc-out] q=${q} ent=${entity} tags=${JSON.stringify(_rgt)} keys=${Object.keys(results).join(',')} membersLen=${(results.members||[]).length}`);
     res.json({ success: true, ...results });
   } catch (err) {
     console.error('discover:', err);

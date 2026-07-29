@@ -1556,11 +1556,13 @@ const getPublicProfile = async (req, res) => {
     // profile always sees it (String equality check above already scoped block
     // to non-self, mirror that here).
     const geoTags = Array.isArray(req.viewerGeoTags) ? req.viewerGeoTags : [];
+    logger.info(`[pp-hide] userId=${userId} viewerId=${viewerId} geoTags=${JSON.stringify(geoTags)}`);
     if (geoTags.length > 0 && String(viewerId || '') !== String(userId)) {
       const { rows: hideRows } = await dbQuery(
         `SELECT 1 FROM users WHERE id = $1 AND COALESCE(hide_from_regions, '{}') && $2::text[] LIMIT 1`,
         [userId, geoTags]
       );
+      logger.info(`[pp-hide] check result rows=${hideRows.length}`);
       if (hideRows.length > 0) {
         return res.status(404).json({ error: 'User not found' });
       }
