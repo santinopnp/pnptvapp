@@ -182,7 +182,25 @@ async function startAutoReplyPolling() {
       lock.release();
     }
   } catch (err) {
-    logger.error('[autoReply] IMAP error', { error: err.message });
+    // ImapFlow tucks the actionable detail into fields other than `.message`
+    // (which just says "Command failed"). Surface them so we can tell auth
+    // failures from network blips from mailbox-selection issues.
+    const detail = {
+      error: err.message,
+      code: err.code || null,
+      command: err.command || null,
+      responseText: err.responseText || null,
+      serverResponseCode: err.serverResponseCode || null,
+      authenticationFailed: err.authenticationFailed || false,
+    };
+    // Transient network drops shouldn't page — only auth / server-side
+    // failures are real bugs. Everything else stays a warn.
+    const isCritical = err.authenticationFailed || err.code === 'AUTHENTICATIONFAILED';
+    if (isCritical) {
+      logger.error('[autoReply] IMAP error', detail);
+    } else {
+      logger.warn('[autoReply] IMAP error (transient)', detail);
+    }
   } finally {
     try { await client.logout(); } catch (_) {}
   }
