@@ -2360,7 +2360,7 @@ const sharePostToHangouts = async (req, res) => {
   // Fetch source post
   const { rows: postRows } = await dbQuery(
     `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type, sp.is_deleted, sp.is_shareable,
-            sp.video_title, sp.video_description, sp.video_thumbnail_url,
+            sp.is_exclusive, sp.video_title, sp.video_description, sp.video_thumbnail_url,
             u.username AS author_username, u.first_name AS author_first_name,
             u.photo_file_id AS author_photo
        FROM social_posts sp
@@ -2371,6 +2371,14 @@ const sharePostToHangouts = async (req, res) => {
   const post = postRows[0];
   if (!post || post.is_deleted) {
     return res.status(404).json({ error: 'Post not found' });
+  }
+  // Exclusive posts must not be forwardable — the recipient may not hold
+  // the entitlement, and the snapshot embeds media_url directly.
+  if (post.is_exclusive) {
+    return res.status(403).json({ error: 'Exclusive posts cannot be shared', code: 'EXCLUSIVE_NO_SHARE' });
+  }
+  if (post.is_shareable === false) {
+    return res.status(403).json({ error: 'This post is not shareable', code: 'NOT_SHAREABLE' });
   }
 
   const noteText = typeof note === 'string' ? note.trim().slice(0, 500) : '';

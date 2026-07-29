@@ -711,7 +711,7 @@ const shareDmPost = async (req, res) => {
   // Fetch post (+ shareability + author display fields)
   const { rows: postRows } = await query(
     `SELECT sp.id, sp.user_id, sp.content, sp.media_url, sp.media_type,
-            sp.is_deleted, sp.is_shareable,
+            sp.is_deleted, sp.is_shareable, sp.is_exclusive,
             sp.video_title, sp.video_description, sp.video_thumbnail_url,
             u.username AS author_username, u.first_name AS author_first_name,
             u.photo_file_id AS author_photo
@@ -722,6 +722,14 @@ const shareDmPost = async (req, res) => {
   );
   const post = postRows[0];
   if (!post || post.is_deleted) return res.status(404).json({ error: 'Post not found' });
+  // Exclusive posts cannot be forwarded via DM — the snapshot carries the
+  // media_url and would leak to a non-entitled recipient.
+  if (post.is_exclusive) {
+    return res.status(403).json({ error: 'Exclusive posts cannot be shared', code: 'EXCLUSIVE_NO_SHARE' });
+  }
+  if (post.is_shareable === false) {
+    return res.status(403).json({ error: 'This post is not shareable', code: 'NOT_SHAREABLE' });
+  }
 
   try {
     const resolvePhoto = (p) => (p && (p.startsWith('/') || p.startsWith('http'))) ? p : null;
