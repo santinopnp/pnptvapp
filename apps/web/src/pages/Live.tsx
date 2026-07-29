@@ -18,8 +18,6 @@ import {
   getWalletBalance,
   getTokenPackages,
   buyTokens,
-  linkDPNS,
-  getWalletHistory,
   assertPaymentUrl,
   getLiveSchedule,
   subscribeToSlotReminder,
@@ -30,7 +28,6 @@ import {
   type LiveStream,
   type LiveScheduleSlot,
   type TokenPackage,
-  type TokenPurchase,
   type CreatorMediaItem,
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
@@ -171,14 +168,6 @@ export default function Live() {
   const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
   const [buyError, setBuyError] = useState<string | null>(null);
   const [buyMethod, setBuyMethod] = useState<"dash">("dash");
-  const [showDpnsInput, setShowDpnsInput] = useState(false);
-  const [dpnsInput, setDpnsInput] = useState("");
-  const [dpnsSaving, setDpnsSaving] = useState(false);
-
-  // Wallet history
-  const [showWalletHistory, setShowWalletHistory] = useState(false);
-  const [walletHistory, setWalletHistory] = useState<TokenPurchase[]>([]);
-  const [walletHistoryLoading, setWalletHistoryLoading] = useState(false);
 
   // Performer drawer
   const [drawerPerformer, setDrawerPerformer] = useState<FeaturedPerformer | null>(null);
@@ -409,39 +398,6 @@ export default function Live() {
     }
   };
 
-  const handleSaveDpns = async () => {
-    if (!dpnsInput.trim()) return;
-    setDpnsSaving(true);
-    try {
-      const result = await linkDPNS(dpnsInput.trim());
-      setDpnsHandle(result.dpnsHandle);
-      setShowDpnsInput(false);
-      setDpnsInput("");
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : t.live.invalidDpnsHandle);
-    } finally {
-      setDpnsSaving(false);
-    }
-  };
-
-  const handleLoadWalletHistory = async () => {
-    if (walletHistoryLoading) return;
-    setWalletHistoryLoading(true);
-    try {
-      const data = await getWalletHistory();
-      setWalletHistory(data.history || []);
-    } catch {
-      // ignore
-    } finally {
-      setWalletHistoryLoading(false);
-    }
-  };
-
-  const openWalletHistory = () => {
-    setShowWalletHistory(true);
-    handleLoadWalletHistory();
-  };
-
   const handleCastingApply = async () => {
     setCastingSubmitting(true);
     try {
@@ -587,6 +543,73 @@ export default function Live() {
           ⭐ All Models
         </button>
       </div>
+
+      {/* ── Token wallet CTA — balance + buy + crypto-guide onramp ── */}
+      {isAuthenticated && (() => {
+        const es = t.lang === "es";
+        return (
+          <div
+            className="mb-4 rounded-2xl overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, rgba(212,0,122,0.10) 0%, rgba(0,141,228,0.10) 55%, rgba(247,147,26,0.10) 100%)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.03) inset",
+            }}
+          >
+            <div className="p-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-widest text-pnp-textSecondary/70">
+                  {es ? "Tu saldo" : "Your balance"}
+                </p>
+                <p className="text-2xl font-black text-pnp-textPrimary leading-tight mt-0.5">
+                  {tokenBalance == null ? "—" : tokenBalance.toLocaleString()}
+                  <span className="ml-1.5 text-xs font-semibold text-pnp-textSecondary">
+                    {es ? "tokens" : "tokens"}
+                  </span>
+                </p>
+              </div>
+              <button
+                onClick={() => setShowBuyModal(true)}
+                className="flex-shrink-0 px-4 py-2.5 rounded-xl btn-gradient text-white text-sm font-bold shadow-lg transition-transform active:scale-[0.98]"
+              >
+                {es ? "Comprar tokens" : "Buy tokens"}
+              </button>
+            </div>
+            <a
+              href="/crypto-guide"
+              className="group flex items-center gap-3 px-4 py-3 border-t border-white/10 hover:bg-white/5 transition-colors"
+            >
+              <div className="relative flex-shrink-0" style={{ width: 44, height: 28 }}>
+                {[
+                  { bg: "#F7931A", letter: "₿", offset: 0,  z: 40 },
+                  { bg: "#26A17B", letter: "₮", offset: 10, z: 30 },
+                  { bg: "#008DE4", letter: "Đ", offset: 20, z: 20 },
+                ].map((c) => (
+                  <div
+                    key={c.letter}
+                    className="absolute top-0 w-7 h-7 rounded-full flex items-center justify-center text-white font-black text-xs"
+                    style={{ left: c.offset, zIndex: c.z, background: c.bg, border: "2px solid #0D0D0D" }}
+                    aria-hidden="true"
+                  >
+                    {c.letter}
+                  </div>
+                ))}
+              </div>
+              <p className="flex-1 min-w-0 text-xs text-pnp-textPrimary leading-snug">
+                <span className="font-bold">{es ? "¿Nuevo en crypto?" : "New to crypto?"}</span>{" "}
+                <span className="text-pnp-textSecondary">
+                  {es
+                    ? "Configura una wallet (Trust o MetaMask) y paga con cripto en 7 pasos."
+                    : "Set up a wallet (Trust or MetaMask) and pay with crypto in 7 steps."}
+                </span>
+              </p>
+              <svg className="w-4 h-4 text-pnp-textSecondary group-hover:translate-x-0.5 transition-transform flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </a>
+          </div>
+        );
+      })()}
 
       {/* ── Magic Search — single sticky container: input + selected-category pill + chip rail ── */}
       <div
@@ -1152,135 +1175,6 @@ export default function Live() {
         );
       })()}
 
-      {/* ── Token wallet CTA — balance + buy + crypto-guide onramp ── */}
-      {isAuthenticated && (() => {
-        const es = t.lang === "es";
-        return (
-          <div
-            className="mb-4 rounded-2xl overflow-hidden"
-            style={{
-              background: "linear-gradient(135deg, rgba(212,0,122,0.10) 0%, rgba(0,141,228,0.10) 55%, rgba(247,147,26,0.10) 100%)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.03) inset",
-            }}
-          >
-            <div className="p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-widest text-pnp-textSecondary/70">
-                  {es ? "Tu saldo" : "Your balance"}
-                </p>
-                <p className="text-2xl font-black text-pnp-textPrimary leading-tight mt-0.5">
-                  {tokenBalance == null ? "—" : tokenBalance.toLocaleString()}
-                  <span className="ml-1.5 text-xs font-semibold text-pnp-textSecondary">
-                    {es ? "tokens" : "tokens"}
-                  </span>
-                </p>
-              </div>
-              <button
-                onClick={() => setShowBuyModal(true)}
-                className="flex-shrink-0 px-4 py-2.5 rounded-xl btn-gradient text-white text-sm font-bold shadow-lg transition-transform active:scale-[0.98]"
-              >
-                {es ? "Comprar tokens" : "Buy tokens"}
-              </button>
-            </div>
-            <a
-              href="/crypto-guide"
-              className="group flex items-center gap-3 px-4 py-3 border-t border-white/10 hover:bg-white/5 transition-colors"
-            >
-              <div className="relative flex-shrink-0" style={{ width: 44, height: 28 }}>
-                {[
-                  { bg: "#F7931A", letter: "₿", offset: 0,  z: 40 },
-                  { bg: "#26A17B", letter: "₮", offset: 10, z: 30 },
-                  { bg: "#008DE4", letter: "Đ", offset: 20, z: 20 },
-                ].map((c) => (
-                  <div
-                    key={c.letter}
-                    className="absolute top-0 w-7 h-7 rounded-full flex items-center justify-center text-white font-black text-xs"
-                    style={{ left: c.offset, zIndex: c.z, background: c.bg, border: "2px solid #0D0D0D" }}
-                    aria-hidden="true"
-                  >
-                    {c.letter}
-                  </div>
-                ))}
-              </div>
-              <p className="flex-1 min-w-0 text-xs text-pnp-textPrimary leading-snug">
-                <span className="font-bold">{es ? "¿Nuevo en crypto?" : "New to crypto?"}</span>{" "}
-                <span className="text-pnp-textSecondary">
-                  {es ? "Aprende a pagar con USDT, Bitcoin o Dash en 3 min." : "Learn to pay with USDT, Bitcoin or Dash in 3 min."}
-                </span>
-              </p>
-              <svg className="w-4 h-4 text-pnp-textSecondary group-hover:translate-x-0.5 transition-transform flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </a>
-          </div>
-        );
-      })()}
-
-      {/* ── Wallet ── */}
-      {isAuthenticated && (
-        <div className="flex items-center justify-between py-2 border-t border-white/5">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#008CE7" }}>
-              <svg viewBox="0 0 24 24" className="w-3 h-3 fill-white">
-                <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16 13.5 16.5z"/>
-              </svg>
-            </div>
-            <span className="text-xs font-semibold text-pnp-textPrimary">
-              {tokenBalance == null ? "—" : `${tokenBalance} ${t.live.tokens}`}
-            </span>
-            {giftedBalance > 0 && (
-              <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.25)" }} title={`+${giftedBalance} ${t.live.giftTokensLabel}`}>
-                <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 fill-current flex-shrink-0"><path d="M20 7h-3.17A3 3 0 0 0 12 4.17 3 3 0 0 0 7.17 7H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-8-1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm-3 2a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm3 13H7v-8h5v8zm5 0h-3v-8h3v8z"/></svg>
-                +{giftedBalance} {t.live.giftTokensLabel}
-              </span>
-            )}
-            {santinoGiftBalance > 0 && (
-              <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.25)" }} title={`+${santinoGiftBalance.toLocaleString()} ${t.live.santinoGiftLabel}`}>
-                <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 fill-current flex-shrink-0"><path d="M20 7h-3.17A3 3 0 0 0 12 4.17 3 3 0 0 0 7.17 7H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-8-1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm-3 2a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm3 13H7v-8h5v8zm5 0h-3v-8h3v8z"/></svg>
-                +{santinoGiftBalance.toLocaleString()} {t.live.santinoGiftLabel}
-              </span>
-            )}
-            {dpnsHandle && <span className="text-[10px] text-pnp-textSecondary">@{dpnsHandle}</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            {!dpnsHandle && (
-              <button onClick={() => setShowDpnsInput(!showDpnsInput)} className="text-[10px] text-pnp-textSecondary hover:text-pnp-accent transition-colors">
-                {t.live.linkDpns}
-              </button>
-            )}
-            <button onClick={openWalletHistory} className="text-[10px] text-pnp-textSecondary hover:text-pnp-accent transition-colors">
-              {t.live.history}
-            </button>
-            <button onClick={() => setShowBuyModal(true)} className="relative flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold text-white btn-gradient">
-              {tokenBalance !== null && tokenBalance < 60 && (
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              )}
-              <svg viewBox="0 0 24 24" className="w-3 h-3 fill-white flex-shrink-0">
-                <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16 13.5 16.5z"/>
-              </svg>
-              {t.live.buyTokens}
-            </button>
-          </div>
-        </div>
-      )}
-      {isAuthenticated && showDpnsInput && (
-        <div className="flex gap-2 mb-2">
-          <input
-            type="text"
-            placeholder={t.live.dpnsPlaceholder}
-            value={dpnsInput}
-            onChange={(e) => setDpnsInput(e.target.value)}
-            style={{ fontSize: "16px" }}
-            className="flex-1 min-w-0 rounded-lg bg-pnp-surface border border-pnp-border px-3 py-1.5 text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-2 focus:ring-pnp-accent"
-          />
-          <button onClick={handleSaveDpns} disabled={dpnsSaving} className="px-3 py-1.5 rounded-lg btn-gradient text-white text-xs font-medium disabled:opacity-50">
-            {dpnsSaving ? t.live.saving : t.live.save}
-          </button>
-        </div>
-      )}
-
-
       {/* Buy Tokens Modal */}
       <BuyTokensModal
         isOpen={showBuyModal}
@@ -1289,46 +1183,6 @@ export default function Live() {
         dpnsHandle={dpnsHandle}
       />
 
-
-      {/* Wallet History Modal */}
-      {showWalletHistory && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowWalletHistory(false)}>
-          <div className="w-full max-w-lg bg-pnp-background border border-pnp-border rounded-t-2xl p-6 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-pnp-textPrimary">{t.live.tokenPurchaseHistoryTitle}</h2>
-              <button onClick={() => setShowWalletHistory(false)} className="text-pnp-textSecondary hover:text-pnp-textPrimary" aria-label="Close">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="overflow-y-auto flex-1">
-              {walletHistoryLoading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
-                </div>
-              ) : walletHistory.length === 0 ? (
-                <p className="text-sm text-pnp-textSecondary text-center py-8">{t.live.noPurchasesYet}</p>
-              ) : (
-                <div className="space-y-2">
-                  {walletHistory.map((h) => (
-                    <div key={h.id} className="flex items-center justify-between p-3 rounded-lg bg-pnp-surface border border-pnp-border">
-                      <div>
-                        <p className="text-sm font-semibold text-pnp-textPrimary">{h.tokens_credited} {t.live.tokensLabel}</p>
-                        <p className="text-xs text-pnp-textSecondary">${h.usd_amount} · {new Date(h.created_at).toLocaleDateString()}</p>
-                      </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${h.status === "settled" ? "bg-green-500/10 text-green-400" : "bg-pnp-surface text-pnp-textSecondary border border-pnp-border"}`}>
-                        {h.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {detailEvent && (
         <EventDetailModal
