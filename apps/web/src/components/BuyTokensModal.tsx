@@ -18,6 +18,7 @@ import {
   assertPaymentUrl,
   reserveTokenActivation,
   NP_COINS,
+  NP_COINS_SUBSCRIBE,
   type TokenPackage,
   type TokenActivationReserveResult,
 } from "@/lib/api";
@@ -84,7 +85,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
 
   // NowPayments (multi-coin + USDT BSC) balance-delta poll state
   const npPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [npCoinPick, setNpCoinPick] = useState<string>("btc");
+  const [npCoinPick, setNpCoinPick] = useState<string>("usdtbsc");
   const [npPickerOpen, setNpPickerOpen] = useState(false);
   const [npPayment, setNpPayment] = useState<{
     invoiceId: string;
@@ -464,7 +465,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-pnp-textPrimary">Crypto</p>
                   <p className="text-xs text-pnp-textSecondary truncate">
-                    {npPickerOpen && npCoinPick ? `Selected: ${NP_COINS.find(c => c.code === npCoinPick)?.label || npCoinPick.toUpperCase()}` : "BTC, ETH, LTC, XMR + more"}
+                    {npPickerOpen && npCoinPick
+                      ? `${es ? "Seleccionado" : "Selected"}: ${NP_COINS_SUBSCRIBE.find(c => c.code === npCoinPick)?.label || npCoinPick.toUpperCase()}`
+                      : "USDT · USDC · ETH · Trust · MetaMask"}
                   </p>
                 </div>
                 <svg className={`w-4 h-4 flex-shrink-0 text-pnp-textSecondary transition-transform ${npPickerOpen ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -473,26 +476,47 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
               </button>
               {npPickerOpen && (
                 <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <p className="text-[10px] text-pnp-textSecondary/60 mb-2">Choose your coin:</p>
-                  <div className="flex gap-1.5 flex-wrap mb-3">
-                    {NP_COINS.map((coin) => (
-                      <button
-                        key={coin.code}
-                        type="button"
-                        onClick={() => setNpCoinPick(coin.code)}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${npCoinPick === coin.code ? "border-green-400/60 bg-green-500/20 text-pnp-textPrimary" : "border-white/15 bg-white/5 text-pnp-textSecondary hover:bg-white/10"}`}
-                      >
-                        <span style={{ color: coin.color }}>{coin.icon}</span>
-                        <span>{coin.label}</span>
-                      </button>
-                    ))}
+                  {/* Coin grid — matches the Prime/Subscribe checkout token pattern
+                      (2-col cards, coin-color icon, label + network, ★ for recommended). */}
+                  <div className="flex items-center justify-between mb-2.5">
+                    <p className="text-[11px] font-semibold text-pnp-textSecondary">
+                      {es ? "Elige tu token:" : "Choose your token:"}
+                    </p>
                   </div>
+                  <div className="grid grid-cols-2 gap-1.5 mb-2">
+                    {NP_COINS_SUBSCRIBE.map((coin) => {
+                      const selected = npCoinPick === coin.code;
+                      return (
+                        <button
+                          key={coin.code}
+                          type="button"
+                          onClick={() => setNpCoinPick(coin.code)}
+                          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-colors text-left ${selected ? "border-green-400/60 bg-green-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"}`}
+                        >
+                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-white">{coin.label}</span>
+                              {"recommended" in coin && coin.recommended && (
+                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                              )}
+                            </div>
+                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[9px] text-pnp-textSecondary/40 mb-3 text-center">
+                    {es ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}
+                  </p>
                   <button
                     onClick={() => { setNpPickerOpen(false); setBuyMethod('np'); }}
                     className="w-full py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
                     style={{ background: "linear-gradient(90deg, #26a17b, #00c896)" }}
                   >
-                    Continue with {NP_COINS.find(c => c.code === npCoinPick)?.label || npCoinPick.toUpperCase()} →
+                    {es ? "Continuar con " : "Continue with "}
+                    {NP_COINS_SUBSCRIBE.find(c => c.code === npCoinPick)?.label || (NP_COINS.find(c => c.code === npCoinPick)?.label ?? npCoinPick.toUpperCase())} →
                   </button>
                 </div>
               )}
@@ -819,12 +843,13 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                     : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your tokens."}
                 </p>
 
-                {/* Package cards — Meru-only packages (250 / 500 tokens). packageKey values
-                    must match TokenActivationService.TOKEN_PACKAGES + meru_payment_links.product. */}
+                {/* Package cards — Meru-only card packs (1,500 / 3,000 tokens for $250 / $500,
+                    6 tokens per $1). Product IDs must match TokenActivationService.TOKEN_PACKAGES
+                    + meru_payment_links.product. */}
                 <div className="grid grid-cols-2 gap-3">
                   {([
-                    { product: 'tokens_250', tokens: 250, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 5 },
-                    { product: 'tokens_500', tokens: 500, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 9 },
+                    { product: 'tokens_250', tokens: 1500, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 250 },
+                    { product: 'tokens_500', tokens: 3000, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 500 },
                   ]).map((pkg) => (
                     <button
                       key={pkg.product}
@@ -912,6 +937,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                           const res = await reserveTokenActivation({
                             packageKey: meruProduct,
                             language: es ? "es" : "en",
+                            email: trimEmail,
                           });
                           setMeruReservation(res);
                         } catch (err: unknown) {

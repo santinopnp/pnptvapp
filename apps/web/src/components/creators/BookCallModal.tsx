@@ -37,6 +37,7 @@ import {
   trackEvent,
   getWalletBalance,
   payCallWithTokens,
+  NP_COINS_SUBSCRIBE,
   type CallPackage,
   type BookingSlot,
   type FeaturedPerformer,
@@ -166,6 +167,9 @@ export function BookCallModal({
   const [duration, setDuration] = useState<30 | 60>(initialDuration);
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
   const [provider, setProvider] = useState<Provider>("nowpayments");
+  // Coin choice inside the "Crypto" pill — matches Prime/Subscribe checkout token grid.
+  // Defaults to USDT-BSC (recommended). Passed as payCurrency to NowPayments when set.
+  const [npCoinPick, setNpCoinPick] = useState<string>("usdtbsc");
   const [email, setEmail] = useState("");
   const [clientNotes, setClientNotes] = useState("");
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
@@ -515,7 +519,12 @@ export function BookCallModal({
     try {
       // NowPayments — open a centered popup (cannot redirect: breaks iOS + 3rd-party cookie policy)
       if (provider === "nowpayments" || provider === "nowpayments_usdc") {
-        const payCurrency = provider === "nowpayments_usdc" ? "usdcsol" : undefined;
+        // nowpayments_usdc → USDC-SOL (legacy pill). nowpayments → use the coin the
+        // user picked in the Prime-style token grid; fall back to undefined so
+        // NowPayments' own picker shows if the user skipped selection.
+        const payCurrency = provider === "nowpayments_usdc"
+          ? "usdcsol"
+          : (npCoinPick || undefined);
         const npRes = await createCallCheckoutNowPayments(
           activePackage.id,
           selectedSlot?.startUtc ?? undefined,
@@ -1446,6 +1455,46 @@ export function BookCallModal({
           <p className="text-[11px] text-[#FF69B4] mt-1.5">
             Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 100).toLocaleString()} Tokens · Saldo: {tokenBalance?.toLocaleString() ?? "—"} T
           </p>
+        )}
+
+        {/* Crypto coin picker — same 2-col token grid pattern as Prime/Subscribe checkout */}
+        {provider === "nowpayments" && (
+          <div className="mt-3 rounded-xl border border-green-500/20 bg-[#0a1f0a]/40 p-3 animate-in fade-in slide-in-from-top-1 duration-200">
+            <p className="text-[11px] font-semibold mb-2.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {t.lang === "es" ? "Elige tu token:" : "Choose your token:"}
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {NP_COINS_SUBSCRIBE.map((coin) => {
+                const selected = npCoinPick === coin.code;
+                return (
+                  <button
+                    key={coin.code}
+                    type="button"
+                    onClick={() => setNpCoinPick(coin.code)}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-colors text-left ${
+                      selected
+                        ? "border-green-400/60 bg-green-500/10"
+                        : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+                    }`}
+                  >
+                    <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-white">{coin.label}</span>
+                        {"recommended" in coin && coin.recommended && (
+                          <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                        )}
+                      </div>
+                      <span className="text-[9px] leading-none" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{coin.network}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] mt-2 text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}
+            </p>
+          </div>
         )}
       </div>
 

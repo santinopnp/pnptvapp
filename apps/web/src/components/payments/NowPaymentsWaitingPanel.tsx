@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { NowPaymentsOrder } from "@/hooks/useNowPayments";
+import { WALLETS } from "@/lib/cryptoWallets";
 
 interface NowPaymentsWaitingPanelProps {
   order: NowPaymentsOrder;
@@ -46,8 +47,9 @@ function openPopup(url: string) {
   window.open(url, "nowpayments_checkout", `width=${w},height=${h},left=${left},top=${top},noopener,noreferrer`);
 }
 
-// ── Wallet icon SVGs ──────────────────────────────────────────────────────────
-const MetaMaskIcon = () => (
+// ── Wallet icon SVGs (also re-used inline in BuyTokensModal / BookCallModal
+// as a "compatible wallets" strip so users see MetaMask/Trust upfront) ────────
+export const MetaMaskIcon = () => (
   <svg viewBox="0 0 40 40" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M34.33 4L21.5 13.27l2.44-5.77L34.33 4z" fill="#E2761B" stroke="#E2761B" strokeLinecap="round" strokeLinejoin="round"/>
     <path d="M5.66 4l12.72 9.36-2.32-5.86L5.66 4zM29.87 27.36l-3.42 5.24 7.32 2.01 2.1-7.14-6-.11zM4.16 27.47l2.09 7.14 7.32-2.01-3.42-5.24-6-.09v.2z" fill="#E4761B" stroke="#E4761B" strokeLinecap="round" strokeLinejoin="round"/>
@@ -64,7 +66,7 @@ const MetaMaskIcon = () => (
   </svg>
 );
 
-const TrustWalletIcon = () => (
+export const TrustWalletIcon = () => (
   <svg viewBox="0 0 40 40" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="40" height="40" rx="10" fill="#0500FF"/>
     <path d="M20 7C20 7 10 11.5 10 20C10 26.627 14.477 32.184 20 34C25.523 32.184 30 26.627 30 20C30 11.5 20 7 20 7Z" fill="white"/>
@@ -73,7 +75,7 @@ const TrustWalletIcon = () => (
   </svg>
 );
 
-const WalletConnectIcon = () => (
+export const WalletConnectIcon = () => (
   <svg viewBox="0 0 40 40" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="40" height="40" rx="10" fill="#3B99FC"/>
     <path d="M12.5 17.2C16.6 13.1 23.4 13.1 27.5 17.2L28 17.7C28.2 17.9 28.2 18.2 28 18.4L26.3 20.1C26.2 20.2 26 20.2 25.9 20.1L25.2 19.4C22.4 16.6 17.6 16.6 14.8 19.4L14.1 20.1C14 20.2 13.8 20.2 13.7 20.1L12 18.4C11.8 18.2 11.8 17.9 12 17.7L12.5 17.2ZM30.8 20.5L32.3 22C32.5 22.2 32.5 22.5 32.3 22.7L25.4 29.6C25.2 29.8 24.9 29.8 24.7 29.6L20 24.9L15.3 29.6C15.1 29.8 14.8 29.8 14.6 29.6L7.7 22.7C7.5 22.5 7.5 22.2 7.7 22L9.2 20.5C9.4 20.3 9.7 20.3 9.9 20.5L14.6 25.2C14.8 25.4 15.1 25.4 15.3 25.2L20 20.5L24.7 25.2C24.9 25.4 25.2 25.4 25.4 25.2L30.1 20.5C30.3 20.3 30.6 20.3 30.8 20.5Z" fill="white"/>

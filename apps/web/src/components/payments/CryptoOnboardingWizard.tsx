@@ -127,17 +127,17 @@ const SETUP_STEPS: Record<WalletKey, Record<Lang, SetupStep[]>> = {
   },
 };
 
-// Screenshot slots — real images live at /crypto-guide/<slug>.png (add later).
+// Screenshot slots — real images live at /crypto-guide-media/<slug>.png (add later).
 const SCREENSHOT_HINTS: Record<string, { en: string; es: string; src: string }> = {
-  "trust-1":  { en: "Trust Wallet — create wallet", es: "Trust Wallet — crear wallet", src: "/crypto-guide/tw-1.png" },
-  "trust-2":  { en: "Trust Wallet — passcode",     es: "Trust Wallet — código de acceso", src: "/crypto-guide/tw-2.png" },
-  "trust-3":  { en: "Trust Wallet — secret words", es: "Trust Wallet — palabras secretas", src: "/crypto-guide/tw-3.png" },
-  "trust-4":  { en: "Trust Wallet — confirm words",es: "Trust Wallet — confirmar palabras", src: "/crypto-guide/tw-4.png" },
-  "metamask-1": { en: "MetaMask — create wallet",   es: "MetaMask — crear wallet", src: "/crypto-guide/mm-1.png" },
-  "metamask-2": { en: "MetaMask — password",        es: "MetaMask — contraseña", src: "/crypto-guide/mm-2.png" },
-  "metamask-3": { en: "MetaMask — secret phrase",   es: "MetaMask — frase secreta", src: "/crypto-guide/mm-3.png" },
-  "metamask-4": { en: "MetaMask — confirm phrase",  es: "MetaMask — confirmar frase", src: "/crypto-guide/mm-4.png" },
-  "buy":      { en: "Wallet 'Buy' screen", es: "Pantalla 'Comprar' de la wallet", src: "/crypto-guide/buy.png" },
+  "trust-1":  { en: "Trust Wallet — create wallet", es: "Trust Wallet — crear wallet", src: "/crypto-guide-media/tw-1.png" },
+  "trust-2":  { en: "Trust Wallet — passcode",     es: "Trust Wallet — código de acceso", src: "/crypto-guide-media/tw-2.png" },
+  "trust-3":  { en: "Trust Wallet — secret words", es: "Trust Wallet — palabras secretas", src: "/crypto-guide-media/tw-3.png" },
+  "trust-4":  { en: "Trust Wallet — confirm words",es: "Trust Wallet — confirmar palabras", src: "/crypto-guide-media/tw-4.png" },
+  "metamask-1": { en: "MetaMask — create wallet",   es: "MetaMask — crear wallet", src: "/crypto-guide-media/mm-1.png" },
+  "metamask-2": { en: "MetaMask — password",        es: "MetaMask — contraseña", src: "/crypto-guide-media/mm-2.png" },
+  "metamask-3": { en: "MetaMask — secret phrase",   es: "MetaMask — frase secreta", src: "/crypto-guide-media/mm-3.png" },
+  "metamask-4": { en: "MetaMask — confirm phrase",  es: "MetaMask — confirmar frase", src: "/crypto-guide-media/mm-4.png" },
+  "buy":      { en: "Wallet 'Buy' screen", es: "Pantalla 'Comprar' de la wallet", src: "/crypto-guide-media/buy.png" },
 };
 
 // ── Small building blocks (inline — no new files per project rule) ──────────
