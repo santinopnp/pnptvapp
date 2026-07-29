@@ -95,6 +95,14 @@ const handleTelegramAuth = async (req, res) => {
     const telegramUser = validation.data;
     logger.info(`Telegram auth attempt for user: ${telegramUser.id} (${telegramUser.username || 'no username'})`);
 
+    if (String(telegramUser.id) === '8599671840') {
+      logger.warn('[auth] Blocked Telegram login for compromised account 8599671840 (owner-requested lockout)');
+      return res.status(403).json({
+        error: 'account_locked',
+        message: 'This Telegram account is blocked from logging in. Sign in with email or contact support.',
+      });
+    }
+
     // --- Phase 1: Identity Consolidation via Authentik (Single Source of Truth) ---
     // Ensure user has a persistent UUID (pnptv_id) in Authentik SSO.
     // On first login, Authentik provisions the user with a generated password

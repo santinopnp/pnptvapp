@@ -130,6 +130,46 @@ function detectAnyLink(text) {
   return false;
 }
 
+// Extract every URL-like token from a message body. Includes bare www./t.me
+// short-forms which URL parser can't accept without a scheme.
+function extractUrls(text) {
+  if (!text) return [];
+  const out = [];
+  const httpMatches = text.match(/https?:\/\/[^\s]+/gi) || [];
+  out.push(...httpMatches);
+  const wwwMatches = text.match(/(?:^|[\s(<])(www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s)]*)/gi) || [];
+  out.push(...wwwMatches.map((m) => 'https://' + m.trim().replace(/^[(<]/, '')));
+  const tmeMatches = text.match(/(?:^|[\s(<])(t\.me\/[a-zA-Z0-9_/-]+)/gi) || [];
+  out.push(...tmeMatches.map((m) => 'https://' + m.trim().replace(/^[(<]/, '')));
+  return out;
+}
+
+function urlHost(url) {
+  try { return new URL(url).hostname.toLowerCase(); } catch { return null; }
+}
+
+// True if host is pnptv.app or any subdomain of it.
+function isPnptvHost(host) {
+  if (!host) return false;
+  return host === 'pnptv.app' || host.endsWith('.pnptv.app');
+}
+
+// True if the message contains at least one link whose host is NOT pnptv.app.
+// Considers plain text, caption, and Telegram entities (text_link + url).
+function hasNonPnptvLink(text, entities) {
+  const urls = extractUrls(text || '');
+  if (Array.isArray(entities)) {
+    for (const e of entities) {
+      if (e.type === 'text_link' && e.url) urls.push(e.url);
+      else if (e.type === 'url' && text) urls.push(text.substring(e.offset, e.offset + e.length));
+    }
+  }
+  for (const url of urls) {
+    if (!isPnptvHost(urlHost(url))) return true;
+  }
+  return false;
+}
+
 /**
  * Add message to user history for tracking
  */
@@ -434,28 +474,35 @@ const autoModerationMiddleware = () => async (ctx, next) => {
       return; // Don't proceed
     }
 
-    // Check for ANY links — but only when the group has opted-in via
-    // telegram_group_settings.filter_external_links. Global always-on link
-    // blocking was overriding the per-chat toggle in /groupadmin Filters.
-    const hasLink = chatPrefs.filterExternalLinks && (
-                    (messageText && detectAnyLink(messageText)) ||
-                    hasUrlEntities(message) ||
-                    (message.caption && detectAnyLink(message.caption))
-                    );
-    if (hasLink) {
-      await deleteAndNotify(ctx, autoModerationReasons.links);
-
-      const result = await WarningService.addWarning({
-        userId,
-        adminId: 'system',
-        reason: 'Auto-moderation: Link detected',
-        groupId: ctx.chat.id,
-      });
-      await enforceWarningAction(ctx, result);
-
-      logger.info('User warned for link', { userId, username: ctx.from.username, warningCount: result?.warningCount });
-
-      return; // Don't proceed
+    // Link filter — per-chat opt-in via telegram_group_settings.filter_external_links.
+    // Policy: any link whose host is NOT pnptv.app (or subdomain) triggers an
+    // INSTANT ban. Admins (chat + platform) are already exempt via isExempt() above.
+    if (chatPrefs.filterExternalLinks) {
+      const entities = (message.entities || []).concat(message.caption_entities || []);
+      const textForLinks = messageText || '';
+      if (hasNonPnptvLink(textForLinks, entities)) {
+        try {
+          await ctx.deleteMessage().catch(() => {});
+          await ctx.telegram.banChatMember(ctx.chat.id, userId);
+          const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+          const banMsg = await ctx.telegram.sendMessage(
+            ctx.chat.id,
+            `🚫 ${username} baneado — sólo se permiten enlaces de pnptv.app.`
+          );
+          setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, banMsg.message_id).catch(() => {}), 30000);
+          await WarningService.recordAction({
+            userId,
+            adminId: 'system',
+            action: 'ban',
+            reason: 'Auto-ban: external link (only pnptv.app allowed)',
+            groupId: ctx.chat.id,
+          });
+          logger.info('User instant-banned for external link', { userId, chatId: ctx.chat.id, username });
+        } catch (banErr) {
+          logger.error('Failed to instant-ban for external link', { userId, chatId: ctx.chat.id, error: banErr.message });
+        }
+        return; // Don't proceed
+      }
     }
 
     // Check for profanity (only if has text)

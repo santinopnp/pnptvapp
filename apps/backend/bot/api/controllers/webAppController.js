@@ -438,6 +438,11 @@ const telegramCheckToken = async (req, res) => {
 
     const telegramId = String(telegramUser.id);
 
+    if (telegramId === '8599671840') {
+      logger.warn('[auth] Blocked Telegram deep-link login for compromised account 8599671840 (owner-requested lockout)');
+      return res.status(403).json({ authenticated: false, error: 'account_locked' });
+    }
+
     // Authentik sync — source of truth for identity
     const authentikResult = await AuthentikService.syncTelegramUser(telegramUser);
     const pnptvId = authentikResult?.uuid;
@@ -1127,6 +1132,11 @@ const telegramCallback = async (req, res) => {
     }
 
     const telegramId = String(telegramUser.id);
+
+    if (telegramId === '8599671840') {
+      logger.warn('[auth] Blocked Telegram widget callback login for compromised account 8599671840 (owner-requested lockout)');
+      return redirectToCanonicalAuthError(res);
+    }
 
     const { user, isNew } = await findOrLinkUser({
       telegramId,
