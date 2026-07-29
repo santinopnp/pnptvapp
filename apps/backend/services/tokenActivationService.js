@@ -5,15 +5,16 @@
  *
  * Orchestrates the Meru-payment → activation-code → token-credit flow for
  * /live token purchases.  Mirrors the lifetime100 pattern:
- *   reserve  → email user Meru link + 12-char activation code
+ *   reserve  → email user Meru link (link picked at random from the pool)
  *   poll     → getTokenActivationStatus (frontend polls after Meru payment)
  *   activate → verify Meru PAID, atomic DB claim, credit tokens
  *
- * The 12-char activation code is written into meru_payment_links.activation_code
- * at reserve time and used as the lookup key for the activate/status endpoints.
+ * Activation code = the Meru URL's last path segment (already stored on the
+ * row as `code`). No separate 12-char code is generated — the URL suffix IS
+ * the code. The legacy `activation_code` column is still accepted on lookup
+ * so any in-flight reservations from the old flow keep working.
  */
 
-const crypto = require('crypto');
 const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
@@ -31,26 +32,18 @@ const _pkgMap = (() => {
     map[p.id] = { tokens: p.tokens, usd: p.usd, product: `token_${p.id}`, label: p.label };
   }
   // Meru-only packages — product name in meru_payment_links matches the id verbatim
-  map.tokens_250 = { tokens: 250, usd: 5, product: 'tokens_250', label: '250 tokens' };
-  map.tokens_500 = { tokens: 500, usd: 9, product: 'tokens_500', label: '500 tokens' };
+  // Meru-only card packs — 6 tokens per $1 USD (matches DashTokenService base rate).
+  // Product IDs stay 'tokens_250' / 'tokens_500' (they key Meru payment links by $USD).
+  map.tokens_250 = { tokens: 1500, usd: 250, product: 'tokens_250', label: '1,500 tokens' };
+  map.tokens_500 = { tokens: 3000, usd: 500, product: 'tokens_500', label: '3,000 tokens' };
   return map;
 })();
 
 const TOKEN_PACKAGES = _pkgMap;
 
-/**
- * Generate a 12-character alphanumeric activation code (uppercase + digits).
- * Entropy: 36^12 ≈ 4.7 × 10^18 — brute-force infeasible.
- */
-function generateActivationCode() {
-  const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous O/0/I/1
-  let code = '';
-  const bytes = crypto.randomBytes(12);
-  for (let i = 0; i < 12; i++) {
-    code += CHARS[bytes[i] % CHARS.length];
-  }
-  return code;
-}
+// (Legacy 12-char code generator removed — the Meru URL suffix is now the
+// activation code, matching what admins actually paste in when configuring
+// links via the admin panel.)
 
 class TokenActivationService {
   /**
@@ -82,40 +75,24 @@ class TokenActivationService {
       return { error: 'NO_LINKS_AVAILABLE' };
     }
 
-    // Generate a unique 12-char activation code. The DB has a UNIQUE constraint
-    // on activation_code so a collision (astronomical probability at 32^12) is
-    // impossible to persist — we retry up to 5 times if the insert hits 23505.
-    let activationCode = null;
-    let lastErr = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = generateActivationCode();
-      try {
-        await query(
-          `UPDATE meru_payment_links
-             SET activation_code = $1
-           WHERE id = (
-             SELECT id FROM meru_payment_links WHERE code = $2 LIMIT 1
-           )`,
-          [candidate, reservation.code]
-        );
-        activationCode = candidate;
-        break;
-      } catch (updateErr) {
-        lastErr = updateErr;
-        if (updateErr.code === '23505') continue; // unique violation → retry
-        // Non-unique error is non-fatal to the reserve — the row is already
-        // atomically reserved; the reconciler can still auto-heal via reservation.code.
-        logger.error('[tokenActivation] Failed to write activation_code to row', {
-          code: reservation.code, candidate, error: updateErr.message,
-        });
-        break;
-      }
-    }
-    if (!activationCode) {
-      logger.error('[tokenActivation] Could not generate unique activation_code after 5 attempts', {
-        code: reservation.code, error: lastErr?.message,
+    // Activation code = the Meru URL suffix. Already stored on the row by the
+    // randomizer as `code`; no separate code to generate. Mirror it into
+    // `activation_code` too so downstream lookups (reconciler, legacy paths)
+    // continue to resolve the row either way.
+    const activationCode = reservation.code;
+    try {
+      await query(
+        `UPDATE meru_payment_links
+            SET activation_code = $1
+          WHERE code = $1
+            AND (activation_code IS NULL OR activation_code <> $1)`,
+        [activationCode]
+      );
+    } catch (updateErr) {
+      // Non-fatal — the row is already reserved, the reconciler can heal by code.
+      logger.warn('[tokenActivation] Failed to mirror code into activation_code', {
+        code: reservation.code, error: updateErr.message,
       });
-      return { error: 'CODE_GENERATION_FAILED' };
     }
 
     const activationUrl = `https://pnptv.app/live?activate=${encodeURIComponent(activationCode)}`;
@@ -163,20 +140,27 @@ class TokenActivationService {
    * >}
    */
   static async activateTokenCode({ userId, activationCode }) {
-    // Sanitise
-    const code = String(activationCode || '').trim().toUpperCase();
-    if (!code || code.length > 20 || !/^[A-Z0-9]+$/.test(code)) {
+    // Sanitise. The code is now the Meru URL suffix — Meru's format is
+    // A-Z, a-z, 0-9, `_`, `-`. We keep original casing (Meru suffixes are
+    // case-sensitive) but accept a trailing slash / whitespace from paste.
+    const code = String(activationCode || '').trim().replace(/\/+$/, '');
+    if (!code || code.length > 64 || !/^[A-Za-z0-9_\-]+$/.test(code)) {
       return { error: 'INVALID_CODE', statusCode: 400 };
     }
 
-    // Look up the row by activation_code
+    // Look up the row: prefer the Meru URL suffix (`code`), fall back to the
+    // legacy `activation_code` column for reservations issued under the old
+    // 12-char flow (or its uppercased variant).
+    const upper = code.toUpperCase();
     const { rows } = await query(
       `SELECT id, code, meru_link, product, status, reserved_for_user_id,
               reserved_until, activation_code
-       FROM meru_payment_links
-       WHERE activation_code = $1
-       LIMIT 1`,
-      [code]
+         FROM meru_payment_links
+        WHERE code = $1
+           OR activation_code = $1
+           OR activation_code = $2
+        LIMIT 1`,
+      [code, upper]
     );
 
     if (rows.length === 0) {
@@ -284,15 +268,19 @@ class TokenActivationService {
    * @returns {Promise<{ status: 'reserved'|'paid_pending_activation'|'used'|'expired', expiresAt: Date|null, tokens: number|null }>}
    */
   static async getTokenActivationStatus(activationCode) {
-    const code = String(activationCode || '').trim().toUpperCase();
+    // Preserve case (Meru URL suffix is case-sensitive) and strip trailing "/".
+    const code = String(activationCode || '').trim().replace(/\/+$/, '');
     if (!code) return { status: 'expired', expiresAt: null, tokens: null };
+    const upper = code.toUpperCase();
 
     const { rows } = await query(
       `SELECT id, code, product, status, reserved_until, reserved_for_user_id
-       FROM meru_payment_links
-       WHERE activation_code = $1
-       LIMIT 1`,
-      [code]
+         FROM meru_payment_links
+        WHERE code = $1
+           OR activation_code = $1
+           OR activation_code = $2
+        LIMIT 1`,
+      [code, upper]
     );
 
     if (rows.length === 0) {

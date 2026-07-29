@@ -23,6 +23,16 @@ interface FilterState {
 
 const EMPTY_FILTERS: FilterState = { product: "all", status: "all" };
 
+// Curated list of products that can be added via the admin panel. Extend
+// this table when a new Meru-backed product is introduced. The `code` is what
+// gets stored in meru_payment_links.product (always lowercase — every read
+// path filters on lowercase). The `label` is what admins see in the dropdown.
+const PRODUCT_PRESETS: Array<{ code: string; label: string; hint: string }> = [
+  { code: "lifetime100",  label: "Lifetime Pass — $100",         hint: "One-time PRIME membership" },
+  { code: "tokens_250",   label: "Tokens Pack — $250 → 1,500 F", hint: "Card/PSE token purchase" },
+  { code: "tokens_500",   label: "Tokens Pack — $500 → 3,000 F", hint: "Card/PSE token purchase" },
+];
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string | null): string {
@@ -399,24 +409,35 @@ export default function MeruLinks() {
         )}
 
         <div className="flex flex-wrap gap-3">
-          {/* Product selector */}
-          <div className="flex flex-col gap-1 min-w-[200px]">
+          {/* Product selector — curated dropdown so admins can't create typos
+              like "Lifetime100" (which silently orphans paid inventory from
+              every read query). */}
+          <div className="flex flex-col gap-1 min-w-[260px]">
             <label className="text-xs text-pnp-textSecondary">{t.meruLinks.product}</label>
-            <input
-              type="text"
-              list="meru-products-list"
+            <select
               value={addProduct}
               onChange={(e) => setAddProduct(e.target.value)}
-              placeholder={t.meruLinks.productPlaceholder}
-              className="px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-sm placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent transition-colors"
+              className="px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-sm focus:outline-none focus:border-pnp-accent transition-colors"
               style={{ fontSize: "16px" }}
-            />
-            <datalist id="meru-products-list">
-              {knownProducts.map((p) => (
-                <option key={p} value={p} />
+            >
+              <option value="">— {t.meruLinks.productPlaceholder} —</option>
+              {PRODUCT_PRESETS.map((p) => (
+                <option key={p.code} value={p.code}>{p.label}</option>
               ))}
-              <option value="lifetime100" />
-            </datalist>
+              {/* Surface any product already in DB that isn't in the preset table
+                  (legacy or ad-hoc) so admins can still add more of the same. */}
+              {knownProducts
+                .filter((p) => !PRODUCT_PRESETS.some((pp) => pp.code === p))
+                .map((p) => (
+                  <option key={p} value={p}>{p} (legacy)</option>
+                ))}
+            </select>
+            {addProduct && (
+              <p className="text-[11px] text-pnp-textSecondary/70">
+                {PRODUCT_PRESETS.find((p) => p.code === addProduct)?.hint ??
+                  "Legacy product — added links go straight into the same pool."}
+              </p>
+            )}
           </div>
         </div>
 
@@ -436,6 +457,10 @@ export default function MeruLinks() {
           <p className="text-[11px] text-pnp-textSecondary">
             {addRawUrls.split("\n").filter((l) => l.trim()).length} URL
             {addRawUrls.split("\n").filter((l) => l.trim()).length !== 1 ? "s" : ""} entered
+            {" · "}
+            <span className="text-pnp-textSecondary/70">
+              The code is auto-extracted from the last path segment (e.g. <span className="font-mono">LWu_pc</span>). Randomizer picks one at reservation time.
+            </span>
           </p>
         </div>
 
