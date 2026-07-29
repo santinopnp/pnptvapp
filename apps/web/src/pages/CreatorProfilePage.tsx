@@ -82,6 +82,220 @@ const REPORT_CATEGORY_LABELS: Record<ReportCategory, string> = {
 // Ice/Crystal/Diamond tier labels removed 2026-07-24 — creators set their own
 // price. Subscribe wizard moved to the shared CreatorSubscribeWizard component.
 
+// ─── Right Rail (desktop only) ──────────────────────────────────────────────
+// X.com-style side column: "Live now" + "Nearby now". Loads lazily so the
+// profile hero isn't blocked. Hides its own sections when empty rather than
+// showing empty-state clutter. Purely client-side; reuses existing endpoints.
+
+interface RightRailStream {
+  channelRef: string;
+  title?: string | null;
+  hostUsername?: string | null;
+  hostFirstName?: string | null;
+  hostPhoto?: string | null;
+  viewerCount?: number | null;
+}
+interface RightRailNearby {
+  id: string;
+  username?: string | null;
+  firstName?: string | null;
+  photo?: string | null;
+  distanceKm?: number | null;
+}
+
+function CreatorRightRail({ excludeCreatorId }: { excludeCreatorId: string }) {
+  const [streams, setStreams] = useState<RightRailStream[]>([]);
+  const [nearby, setNearby] = useState<RightRailNearby[]>([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      // Live streams — always attempt, no geo required
+      try {
+        const { getWebAppLiveStreams } = await import("@/lib/api");
+        const res = await getWebAppLiveStreams();
+        if (cancelled) return;
+        const rows = (res?.streams || [])
+          .filter((s: unknown) => {
+            const o = s as { hostId?: string | number; host_id?: string | number };
+            const hid = String(o.hostId ?? o.host_id ?? "");
+            return hid && hid !== String(excludeCreatorId);
+          })
+          .slice(0, 4)
+          .map((s: unknown) => {
+            const o = s as Record<string, unknown>;
+            return {
+              channelRef: String(o.channelRef ?? o.channel_ref ?? o.slug ?? ""),
+              title: (o.title as string) ?? (o.streamTitle as string) ?? null,
+              hostUsername: (o.hostUsername as string) ?? (o.host_username as string) ?? null,
+              hostFirstName: (o.hostFirstName as string) ?? (o.host_first_name as string) ?? null,
+              hostPhoto: (o.hostPhoto as string) ?? (o.host_photo as string) ?? null,
+              viewerCount: (o.viewerCount as number) ?? (o.viewer_count as number) ?? null,
+            } as RightRailStream;
+          })
+          .filter((s) => s.channelRef);
+        setStreams(rows);
+      } catch { /* silent — right rail is decorative */ }
+
+      // Nearby users — only if geolocation is available + permitted
+      try {
+        if (typeof navigator !== "undefined" && navigator.geolocation) {
+          const coords = await new Promise<GeolocationCoordinates | null>((resolve) => {
+            const timer = setTimeout(() => resolve(null), 2500);
+            navigator.geolocation.getCurrentPosition(
+              (pos) => { clearTimeout(timer); resolve(pos.coords); },
+              () => { clearTimeout(timer); resolve(null); },
+              { maximumAge: 5 * 60 * 1000, timeout: 2500, enableHighAccuracy: false }
+            );
+          });
+          if (coords && !cancelled) {
+            const { searchNearby } = await import("@/lib/api");
+            const res = await searchNearby(coords.latitude, coords.longitude, 25, 12);
+            if (cancelled) return;
+            const rawUsers = (res as unknown as { users?: unknown[] }).users ?? [];
+            const rows: RightRailNearby[] = rawUsers
+              .map((u: unknown) => {
+                const o = u as Record<string, unknown>;
+                return {
+                  id: String(o.id ?? ""),
+                  username: (o.username as string) ?? null,
+                  firstName: (o.firstName as string) ?? (o.first_name as string) ?? null,
+                  photo: (o.photoUrl as string) ?? (o.photo_url as string) ?? (o.photo as string) ?? null,
+                  distanceKm: (o.distanceKm as number) ?? (o.distance_km as number) ?? null,
+                };
+              })
+              .filter((u) => u.id && u.id !== String(excludeCreatorId))
+              .slice(0, 5);
+            setNearby(rows);
+          }
+        }
+      } catch { /* silent */ }
+
+      if (!cancelled) setReady(true);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [excludeCreatorId]);
+
+  if (!ready && streams.length === 0 && nearby.length === 0) {
+    return (
+      <div
+        className="rounded-2xl p-4 animate-pulse"
+        style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+      >
+        <div className="h-4 w-24 rounded bg-white/10 mb-3" />
+        <div className="space-y-2">
+          <div className="h-10 rounded bg-white/5" />
+          <div className="h-10 rounded bg-white/5" />
+          <div className="h-10 rounded bg-white/5" />
+        </div>
+      </div>
+    );
+  }
+
+  const nothingToShow = streams.length === 0 && nearby.length === 0;
+  if (nothingToShow) return null;
+
+  return (
+    <div className="space-y-4">
+      {streams.length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <div className="px-4 pt-3.5 pb-2 flex items-center gap-2">
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={{ background: "#FF3B30", color: "#fff" }}
+            >
+              ● Live
+            </span>
+            <span className="text-[13px] font-semibold text-white">Live now</span>
+          </div>
+          <ul>
+            {streams.map((s) => (
+              <li key={s.channelRef}>
+                <Link
+                  to={`/live/${encodeURIComponent(s.channelRef)}`}
+                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors"
+                >
+                  <UserAvatar
+                    userId={s.channelRef}
+                    photoUrl={s.hostPhoto || undefined}
+                    displayName={s.hostFirstName || s.hostUsername || "Live"}
+                    size="sm"
+                    showOnline={false}
+                    linkToProfile={false}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-white truncate">
+                      {s.hostFirstName || s.hostUsername || "Streaming"}
+                    </div>
+                    <div className="text-[11px] truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {s.title || "Live now"}
+                    </div>
+                  </div>
+                  {typeof s.viewerCount === "number" && s.viewerCount > 0 && (
+                    <span className="text-[10px] shrink-0" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {formatCompact(s.viewerCount)}
+                    </span>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {nearby.length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <div className="px-4 pt-3.5 pb-2">
+            <span className="text-[13px] font-semibold text-white">Nearby now</span>
+          </div>
+          <ul>
+            {nearby.map((u) => (
+              <li key={u.id}>
+                <Link
+                  to={u.username ? `/@${u.username}` : `/profile/${u.id}`}
+                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors"
+                >
+                  <UserAvatar
+                    userId={u.id}
+                    photoUrl={u.photo || undefined}
+                    displayName={u.firstName || u.username || "User"}
+                    size="sm"
+                    showOnline
+                    linkToProfile={false}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-white truncate">
+                      {u.firstName || u.username || "Member"}
+                    </div>
+                    {u.username && (
+                      <div className="text-[11px] truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                        @{u.username}
+                      </div>
+                    )}
+                  </div>
+                  {typeof u.distanceKm === "number" && (
+                    <span className="text-[10px] shrink-0" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {u.distanceKm < 1 ? "<1 km" : `${Math.round(u.distanceKm)} km`}
+                    </span>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function CreatorProfilePage() {
@@ -358,7 +572,12 @@ export default function CreatorProfilePage() {
         <meta name="description" content={creator.bio || `${displayName} on PNPtv!`} />
       </Helmet>
 
-      <div className="min-h-screen flex flex-col" style={{ background: "var(--pnp-bg, #121212)", color: "#fff" }}>
+      <div className="min-h-screen" style={{ background: "var(--pnp-bg, #121212)", color: "#fff" }}>
+        {/* Desktop: 3-col layout — center profile column + sticky right rail
+            for "Live now" / "Nearby now". Mobile: unchanged single column
+            (the grid classes collapse to normal block flow below lg).       */}
+        <div className="lg:mx-auto lg:max-w-[1040px] lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 lg:px-6 lg:py-6">
+        <div className="flex flex-col lg:min-w-0 lg:rounded-2xl lg:overflow-hidden lg:border lg:border-white/5" style={{ background: "var(--pnp-bg, #121212)" }}>
         {/* ── Cover + avatar overlay ─────────────────────────────────── */}
         <div className="relative">
           <div
@@ -547,13 +766,15 @@ export default function CreatorProfilePage() {
               PRIME-gated creators (Santino): CTA points to /subscribe (PRIME plan)
               and viewers with active PRIME see the "PRIME Access" pill instead
               of a per-creator sub. */}
+          {/* Action buttons: on desktop they cap at max-w-md so they don't
+              stretch across the full 640px center column and feel balanced. */}
           {!isOwnProfile && !viewerUnlocked && (
             <button
               onClick={() => {
                 if (isPrimeCreator) navigate("/subscribe");
                 else handleSubscribeCta();
               }}
-              className="w-full py-3 rounded-xl text-sm font-bold text-white mb-2.5 transition-opacity hover:opacity-90"
+              className="w-full lg:max-w-md py-3 rounded-xl text-sm font-bold text-white mb-2.5 transition-opacity hover:opacity-90"
               style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             >
               {isPrimeCreator
@@ -562,7 +783,7 @@ export default function CreatorProfilePage() {
             </button>
           )}
           {viewerUnlocked && !isOwnProfile && (
-            <div className="flex gap-2.5 mb-2.5">
+            <div className="flex gap-2.5 mb-2.5 lg:max-w-md">
               <button
                 onClick={() => (isPrimeCreator && !isSubscribed
                   ? navigate("/subscribe")
@@ -589,14 +810,14 @@ export default function CreatorProfilePage() {
           {isOwnProfile && (
             <button
               onClick={() => navigate("/creator?tab=settings")}
-              className="w-full py-3 rounded-xl text-sm font-bold text-white mb-2.5 border transition-opacity hover:opacity-90"
+              className="w-full lg:max-w-md py-3 rounded-xl text-sm font-bold text-white mb-2.5 border transition-opacity hover:opacity-90"
               style={{ borderColor: "rgba(255,255,255,0.15)", background: "transparent" }}
             >
               <Pencil size={14} className="inline mr-2" /> Edit profile & settings
             </button>
           )}
 
-          <div className="flex gap-2.5 mb-4">
+          <div className="flex gap-2.5 mb-4 lg:max-w-md">
             <button
               onClick={() => handleBookCall(30)}
               className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90"
@@ -623,7 +844,7 @@ export default function CreatorProfilePage() {
             return (
               <button
                 onClick={() => navigate(`/channels?channel=${encodeURIComponent(ch.slug)}`)}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold mb-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                className="w-full lg:max-w-md py-2.5 rounded-xl text-sm font-semibold mb-4 flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
                 style={{
                   background: "rgba(212,0,122,0.10)",
                   color: "#fff",
@@ -767,6 +988,15 @@ export default function CreatorProfilePage() {
             )}
           </div>
         </div>
+        </div>{/* /center column */}
+
+        {/* ── Right rail: desktop only (X.com pattern) ────────────────── */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-4 space-y-4">
+            <CreatorRightRail excludeCreatorId={creator.id} />
+          </div>
+        </aside>
+        </div>{/* /grid wrapper */}
       </div>
 
       {/* ── Subscription info modal (opened from the Subscribed pill) ─── */}
