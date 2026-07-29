@@ -495,7 +495,11 @@ export default function CreatorProfilePage() {
             </div>
             <div>
               <div className="text-[15px] font-bold text-white">{formatCompact(creator.creator_subscriber_count || 0)}</div>
-              <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Fans</div>
+              <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Subscribers</div>
+            </div>
+            <div>
+              <div className="text-[15px] font-bold text-white">{formatCompact(creator.followerCount || 0)}</div>
+              <div className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Followers</div>
             </div>
             <div>
               <div className="text-[15px] font-bold text-white">{formatCompact(creator.completedCallsCount || 0)}</div>

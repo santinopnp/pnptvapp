@@ -16,6 +16,8 @@ const strings = {
     bulkUploadVideos: "Bulk Upload Videos",
     exclusiveToggle: "Exclusive content (subscribers only)",
     allowSharing: "Allow sharing",
+    creatorWallHint: "This post will appear on your public wall",
+    creatorWallHintView: "View wall",
     // Tabs
     allPosts: "All Posts",
     wallOfFame: "Wall of Fame",
@@ -92,6 +94,8 @@ const strings = {
     bulkUploadVideos: "Subir videos en lote",
     exclusiveToggle: "Contenido exclusivo (solo suscriptores)",
     allowSharing: "Permitir compartir",
+    creatorWallHint: "Esta publicación aparecerá en tu muro público",
+    creatorWallHintView: "Ver muro",
     allPosts: "Todos",
     wallOfFame: "Muro de la Fama",
     following: "Siguiendo",

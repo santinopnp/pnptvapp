@@ -1326,6 +1326,29 @@ export function PostComposer({
             </div>
           )}
 
+          {/* Creator wall visibility hint — always visible for active creators so
+              they understand that every post from the app lands on their public
+              /c/@handle wall (there is no separate "feed only" scope). */}
+          {isActiveCreator && user?.username && (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} className="w-3.5 h-3.5 flex-shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span>{tFeed.creatorWallHint}</span>
+              <a
+                href={`/c/@${user.username}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="underline hover:text-white transition-colors"
+                style={{ color: "#D4007A" }}
+              >
+                /c/@{user.username}
+              </a>
+            </div>
+          )}
+
           {/* Allow sharing toggle */}
           <div className="mt-2">
             <ToggleSwitch
