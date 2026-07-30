@@ -13490,19 +13490,30 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
           }
         }
 
-        const renewalGrantResult = await PaymentServiceRenewal.grantEntitlementsForPlan(
-          existing.user_id,
-          existing.plan_id,
-          'nowpayments',
-          existing.creator_id ? { creatorId: String(existing.creator_id) } : null,
-          renewalOrderId
-        );
-        if (!isRenewalDonation && (!renewalGrantResult || renewalGrantResult.granted === 0)) {
-          await dbQuery(
-            `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
-            [renewalOrderId, `renewal:grant_zero:${existing.plan_id}`]
-          ).catch(() => {});
-          throw new Error(`grantEntitlementsForPlan returned zero grants for renewal plan ${existing.plan_id}`);
+        // CS-PAY-C-02 parity for renewals: creator_monthly must route through
+        // subscribeToCreator ONLY. grantEntitlementsForPlan + subscribeToCreator
+        // would both upsert the same creator-subscription entitlement, doubling
+        // the expiry extension (60 days per renewal instead of 30).
+        if (existing.plan_id === 'creator_monthly' && existing.creator_id) {
+          const CreatorServiceRenewalGrant = require('../../services/creatorService');
+          await CreatorServiceRenewalGrant.subscribeToCreator(
+            existing.user_id, String(existing.creator_id), renewalOrderId
+          );
+        } else {
+          const renewalGrantResult = await PaymentServiceRenewal.grantEntitlementsForPlan(
+            existing.user_id,
+            existing.plan_id,
+            'nowpayments',
+            existing.creator_id ? { creatorId: String(existing.creator_id) } : null,
+            renewalOrderId
+          );
+          if (!isRenewalDonation && (!renewalGrantResult || renewalGrantResult.granted === 0)) {
+            await dbQuery(
+              `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+              [renewalOrderId, `renewal:grant_zero:${existing.plan_id}`]
+            ).catch(() => {});
+            throw new Error(`grantEntitlementsForPlan returned zero grants for renewal plan ${existing.plan_id}`);
+          }
         }
       } catch (renewalGrantErr) {
         await dbQuery(
@@ -13516,20 +13527,6 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
         [renewalOrderId, `nowpayments:renewal:${payment_id}`]
       );
-
-      // Record creator earnings on renewal — intentionally non-fatal (entitlement already extended)
-      if (existing.plan_id === 'creator_monthly' && existing.creator_id) {
-        try {
-          const CreatorServiceRenewal = require('../../services/creatorService');
-          await CreatorServiceRenewal.subscribeToCreator(
-            existing.user_id, String(existing.creator_id), renewalOrderId || order_id
-          );
-        } catch (renewalCreatorErr) {
-          logger.warn('[NOWPayments] IPN: subscribeToCreator failed on renewal (earnings not recorded — manual reconciliation needed)', {
-            userId: existing.user_id, creatorId: existing.creator_id, error: renewalCreatorErr.message,
-          });
-        }
-      }
 
       try {
         const { cache: renewalCache } = require('../../config/redis');
@@ -14054,7 +14051,12 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         order_id,
         order_id,
         String(payment_id),
-        JSON.stringify({ nowpayments_payment_id: String(payment_id), pay_currency, actually_paid }),
+        JSON.stringify({
+          nowpayments_payment_id: String(payment_id),
+          pay_currency,
+          actually_paid,
+          ...(order.creator_id ? { creator_id: String(order.creator_id) } : {}),
+        }),
       ]
     );
   } catch (paymentsErr) {

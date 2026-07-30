@@ -742,13 +742,36 @@ class CreatorService {
     try {
       await client.query('BEGIN');
 
-      // Upsert subscription
+      // Upsert subscription. Extension logic mirrors user_entitlements below so
+      // cs.expires_at and ue.expires_at stay in lockstep (fixes drift bug where
+      // renewal reset cs but extended ue, showing wrong dates in Manage Sub UI).
+      // - Existing active row → extend by durationDays.
+      // - Existing lapsed / new / compliance-held incoming → set to $4 (which is
+      //   NULL when creator is non-compliant → subscription stays on hold).
+      // compliance_hold flips false only when the CURRENT paying subscriber has
+      // active access, so an existing paid-up subscriber isn't punished if the
+      // creator's content dropped below the minimum between renewals.
       const subResult = await client.query(
         `INSERT INTO creator_subscriptions (creator_id, subscriber_id, price_usd, expires_at, payment_id, status, compliance_hold, held_duration_days)
          VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)
          ON CONFLICT (creator_id, subscriber_id)
-         DO UPDATE SET status = 'active', price_usd = $3, expires_at = $4, payment_id = $5,
-                       cancelled_at = NULL, auto_renew = TRUE, compliance_hold = $6, held_duration_days = $7
+         DO UPDATE SET
+           status = 'active',
+           price_usd = $3,
+           payment_id = $5,
+           cancelled_at = NULL,
+           auto_renew = TRUE,
+           held_duration_days = $7,
+           expires_at = CASE
+             WHEN creator_subscriptions.expires_at IS NOT NULL AND creator_subscriptions.expires_at > NOW()
+               THEN creator_subscriptions.expires_at + ($7::integer * INTERVAL '1 day')
+             ELSE $4::timestamptz
+           END,
+           compliance_hold = CASE
+             WHEN creator_subscriptions.expires_at IS NOT NULL AND creator_subscriptions.expires_at > NOW()
+               THEN false
+             ELSE $6::boolean
+           END
          RETURNING id`,
         [creatorId, subscriberId, priceUsd, expiresAt, paymentId || null, !isContentCompliant, durationDays]
       );
@@ -817,6 +840,15 @@ class CreatorService {
       logger.warn('subscribeToCreator: cache invalidation failed (non-fatal)', { subscriberId, error: cacheErr.message });
     }
 
+    // Invalidate the creator's session cache too — creator_subscriber_count
+    // changed, so any Nearby / Discover / profile fetch that hits the cache
+    // would otherwise render a stale count until the TTL expires.
+    try {
+      const { cache: creatorCache } = require('../config/redis');
+      await creatorCache.del(`user:${creatorId}`).catch(() => {});
+      await creatorCache.del(`session:user:${creatorId}`).catch(() => {});
+    } catch (_) { /* non-fatal */ }
+
     if (!isContentCompliant) {
       try {
         await ContentComplianceService.startComplianceClockIfNeeded(creatorId);
@@ -827,16 +859,22 @@ class CreatorService {
       }
     }
 
-    // Notify subscriber's frontend to refresh subscription state
+    // Notify subscriber's frontend to refresh subscription state, and mirror
+    // the event to the creator's room so the creator's live subscriber-count
+    // widgets update in real time without a page refresh.
     try {
       const socketSingleton = require('./socketSingleton');
       const io = socketSingleton.get ? socketSingleton.get() : socketSingleton;
       if (io) {
-        io.to(`user:${subscriberId}`).emit('subscription:updated', {
+        const payload = {
           creatorId,
+          subscriberId,
           status: 'active',
           expiresAt,
-        });
+          complianceHeld: !isContentCompliant,
+        };
+        io.to(`user:${subscriberId}`).emit('subscription:updated', payload);
+        io.to(`user:${creatorId}`).emit('creator:new-subscriber', payload);
       }
     } catch (socketErr) {
       logger.warn('subscribeToCreator: failed to emit subscription:updated socket event', {
@@ -873,6 +911,39 @@ class CreatorService {
         creatorId,
         error: notifyErr.message,
       });
+    }
+
+    // Notify SUBSCRIBER on compliance-hold — they paid but got no active
+    // membership because the creator hasn't uploaded the 4-min minimum.
+    // Without this the user just sees "success" on checkout and silently
+    // has no access (bug pre-2026-07-30).
+    if (!isContentCompliant) {
+      try {
+        const creatorNameRes = await query(
+          'SELECT COALESCE(first_name, username, $1) AS name FROM users WHERE id = $1',
+          [String(creatorId)]
+        );
+        const creatorName = creatorNameRes.rows[0]?.name || 'the creator';
+        NotificationEmitter.emit({
+          type: 'creator_subscription_held',
+          category: 'commerce',
+          priority: 'high',
+          actorId: creatorId,
+          targetUserId: String(subscriberId),
+          entityType: 'creator_subscription',
+          entityId: String(rows[0].id),
+          message: `Your $${parseFloat(priceUsd).toFixed(2)} subscription to ${creatorName} is on hold — waiting for them to upload their minimum content. Access will start automatically as soon as they qualify.`,
+          metadata: {
+            url: `/c/${creatorId}`,
+            pushTitle: 'Subscription on hold',
+            pushBody: `Your subscription to ${creatorName} starts as soon as they meet the content minimum. No action needed.`,
+          },
+        }).catch(() => {});
+      } catch (holdNotifErr) {
+        logger.warn('subscribeToCreator: subscriber hold-notice failed (non-fatal)', {
+          subscriberId, creatorId, error: holdNotifErr.message,
+        });
+      }
     }
 
     // Notify creator via Telegram DM (non-fatal)
@@ -938,7 +1009,7 @@ class CreatorService {
       });
     } catch (_) { /* non-critical */ }
 
-    return { subscriptionId: rows[0].id, expiresAt, price: priceUsd };
+    return { subscriptionId: rows[0].id, expiresAt, price: priceUsd, complianceHeld: !isContentCompliant };
   }
 
   static async unsubscribeFromCreator(subscriberId, creatorId) {
@@ -1269,7 +1340,7 @@ class CreatorService {
   static async getSubscriptionStatus(subscriberId, creatorId) {
     const [subRes, creatorRes] = await Promise.all([
       query(
-        `SELECT id, status, price_usd, started_at, expires_at, auto_renew
+        `SELECT id, status, price_usd, started_at, expires_at, auto_renew, compliance_hold
          FROM creator_subscriptions
          WHERE creator_id = $1 AND subscriber_id = $2
            AND status = 'active'
@@ -1286,8 +1357,17 @@ class CreatorService {
     const creator = creatorRes.rows[0] || {};
     const sub = subRes.rows[0] || null;
 
+    // Compliance hold: paid row exists but expires_at IS NULL because the
+    // creator hasn't uploaded the 4-min exclusive-content minimum yet. The
+    // subscriber DID pay, so `subscribed=true`, but downstream gates return
+    // false via hasEntitlement (which requires expires_at > NOW()). The
+    // wizard uses `complianceHeld` to swap the success copy for a hold notice.
+    const complianceHeld = !!(sub && (sub.compliance_hold === true || sub.expires_at === null));
+
     return {
       subscribed: sub?.status === 'active',
+      complianceHeld,
+      expiresAt: sub?.expires_at || null,
       subscription: sub,
       creator: {
         status: creator.creator_status,

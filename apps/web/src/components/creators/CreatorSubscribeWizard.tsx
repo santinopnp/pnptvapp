@@ -89,6 +89,9 @@ export default function CreatorSubscribeWizard({
   const [error, setError] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [showAllCoins, setShowAllCoins] = useState(false);
+  // Compliance hold: creator hasn't uploaded 4-min exclusive minimum yet.
+  // Wizard shows a distinct "held" copy instead of the false "active" tick.
+  const [complianceHeld, setComplianceHeld] = useState(false);
   const inFlight = useRef(false);
 
   // Fetch token balance once for the tokens button.
@@ -189,10 +192,14 @@ export default function CreatorSubscribeWizard({
     setError(null);
     try {
       const s = await getCreatorSubscriptionStatus(creatorId);
-      if (s.subscribed) onSuccess();
-      else setError(lang === "es"
-        ? "Tu pago aún no se ha confirmado. Espera un momento e intenta de nuevo."
-        : "Payment not confirmed yet. Wait a moment and try again.");
+      if (s.subscribed) {
+        setComplianceHeld(!!s.complianceHeld);
+        onSuccess();
+      } else {
+        setError(lang === "es"
+          ? "Tu pago aún no se ha confirmado. Espera un momento e intenta de nuevo."
+          : "Payment not confirmed yet. Wait a moment and try again.");
+      }
     } catch {
       setError(lang === "es" ? "No se pudo verificar." : "Could not verify.");
     } finally {
@@ -200,8 +207,38 @@ export default function CreatorSubscribeWizard({
     }
   }, [creatorId, onSuccess, lang]);
 
+  // When the NowPayments poller flips paymentSuccess=true, refetch status to
+  // detect compliance-held state (creator hasn't uploaded the 4-min minimum).
+  // Without this the wizard would show "Subscription active" while every
+  // downstream gate returns "no access", which is the exact bug this fixes.
+  useEffect(() => {
+    if (!paymentSuccess) return;
+    let cancelled = false;
+    getCreatorSubscriptionStatus(creatorId)
+      .then((s) => { if (!cancelled) setComplianceHeld(!!s.complianceHeld); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [paymentSuccess, creatorId]);
+
   // ── Success view (tokens or crypto confirmed) ────────────────────────────
   if (paymentSuccess) {
+    if (complianceHeld) {
+      return (
+        <div
+          className={`rounded-2xl ${compact ? "p-4" : "p-5"} text-center space-y-2`}
+          style={{ background: "rgba(255,159,10,0.14)", border: "1px solid rgba(255,159,10,0.3)", color: "#FF9F0A" }}
+        >
+          <p className="text-sm font-bold">
+            {lang === "es" ? "Pago recibido — en espera" : "Payment received — on hold"}
+          </p>
+          <p className="text-xs opacity-90">
+            {lang === "es"
+              ? `Tu suscripción se activará automáticamente cuando ${displayName} suba el contenido exclusivo mínimo requerido. No necesitas hacer nada más — te avisaremos.`
+              : `Your subscription will activate automatically once ${displayName} uploads the required minimum exclusive content. Nothing more to do — we'll notify you.`}
+          </p>
+        </div>
+      );
+    }
     return (
       <div
         className={`rounded-2xl ${compact ? "p-4" : "p-5"} text-center space-y-2`}

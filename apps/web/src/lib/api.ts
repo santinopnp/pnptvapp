@@ -3802,13 +3802,16 @@ export interface CreatorDashboard {
 
 export interface CreatorSubscriptionStatus {
   subscribed: boolean;
+  complianceHeld?: boolean;
+  expiresAt?: string | null;
   subscription: {
     id: string;
     status: string;
     price_usd: number;
     started_at: string;
-    expires_at: string;
+    expires_at: string | null;
     auto_renew: boolean;
+    compliance_hold?: boolean;
   } | null;
   creator: {
     status: string;

@@ -587,6 +587,7 @@ async function _fetchScoredCreators(userId, viewerLat, viewerLng, limit) {
         CASE WHEN distance_km IS NOT NULL AND distance_km < ${NEARBY_KM} THEN 40 ELSE 0 END
         + (mutual_cnt * 30)
         + CASE WHEN is_live    THEN 25 ELSE 0 END
+        + CASE WHEN avatar_url IS NOT NULL THEN 25 ELSE 0 END
         + CASE WHEN is_prime   THEN 20 ELSE 0 END
         + CASE WHEN recent_post THEN 15 ELSE 0 END
         + CASE WHEN has_prime_channel THEN 10 ELSE 0 END
@@ -740,6 +741,7 @@ async function _fetchScoredFollows(userId, viewerLat, viewerLng, limit) {
       -- score without online (online requires Redis lookup after query)
       (
         (mutual_cnt * 30)
+        + CASE WHEN avatar_url IS NOT NULL THEN 25 ELSE 0 END
         + CASE WHEN distance_km IS NOT NULL AND distance_km < ${NEARBY_KM} THEN 20 ELSE 0 END
         + CASE WHEN recent_contact THEN 15 ELSE 0 END
         + CASE WHEN recent_post THEN 10 ELSE 0 END

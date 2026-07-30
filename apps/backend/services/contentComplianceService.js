@@ -137,6 +137,35 @@ class ContentComplianceService {
           });
         }
 
+        // Notify subscriber that their held membership is now active.
+        // Mirrors the hold-start notice sent from creatorService.subscribeToCreator.
+        try {
+          const { rows: creatorRows } = await query(
+            'SELECT COALESCE(first_name, username, $1) AS name FROM users WHERE id = $1',
+            [String(creatorId)]
+          );
+          const creatorName = creatorRows[0]?.name || 'the creator';
+          NotificationEmitter.emit({
+            type: 'creator_subscription_activated',
+            category: 'commerce',
+            priority: 'high',
+            actorId: String(creatorId),
+            targetUserId: String(sub.subscriber_id),
+            entityType: 'creator_subscription',
+            entityId: String(sub.id),
+            message: `Your subscription to ${creatorName} is now active — full access for the next ${durationDays} days.`,
+            metadata: {
+              url: `/c/${creatorId}`,
+              pushTitle: 'Subscription activated',
+              pushBody: `${creatorName} unlocked your access — enjoy!`,
+            },
+          }).catch(() => {});
+        } catch (activateNotifyErr) {
+          logger.warn('markCompliantIfNewlyQualified: subscriber activate-notice failed (non-fatal)', {
+            subscriberId: sub.subscriber_id, error: activateNotifyErr.message,
+          });
+        }
+
         unlockedCount++;
       } catch (rowErr) {
         logger.error('markCompliantIfNewlyQualified: failed to unlock held subscription (non-fatal, continuing)', {
