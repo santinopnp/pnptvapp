@@ -137,13 +137,334 @@ const SCREENSHOT_HINTS: Record<string, { en: string; es: string; src: string }> 
   "metamask-2": { en: "MetaMask — password",        es: "MetaMask — contraseña", src: "/crypto-guide-media/mm-2.png" },
   "metamask-3": { en: "MetaMask — secret phrase",   es: "MetaMask — frase secreta", src: "/crypto-guide-media/mm-3.png" },
   "metamask-4": { en: "MetaMask — confirm phrase",  es: "MetaMask — confirmar frase", src: "/crypto-guide-media/mm-4.png" },
+  "trust-5":  { en: "Trust Wallet — buy USDT/USDC", es: "Trust Wallet — comprar USDT/USDC", src: "/crypto-guide-media/tw-5.png" },
+  "metamask-5": { en: "MetaMask — buy USDT/USDC",   es: "MetaMask — comprar USDT/USDC", src: "/crypto-guide-media/mm-5.png" },
   "buy":      { en: "Wallet 'Buy' screen", es: "Pantalla 'Comprar' de la wallet", src: "/crypto-guide-media/buy.png" },
 };
 
 // ── Small building blocks (inline — no new files per project rule) ──────────
 
+// Sample 12-word BIP39-style seed for mocks. Not a real seed — obviously fake
+// (repeated common words) so a user can't accidentally treat it as their own.
+const MOCK_SEED = ["ocean","apple","forest","piano","river","spark","tiger","cloud","stone","voyage","melody","bright"];
+
+// Trust Wallet mock — portrait phone frame, TW brand blue (#0500FF).
+function TrustWalletMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }) {
+  const es = lang === "es";
+  const bezel: React.CSSProperties = {
+    width: 200, height: 400, borderRadius: 32, background: "#0F111C",
+    padding: 6, boxShadow: "0 10px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.05)", position: "relative",
+  };
+  const screen: React.CSSProperties = {
+    width: "100%", height: "100%", borderRadius: 26, background: "#fff", color: "#0F111C",
+    overflow: "hidden", display: "flex", flexDirection: "column", position: "relative",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  };
+  const statusBar = (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 14px 2px", fontSize: 9, color: "#0F111C", fontWeight: 600 }}>
+      <span>9:41</span>
+      <span>•••</span>
+    </div>
+  );
+  const homeIndicator = (
+    <div style={{ position: "absolute", bottom: 4, left: "50%", transform: "translateX(-50%)", width: 60, height: 3, borderRadius: 2, background: "rgba(15,17,28,.35)" }} />
+  );
+  const twLogo = (
+    <svg width="34" height="34" viewBox="0 0 40 40" fill="none">
+      <path d="M20 3l14 5v10c0 8-6 15-14 19-8-4-14-11-14-19V8l14-5z" fill="#0500FF"/>
+      <path d="M20 10.5v18c-5-3-9-7.5-9-13V13l9-2.5z" fill="#48A9FF"/>
+    </svg>
+  );
+
+  return (
+    <div style={bezel}>
+      <div style={screen}>
+        {statusBar}
+        {step === 1 && (
+          <>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 20px", gap: 10 }}>
+              {twLogo}
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#0F111C" }}>Trust Wallet</p>
+              <p style={{ margin: 0, fontSize: 9, color: "#6b6b70", textAlign: "center", lineHeight: 1.4 }}>
+                {es ? "La billetera cripto más confiable del mundo" : "The world's most trusted crypto wallet"}
+              </p>
+            </div>
+            <div style={{ padding: "0 14px 24px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <button style={{ padding: "10px 0", borderRadius: 999, border: "none", background: "#0500FF", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+                {es ? "Crear una nueva wallet" : "Create a new wallet"}
+              </button>
+              <button style={{ padding: "10px 0", borderRadius: 999, border: "1px solid #E5E7EB", background: "#fff", color: "#0500FF", fontSize: 11, fontWeight: 700 }}>
+                {es ? "Ya tengo una wallet" : "I already have a wallet"}
+              </button>
+            </div>
+          </>
+        )}
+        {step === 2 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "20px 20px 0", gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(5,0,255,.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0500FF" strokeWidth={2}>
+                <rect x="4" y="10" width="16" height="11" rx="2"/><path strokeLinecap="round" d="M8 10V7a4 4 0 118 0v3"/>
+              </svg>
+            </div>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>{es ? "Crea un código" : "Create passcode"}</p>
+            <p style={{ margin: 0, fontSize: 9, color: "#6b6b70", textAlign: "center", lineHeight: 1.4 }}>
+              {es ? "Se usará para desbloquear la app" : "Used to unlock the app"}
+            </p>
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              {[1,2,3,4,5,6].map((i) => (
+                <div key={i} style={{ width: 10, height: 10, borderRadius: 999, background: i <= 4 ? "#0500FF" : "transparent", border: "1.5px solid #0500FF" }} />
+              ))}
+            </div>
+            <div style={{ marginTop: "auto", width: "100%", background: "#F4F5F7", padding: "10px 0", borderRadius: "12px 12px 0 0", display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, textAlign: "center", fontSize: 13, fontWeight: 600, color: "#0F111C" }}>
+              {["1","2","3","4","5","6","7","8","9","","0","⌫"].map((n, i) => (
+                <div key={i} style={{ padding: "6px 0" }}>{n}</div>
+              ))}
+            </div>
+          </div>
+        )}
+        {step === 3 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "10px 14px 16px", gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700 }}>{es ? "Tu frase de recuperación" : "Your Recovery Phrase"}</p>
+            <p style={{ margin: 0, fontSize: 8, color: "#6b6b70", lineHeight: 1.4 }}>
+              {es ? "Escríbela en papel. Nunca la compartas." : "Write it on paper. Never share it."}
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginTop: 4 }}>
+              {MOCK_SEED.map((w, i) => (
+                <div key={i} style={{ border: "1px solid #E5E7EB", borderRadius: 8, padding: "5px 8px", fontSize: 9, display: "flex", gap: 5 }}>
+                  <span style={{ color: "#9AA0A6", minWidth: 12 }}>{i + 1}.</span>
+                  <span style={{ fontWeight: 600, color: "#0F111C" }}>{w}</span>
+                </div>
+              ))}
+            </div>
+            <button style={{ marginTop: "auto", padding: "9px 0", borderRadius: 999, border: "none", background: "#0500FF", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+              {es ? "Continuar" : "Continue"}
+            </button>
+          </div>
+        )}
+        {step === 4 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "10px 14px 16px", gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700 }}>{es ? "Verifica tu frase" : "Verify your phrase"}</p>
+            <p style={{ margin: 0, fontSize: 8, color: "#6b6b70" }}>
+              {es ? "Toca las palabras en orden" : "Tap the words in order"}
+            </p>
+            <div style={{ border: "1px dashed #0500FF", borderRadius: 10, padding: 8, minHeight: 60, display: "flex", flexWrap: "wrap", gap: 4, alignContent: "flex-start", background: "rgba(5,0,255,.03)" }}>
+              {["ocean","apple","forest"].map((w, i) => (
+                <span key={i} style={{ background: "#0500FF", color: "#fff", padding: "3px 8px", borderRadius: 999, fontSize: 9, fontWeight: 600 }}>{i + 1}. {w}</span>
+              ))}
+              <span style={{ padding: "3px 8px", border: "1px dashed #9AA0A6", borderRadius: 999, fontSize: 9, color: "#9AA0A6" }}>4.</span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {["piano","river","spark","tiger","cloud","stone","voyage","melody","bright"].map((w, i) => (
+                <span key={i} style={{ background: "#F4F5F7", padding: "3px 8px", borderRadius: 999, fontSize: 9, fontWeight: 600, color: "#0F111C" }}>{w}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        {step === 5 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "10px 14px 16px", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>{es ? "Comprar" : "Buy"}</span>
+              <span style={{ fontSize: 12, color: "#6b6b70" }}>✕</span>
+            </div>
+            <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
+              <div style={{ flex: 1, padding: "5px 0", background: "#0500FF", color: "#fff", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 700 }}>USDT</div>
+              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>USDC</div>
+              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>BTC</div>
+            </div>
+            <div style={{ background: "#F4F5F7", borderRadius: 10, padding: "12px 10px", textAlign: "center", marginTop: 6 }}>
+              <p style={{ margin: 0, fontSize: 9, color: "#6b6b70", fontWeight: 600 }}>{es ? "Pagas" : "You pay"}</p>
+              <p style={{ margin: "3px 0 0", fontSize: 22, fontWeight: 800, color: "#0F111C" }}>$25<span style={{ fontSize: 11, color: "#9AA0A6", marginLeft: 3 }}>USD</span></p>
+              <p style={{ margin: "3px 0 0", fontSize: 8, color: "#9AA0A6" }}>≈ 25.02 USDT</p>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 8px", fontSize: 8, color: "#6b6b70" }}>
+              <span>{es ? "Pago con" : "Pay with"}</span>
+              <span style={{ color: "#0F111C", fontWeight: 600 }}>💳 •••• 4242</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "0 8px 4px", fontSize: 8, color: "#6b6b70" }}>
+              <span>{es ? "Proveedor" : "Provider"}</span>
+              <span style={{ color: "#0F111C", fontWeight: 600 }}>MoonPay</span>
+            </div>
+            <button style={{ marginTop: "auto", padding: "9px 0", borderRadius: 999, border: "none", background: "#0500FF", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+              {es ? "Comprar USDT" : "Buy USDT"}
+            </button>
+          </div>
+        )}
+        {homeIndicator}
+      </div>
+    </div>
+  );
+}
+
+// MetaMask mock — desktop browser window, MM orange (#F6851B) accents.
+function MetaMaskMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }) {
+  const es = lang === "es";
+  const window: React.CSSProperties = {
+    width: 340, borderRadius: 10, background: "#fff", overflow: "hidden",
+    boxShadow: "0 10px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05)",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: "#24292F",
+  };
+  const chrome = (
+    <div style={{ background: "#E9EBED", padding: "6px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #D0D7DE" }}>
+      <div style={{ display: "flex", gap: 5 }}>
+        {["#FF5F57","#FEBC2E","#28C840"].map((c) => (
+          <div key={c} style={{ width: 8, height: 8, borderRadius: 999, background: c }} />
+        ))}
+      </div>
+      <div style={{ flex: 1, background: "#fff", borderRadius: 5, padding: "3px 8px", fontSize: 9, color: "#57606A", display: "flex", alignItems: "center", gap: 5 }}>
+        <span>🔒</span><span>chrome-extension://metamask/home.html</span>
+      </div>
+    </div>
+  );
+  const fox = (
+    <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+      <path d="M52 8L34 20l3-8 15-4z" fill="#E17726"/>
+      <path d="M8 8l18 12-3-8L8 8z" fill="#E27625"/>
+      <path d="M44 42l-5 8 11 3 3-11-9 0z" fill="#E27625"/>
+      <path d="M4 42l3 11 11-3-5-8-9 0z" fill="#E27625"/>
+      <path d="M18 26l-3 5 11 1-.5-11L18 26z" fill="#F6851B"/>
+      <path d="M42 26l-8-5-.5 11 11-1-2.5-5z" fill="#F6851B"/>
+      <path d="M18 50l7-3-6-5-1 8z" fill="#E27625"/>
+      <path d="M35 47l7 3-1-8-6 5z" fill="#E27625"/>
+      <path d="M42 50l-7-3 .5 5 0 2 6.5-4z" fill="#D5BFB2"/>
+      <path d="M18 50l6.5 4 0-2 .5-5-7 3z" fill="#D5BFB2"/>
+      <path d="M25 43l-6-2 4-2 2 4zm10 0l2-4 4 2-6 2z" fill="#233447"/>
+    </svg>
+  );
+
+  return (
+    <div style={window}>
+      {chrome}
+      <div style={{ padding: 16, minHeight: 300, display: "flex", flexDirection: "column" }}>
+        {step === 1 && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 10 }}>
+            {fox}
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{es ? "Bienvenido a MetaMask" : "Welcome to MetaMask"}</p>
+            <p style={{ margin: 0, fontSize: 10, color: "#57606A", maxWidth: 240, lineHeight: 1.5 }}>
+              {es ? "Confía en tus operaciones — la wallet líder para DeFi y Web3." : "Trusted by millions — the leading self-custody wallet for Web3."}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", marginTop: 10 }}>
+              <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+                {es ? "Crear una nueva wallet" : "Create a new wallet"}
+              </button>
+              <button style={{ padding: "9px 0", borderRadius: 6, border: "1px solid #F6851B", background: "#fff", color: "#F6851B", fontSize: 11, fontWeight: 700 }}>
+                {es ? "Importar una wallet existente" : "Import an existing wallet"}
+              </button>
+            </div>
+          </div>
+        )}
+        {step === 2 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{es ? "Crea tu contraseña" : "Create password"}</p>
+            <p style={{ margin: 0, fontSize: 10, color: "#57606A", lineHeight: 1.5 }}>
+              {es ? "Esta contraseña desbloqueará MetaMask solo en este dispositivo." : "This password will unlock MetaMask only on this device."}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+              <span style={{ fontSize: 9, fontWeight: 600, color: "#24292F" }}>{es ? "Nueva contraseña" : "New password"}</span>
+              <div style={{ border: "1px solid #D0D7DE", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: "#24292F", letterSpacing: 2, background: "#F6F8FA" }}>••••••••••</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 9, fontWeight: 600, color: "#24292F" }}>{es ? "Confirmar contraseña" : "Confirm password"}</span>
+              <div style={{ border: "1px solid #D0D7DE", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: "#24292F", letterSpacing: 2, background: "#F6F8FA" }}>••••••••••</div>
+            </div>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 9, color: "#57606A", marginTop: 4 }}>
+              <span style={{ width: 12, height: 12, border: "1.5px solid #F6851B", borderRadius: 3, background: "#F6851B", color: "#fff", fontSize: 8, textAlign: "center", lineHeight: "9px", flexShrink: 0 }}>✓</span>
+              <span>{es ? "Entiendo que MetaMask no puede recuperar esta contraseña." : "I understand that MetaMask cannot recover this password."}</span>
+            </label>
+            <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700, marginTop: 6 }}>
+              {es ? "Crear contraseña" : "Create password"}
+            </button>
+          </div>
+        )}
+        {step === 3 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{es ? "Tu frase secreta" : "Secret Recovery Phrase"}</p>
+            <p style={{ margin: 0, fontSize: 10, color: "#57606A", lineHeight: 1.5 }}>
+              {es ? "12 palabras que restauran tu cuenta. Guárdalas en papel — nadie de MetaMask te las pedirá jamás." : "12 words that restore your account. Save on paper — no MetaMask staff will ever ask for them."}
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginTop: 4 }}>
+              {MOCK_SEED.map((w, i) => (
+                <div key={i} style={{ border: "1px solid #D0D7DE", borderRadius: 5, padding: "6px 8px", fontSize: 10, display: "flex", gap: 5, background: "#F6F8FA" }}>
+                  <span style={{ color: "#8B949E", minWidth: 12 }}>{i + 1}.</span>
+                  <span style={{ fontWeight: 600 }}>{w}</span>
+                </div>
+              ))}
+            </div>
+            <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700, marginTop: 8 }}>
+              {es ? "Ya lo escribí" : "I wrote it down"}
+            </button>
+          </div>
+        )}
+        {step === 4 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{es ? "Confirma tu frase secreta" : "Confirm Secret Recovery Phrase"}</p>
+            <p style={{ margin: 0, fontSize: 10, color: "#57606A", lineHeight: 1.5 }}>
+              {es ? "Completa las palabras que faltan." : "Fill in the missing words."}
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginTop: 4 }}>
+              {MOCK_SEED.map((w, i) => {
+                const isBlank = i === 2 || i === 6 || i === 10;
+                return (
+                  <div key={i} style={{ border: isBlank ? "1.5px solid #F6851B" : "1px solid #D0D7DE", borderRadius: 5, padding: "6px 8px", fontSize: 10, display: "flex", gap: 5, background: isBlank ? "#FFF7EE" : "#F6F8FA" }}>
+                    <span style={{ color: "#8B949E", minWidth: 12 }}>{i + 1}.</span>
+                    <span style={{ fontWeight: 600, color: isBlank ? "#F6851B" : "#24292F" }}>{isBlank ? "____" : w}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700, marginTop: 8 }}>
+              {es ? "Confirmar" : "Confirm"}
+            </button>
+          </div>
+        )}
+        {step === 5 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{es ? "Comprar cripto" : "Buy crypto"}</p>
+              <span style={{ fontSize: 12, color: "#57606A" }}>✕</span>
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <div style={{ flex: 1, padding: "6px 0", background: "#F6851B", color: "#fff", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 700 }}>USDT</div>
+              <div style={{ flex: 1, padding: "6px 0", background: "#F6F8FA", color: "#57606A", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 600, border: "1px solid #D0D7DE" }}>USDC</div>
+              <div style={{ flex: 1, padding: "6px 0", background: "#F6F8FA", color: "#57606A", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 600, border: "1px solid #D0D7DE" }}>ETH</div>
+            </div>
+            <div style={{ background: "#F6F8FA", border: "1px solid #D0D7DE", borderRadius: 8, padding: "12px 12px", textAlign: "center", marginTop: 4 }}>
+              <p style={{ margin: 0, fontSize: 10, color: "#57606A", fontWeight: 600 }}>{es ? "Pagas" : "You pay"}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 800, color: "#24292F" }}>$25<span style={{ fontSize: 11, color: "#8B949E", marginLeft: 3 }}>USD</span></p>
+              <p style={{ margin: "3px 0 0", fontSize: 9, color: "#8B949E" }}>≈ 25.02 USDT</p>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#57606A", padding: "0 4px" }}>
+              <span>{es ? "Proveedor" : "Provider"}</span>
+              <span style={{ color: "#24292F", fontWeight: 600 }}>MoonPay · Transak</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#57606A", padding: "0 4px" }}>
+              <span>{es ? "Método" : "Method"}</span>
+              <span style={{ color: "#24292F", fontWeight: 600 }}>💳 {es ? "Tarjeta" : "Card"}</span>
+            </div>
+            <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700, marginTop: 4 }}>
+              {es ? "Continuar" : "Continue"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ScreenshotSlot({ slotId, height, lang }: { slotId: string; height: number; lang: Lang }) {
   const hint = SCREENSHOT_HINTS[slotId];
+  // In-JSX wallet mocks — replaces the missing PNG placeholders for the 8
+  // wallet-onboarding slots. Other slots (e.g. "buy") still use the image
+  // fallback pattern below.
+  const twMatch = slotId.match(/^trust-([1-5])$/);
+  const mmMatch = slotId.match(/^metamask-([1-5])$/);
+  if (twMatch || mmMatch) {
+    const step = Number(twMatch?.[1] || mmMatch?.[1]) as 1 | 2 | 3 | 4 | 5;
+    return (
+      <div style={{ marginTop: 14, height, borderRadius: 14, overflow: "hidden", border: "1px solid #2A2A2A", background: "radial-gradient(circle at 50% 30%, #1a1a1f 0%, #0a0a0d 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+        {twMatch ? <TrustWalletMock step={step} lang={lang} /> : <MetaMaskMock step={step} lang={lang} />}
+      </div>
+    );
+  }
   return (
     <div
       style={{
@@ -355,7 +676,7 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
             {T.addMoneyBodyRest[lang]}
           </p>
 
-          <ScreenshotSlot slotId="buy" height={280} lang={lang} />
+          <ScreenshotSlot slotId={`${walletKey}-5`} height={280} lang={lang} />
 
           <Callout variant="gold" label={T.tipLabel[lang]} body={T.tipBody[lang]} />
         </div>
