@@ -13175,11 +13175,91 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   }
 
   if (payment_status === 'partially_paid') {
-    logger.warn('[NOWPayments] IPN: partial payment', { order_id, actually_paid, pay_currency });
+    const paidCrypto = Number(actually_paid) || 0;
+    const owedCrypto = Number(pay_amount) || 0;
+    const paidRatio = owedCrypto > 0 ? paidCrypto / owedCrypto : 0;
+    logger.warn('[NOWPayments] IPN: partial payment', {
+      order_id, payment_id, actually_paid: paidCrypto, pay_amount: owedCrypto,
+      pay_currency, paidRatio: paidRatio.toFixed(4),
+    });
+
+    // Auto-prorate for token purchases in the 50-98% range. Safer than
+    // touching entitlement plans (binary access + duration math) — token
+    // credit is a pure numeric grant. Above 98% falls into the finished
+    // branch on the follow-up IPN.
+    if (paidRatio >= 0.50 && paidRatio < 0.98) {
+      try {
+        const { rows: [order] } = await dbQuery(
+          `SELECT id, user_id, plan_id, metadata FROM dash_subscription_orders
+             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
+          [order_id]
+        );
+        if (order && order.plan_id === 'token_purchase') {
+          const meta = order.metadata || {};
+          const baseTokens = Math.max(0, Number(meta.tokens) || 0);
+          const prorated = Math.floor(baseTokens * paidRatio);
+          if (prorated > 0) {
+            const TokenSvc = require('../../services/tokenService');
+            await TokenSvc.creditTokens(order.user_id, prorated, `nowpayments:auto_prorate:${payment_id}`);
+            await dbQuery(
+              `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
+                 notes = $2 WHERE btcpay_invoice_id = $1`,
+              [order_id, `nowpayments:${payment_id}:auto_prorated:${paidRatio.toFixed(3)}:${prorated}_of_${baseTokens}`]
+            );
+            try {
+              const NotificationEmitter = require('../../services/notificationEmitter');
+              await NotificationEmitter.emit({
+                type: 'token_partial_credit',
+                category: 'commerce',
+                priority: 'normal',
+                targetUserId: String(order.user_id),
+                entityType: 'token_purchase',
+                entityId: String(order.id),
+                message: `You paid ${(paidRatio * 100).toFixed(0)}% of your token order — we credited ${prorated} tokens (of ${baseTokens} full).`,
+                metadata: { url: '/buy-tokens', pushTitle: 'Tokens credited', pushBody: `${prorated} tokens added — top up any time for the rest.` },
+              }).catch(() => {});
+            } catch (_) { /* non-fatal */ }
+            logger.info('[NOWPayments] auto-prorated token grant', {
+              order_id, userId: order.user_id, prorated, of: baseTokens, ratio: paidRatio,
+            });
+            return res.json({ received: true });
+          }
+        }
+      } catch (proErr) {
+        logger.error('[NOWPayments] auto-prorate token grant failed', {
+          order_id, error: proErr.message,
+        });
+        // Fall through — mark as partial so manual review kicks in.
+      }
+    }
+
+    // Default path: not-eligible for auto-prorate (entitlement plan, below 50%,
+    // or grant failed). Mark partial + notify user of the shortfall so they can
+    // top up. Below 50% still gets flagged for manual review.
     await dbQuery(
       `UPDATE dash_subscription_orders SET status = 'partially_paid', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
       [order_id, `nowpayments:${payment_id}:partial:${actually_paid}${pay_currency ? ' ' + pay_currency : ''}`]
     );
+    try {
+      const { rows: [ord] } = await dbQuery(
+        `SELECT user_id, usd_amount FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 LIMIT 1`,
+        [order_id]
+      );
+      if (ord) {
+        const NotificationEmitter = require('../../services/notificationEmitter');
+        const shortUsd = Number(ord.usd_amount) * (1 - paidRatio);
+        await NotificationEmitter.emit({
+          type: 'payment_partial_shortfall',
+          category: 'commerce',
+          priority: 'high',
+          targetUserId: String(ord.user_id),
+          entityType: 'nowpayments_order',
+          entityId: String(order_id),
+          message: `Your crypto payment came up ${(1 - paidRatio) * 100 >= 1 ? `${((1 - paidRatio) * 100).toFixed(0)}%` : 'a bit'} short — about $${shortUsd.toFixed(2)}. Top up in your wallet and send again to unlock access.`,
+          metadata: { url: '/subscribe', pushTitle: 'Payment short by ~$' + shortUsd.toFixed(2), pushBody: 'Send the remaining amount to unlock.' },
+        }).catch(() => {});
+      }
+    } catch (_) { /* non-fatal */ }
     return res.json({ received: true });
   }
 
