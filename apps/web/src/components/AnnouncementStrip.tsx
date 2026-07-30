@@ -48,6 +48,12 @@ const MARQUEE_END_PAD_PX = 12; // ensure the last character clears the edge
 const UPDATE_MESSAGES: RawMessage[] = [
   {
     category: "UPDATE",
+    en: "💰 New to crypto? Setup a wallet in 5 min + earn 100 free tokens. Tap here →",
+    es: "💰 ¿Nuevo en cripto? Setup en 5 min + gana 100 tokens gratis. Toca aquí →",
+    href: "/crypto-guide",
+  },
+  {
+    category: "UPDATE",
     en: "🚢 Cruise Mode is here — a sleek floating nav for a cleaner browsing experience. Tap the ship to try it!",
     es: "🚢 Cruise Mode ya está disponible — una navegación flotante para una experiencia más limpia. ¡Toca el barco!",
     href: "/",

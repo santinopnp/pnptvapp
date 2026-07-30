@@ -7676,6 +7676,80 @@ app.get('/api/webapp/me/referral/list', asyncHandler(async (req, res) => {
   return res.json({ success: true, list });
 }));
 
+// ── Crypto guide progress / completion ──────────────────────────────────────
+// Wizard state persisted server-side so users see the same last-step across
+// devices; completion grants a one-time 100-token reward (idempotent via the
+// crypto_guide_reward_granted_at column).
+app.get('/api/webapp/me/crypto-guide-status', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const { rows } = await query(
+    `SELECT crypto_guide_completed_at, crypto_guide_reward_granted_at, crypto_guide_progress_step
+       FROM users WHERE id = $1`,
+    [user.id]
+  );
+  const r = rows[0] || {};
+  return res.json({
+    success: true,
+    completedAt: r.crypto_guide_completed_at || null,
+    rewardGrantedAt: r.crypto_guide_reward_granted_at || null,
+    progressStep: r.crypto_guide_progress_step || 0,
+  });
+}));
+
+app.post('/api/webapp/me/crypto-guide-progress', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const step = Math.max(0, Math.min(7, parseInt(req.body?.step, 10) || 0));
+  await query(
+    `UPDATE users SET crypto_guide_progress_step = GREATEST(crypto_guide_progress_step, $2), updated_at = NOW() WHERE id = $1`,
+    [user.id, step]
+  );
+  return res.json({ success: true, progressStep: step });
+}));
+
+app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  // Mark completed if not already. Grant 100 tokens once (guarded by reward_granted_at).
+  const { rows } = await query(
+    `UPDATE users
+        SET crypto_guide_completed_at = COALESCE(crypto_guide_completed_at, NOW()),
+            crypto_guide_progress_step = 7,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING crypto_guide_completed_at, crypto_guide_reward_granted_at`,
+    [user.id]
+  );
+  const r = rows[0] || {};
+  let rewarded = false;
+  let newBalance = null;
+  if (!r.crypto_guide_reward_granted_at) {
+    try {
+      const TokenSvc = require('../../services/tokenService');
+      newBalance = await TokenSvc.creditTokens(user.id, 100, `crypto_guide:reward:${user.id}`);
+      await query(
+        `UPDATE users SET crypto_guide_reward_granted_at = NOW() WHERE id = $1 AND crypto_guide_reward_granted_at IS NULL`,
+        [user.id]
+      );
+      rewarded = true;
+      try {
+        const NotificationEmitter = require('../../services/notificationEmitter');
+        await NotificationEmitter.emit({
+          type: 'crypto_guide_reward',
+          category: 'gamification',
+          priority: 'normal',
+          targetUserId: String(user.id),
+          entityType: 'crypto_guide',
+          entityId: String(user.id),
+          message: 'You completed the crypto guide — 100 tokens added to your wallet 🎁',
+          metadata: { url: '/buy-tokens', pushTitle: '+100 tokens', pushBody: 'Crypto guide complete — enjoy the reward.' },
+        }).catch(() => {});
+      } catch (_) { /* non-fatal */ }
+    } catch (grantErr) {
+      logger.warn('crypto-guide-complete: token grant failed (still marked completed)', { userId: user.id, error: grantErr.message });
+    }
+  }
+  return res.json({ success: true, completedAt: r.crypto_guide_completed_at, rewarded, tokenBalance: newBalance });
+}));
+
 // Referral: redeem a code (called on register)
 app.post('/api/webapp/referral/redeem', asyncHandler(async (req, res) => {
   const user = req.session?.user;

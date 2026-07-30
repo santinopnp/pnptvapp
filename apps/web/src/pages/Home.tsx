@@ -11,6 +11,7 @@ import { UpcomingEvents } from "@/components/events/UpcomingEvents";
 import { NearbyWidget } from "@/components/NearbyWidget";
 import { useI18n } from "@/lib/i18n";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
+import { getCryptoGuideStatus } from "@/lib/api";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
 
@@ -40,6 +41,21 @@ export default function Home() {
   const [myHangouts, setMyHangouts] = useState<HangoutGroup[]>([]);
   const [previewPosts, setPreviewPosts] = useState<SocialPostItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  // Crypto-guide onboarding banner — shown once per session for users who
+  // haven't completed the wizard. Dismissed via sessionStorage.
+  const [showCryptoBanner, setShowCryptoBanner] = useState(false);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (sessionStorage.getItem("pnp_crypto_banner_dismissed") === "1") return;
+    getCryptoGuideStatus()
+      .then((s) => { if (!s.completedAt) setShowCryptoBanner(true); })
+      .catch(() => {});
+  }, [isAuthenticated]);
+  const dismissCryptoBanner = () => {
+    setShowCryptoBanner(false);
+    try { sessionStorage.setItem("pnp_crypto_banner_dismissed", "1"); } catch {}
+  };
 
   const username = user?.username || user?.displayName || "user";
   const tierLabel = isPrime ? t.home.tierLabelPrime : isMember ? t.home.tierLabelMember : t.home.tierLabelFree;
@@ -137,6 +153,44 @@ export default function Home() {
         <meta name="description" content={t.home.metaDescription} />
       </Helmet>
       {showTutorial && viewMode === "feed" && <TutorialOverlay section="home" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
+
+      {/* Crypto-guide onboarding banner (dismissible per session) */}
+      {isAuthenticated && showCryptoBanner && viewMode === "home" && (
+        <div
+          className="mb-4 rounded-xl p-4 flex items-center gap-3"
+          style={{
+            background: "linear-gradient(90deg, rgba(245,158,11,0.10), rgba(212,0,122,0.10))",
+            border: "1px solid rgba(245,158,11,0.35)",
+          }}
+        >
+          <div style={{ fontSize: 24 }}>💰</div>
+          <div className="flex-1 min-w-0">
+            <p className="m-0 text-sm font-bold text-white">
+              {es ? "¿Nuevo en cripto? Setup en 5 min" : "New to crypto? Setup in 5 min"}
+            </p>
+            <p className="m-0 text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>
+              {es ? "Completa la guía y llévate 100 tokens gratis 🎁" : "Complete the guide and earn 100 free tokens 🎁"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/crypto-guide")}
+            className="px-3.5 py-2 rounded-lg text-xs font-bold text-white flex-shrink-0"
+            style={{ background: "linear-gradient(135deg, #F59E0B, #D4007A)" }}
+          >
+            {es ? "Empezar →" : "Start →"}
+          </button>
+          <button
+            type="button"
+            onClick={dismissCryptoBanner}
+            aria-label={es ? "Cerrar" : "Dismiss"}
+            className="text-white/50 hover:text-white/90 text-lg leading-none flex-shrink-0"
+            style={{ padding: "4px 6px" }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Dashboard: Welcome + Latest Posts + Events — only in home view */}
       {isAuthenticated && viewMode === "home" && (

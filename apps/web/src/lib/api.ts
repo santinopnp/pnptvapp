@@ -9715,3 +9715,27 @@ export async function getForYouRecommendations(
   if (creatorId) qs.set('creatorId', creatorId);
   return request(`/api/webapp/recommendations/for-you?${qs.toString()}`);
 }
+
+// Crypto guide progress + one-time reward.
+export interface CryptoGuideStatus {
+  success: boolean;
+  completedAt: string | null;
+  rewardGrantedAt: string | null;
+  progressStep: number;
+}
+export async function getCryptoGuideStatus(): Promise<CryptoGuideStatus> {
+  return request(`/api/webapp/me/crypto-guide-status`);
+}
+export async function saveCryptoGuideProgress(step: number): Promise<{ success: boolean; progressStep: number }> {
+  return request(`/api/webapp/me/crypto-guide-progress`, {
+    method: 'POST',
+    body: JSON.stringify({ step }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+export async function completeCryptoGuide(): Promise<{ success: boolean; rewarded: boolean; tokenBalance: number | null }> {
+  return request(`/api/webapp/me/crypto-guide-complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+}

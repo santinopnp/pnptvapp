@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { getCryptoGuideStatus, saveCryptoGuideProgress, completeCryptoGuide } from "@/lib/api";
 import { WALLETS, type WalletKey } from "@/lib/cryptoWallets";
 
 type Lang = "en" | "es";
@@ -533,6 +534,9 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
   // screen: 0 intro, 1 install, 2-5 setup (1..4), 6 fund, 7 done
   const [screen, setScreen] = useState(0);
   const [walletKey, setWalletKey] = useState<WalletKey>("trust");
+  const [rewarded, setRewarded] = useState<boolean | null>(null);
+  const initialLoadedRef = useRef(false);
+  const completeFiredRef = useRef(false);
 
   const wallet = WALLETS[walletKey];
   const setupIdx = screen - 2; // 0..3 during setup screens
@@ -542,9 +546,36 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
   const isFund = screen === 6;
   const isDone = screen === 7;
 
+  // Resume: fetch server-side progress on mount. Only jumps forward — never
+  // back — so we don't yank a user out of an in-progress screen.
+  useEffect(() => {
+    if (initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
+    getCryptoGuideStatus().then((s) => {
+      const svc = Number(s.progressStep || 0);
+      if (svc > 0 && svc < 7) setScreen((cur) => (svc > cur ? svc : cur));
+    }).catch(() => {});
+  }, []);
+
+  // Persist progress to server as the user moves through the flow.
+  useEffect(() => {
+    if (!initialLoadedRef.current || screen === 0) return;
+    saveCryptoGuideProgress(screen).catch(() => {});
+  }, [screen]);
+
+  // Fire completion (+100 tokens once) when the user lands on the final screen.
+  useEffect(() => {
+    if (screen !== 7 || completeFiredRef.current) return;
+    completeFiredRef.current = true;
+    completeCryptoGuide().then((r) => {
+      setRewarded(!!r.rewarded);
+    }).catch(() => {});
+  }, [screen]);
+
   const goBack = () => setScreen((s) => Math.max(0, s - 1));
   const goNext = () => setScreen((s) => Math.min(7, s + 1));
   const pickWallet = (key: WalletKey) => { setWalletKey(key); setScreen(1); };
+  const skipToDone = () => setScreen(7);
 
   const nextBg = isFund || isDone
     ? "linear-gradient(90deg, #2DD4BF, #22D3EE)"
@@ -606,6 +637,14 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
             })}
           </div>
           <p style={{ margin: "12px 0 0", fontSize: 11, color: "#6b6b70", lineHeight: 1.6 }}>{T.bothFree[lang]}</p>
+
+          <button
+            type="button"
+            onClick={skipToDone}
+            style={{ marginTop: 14, width: "100%", padding: "10px 0", borderRadius: 10, border: "1px dashed #2A2A2A", background: "transparent", fontSize: 11, fontWeight: 600, color: "#A1A1A3", cursor: "pointer", fontFamily: "inherit" }}
+          >
+            {es ? "Ya tengo una wallet — saltar →" : "I already have a wallet — skip →"}
+          </button>
         </div>
       )}
 
@@ -692,6 +731,12 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
           </div>
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#fff" }}>{T.ready[lang]}</h2>
           <p style={{ margin: 0, fontSize: 12, color: "#A1A1A3", lineHeight: 1.7, maxWidth: 280 }}>{T.readyBody[lang]}</p>
+          {rewarded && (
+            <div style={{ padding: "8px 14px", borderRadius: 999, background: "linear-gradient(90deg, #F59E0B, #D4007A)", color: "#fff", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span>🎁</span>
+              <span>{es ? "+100 tokens agregados a tu wallet" : "+100 tokens added to your wallet"}</span>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", marginTop: 6 }}>
             {[
               { href: "/subscribe",   label: T.linkSub[lang] },
