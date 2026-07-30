@@ -133,9 +133,6 @@ export default function PreferencesSettings() {
   const [langSaving, setLangSaving] = useState(false);
   const [langError, setLangError] = useState<string | null>(null);
 
-  const [wofConsent, setWofConsent] = useState(false);
-  const [wofConsentSaving, setWofConsentSaving] = useState(false);
-
   const [contentDisclaimer, setContentDisclaimer] = useState(false);
   const [contentDisclaimerSaving, setContentDisclaimerSaving] = useState(false);
 
@@ -153,7 +150,6 @@ export default function PreferencesSettings() {
       .then((res) => {
         if (cancelled) return;
         const profile = res.profile;
-        setWofConsent(profile.wofPhotoConsent ?? false);
         setContentDisclaimer(profile.contentDisclaimer ?? false);
         setAutoShareToX(profile.autoShareToX ?? false);
         setXHandle(profile.xHandle ?? null);
@@ -184,16 +180,6 @@ export default function PreferencesSettings() {
     },
     [selectedLang, langSaving, refreshUser, p],
   );
-
-  const handleWofConsentToggle = useCallback(async () => {
-    const newValue = !wofConsent;
-    setWofConsentSaving(true);
-    try {
-      await updateProfile({ wofPhotoConsent: newValue });
-      setWofConsent(newValue);
-    } catch { /* silent */ }
-    finally { setWofConsentSaving(false); }
-  }, [wofConsent]);
 
   const handleContentDisclaimerToggle = useCallback(async () => {
     if (contentDisclaimer) return;
@@ -281,25 +267,6 @@ export default function PreferencesSettings() {
 
         {/* Theme */}
         <ThemePicker />
-
-        {/* Wall of Fame consent */}
-        <div
-          className="flex items-center justify-between rounded-lg px-3 py-3 mb-3"
-          style={{ background: "rgba(255,180,84,0.06)", border: "1px solid rgba(255,180,84,0.15)" }}
-        >
-          <div className="flex-1 min-w-0 mr-3">
-            <p className="text-sm font-medium text-white">{p.wallOfFameConsent}</p>
-            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary)" }}>
-              {p.wallOfFameConsentDesc}
-            </p>
-          </div>
-          <Toggle
-            checked={wofConsent}
-            onChange={handleWofConsentToggle}
-            disabled={wofConsentSaving}
-            accentColor="#FFB454"
-          />
-        </div>
 
         {/* Content disclaimer */}
         <div

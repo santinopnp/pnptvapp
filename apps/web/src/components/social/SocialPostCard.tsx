@@ -11,9 +11,6 @@ import {
   getReplies,
   createReply,
   togglePostLike,
-  adminFlagWofPost,
-  adminUnflagWofPost,
-  requestWofDeletion,
   editSocialPost,
   createUserReport,
   searchCreators,
@@ -164,7 +161,6 @@ export interface SocialPostCardProps {
   userLang: string;
   onLike: (id: number) => void;
   onDelete: (id: number) => void | Promise<void>;
-  onWofToggle?: (id: number, nowWof: boolean) => void;
   onNavigate: (path: string) => void;
   contentDisclaimerAccepted?: boolean;
   onAcceptDisclaimer?: () => Promise<void>;
@@ -211,7 +207,6 @@ export default function SocialPostCard({
   userLang,
   onLike,
   onDelete,
-  onWofToggle,
   onNavigate,
   contentDisclaimerAccepted,
   onAcceptDisclaimer,
@@ -240,10 +235,6 @@ export default function SocialPostCard({
   const [localReplyCount, setLocalReplyCount] = useState(post.replies_count || 0);
   const optimisticIdRef = useRef(-Date.now());
   const composerRef = useRef<HTMLDivElement>(null);
-  const [wofDeleting, setWofDeleting] = useState(false);
-  const [wofDeleted, setWofDeleted] = useState(false);
-  const [isWof, setIsWof] = useState(post.is_wof ?? false);
-  const [wofToggling, setWofToggling] = useState(false);
   const [translatedContent, setTranslatedContent] = useState<string | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -334,23 +325,6 @@ export default function SocialPostCard({
   // Feed CTA banner (2026-07-24): opens the shared CreatorSubscribeWizard
   // inline right under the post card — no navigation to the profile.
   const [showFeedSubPanel, setShowFeedSubPanel] = useState(false);
-
-  const handleWofToggle = useCallback(async () => {
-    if (wofToggling) return;
-    setWofToggling(true);
-    try {
-      if (isWof) {
-        await adminUnflagWofPost(post.id);
-        setIsWof(false);
-        onWofToggle?.(post.id, false);
-      } else {
-        await adminFlagWofPost(post.id);
-        setIsWof(true);
-        onWofToggle?.(post.id, true);
-      }
-    } catch { /* silent */ }
-    setWofToggling(false);
-  }, [post.id, isWof, wofToggling, onWofToggle]);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -491,20 +465,6 @@ export default function SocialPostCard({
     setIsTranslating(false);
   }, [isTranslating, translatedContent, post.content, userLang]);
 
-  const handleRequestWofDeletion = useCallback(async () => {
-    if (wofDeleting || wofDeleted) return;
-    if (!confirm("Remove this Wall of Fame post from the feed?")) return;
-    setWofDeleting(true);
-    try {
-      const res = await requestWofDeletion(post.id);
-      if (res.success) {
-        setWofDeleted(true);
-        onDelete(post.id);
-      }
-    } catch { /* silent */ }
-    setWofDeleting(false);
-  }, [post.id, wofDeleting, wofDeleted, onDelete]);
-
   useEffect(() => {
     if (!showMenu) return;
     const handler = (e: MouseEvent) => {
@@ -627,7 +587,7 @@ export default function SocialPostCard({
 
   return (
     <div
-      className={`glass-card-sm pt-4 pb-4 pr-4 pl-14 relative${post.is_carousel ? "" : " cursor-pointer"}`}
+      className={`group glass-card-sm pt-4 pb-4 pr-4 pl-14 relative transition-colors lg:hover:border-white/15 lg:hover:bg-white/[0.02]${post.is_carousel ? "" : " cursor-pointer"}`}
       onClick={post.is_carousel ? undefined : toggleReplies}
       id={`post-${post.id}`}
       style={
@@ -747,15 +707,6 @@ export default function SocialPostCard({
                 #{post.hangout_group_name.replace(/\s+/g, "")}
               </button>
             )}
-            {/* Wall of Fame badge */}
-            {post.is_wof && (
-              <span
-                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ background: "rgba(255,180,84,0.15)", color: "#FFB454" }}
-              >
-                {t.wallOfFame}
-              </span>
-            )}
             {/* Exclusive badges */}
             {post.is_exclusive && post.exclusive_status === "unlocked" && (
               <span
@@ -783,32 +734,6 @@ export default function SocialPostCard({
               >
                 <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
-            )}
-
-            {/* Admin: WoF flag toggle */}
-            {isAdmin && (
-              <button
-                onClick={(e) => { e.stopPropagation(); handleWofToggle(); }}
-                disabled={wofToggling}
-                className="text-xs transition-colors disabled:opacity-40"
-                style={{ color: isWof ? "#FFB454" : "#8E8E93" }}
-                title={isWof ? "Remove from Wall of Fame" : "Add to Wall of Fame"}
-                aria-label={isWof ? "Remove from Wall of Fame" : "Add to Wall of Fame"}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={isWof ? "currentColor" : "none"}
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"
-                  />
-                </svg>
-              </button>
             )}
 
             {/* 3-dots post menu */}
@@ -1388,15 +1313,55 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* Community hype — re-shared community media */}
+              {/* Community hype — media is hydrated live from the ORIGINAL post
+                  via original_* fields. If the original was deleted or went
+                  exclusive after the hype, we show a placeholder instead of
+                  borrowed media (no more content theft on delete/paywall flip). */}
               {(() => {
                 const m = post.metadata as Record<string, unknown> | undefined | null;
                 if (!m || m.kind !== 'community_hype') return null;
-                const originalAuthor = (m.original_author_username as string) || 'someone';
-                const mediaUrl = post.media_url || (m.original_media_url as string) || null;
-                const mediaType = (m.original_media_type as string) || post.media_type;
-                const thumbUrl = post.video_thumbnail_url || (m.original_video_thumbnail_url as string | undefined) || undefined;
+                const originalAuthor = post.original_author_username || (m.original_author_username as string) || 'someone';
                 const originalContent = m.original_content as string | undefined;
+                const attribution = (
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2 bg-white/4 hover:bg-white/8 transition-colors group"
+                    onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
+                  >
+                    <p className="text-[10px] text-orange-400/80 font-medium flex items-center gap-1">
+                      🔥 Shared from @{originalAuthor}
+                      <span className="ml-auto text-white/30 group-hover:text-white/60 transition-colors text-[9px]">View original →</span>
+                    </p>
+                    {originalContent && (
+                      <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{originalContent}</p>
+                    )}
+                  </button>
+                );
+
+                if (post.original_deleted) {
+                  return (
+                    <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
+                      <div className="p-4 text-center text-xs text-white/50">
+                        The original post was removed by its author.
+                      </div>
+                      {attribution}
+                    </div>
+                  );
+                }
+                if (post.original_is_exclusive) {
+                  return (
+                    <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
+                      <div className="p-4 text-center text-xs text-white/50">
+                        This content is now exclusive — visit the author's profile to unlock.
+                      </div>
+                      {attribution}
+                    </div>
+                  );
+                }
+
+                const mediaUrl = post.original_media_url || null;
+                const mediaType = post.original_media_type || null;
+                const thumbUrl = post.original_video_thumbnail_url || undefined;
                 return (
                   <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
                     {mediaUrl && (
@@ -1409,7 +1374,7 @@ export default function SocialPostCard({
                           onContextMenu={(e) => e.preventDefault()}
                           playsInline
                           creatorDisclaimer={post.author_creator_status === "active"}
-                          className="w-full max-h-[360px] object-contain bg-black"
+                          className="w-full max-h-[360px] lg:max-h-[560px] object-contain bg-black"
                           preload="metadata"
                           poster={thumbUrl || undefined}
                         />
@@ -1417,25 +1382,13 @@ export default function SocialPostCard({
                         <img
                           src={mediaUrl}
                           alt="Hyped post"
-                          className="w-full object-cover max-h-[360px] cursor-pointer"
+                          className="w-full object-cover max-h-[360px] lg:max-h-[560px] cursor-pointer"
                           loading="lazy"
                           onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
                         />
                       )
                     )}
-                    <button
-                      type="button"
-                      className="w-full text-left px-3 py-2 bg-white/4 hover:bg-white/8 transition-colors group"
-                      onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
-                    >
-                      <p className="text-[10px] text-orange-400/80 font-medium flex items-center gap-1">
-                        🔥 Shared from @{originalAuthor}
-                        <span className="ml-auto text-white/30 group-hover:text-white/60 transition-colors text-[9px]">View original →</span>
-                      </p>
-                      {originalContent && (
-                        <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{originalContent}</p>
-                      )}
-                    </button>
+                    {attribution}
                   </div>
                 );
               })()}
@@ -1481,7 +1434,7 @@ export default function SocialPostCard({
                             onContextMenu={(e) => e.preventDefault()}
                             playsInline
                             creatorDisclaimer={post.author_creator_status === "active"}
-                            className="w-full max-h-[480px] rounded-lg object-contain bg-black"
+                            className="w-full max-h-[480px] lg:max-h-[640px] rounded-lg object-contain bg-black"
                             preload="metadata"
                             poster={post.video_thumbnail_url || undefined}
                             onError={() => setVideoError(true)}
@@ -1744,36 +1697,6 @@ export default function SocialPostCard({
               </button>
             )}
 
-            {/* Request Deletion — shown on WoF posts for the post author */}
-            {post.is_wof && isOwn && !wofDeleted && (
-              <button
-                onClick={handleRequestWofDeletion}
-                disabled={wofDeleting}
-                className="flex items-center gap-1.5 text-xs ml-auto hover:text-red-400 transition-colors"
-                style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
-                title="Request removal from feed"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                  />
-                </svg>
-                {wofDeleting ? t.removing : t.remove}
-              </button>
-            )}
-            {post.is_wof && isOwn && wofDeleted && (
-              <span className="text-xs ml-auto" style={{ color: "#34D399" }}>
-                Removed
-              </span>
-            )}
           </div>
           )}
 

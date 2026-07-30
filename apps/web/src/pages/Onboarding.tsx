@@ -7,6 +7,7 @@ import {
   completeOnboarding,
   type OnboardingStepKey,
 } from "@/lib/api";
+import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -535,89 +536,13 @@ function StepCrypto({
   onFinish: () => Promise<void>;
   state: StepState;
 }) {
-  const o = useI18n().onboarding;
-
-  const wallets = [
-    {
-      emoji: "⚡",
-      title: o.cryptoDashTitle,
-      desc: o.cryptoDashDesc,
-      homepage: o.cryptoDashHomepage,
-      appStore: o.cryptoDashAppStore,
-      playStore: o.cryptoDashPlayStore,
-    },
-    {
-      emoji: "🟡",
-      title: o.cryptoTrustTitle,
-      desc: o.cryptoTrustDesc,
-      homepage: o.cryptoTrustHomepage,
-      appStore: o.cryptoTrustAppStore,
-      playStore: o.cryptoTrustPlayStore,
-    },
-  ] as const;
+  const t = useI18n();
+  const o = t.onboarding;
+  const lang: "en" | "es" = t.lang === "es" ? "es" : "en";
 
   return (
     <StepWrapper title={o.cryptoTitle} subtitle={o.cryptoSubtitle}>
-      <div className="space-y-3 text-sm text-pnp-textSecondary">
-        <p>{o.cryptoP1}</p>
-        <p>{o.cryptoP2}</p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {wallets.map((wallet) => (
-          <div
-            key={wallet.title}
-            className="rounded-xl bg-pnp-surface border border-pnp-border p-4 flex flex-col gap-2"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-2xl" aria-hidden="true">{wallet.emoji}</span>
-              <div>
-                <p className="font-semibold text-pnp-textPrimary text-sm">{wallet.title}</p>
-                <p className="text-xs text-pnp-textSecondary">{wallet.desc}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-1">
-              <a
-                href={wallet.homepage}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-h-[36px] px-3 flex items-center rounded-lg text-xs font-medium text-pnp-textPrimary border border-pnp-border hover:border-pnp-accent/50 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-pnp-accent"
-              >
-                Website
-              </a>
-              <a
-                href={wallet.appStore}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`${wallet.title} on App Store`}
-                className="min-h-[36px] px-3 flex items-center rounded-lg text-xs font-medium text-pnp-textPrimary border border-pnp-border hover:border-pnp-accent/50 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-pnp-accent"
-              >
-                App Store
-              </a>
-              <a
-                href={wallet.playStore}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`${wallet.title} on Google Play`}
-                className="min-h-[36px] px-3 flex items-center rounded-lg text-xs font-medium text-pnp-textPrimary border border-pnp-border hover:border-pnp-accent/50 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-pnp-accent"
-              >
-                Google Play
-              </a>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <p className="text-xs text-pnp-textSecondary">
-        {o.cryptoGuideLink.split(o.cryptoGuideLinkLabel)[0]}
-        <a
-          href="/crypto-guide"
-          className="text-pnp-accent hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-pnp-accent rounded"
-        >
-          {o.cryptoGuideLinkLabel}
-        </a>
-        {o.cryptoGuideLink.split(o.cryptoGuideLinkLabel)[1] ?? ""}
-      </p>
+      <CryptoOnboardingWizard lang={lang} />
 
       {state.error && (
         <p role="alert" className="text-sm text-pnp-error">{state.error}</p>

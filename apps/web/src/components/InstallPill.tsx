@@ -33,12 +33,21 @@ function setDismissed(days: number) {
 /**
  * Public predicate so other floating pills can defer to the install pill.
  * Returns true when the install pill SHOULD render (mounted + visible).
+ *
+ * Desktop-Chrome hide: PWA install on a mouse-driven ≥1024px viewport is
+ * noise — user already has the site in a normal window, and the FAB collides
+ * with Cristina + mini-player + push pill. Gate to touch OR narrow only.
  */
 export function shouldShowInstallPill(): boolean {
   if (typeof window === "undefined") return false;
   if (wasInstalledThisSession()) return false;
   if (isStandalonePWA()) return false;
   if (isDismissed()) return false;
+  try {
+    const isTouch = window.matchMedia("(pointer: coarse)").matches;
+    const isNarrow = window.matchMedia("(max-width: 1023px)").matches;
+    if (!isTouch && !isNarrow) return false;
+  } catch { /* older browsers — fall through and show */ }
   return isIOSSafariNotInstalled() || hasCapturedInstallEvent();
 }
 
@@ -115,6 +124,13 @@ export function InstallPill() {
     if (isInstalled) return false;
     if (isStandalonePWA()) return false;
     if (isDismissed()) return false;
+    // Desktop Chrome hide — same gate as shouldShowInstallPill() so the
+    // predicate + render stay in lockstep.
+    try {
+      const isTouch = window.matchMedia("(pointer: coarse)").matches;
+      const isNarrow = window.matchMedia("(max-width: 1023px)").matches;
+      if (!isTouch && !isNarrow) return false;
+    } catch { /* older browsers — fall through */ }
     if (isIOS) return true;
     if (installEvent) return true;
     return false;

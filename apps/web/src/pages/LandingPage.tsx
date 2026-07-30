@@ -795,7 +795,7 @@ export function LandingPage() {
               Replaces the entire login form with a single-action card. */}
           {showPasskeyPrompt && (
             <div className="w-full flex flex-col items-center gap-5">
-              <img src="/logo-login.png" alt="PNPtv!" className="w-48 h-auto" />
+              <img src="/logo-login-800.webp" alt="PNPtv!" className="w-48 h-auto object-contain" style={{ aspectRatio: "6581 / 2141" }} />
 
               <div
                 className="w-full rounded-2xl p-5 text-left space-y-4"

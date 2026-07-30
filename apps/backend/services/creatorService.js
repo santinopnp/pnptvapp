@@ -632,12 +632,11 @@ class CreatorService {
           [hangoutId, userId]
         );
 
-        // Seed 4 default topics
+        // Seed default topics
         const topics = [
           { name: 'General',      description: 'General discussion',       position: 0, is_read_only: false, is_wall_of_fame: false },
           { name: 'New Members',  description: 'Welcome new members!',     position: 1, is_read_only: false, is_wall_of_fame: false },
           { name: 'PNP Media',    description: 'Share media and content',  position: 2, is_read_only: false, is_wall_of_fame: false },
-          { name: 'Wall of Fame', description: 'Top content by community', position: 3, is_read_only: true,  is_wall_of_fame: true  },
         ];
         for (const td of topics) {
           const { rows: tRows } = await client.query(

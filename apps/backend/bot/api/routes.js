@@ -7842,8 +7842,6 @@ app.delete('/api/webapp/dm/messages/:msgId', requireSessionAuth, asyncHandler(dm
 app.get('/api/webapp/social/home-feed', pageLimiter, asyncHandler(socialController.getHomeFeed));
 // Authenticated feed — full paginated feed with liked_by_me per viewer
 app.get('/api/webapp/social/feed', requireSessionAuth, asyncHandler(socialController.getFeed));
-// Wall of Fame sub-feed — WoF-only posts
-app.get('/api/webapp/social/wof-feed', pageLimiter, asyncHandler(socialController.getWofFeed));
 // Hashtag feed — posts containing a specific #tag (?tag=pnp)
 app.get('/api/webapp/social/hashtag-feed', requireSessionAuth, asyncHandler(socialController.getHashtagFeed));
 app.get('/api/webapp/social/wall/:userId', asyncHandler(socialController.getWall));
@@ -8252,11 +8250,6 @@ app.get('/api/webapp/social/posts/:postId', asyncHandler(socialController.getPos
 app.get('/api/webapp/social/posts/:postId/replies', requireSessionAuth, asyncHandler(socialController.getReplies));
 app.get('/api/webapp/social/mentions/search', requireSessionAuth, asyncHandler(socialController.searchMentions));
 app.post('/api/webapp/social/posts/:postId/mastodon', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.postToMastodon));
-app.post('/api/webapp/social/posts/:postId/request-deletion', requireSessionAuth, asyncHandler(socialController.requestWofDeletion));
-app.get('/api/webapp/social/wof/leaderboard', asyncHandler(socialController.getWofLeaderboard));
-app.get('/api/webapp/social/wof/stats', asyncHandler(socialController.getWofStats));
-app.post('/api/admin/social/posts/:postId/wof', adminGuard, asyncHandler(socialController.adminFlagWof));
-app.delete('/api/admin/social/posts/:postId/wof', adminGuard, asyncHandler(socialController.adminUnflagWof));
 
 // ── User Hangout Activity (for profiles) ────────────────────────────────────
 app.get('/api/webapp/social/hangout-activity/:userId', requireSessionAuth, asyncHandler(socialController.getUserHangoutActivity));

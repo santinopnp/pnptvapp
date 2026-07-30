@@ -374,12 +374,6 @@ export default function SocialFeedTabs({
     setPosts((prev) => prev.filter((p) => p.id !== postId));
   }, []);
 
-  const handleWofToggle = useCallback((postId: number, nowWof: boolean) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, is_wof: nowWof } : p))
-    );
-  }, []);
-
   const handleAcceptDisclaimer = useCallback(async () => {
     await updateProfile({ contentDisclaimer: true });
     setDisclaimerAccepted(true);
@@ -710,7 +704,6 @@ export default function SocialFeedTabs({
               userLang={userLang}
               onLike={handleLike}
               onDelete={handleDelete}
-              onWofToggle={handleWofToggle}
               onNavigate={onNavigate}
               contentDisclaimerAccepted={disclaimerAccepted}
               onAcceptDisclaimer={handleAcceptDisclaimer}

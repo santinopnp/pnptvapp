@@ -162,6 +162,28 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-pnp-textSecondary;
   }
+
+  /* Windows Chrome scrollbars are 17px overlay-less; without stable gutter the
+     entire layout shifts sideways every time a page appears/disappears its
+     vertical scrollbar. This locks a fixed gutter so tab-switches and
+     content-loads don't jerk horizontally on desktop. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  /* Consistent keyboard-focus ring across the whole app. Uses focus-visible
+     so mouse clicks don't get outlines, only actual keyboard nav. */
+  :focus-visible {
+    outline: 2px solid #FF4DA6;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid #FF4DA6;
+    outline-offset: 2px;
+  }
 }
 
 @layer components {

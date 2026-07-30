@@ -1030,7 +1030,6 @@ export function CreatorConsents() {
   const [acceptKind, setAcceptKind] = React.useState<"terms" | "disclaimer" | "creator_terms" | null>(null);
   const [acceptBusy, setAcceptBusy] = React.useState(false);
   const [acceptError, setAcceptError] = React.useState<string | null>(null);
-  const [wofBusy, setWofBusy] = React.useState(false);
 
   // PNPtv announcement consent — creator opt-in for @pnptv to auto-broadcast
   // new videos/streams on X, Telegram groups, and consented DMs.
@@ -1075,15 +1074,6 @@ export function CreatorConsents() {
     return () => { cancelled = true; };
   }, []);
 
-  const acceptWofPhotoConsent = async () => {
-    setWofBusy(true);
-    try {
-      await updateProfile({ wofPhotoConsent: true });
-      setConsents((c: any) => c ? { ...c, wof_photo_consent: true } : c);
-    } catch { /* swallow — row stays pending, user can retry */ }
-    finally { setWofBusy(false); }
-  };
-
   const genericRows: ConsentRow[] = consents ? [
     {
       label: "Terms of Service",
@@ -1110,18 +1100,6 @@ export function CreatorConsents() {
       date: consents.age_verified_at,
       ...(!consents.age_verified
         ? { actionLabel: "Verify Age", onAction: () => navigate("/2257") }
-        : {}),
-    },
-    {
-      label: "Wall of Fame Photo Consent",
-      status: consents.wof_photo_consent ? "accepted" : "pending",
-      expandContent: (
-        <p className="pt-2">Allow your Wall of Fame photos to appear in the Social Feed on the web app. You can toggle this in Settings → App Preferences at any time.</p>
-      ),
-      // Inline accept — simple toggle, no modal needed. updateProfile keeps
-      // a single source of truth with the Settings → App Preferences toggle.
-      ...(!consents.wof_photo_consent
-        ? { actionLabel: wofBusy ? "Saving…" : "Accept", onAction: acceptWofPhotoConsent }
         : {}),
     },
     {

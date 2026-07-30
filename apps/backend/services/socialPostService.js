@@ -14,14 +14,102 @@ const isValidPhotoUrl = (photo) => {
 };
 
 /**
- * Sanitize post rows: convert Telegram file IDs to null so the frontend
- * shows a gradient fallback instead of a broken <img> tag.
+ * Sanitize + hydrate post rows.
+ *
+ * 1. Convert Telegram file IDs to null so the frontend shows a gradient
+ *    fallback instead of a broken <img> tag.
+ * 2. For community_hype posts, hydrate `original_*` fields (media_url,
+ *    media_type, video_thumbnail_url, is_deleted, is_exclusive, author info)
+ *    from the ORIGINAL post via one batched query — never trust a copy of
+ *    media on the hyper's row. Root cause fix for the "hype steals content"
+ *    bug: hype posts no longer duplicate media, they reference it live.
+ * 3. Optional `hideDeletedHypeOriginals` filters out hypes whose original
+ *    was deleted (used by the community feed, NOT by profile feeds — a
+ *    profile keeps the row with an "eliminated by author" placeholder).
  */
-const sanitizePostRows = (rows) => {
-  return rows.map(row => ({
+const sanitizePostRows = async (rows, opts = {}) => {
+  const { hideDeletedHypeOriginals = false } = opts;
+  const base = rows.map(row => ({
     ...row,
     author_photo: isValidPhotoUrl(row.author_photo) ? row.author_photo : null,
   }));
+
+  // Collect original_post_ids from community_hype rows (metadata may be a
+  // string when it round-trips through JSON.stringify in some code paths).
+  const origIds = new Set();
+  for (const r of base) {
+    const meta = typeof r.metadata === 'string'
+      ? (() => { try { return JSON.parse(r.metadata); } catch { return null; } })()
+      : r.metadata;
+    if (meta && meta.kind === 'community_hype' && meta.original_post_id) {
+      const id = parseInt(meta.original_post_id, 10);
+      if (Number.isFinite(id)) origIds.add(id);
+    }
+  }
+
+  let origMap = new Map();
+  if (origIds.size > 0) {
+    const { rows: origs } = await query(
+      `SELECT sp.id,
+              sp.media_url, sp.media_type, sp.video_thumbnail_url,
+              sp.is_deleted, sp.is_exclusive, sp.content_tier,
+              sp.user_id AS author_id,
+              u.username AS author_username, u.first_name AS author_first_name,
+              u.photo_file_id AS author_photo
+         FROM social_posts sp
+         JOIN users u ON u.id = sp.user_id
+        WHERE sp.id = ANY($1::int[])`,
+      [[...origIds]]
+    );
+    for (const o of origs) origMap.set(o.id, o);
+  }
+
+  const hydrated = [];
+  for (const r of base) {
+    const meta = typeof r.metadata === 'string'
+      ? (() => { try { return JSON.parse(r.metadata); } catch { return null; } })()
+      : r.metadata;
+    if (meta && meta.kind === 'community_hype' && meta.original_post_id) {
+      const origId = parseInt(meta.original_post_id, 10);
+      const orig = origMap.get(origId);
+      if (!orig) {
+        // Original was hard-deleted or never existed — treat as removed.
+        if (hideDeletedHypeOriginals) continue;
+        r.original_deleted = true;
+        r.original_media_url = null;
+        r.original_media_type = null;
+        r.original_video_thumbnail_url = null;
+        r.original_author_username = null;
+        r.original_author_first_name = null;
+        r.original_author_photo = null;
+        r.original_is_exclusive = false;
+      } else if (orig.is_deleted) {
+        if (hideDeletedHypeOriginals) continue;
+        r.original_deleted = true;
+        r.original_media_url = null;
+        r.original_media_type = null;
+        r.original_video_thumbnail_url = null;
+        r.original_author_username = orig.author_username;
+        r.original_author_first_name = orig.author_first_name;
+        r.original_author_photo = isValidPhotoUrl(orig.author_photo) ? orig.author_photo : null;
+        r.original_is_exclusive = false;
+      } else {
+        // If original became exclusive AFTER the hype, suppress media —
+        // the paywall on the original applies transitively to its hype.
+        const wentExclusive = orig.is_exclusive || String(orig.content_tier || '').toLowerCase() === 'prime';
+        r.original_deleted = false;
+        r.original_media_url = wentExclusive ? null : orig.media_url;
+        r.original_media_type = wentExclusive ? null : orig.media_type;
+        r.original_video_thumbnail_url = wentExclusive ? null : orig.video_thumbnail_url;
+        r.original_author_username = orig.author_username;
+        r.original_author_first_name = orig.author_first_name;
+        r.original_author_photo = isValidPhotoUrl(orig.author_photo) ? orig.author_photo : null;
+        r.original_is_exclusive = wentExclusive;
+      }
+    }
+    hydrated.push(r);
+  }
+  return hydrated;
 };
 
 class SocialPostService {
@@ -107,7 +195,7 @@ class SocialPostService {
        LIMIT $2`,
       params
     );
-    let posts = sanitizePostRows(rows);
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
     }
@@ -412,7 +500,7 @@ class SocialPostService {
        LIMIT $1`,
       [lim]
     );
-    return { posts: sanitizePostRows(rows) };
+    return { posts: await sanitizePostRows(rows, { hideDeletedHypeOriginals: true }) };
   }
 
   // ── Wall of Fame Feed ───────────────────────────────────────────────────────
@@ -426,47 +514,6 @@ class SocialPostService {
    * @param {number}   limit      - Page size (max 50)
    * @param {number[]} blockedIds - User IDs the viewer has blocked (C-08)
    */
-  static async getWofFeed(userId, cursor, limit = 20, blockedIds = [], viewerTier, isAdmin = false) {
-    const lim = Math.min(Number(limit) || 20, 50);
-    const cursorId = cursor ? parseInt(cursor, 10) : null;
-    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
-
-    // Param order: $1=userId, $2=lim, [$3=cursorId], $N=blockedParam
-    const params = [userId, lim];
-    if (cursorId) params.push(cursorId);
-    params.push(blockedParam);
-    const blockedParamIdx = params.length;
-    const cursorClause = cursorId ? `AND sp.id < $3` : '';
-
-    const { rows } = await query(
-      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
-              sp.content_type, sp.x_embed_url, sp.channel_id,
-              sp.source_channel,
-              sp.reply_to_id, sp.repost_of_id,
-              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_shareable, sp.is_wof, sp.created_at,
-              COALESCE(sp.content_tier, 'free') as content_tier,
-              u.id as author_id, u.username as author_username,
-              u.first_name as author_first_name, u.photo_file_id as author_photo,
-              u.city as author_city, u.country as author_country,
-              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me
-       FROM social_posts sp
-       JOIN users u ON sp.user_id = u.id
-       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL AND sp.is_wof = true AND sp.is_exclusive = false
-         ${cursorClause}
-         AND sp.user_id != ALL($${blockedParamIdx}::text[])
-       ORDER BY sp.id DESC
-       LIMIT $2`,
-      params
-    );
-    let posts = sanitizePostRows(rows);
-    // Apply content_tier blurring so PRIME-gated WoF posts are locked for non-PRIME viewers (HIGH-03)
-    if (viewerTier !== undefined) {
-      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
-    }
-    const nextCursor = rows.length === lim ? String(rows[rows.length - 1].id) : null;
-    return { posts, nextCursor };
-  }
-
   // ── Hashtag Feed ──────────────────────────────────────────────────────────
 
   /**
@@ -539,7 +586,7 @@ class SocialPostService {
        LIMIT $3`,
       params
     );
-    let posts = sanitizePostRows(rows);
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
@@ -602,7 +649,7 @@ class SocialPostService {
        LIMIT $3`,
       params
     );
-    let posts = sanitizePostRows(rows);
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
@@ -668,7 +715,9 @@ class SocialPostService {
     const profile = profileRes.rows[0] || null;
     if (profile) profile.photo_file_id = isValidPhotoUrl(profile.photo_file_id) ? profile.photo_file_id : null;
 
-    let posts = sanitizePostRows(postsRes.rows);
+    // Profile wall keeps hype rows even when the original was deleted — the row
+    // renders an "eliminated by author" placeholder instead of disappearing.
+    let posts = await sanitizePostRows(postsRes.rows);
     // Filter exclusive creator posts the viewer hasn't subscribed to (mirrors getFeed behaviour)
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
@@ -883,15 +932,6 @@ class SocialPostService {
 
   // ── Delete WoF Post (user requesting removal of their own WoF content) ────
 
-  static async deleteWofPost(postId, userId) {
-    const { rowCount } = await query(
-      'UPDATE social_posts SET is_deleted=true, updated_at=NOW() WHERE id=$1 AND user_id=$2 AND is_wof=true',
-      [postId, userId]
-    );
-    if (rowCount > 0) await MediaCleanupService.deletePostMedia(postId);
-    return rowCount > 0;
-  }
-
   // ── Replies ───────────────────────────────────────────────────────────────
 
   static async getReplies(postId, viewerId, cursor) {
@@ -923,7 +963,7 @@ class SocialPostService {
     );
     const page = rows.slice(0, lim);
     const nextCursor = rows.length > lim ? String(page[page.length - 1].id) : null;
-    return { replies: sanitizePostRows(page), nextCursor };
+    return { replies: await sanitizePostRows(page), nextCursor };
   }
 
   // ── Public Profile ────────────────────────────────────────────────────────
@@ -1023,7 +1063,10 @@ class SocialPostService {
       }
     }
 
-    let posts = sanitizePostRows(postsRes.rows).map(p => ({
+    // Public profile keeps hype rows even when the original was deleted —
+    // the row renders an "eliminated by author" placeholder instead of
+    // disappearing from the wall (Carlos: preserve activity, no media theft).
+    let posts = (await sanitizePostRows(postsRes.rows)).map(p => ({
       ...p,
       liked_by_me: viewerId ? p.liked_by_me : false,
     }));
@@ -1043,68 +1086,6 @@ class SocialPostService {
     const exclusivePhotoCount = exclusiveCountRes.rows[0]?.exclusive_photos || 0;
 
     return { profile, posts, nextCursor, postCount, performerData, exclusiveVideoCount, exclusivePhotoCount };
-  }
-
-  // ── Wall of Fame: Leaderboard ─────────────────────────────────────────────
-
-  /**
-   * Returns the top N WoF contributors ranked by total likes on their WoF posts.
-   */
-  static async getWofLeaderboard(limit = 10) {
-    const lim = Math.min(Number(limit) || 10, 50);
-    const { rows } = await query(
-      `SELECT u.id, u.username, u.first_name, u.photo_file_id,
-              COUNT(sp.id)::int AS total_posts,
-              COALESCE(SUM(sp.likes_count), 0)::int AS total_likes
-       FROM social_posts sp
-       JOIN users u ON sp.user_id = u.id
-       WHERE sp.is_wof = true AND sp.is_deleted = false
-       GROUP BY u.id, u.username, u.first_name, u.photo_file_id
-       ORDER BY total_likes DESC, total_posts DESC
-       LIMIT $1`,
-      [lim]
-    );
-    return rows.map(r => ({
-      ...r,
-      photo_file_id: isValidPhotoUrl(r.photo_file_id) ? r.photo_file_id : null,
-    }));
-  }
-
-  // ── Wall of Fame: Stats ───────────────────────────────────────────────────
-
-  /**
-   * Aggregate WoF statistics: total posts, total likes, unique contributors.
-   */
-  static async getWofStats() {
-    const { rows } = await query(
-      `SELECT
-         COUNT(*)::int AS total_posts,
-         COALESCE(SUM(likes_count), 0)::int AS total_likes,
-         COUNT(DISTINCT user_id)::int AS unique_contributors
-       FROM social_posts
-       WHERE is_wof = true AND is_deleted = false`
-    );
-    return rows[0] || { total_posts: 0, total_likes: 0, unique_contributors: 0 };
-  }
-
-  // ── Wall of Fame: Admin Flag / Unflag ─────────────────────────────────────
-
-  /** Admin: mark an existing post as WoF. Returns post id or null. */
-  static async adminFlagWof(postId) {
-    const { rows } = await query(
-      'UPDATE social_posts SET is_wof=true, updated_at=NOW() WHERE id=$1 AND is_deleted=false RETURNING id',
-      [postId]
-    );
-    return rows[0]?.id || null;
-  }
-
-  /** Admin: remove WoF flag without deleting the post. Returns post id or null. */
-  static async adminUnflagWof(postId) {
-    const { rows } = await query(
-      'UPDATE social_posts SET is_wof=false, updated_at=NOW() WHERE id=$1 AND is_deleted=false RETURNING id',
-      [postId]
-    );
-    return rows[0]?.id || null;
   }
 
   // ── Admin List Posts ──────────────────────────────────────────────────────
@@ -1277,7 +1258,7 @@ class SocialPostService {
        LIMIT $2`;
 
     const { rows } = await query(sql, params);
-    let posts = sanitizePostRows(rows);
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
 
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);

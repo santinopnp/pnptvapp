@@ -152,25 +152,6 @@ const getWall = async (req, res) => {
   }
 };
 
-// ── Wall of Fame Feed ────────────────────────────────────────────────────────
-
-const getWofFeed = async (req, res) => {
-  const user = authGuard(req, res); if (!user) return;
-  try {
-    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-    const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
-    if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
-    // Fetch the viewer's blocked list from DB to exclude their posts (C-08)
-    const blockedRes = await dbQuery('SELECT blocked FROM users WHERE id = $1', [user.id]);
-    const blockedIds = (blockedRes.rows[0]?.blocked || []).map(Number);
-    const result = await SocialPostService.getWofFeed(user.id, req.query.cursor, req.query.limit, blockedIds, viewerTier, isAdmin);
-    return res.json({ success: true, ...result });
-  } catch (err) {
-    logger.error('getWofFeed error', err);
-    return res.status(500).json({ error: 'Failed to load Wall of Fame feed' });
-  }
-};
-
 // ── Socket emission helper (CRIT-1: exclusive posts must not broadcast to all) ─
 
 /**
@@ -393,7 +374,7 @@ const createPost = async (req, res) => {
 
       const origRes = await dbQuery(
         `SELECT id, user_id, media_url, media_type, video_thumbnail_url,
-                is_exclusive, COALESCE(content_tier, 'free') AS content_tier
+                is_exclusive, is_shareable, COALESCE(content_tier, 'free') AS content_tier
            FROM social_posts WHERE id = $1 AND is_deleted = false`,
         [origPostId]
       );
@@ -403,6 +384,10 @@ const createPost = async (req, res) => {
       const orig = origRes.rows[0];
       if (orig.is_exclusive || orig.content_tier?.toLowerCase() === 'prime') {
         return res.status(403).json({ error: 'Cannot hype exclusive content' });
+      }
+      // Author opted their post out of hype/repost.
+      if (orig.is_shareable === false) {
+        return res.status(403).json({ error: 'Author disabled sharing for this post', code: 'NOT_SHAREABLE' });
       }
       communityHypeOrig = orig;
     }
@@ -459,18 +444,28 @@ const createPost = async (req, res) => {
 
     if (communityHypeOrig) {
       const orig = communityHypeOrig;
-      // Sanitize stored metadata: replace client-supplied URLs with DB-authoritative values
-      const sanitizedMeta = { ...rawMeta, original_media_url: orig.media_url, original_author_id: String(orig.user_id) };
+      // Hype = reference, NOT a copy. Store only the pointer in metadata;
+      // media_url/type/thumbnail stay NULL on the hyper's row. Feed queries
+      // hydrate `original_*` fields via sanitizePostRows at read time, so
+      // deletions / exclusivity flips on the original propagate automatically
+      // (fixes the "hype steals content" bug — media is never duplicated).
+      const sanitizedMeta = {
+        ...rawMeta,
+        // original_author_id kept for legacy consumers; original_media_url
+        // deliberately dropped so nothing downstream reads a stale copy.
+        original_author_id: String(orig.user_id),
+      };
+      delete sanitizedMeta.original_media_url;
       await dbQuery(
         `UPDATE social_posts
-           SET metadata = $1, media_url = $2, media_type = $3, video_thumbnail_url = $4
-         WHERE id = $5`,
-        [JSON.stringify(sanitizedMeta), orig.media_url, orig.media_type || 'image', orig.video_thumbnail_url || null, post.id]
+           SET metadata = $1
+         WHERE id = $2`,
+        [JSON.stringify(sanitizedMeta), post.id]
       );
       post.metadata = sanitizedMeta;
-      post.media_url = orig.media_url;
-      post.media_type = orig.media_type || 'image';
-      post.video_thumbnail_url = orig.video_thumbnail_url || null;
+      post.media_url = null;
+      post.media_type = null;
+      post.video_thumbnail_url = null;
     }
 
     if (!replyToId && !repostOfId && !exclusive && !isHypePost) {
@@ -1056,6 +1051,36 @@ const createPostWithMedia = async (req, res) => {
         error: 'Set up your paid channel before posting exclusive content.',
         code: 'NO_PAID_CHANNEL',
       });
+    }
+
+    // Upload to R2 if configured — mirror of the bulkCreateVideos path.
+    // Non-fatal: disk copy remains as fallback (video guard checks R2 first
+    // via tryR2Redirect in routes.js, falls through to express.static on miss).
+    if (finalFilePath && mediaType === 'video') {
+      try {
+        const objectStorage = require('../../../services/objectStorageService');
+        if (objectStorage.isConfigured()) {
+          const vidKey = 'posts/' + path.basename(finalFilePath);
+          const vidMime = detectedMime === 'video/webm' ? 'video/webm'
+            : detectedMime === 'video/quicktime' ? 'video/quicktime'
+            : detectedMime === 'video/3gpp' ? 'video/3gpp'
+            : 'video/mp4';
+          await objectStorage.uploadFile(finalFilePath, vidKey, vidMime);
+          logger.info('Video uploaded to object storage', { userId: user.id, key: vidKey });
+          if (videoThumbnailUrl) {
+            const thumbAbs = path.join(path.dirname(finalFilePath), path.basename(videoThumbnailUrl));
+            try {
+              await objectStorage.uploadFile(thumbAbs, 'posts/' + path.basename(videoThumbnailUrl), 'image/jpeg');
+            } catch (thumbErr) {
+              logger.warn('Thumbnail R2 upload failed (non-fatal)', { error: thumbErr.message });
+            }
+          }
+        }
+      } catch (r2Err) {
+        logger.error('Object storage upload failed — disk copy retained', {
+          userId: user.id, filename: path.basename(finalFilePath), error: r2Err.message,
+        });
+      }
     }
 
     const post = await SocialPostService.createPost(
@@ -1691,73 +1716,6 @@ const getPublicProfile = async (req, res) => {
   } catch (err) {
     logger.error('getPublicProfile error', err);
     return res.status(500).json({ error: 'Failed to load profile' });
-  }
-};
-
-// ── WoF Leaderboard ──────────────────────────────────────────────────────────
-
-const getWofLeaderboard = async (req, res) => {
-  const user = authGuard(req, res); if (!user) return;
-  try {
-    const leaderboard = await SocialPostService.getWofLeaderboard(req.query.limit);
-    return res.json({ success: true, leaderboard });
-  } catch (err) {
-    logger.error('getWofLeaderboard error', err);
-    return res.status(500).json({ error: 'Failed to load WoF leaderboard' });
-  }
-};
-
-// ── WoF Stats ─────────────────────────────────────────────────────────────────
-
-const getWofStats = async (req, res) => {
-  const user = authGuard(req, res); if (!user) return;
-  try {
-    const stats = await SocialPostService.getWofStats();
-    return res.json({ success: true, stats });
-  } catch (err) {
-    logger.error('getWofStats error', err);
-    return res.status(500).json({ error: 'Failed to load WoF stats' });
-  }
-};
-
-// ── Admin: Flag / Unflag WoF ──────────────────────────────────────────────────
-
-const adminFlagWof = async (req, res) => {
-  const postId = parsePostId(req, res); if (!postId) return;
-  try {
-    const id = await SocialPostService.adminFlagWof(postId);
-    if (!id) return res.status(404).json({ error: 'Post not found' });
-    return res.json({ success: true, postId: id });
-  } catch (err) {
-    logger.error('adminFlagWof error', err);
-    return res.status(500).json({ error: 'Failed to flag post as WoF' });
-  }
-};
-
-const adminUnflagWof = async (req, res) => {
-  const postId = parsePostId(req, res); if (!postId) return;
-  try {
-    const id = await SocialPostService.adminUnflagWof(postId);
-    if (!id) return res.status(404).json({ error: 'Post not found' });
-    return res.json({ success: true, postId: id });
-  } catch (err) {
-    logger.error('adminUnflagWof error', err);
-    return res.status(500).json({ error: 'Failed to unflag WoF post' });
-  }
-};
-
-// ── Request WoF Deletion ─────────────────────────────────────────────────────
-
-const requestWofDeletion = async (req, res) => {
-  const user = authGuard(req, res); if (!user) return;
-  const postId = parsePostId(req, res); if (!postId) return;
-  try {
-    const deleted = await SocialPostService.deleteWofPost(postId, user.id);
-    if (!deleted) return res.status(404).json({ error: 'WoF post not found or not yours' });
-    return res.json({ success: true });
-  } catch (err) {
-    logger.error('requestWofDeletion error', err);
-    return res.status(500).json({ error: 'Failed to delete WoF post' });
   }
 };
 
@@ -2485,4 +2443,4 @@ const sharePostToHangouts = async (req, res) => {
   return res.json({ success: true, results });
 };
 
-module.exports = { getFeed, getHomeFeed, getWofFeed, getWall, createPost, toggleLike, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, requestWofDeletion, bulkCreateVideos, getWofLeaderboard, getWofStats, adminFlagWof, adminUnflagWof, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts };
+module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts };

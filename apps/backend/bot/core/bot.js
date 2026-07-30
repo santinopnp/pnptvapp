@@ -62,7 +62,6 @@ const {
   primeChannelSilentRedirectMiddleware
 } = require('./middleware/groupBehavior');
 const groupCommandRestrictionMiddleware = require('./middleware/groupCommandRestriction');
-const wallOfFameGuard = require('./middleware/wallOfFameGuard');
 const notificationsTopicGuard = require('./middleware/notificationsTopicGuard');
 const { getHangoutJoinWelcomeMessage } = require('../../config/groupMessages');
 const logger = require('../../utils/logger');
@@ -96,7 +95,6 @@ const UserService = require('../../services/userService');
 const registerAdminHandlers = safeRequire('../handlers/admin');
 const registerModerationAdminHandlers = safeRequire('../handlers/moderation/adminCommands');
 const registerRoleManagementHandlers = safeRequire('../handlers/admin/roleManagement');
-const { registerWallOfFameHandlers } = safeRequire('../handlers/group/wallOfFame', { registerWallOfFameHandlers: _noop });
 const registerPaymentTutorialHandlers = safeRequire('../handlers/user/paymentTutorial');
 const registerSupportRoutingHandlers = safeRequire('../handlers/support/supportRouting');
 const { registerGroupManagerHandlers } = safeRequire('../handlers/group/groupManager', { registerGroupManagerHandlers: _noop });
@@ -982,7 +980,6 @@ const startBot = async () => {
       ['cristinaGroupFilter', () => bot.use(cristinaGroupFilterMiddleware())],
       ['groupMenuRedirect', () => bot.use(groupMenuRedirectMiddleware())],
       ['groupCallbackRedirect', () => bot.use(groupCallbackRedirectMiddleware())],
-      ['wallOfFameGuard', () => bot.use(wallOfFameGuard())],
       ['notificationsTopicGuard', () => bot.use(notificationsTopicGuard())],
       ['groupCommandRestriction', () => bot.use(groupCommandRestrictionMiddleware())],
       ['notificationsAutoDelete', () => bot.use(notificationsAutoDelete())],
@@ -1971,7 +1968,6 @@ const startBot = async () => {
       ['adminHandlers', () => registerAdminHandlers(bot)],
       ['moderationAdminHandlers', () => registerModerationAdminHandlers(bot)],
       ['roleManagementHandlers', () => registerRoleManagementHandlers(bot)],
-      ['wallOfFameHandlers', () => registerWallOfFameHandlers(bot)],
       ['paymentTutorialHandlers', () => registerPaymentTutorialHandlers(bot)],
       ['supportRoutingHandlers', () => registerSupportRoutingHandlers(bot)],
       ['groupAdminPanelHandlers', () => registerGroupAdminPanelHandlers(bot)],
@@ -2115,30 +2111,6 @@ const startBot = async () => {
       logger.info('✓ Group broadcast scheduler initialized and started');
     } catch (error) {
       logger.warn(`Group broadcast scheduler initialization failed: ${error.message}`);
-    }
-
-    // Weekly group activity rank + reward + strike scheduler (Monday 08:00 UTC)
-    try {
-      const { startWeeklyRankScheduler } = require('./schedulers/weeklyRankScheduler');
-      startWeeklyRankScheduler(bot);
-      logger.info('✓ Weekly group rank scheduler initialized and started');
-    } catch (error) {
-      logger.warn(`Weekly group rank scheduler initialization failed: ${error.message}`);
-    }
-
-    // Daily community Wall of Fame feature — 01:00 UTC (20:00 COT previous day)
-    // Picks the most active hangout media poster, features them everywhere, awards +50 ranking points.
-    try {
-      const cron = require('node-cron');
-      const { runDailyWofFeature } = require('../handlers/group/wallOfFame');
-      cron.schedule('0 1 * * *', () => {
-        runDailyWofFeature(bot.telegram).catch((err) =>
-          logger.error('[WoF] Daily community feature cron failed', { error: err.message })
-        );
-      }, { timezone: 'UTC' });
-      logger.info('✓ Daily WoF community feature scheduler started (01:00 UTC)');
-    } catch (error) {
-      logger.warn(`Daily WoF community feature scheduler failed to start: ${error.message}`);
     }
 
     // Initialize X post analytics ingestion scheduler (every 6h)

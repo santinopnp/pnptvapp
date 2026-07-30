@@ -1233,6 +1233,18 @@ export interface SocialPostItem {
   // instead of media_url.
   mux_playback_id?: string | null;
   mux_status?: string | null;
+  // Community-hype hydration (populated server-side in sanitizePostRows).
+  // Hype posts don't duplicate media on the hyper's row — these fields hold
+  // the ORIGINAL author's live media so deletions / exclusivity flips
+  // propagate automatically and no content is ever "stolen".
+  original_media_url?: string | null;
+  original_media_type?: string | null;
+  original_video_thumbnail_url?: string | null;
+  original_deleted?: boolean;
+  original_is_exclusive?: boolean;
+  original_author_username?: string | null;
+  original_author_first_name?: string | null;
+  original_author_photo?: string | null;
 }
 
 export interface PostCardSnapshot {
@@ -1848,18 +1860,6 @@ export function editSocialPost(
       ...(opts?.taggedPerformerIds !== undefined && { tagged_performer_ids: opts.taggedPerformerIds }),
     }),
   });
-}
-
-export function requestWofDeletion(postId: number): Promise<{ success: boolean }> {
-  return request(`/api/webapp/social/posts/${postId}/request-deletion`, { method: "POST" });
-}
-
-export function adminFlagWofPost(postId: number): Promise<{ success: boolean }> {
-  return request(`/api/admin/social/posts/${postId}/wof`, { method: "POST" });
-}
-
-export function adminUnflagWofPost(postId: number): Promise<{ success: boolean }> {
-  return request(`/api/admin/social/posts/${postId}/wof`, { method: "DELETE" });
 }
 
 // ── Matrix bridge endpoints ───────────────────────────────────────────────────

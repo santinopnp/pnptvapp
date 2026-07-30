@@ -375,7 +375,6 @@ export default function MainStage() {
     { id: 1, name: "General",      description: "General community chat", position: 0 },
     { id: 2, name: "New Members",  description: "Welcome newcomers",      position: 1 },
     { id: 3, name: "PNP Media",    description: "Media and streams",       position: 2 },
-    { id: 4, name: "Wall of Fame", description: "Community highlights",   position: 3 },
   ]);
   useEffect(() => {
     // Use the public endpoint as primary — works for guests, viewers, and members

@@ -351,12 +351,11 @@ const createGroup = async (req, res) => {
         [group.id, user.id]
       );
 
-      // Seed 4 default topics for every new hangout
+      // Seed default topics for every new hangout
       const topicDefs = [
         { name: 'General',      description: 'General discussion',                              position: 0, is_read_only: false, is_wall_of_fame: false },
         { name: 'New Members',  description: 'Welcome new members!',                            position: 1, is_read_only: false, is_wall_of_fame: false },
         { name: 'PNP Media',    description: 'Share media and content',                         position: 2, is_read_only: false, is_wall_of_fame: false },
-        { name: 'Wall of Fame', description: 'Top content highlighted by the community',        position: 3, is_read_only: true,  is_wall_of_fame: true  },
       ];
       for (const td of topicDefs) {
         const { rows: tRows } = await createClient.query(

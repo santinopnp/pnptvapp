@@ -12,6 +12,7 @@ import {
 import { useI18n } from "@/lib/i18n";
 import { SocialFeedTabs } from "@/components/social";
 import { UserAvatar } from "@/components/UserAvatar";
+import { AppShell } from "@/components/Layout";
 
 export default function Social() {
   const { user, isAuthenticated, isAdmin } = useAuth();
@@ -47,82 +48,128 @@ export default function Social() {
     setContentDisclaimer(true);
   }, []);
 
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <Helmet>
-        <title>{t.socialFeedTitle} — PNPtv!</title>
-        <meta name="description" content={t.socialFeedSubtitle} />
-      </Helmet>
-      {showTutorial && <TutorialOverlay section="social" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-pnp-textPrimary">{t.socialFeedTitle}</h1>
-          <p className="text-sm mt-1 text-pnp-textSecondary">{t.socialFeedSubtitle}</p>
-        </div>
+  // Desktop right rail: featured live performers, hangout hints, etc.
+  // Only rendered by AppShell at lg+ so the mobile view stays untouched.
+  const rightRail = featuredPerformers.length > 0 ? (
+    <div className="glass-card-sm p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-white">{t.featured}</h3>
+        <span
+          className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+          style={{ background: "rgba(94,209,196,0.12)", color: "#5ED1C4" }}
+        >
+          {t.live}
+        </span>
       </div>
+      <div className="flex flex-col gap-3">
+        {featuredPerformers.slice(0, 8).map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => p.userId && navigate(`/profile/${p.userId}`)}
+            className="flex items-center gap-3 w-full text-left rounded-lg p-1.5 hover:bg-white/[0.04] transition-colors"
+          >
+            <UserAvatar
+              userId={p.userId || undefined}
+              photoUrl={p.photoUrl}
+              displayName={p.displayName}
+              size="md"
+              className="border-2 border-[#5ED1C4] rounded-full flex-shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-white truncate">{p.displayName}</p>
+              {p.averageRating > 0 && (
+                <p className="text-[10px]" style={{ color: "#5ED1C4" }}>
+                  {"★".repeat(Math.round(p.averageRating))} {p.averageRating.toFixed(1)}
+                </p>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
 
-      {/* Featured Performers */}
-      {featuredPerformers.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="text-lg font-semibold text-white">{t.featured}</h2>
-            <span
-              className="text-xs px-2 py-0.5 rounded-full font-medium"
-              style={{ background: "rgba(94,209,196,0.12)", color: "#5ED1C4" }}
-            >
-              {t.live}
-            </span>
-          </div>
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-hide">
-            {featuredPerformers.map((p) => (
-              <div
-                key={p.id}
-                className="glass-card-sm p-3 flex-shrink-0 w-28 text-center"
-                style={{ borderColor: "rgba(94,209,196,0.18)" }}
-              >
-                <div className="mx-auto mb-2 flex justify-center">
-                  <UserAvatar
-                    userId={p.userId || undefined}
-                    photoUrl={p.photoUrl}
-                    displayName={p.displayName}
-                    size="lg"
-                    className="border-2 border-[#5ED1C4] rounded-full"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => p.userId && navigate(`/profile/${p.userId}`)}
-                  className={`block w-full text-xs font-medium text-white truncate ${p.userId ? "hover:underline" : "cursor-default"}`}
-                >
-                  {p.displayName}
-                </button>
-                {p.averageRating > 0 && (
-                  <p className="text-[10px] mt-0.5" style={{ color: "#5ED1C4" }}>
-                    {"★".repeat(Math.round(p.averageRating))}{" "}
-                    {p.averageRating.toFixed(1)}
-                  </p>
-                )}
-              </div>
-            ))}
+  return (
+    <AppShell rightRail={rightRail} centerMaxWidth="720px">
+      <div className="max-w-2xl mx-auto lg:mx-0 px-4 py-6">
+        <Helmet>
+          <title>{t.socialFeedTitle} — PNPtv!</title>
+          <meta name="description" content={t.socialFeedSubtitle} />
+        </Helmet>
+        {showTutorial && <TutorialOverlay section="social" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-pnp-textPrimary">{t.socialFeedTitle}</h1>
+            <p className="text-sm mt-1 text-pnp-textSecondary">{t.socialFeedSubtitle}</p>
           </div>
         </div>
-      )}
 
-      {/* Full social feed with tabs */}
-      <SocialFeedTabs
-        currentUserId={currentUserId}
-        isAdmin={isAdmin}
-        isAuthenticated={isAuthenticated}
-        userLang={user?.language || "en"}
-        viewerCity={user?.city}
-        viewerCountry={user?.country}
-        contentDisclaimerAccepted={contentDisclaimer}
-        onAcceptDisclaimer={handleAcceptDisclaimer}
-        onNavigate={navigate}
-        showComposer={true}
-      />
-    </div>
+        {/* Featured Performers — mobile only (desktop shows them in the right rail).
+            On mobile we keep the horizontal scroll strip; on desktop it lives in
+            the right rail as a vertical list (see rightRail above). */}
+        {featuredPerformers.length > 0 && (
+          <div className="mb-6 lg:hidden">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-lg font-semibold text-white">{t.featured}</h2>
+              <span
+                className="text-xs px-2 py-0.5 rounded-full font-medium"
+                style={{ background: "rgba(94,209,196,0.12)", color: "#5ED1C4" }}
+              >
+                {t.live}
+              </span>
+            </div>
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-hide sm:grid sm:grid-cols-4 md:grid-cols-6 sm:gap-3 sm:overflow-visible">
+              {featuredPerformers.map((p) => (
+                <div
+                  key={p.id}
+                  className="glass-card-sm p-3 flex-shrink-0 w-28 sm:w-auto text-center"
+                  style={{ borderColor: "rgba(94,209,196,0.18)" }}
+                >
+                  <div className="mx-auto mb-2 flex justify-center">
+                    <UserAvatar
+                      userId={p.userId || undefined}
+                      photoUrl={p.photoUrl}
+                      displayName={p.displayName}
+                      size="lg"
+                      className="border-2 border-[#5ED1C4] rounded-full"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => p.userId && navigate(`/profile/${p.userId}`)}
+                    className={`block w-full text-xs font-medium text-white truncate ${p.userId ? "hover:underline" : "cursor-default"}`}
+                  >
+                    {p.displayName}
+                  </button>
+                  {p.averageRating > 0 && (
+                    <p className="text-[10px] mt-0.5" style={{ color: "#5ED1C4" }}>
+                      {"★".repeat(Math.round(p.averageRating))}{" "}
+                      {p.averageRating.toFixed(1)}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Full social feed with tabs */}
+        <SocialFeedTabs
+          currentUserId={currentUserId}
+          isAdmin={isAdmin}
+          isAuthenticated={isAuthenticated}
+          userLang={user?.language || "en"}
+          viewerCity={user?.city}
+          viewerCountry={user?.country}
+          contentDisclaimerAccepted={contentDisclaimer}
+          onAcceptDisclaimer={handleAcceptDisclaimer}
+          onNavigate={navigate}
+          showComposer={true}
+        />
+      </div>
+    </AppShell>
   );
 }

@@ -12,9 +12,6 @@ import {
   createReply,
   editSocialPost,
   searchCreators,
-  adminFlagWofPost,
-  adminUnflagWofPost,
-  requestWofDeletion,
   createSocialPost,
   type SocialPostItem,
   type MentionUser,
@@ -236,10 +233,6 @@ export default function PostCard({
   const [localTaggedPerformers, setLocalTaggedPerformers] = useState<typeof post.tagged_performers>(null);
 
   const [videoError, setVideoError] = useState(false);
-  const [isWof, setIsWof] = useState(post.is_wof ?? false);
-  const [wofToggling, setWofToggling] = useState(false);
-  const [wofDeleting, setWofDeleting] = useState(false);
-  const [wofDeleted, setWofDeleted] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [hypeOpen, setHypeOpen] = useState(false);
   const [hypeText, setHypeText] = useState('');
@@ -338,35 +331,6 @@ export default function PostCard({
     if (result) setTranslatedContent(result);
     setIsTranslating(false);
   }, [isTranslating, translatedContent, post.content, userLang]);
-
-  const handleWofToggle = useCallback(async () => {
-    if (wofToggling) return;
-    setWofToggling(true);
-    try {
-      if (isWof) {
-        await adminUnflagWofPost(post.id);
-        setIsWof(false);
-      } else {
-        await adminFlagWofPost(post.id);
-        setIsWof(true);
-      }
-    } catch { /* silent */ }
-    setWofToggling(false);
-  }, [post.id, isWof, wofToggling]);
-
-  const handleRequestWofDeletion = useCallback(async () => {
-    if (wofDeleting || wofDeleted) return;
-    if (!confirm("Remove this Wall of Fame post from the feed?")) return;
-    setWofDeleting(true);
-    try {
-      const res = await requestWofDeletion(post.id);
-      if (res.success) {
-        setWofDeleted(true);
-        onDelete(post.id);
-      }
-    } catch { /* silent */ }
-    setWofDeleting(false);
-  }, [post.id, wofDeleting, wofDeleted, onDelete]);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -540,7 +504,7 @@ export default function PostCard({
   } : null;
 
   return (
-    <div className="relative glass-card-sm p-4 transition-all duration-300">
+    <div className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]">
       {/* ── Exclusive lock overlay (non-owner, non-subscriber) ── */}
       {isExclusiveLocked && (
         <div
@@ -757,31 +721,6 @@ export default function PostCard({
               </span>
             )}
 
-            {/* Admin: WoF flag toggle */}
-            {isAdmin && (
-              <button
-                onClick={handleWofToggle}
-                disabled={wofToggling}
-                className="text-xs transition-colors disabled:opacity-40"
-                style={{ color: isWof ? "#FFB454" : "#8E8E93" }}
-                title={isWof ? "Remove from Wall of Fame" : "Add to Wall of Fame"}
-                aria-label={isWof ? "Remove from Wall of Fame" : "Add to Wall of Fame"}
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={isWof ? "currentColor" : "none"}
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"
-                  />
-                </svg>
-              </button>
-            )}
 
             {/* 3-dots post menu */}
             {(canDelete || (!isOwn && !!onReport)) && (
@@ -1068,43 +1007,62 @@ export default function PostCard({
             );
           })()}
 
-          {/* Community hype — re-shared community media. The card header
-              above already shows the original author + banner; here we just
-              render the reposted media. The whole media wrapper links to the
-              original post so likes/replies accrue there. */}
+          {/* Community hype — media is NEVER stored on the hyper's row; it's
+              hydrated from the ORIGINAL post server-side via original_*.
+              If the original was deleted or went exclusive after the hype,
+              show an inline placeholder instead of borrowed media. */}
           {(() => {
             const m = post.metadata as Record<string, unknown> | undefined | null;
             if (!m || m.kind !== 'community_hype') return null;
-            const mediaUrl = post.media_url || (m.original_media_url as string) || null;
-            const mediaType = (m.original_media_type as string) || post.media_type;
-            const thumbUrl = post.video_thumbnail_url || (m.original_video_thumbnail_url as string | undefined) || undefined;
             const originalPostHref = m.original_post_id ? `/social/post/${m.original_post_id}` : undefined;
+
+            if (post.original_deleted) {
+              return (
+                <div className="mt-3 rounded-xl border border-white/10 bg-white/[.03] p-4 text-center">
+                  <p className="text-xs text-white/60">
+                    The original post was removed by its author.
+                  </p>
+                </div>
+              );
+            }
+            if (post.original_is_exclusive) {
+              return (
+                <div className="mt-3 rounded-xl border border-white/10 bg-white/[.03] p-4 text-center">
+                  <p className="text-xs text-white/60">
+                    This content is now exclusive — visit the author's profile to unlock.
+                  </p>
+                </div>
+              );
+            }
+
+            const mediaUrl = post.original_media_url || null;
+            const mediaType = post.original_media_type || null;
+            const thumbUrl = post.original_video_thumbnail_url || undefined;
+            if (!mediaUrl) return null;
             return (
               <div className="mt-3 rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                {mediaUrl && (
-                  mediaType === 'video' ? (
-                    <VideoPlayer
+                {mediaType === 'video' ? (
+                  <VideoPlayer
+                    src={mediaUrl}
+                    controls
+                    controlsList="nodownload"
+                    disablePictureInPicture
+                    onContextMenu={(e) => e.preventDefault()}
+                    playsInline
+                    creatorDisclaimer={post.author_creator_status === "active"}
+                    className="w-full max-h-[360px] lg:max-h-[560px] object-contain bg-black"
+                    preload="metadata"
+                    poster={thumbUrl || undefined}
+                  />
+                ) : (
+                  <a href={originalPostHref} className="block cursor-pointer">
+                    <img
                       src={mediaUrl}
-                      controls
-                      controlsList="nodownload"
-                      disablePictureInPicture
-                      onContextMenu={(e) => e.preventDefault()}
-                      playsInline
-                      creatorDisclaimer={post.author_creator_status === "active"}
-                      className="w-full max-h-[360px] object-contain bg-black"
-                      preload="metadata"
-                      poster={thumbUrl || undefined}
+                      alt="Hyped post"
+                      className="w-full object-cover max-h-[360px] lg:max-h-[560px]"
+                      loading="lazy"
                     />
-                  ) : (
-                    <a href={originalPostHref} className="block cursor-pointer">
-                      <img
-                        src={mediaUrl}
-                        alt="Hyped post"
-                        className="w-full object-cover max-h-[360px]"
-                        loading="lazy"
-                      />
-                    </a>
-                  )
+                  </a>
                 )}
               </div>
             );
@@ -1144,7 +1102,7 @@ export default function PostCard({
                         onContextMenu={(e) => e.preventDefault()}
                         playsInline
                         creatorDisclaimer={post.author_creator_status === "active"}
-                        className="w-full max-h-[480px] rounded-lg object-contain bg-black"
+                        className="w-full max-h-[480px] lg:max-h-[640px] rounded-lg object-contain bg-black"
                         preload="metadata"
                         poster={post.video_thumbnail_url || undefined}
                         onError={() => setVideoError(true)}
@@ -1377,37 +1335,6 @@ export default function PostCard({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
                 </svg>
               </button>
-            )}
-
-            {/* Request Deletion — shown on WoF posts for the post author */}
-            {isWof && isOwn && !wofDeleted && (
-              <button
-                onClick={handleRequestWofDeletion}
-                disabled={wofDeleting}
-                className="flex items-center gap-1.5 text-xs ml-auto hover:text-red-400 transition-colors"
-                style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
-                title="Request removal from feed"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                  />
-                </svg>
-                {wofDeleting ? ft.removing : ft.remove}
-              </button>
-            )}
-            {isWof && isOwn && wofDeleted && (
-              <span className="text-xs ml-auto" style={{ color: "#34D399" }}>
-                Removed
-              </span>
             )}
 
           </div>
