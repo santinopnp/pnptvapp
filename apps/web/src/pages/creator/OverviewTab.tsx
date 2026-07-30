@@ -4,6 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
 import { TIER_UPGRADE_THRESHOLDS, TIER_CONFIG, type TierId } from "@/components/profile/CreatorEnrollmentWizard";
+import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
+import { useI18n } from "@/lib/i18n";
 
 const TIERS: { key: "ice" | "crystal" | "diamond"; label: string; price: number; emoji: string }[] = [
   { key: "ice", label: "Ice", price: 5, emoji: "❄" },
@@ -23,12 +25,48 @@ interface OverviewTabProps {
 export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: OverviewTabProps) {
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
+  const tGlobal = useI18n();
   const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
   const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
 
+  // Desktop right rail — for-you recommendations scoped to the creator's own profile
+  const creatorUserId = authUser?.dbId ? String(authUser.dbId) : null;
+  const { data: forYou } = useForYou("home", creatorUserId);
+  const studioRail = (
+    <>
+      {/* Context hints — upgrade prompts, prime expiry, unread DMs */}
+      {(forYou?.contextHints ?? []).length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <ul>{(forYou?.contextHints ?? []).slice(0, 3).map((hint, i) => (
+            <ContextHintCard key={i} hint={hint} />
+          ))}</ul>
+        </div>
+      )}
+      <RightRail
+        sections={[
+          {
+            title: tGlobal.nav.railStudioActivity,
+            items: (forYou?.suggestedFollows ?? []).slice(0, 4).map((f) => (
+              <SuggestedFollowRow
+                key={f.userId}
+                item={f}
+                followLabel={tGlobal.nav.railFollow}
+                viewLabel={tGlobal.nav.railView}
+              />
+            )),
+          },
+        ]}
+      />
+    </>
+  );
+
   return (
+    <AppShell rightRail={studioRail} centerMaxWidth="640px">
     <>
       <button
         onClick={() => navigate("/creators/setup")}
@@ -241,5 +279,6 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
       </div>
 
     </>
+    </AppShell>
   );
 }

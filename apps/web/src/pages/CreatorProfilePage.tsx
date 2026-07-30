@@ -50,6 +50,8 @@ import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import PostCard from "@/components/profile/PostCard";
+import { SuggestedCreatorRow, useForYou } from "@/components/Layout";
+import { useI18n } from "@/lib/i18n";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -302,6 +304,10 @@ export default function CreatorProfilePage() {
   const { username } = useParams<{ username: string }>();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
+  const t = useI18n();
+
+  const [creatorForYouId, setCreatorForYouId] = useState<string | null>(null);
+  const { data: forYou } = useForYou("creator", creatorForYouId);
 
   const [data, setData] = useState<CreatorPublicProfile | null>(null);
   const [posts, setPosts] = useState<SocialPostItem[]>([]);
@@ -345,6 +351,9 @@ export default function CreatorProfilePage() {
         setData(res);
         setIsSubscribed(!!res.isSubscribed);
         setViewerSub(res.viewerSubscription || null);
+        if (res.creator?.id) {
+          setCreatorForYouId(String(res.creator.id));
+        }
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Creator not found");
@@ -993,6 +1002,27 @@ export default function CreatorProfilePage() {
         {/* ── Right rail: desktop only (X.com pattern) ────────────────── */}
         <aside className="hidden lg:block">
           <div className="sticky top-4 space-y-4">
+            {/* More creators like this — powered by for-you recs */}
+            {(forYou?.suggestedCreators ?? []).length > 0 && (
+              <div
+                className="rounded-2xl overflow-hidden"
+                style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+              >
+                <div className="px-4 pt-3.5 pb-2">
+                  <span className="text-[13px] font-semibold text-white">{t.nav.railMoreCreatorsLikeThis}</span>
+                </div>
+                <ul>
+                  {(forYou?.suggestedCreators ?? []).slice(0, 4).map((c) => (
+                    <SuggestedCreatorRow
+                      key={c.userId}
+                      item={c}
+                      subscribeLabel={t.nav.railSubscribe}
+                      viewLabel={t.nav.railView}
+                    />
+                  ))}
+                </ul>
+              </div>
+            )}
             <CreatorRightRail excludeCreatorId={creator.id} />
           </div>
         </aside>

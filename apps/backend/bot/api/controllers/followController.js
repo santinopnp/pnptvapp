@@ -7,6 +7,7 @@ const NotificationEmitter = require('../../../services/notificationEmitter');
 const { isEnforcedFollow } = require('../../../services/followService');
 const { validateTierFresh } = require('../../../services/accessService');
 const { resolveUserId } = require('../../utils/helpers');
+const { invalidateForYouCache } = require('../../../services/discoverService');
 
 const authGuard = (req, res) => {
   const user = req.session?.user;
@@ -86,6 +87,10 @@ const followUser = async (req, res) => {
     );
     const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
 
+    // Bust for-you cache for both parties (fire-and-forget)
+    invalidateForYouCache(String(actor.id)).catch(() => {});
+    invalidateForYouCache(String(targetId)).catch(() => {});
+
     return res.json({
       success: true,
       isFollowing: true,
@@ -127,6 +132,10 @@ const unfollowUser = async (req, res) => {
       [targetId]
     );
     const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
+
+    // Bust for-you cache for both parties (fire-and-forget)
+    invalidateForYouCache(String(actor.id)).catch(() => {});
+    invalidateForYouCache(String(targetId)).catch(() => {});
 
     return res.json({
       success: true,

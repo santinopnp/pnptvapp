@@ -10,6 +10,7 @@ import { SocialFeedTabs } from "@/components/social";
 import { UpcomingEvents } from "@/components/events/UpcomingEvents";
 import { NearbyWidget } from "@/components/NearbyWidget";
 import { useI18n } from "@/lib/i18n";
+import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
 
@@ -82,7 +83,54 @@ export default function Home() {
     setContentDisclaimer(true);
   }, []);
 
+  // Desktop right rail — for-you recommendations
+  const { data: forYou } = useForYou("home");
+  const homeRail = (
+    <>
+      {/* Context hints — rendered as standalone tip cards */}
+      {(forYou?.contextHints ?? []).length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <ul>{(forYou?.contextHints ?? []).slice(0, 3).map((hint, i) => (
+            <ContextHintCard key={i} hint={hint} />
+          ))}</ul>
+        </div>
+      )}
+      <RightRail
+        sections={[
+          {
+            title: t.nav.railCreatorsForYou,
+            viewAllHref: "/models",
+            viewAllLabel: t.nav.railViewAll,
+            items: (forYou?.suggestedCreators ?? []).slice(0, 4).map((c) => (
+              <SuggestedCreatorRow
+                key={c.userId}
+                item={c}
+                subscribeLabel={t.nav.railSubscribe}
+                viewLabel={t.nav.railView}
+              />
+            )),
+          },
+          {
+            title: t.nav.railPeopleToFollow,
+            items: (forYou?.suggestedFollows ?? []).slice(0, 4).map((f) => (
+              <SuggestedFollowRow
+                key={f.userId}
+                item={f}
+                followLabel={t.nav.railFollow}
+                viewLabel={t.nav.railView}
+              />
+            )),
+          },
+        ]}
+      />
+    </>
+  );
+
   return (
+    <AppShell rightRail={homeRail}>
     <div className="max-w-5xl mx-auto px-4 py-6">
       <Helmet>
         <title>{t.home.pageTitle}</title>
@@ -375,5 +423,6 @@ export default function Home() {
       )}
       </>}
     </div>
+    </AppShell>
   );
 }

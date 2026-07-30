@@ -14459,6 +14459,17 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
       } catch (ownerErr) {
         return res.status(ownerErr.status || 403).json({ success: false, error: ownerErr.message || 'Access denied', code: ownerErr.code || 'FORBIDDEN' });
       }
+      // Storage quota gate — admins bypass so they can seed PRIME channel without a cap
+      if (!isAdmin) {
+        try {
+          await channelVideoService.assertStorageCapacity(String(userId), Number(fileSize));
+        } catch (quotaErr) {
+          if (quotaErr.code === 'STORAGE_QUOTA_EXCEEDED') {
+            return res.status(413).json({ success: false, error: quotaErr.message, code: quotaErr.code, ...quotaErr.details });
+          }
+          throw quotaErr;
+        }
+      }
       // 2257 compliance gate
       if (!isAdmin) {
         const IdentityVerificationService = require('../../services/identityVerificationService');
@@ -14654,6 +14665,17 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
             });
           }
         }
+        // Storage quota gate
+        if (!isAdmin) {
+          try {
+            await channelVideoService.assertStorageCapacity(String(userId), Number(req.file.size || 0));
+          } catch (quotaErr) {
+            if (quotaErr.code === 'STORAGE_QUOTA_EXCEEDED') {
+              return res.status(413).json({ success: false, error: quotaErr.message, code: quotaErr.code, ...quotaErr.details });
+            }
+            throw quotaErr;
+          }
+        }
         const video = await channelVideoService.uploadVideo({
           channelId, uploaderId: userId, isAdmin,
           file: req.file, title: req.body?.title,
@@ -14801,6 +14823,23 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     })
   );
 
+  // GET /api/webapp/channels/me/storage-quota — remaining channel-video storage
+  // for the calling creator. Used by UploadVideoModal to show a usage bar and
+  // pre-flight the incoming file size before the upload actually starts.
+  app.get(
+    '/api/webapp/channels/me/storage-quota',
+    requireSessionAuth,
+    asyncHandler(async (req, res) => {
+      const { userId } = userCtx(req);
+      try {
+        const q = await channelVideoService.getStorageQuota(String(userId));
+        res.json({ success: true, ...q });
+      } catch (err) {
+        handleSvcError(res, err);
+      }
+    })
+  );
+
   // GET /api/webapp/channels/:channelId/videos — list videos for the channel.
   // Drafts visible only to owner / collaborators / admins.
   app.get(
@@ -14847,7 +14886,21 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
     asyncHandler(async (req, res) => {
       const channelId = parseInt(req.params.channelId, 10);
       if (!Number.isFinite(channelId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });
-      const { userId } = userCtx(req);
+      const { userId, isAdmin } = userCtx(req);
+      // Storage quota pre-flight — refuse the Mux URL if the creator is already
+      // at or over cap. The modal enforces per-file size client-side; this is
+      // the server-side belt-and-suspenders for the current-usage bound.
+      if (!isAdmin) {
+        const q = await channelVideoService.getStorageQuota(String(userId));
+        if (q.remainingBytes <= 0) {
+          return res.status(413).json({
+            success: false,
+            error: 'Storage quota exceeded for this creator',
+            code: 'STORAGE_QUOTA_EXCEEDED',
+            usedBytes: q.usedBytes, capBytes: q.capBytes, remainingBytes: q.remainingBytes,
+          });
+        }
+      }
       try {
         const result = await channelVideoService.createMuxUpload(userId, channelId);
         res.json({ success: true, ...result });
@@ -18028,6 +18081,25 @@ app.get('/api/webapp/admin/email/daily-count/:email', adminGuard, asyncHandler(a
 }));
 
 // ── End Email suppression management ──────────────────────────────────────────
+
+// ==========================================
+// FOR-YOU RECOMMENDATIONS
+// GET /api/webapp/recommendations/for-you
+//   ?context=home|live|discover|creator  (default: home)
+//   &creatorId=<id>                      (optional, used when context=creator)
+//   &limit=5                             (1–20, default 5)
+// ==========================================
+app.get('/api/webapp/recommendations/for-you', requireSessionAuth, asyncHandler(async (req, res) => {
+  const { getForYouRecommendations } = require('../../services/discoverService');
+  const userId    = req.user.id;
+  const context   = ['home', 'live', 'discover', 'creator'].includes(req.query.context)
+    ? req.query.context
+    : 'home';
+  const limit     = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 5), 20);
+
+  const result = await getForYouRecommendations(userId, context, req.query.creatorId || null, limit);
+  return res.json(result);
+}));
 
 // ==========================================
 // OG PRERENDER — serves dynamic meta tags for social media crawlers

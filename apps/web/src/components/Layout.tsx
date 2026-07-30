@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
-import { Outlet, NavLink, useNavigate, useLocation, Navigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { BottomNav } from "./BottomNav";
 import { AnnouncementStrip } from "./AnnouncementStrip";
 import { VerificationGate } from "./VerificationGate";
@@ -11,9 +11,10 @@ import { useOrientation } from "@/hooks/useOrientation";
 const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m) => ({ default: m.CristinaWidget })));
 
 import { NotificationBell } from "@/components/NotificationBell";
+import { UserAvatar } from "@/components/UserAvatar";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, type MessageThread, type HangoutGroup } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -2058,3 +2059,280 @@ function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
 // REMOVED 2026-05-01 — FloatingMainStagePlayer (220×130 fixed PiP video).
 // Replaced by MainStageLiveBanner mounted on Home / Live / Chat pages.
 // Original code deleted from tree; recoverable from git history.
+
+// ─── For-You Recommendations Hook ────────────────────────────────────────────
+// Simple memoized fetch with a 15-minute in-memory cache keyed by context.
+// No SWR dependency — plain useEffect + useState. Fails gracefully (returns
+// empty arrays so the right rail simply renders nothing).
+
+const forYouCache = new Map<string, { data: ForYouRecommendations; ts: number }>();
+const FOR_YOU_TTL_MS = 15 * 60 * 1000;
+
+export function useForYou(context: string, creatorId?: string | null): {
+  data: ForYouRecommendations | null;
+  loading: boolean;
+} {
+  const [data, setData] = useState<ForYouRecommendations | null>(null);
+  const [loading, setLoading] = useState(true);
+  const cacheKey = creatorId ? `${context}:${creatorId}` : context;
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = forYouCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < FOR_YOU_TTL_MS) {
+      setData(cached.data);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    getForYouRecommendations(context, creatorId ?? null)
+      .then((res) => {
+        if (cancelled) return;
+        forYouCache.set(cacheKey, { data: res, ts: Date.now() });
+        setData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [context, creatorId, cacheKey]);
+
+  return { data, loading };
+}
+
+// ─── Rail Row Components ──────────────────────────────────────────────────────
+
+interface SuggestedCreatorRowProps {
+  item: ForYouSuggestedCreator;
+  subscribeLabel: string;
+  viewLabel: string;
+}
+
+export function SuggestedCreatorRow({ item, subscribeLabel, viewLabel }: SuggestedCreatorRowProps) {
+  const href = item.username ? `/c/@${item.username}` : `/profile/${item.userId}`;
+  return (
+    <li>
+      <Link
+        to={href}
+        className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors"
+      >
+        <UserAvatar
+          userId={item.userId}
+          photoUrl={item.avatarUrl || undefined}
+          displayName={item.displayName || item.username}
+          size="sm"
+          showOnline={false}
+          linkToProfile={false}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-white truncate">
+            {item.displayName || item.username}
+          </div>
+          {item.reason && (
+            <div
+              className="text-[11px] truncate"
+              style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+            >
+              {item.reason}
+            </div>
+          )}
+        </div>
+        <span
+          className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors"
+          style={{
+            background: "rgba(212,0,122,0.15)",
+            color: "#D4007A",
+            border: "1px solid rgba(212,0,122,0.3)",
+          }}
+        >
+          {item.price && parseFloat(item.price) > 0 ? subscribeLabel : viewLabel}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+interface SuggestedFollowRowProps {
+  item: ForYouSuggestedFollow;
+  followLabel: string;
+  viewLabel: string;
+}
+
+export function SuggestedFollowRow({ item, followLabel, viewLabel }: SuggestedFollowRowProps) {
+  const [followed, setFollowed] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const href = item.username ? `/@${item.username}` : `/profile/${item.userId}`;
+
+  const handleFollow = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (followed || following) return;
+      setFollowing(true);
+      try {
+        await followUser(item.userId);
+        setFollowed(true);
+      } catch {
+        // Silent — the user can navigate to profile to follow properly
+      } finally {
+        setFollowing(false);
+      }
+    },
+    [item.userId, followed, following]
+  );
+
+  return (
+    <li>
+      <Link
+        to={href}
+        className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors"
+      >
+        <UserAvatar
+          userId={item.userId}
+          photoUrl={item.avatarUrl || undefined}
+          displayName={item.username}
+          size="sm"
+          showOnline={item.isOnline}
+          linkToProfile={false}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-white truncate">
+            {item.username ? `@${item.username}` : item.userId}
+          </div>
+          {item.reason && (
+            <div
+              className="text-[11px] truncate"
+              style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+            >
+              {item.reason}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleFollow}
+          disabled={followed || following}
+          className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors disabled:opacity-60"
+          style={
+            followed
+              ? { background: "rgba(255,255,255,0.08)", color: "#8E8E93", border: "1px solid rgba(255,255,255,0.1)" }
+              : { background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }
+          }
+          aria-label={followed ? "Following" : followLabel}
+        >
+          {followed ? viewLabel : following ? "…" : followLabel}
+        </button>
+      </Link>
+    </li>
+  );
+}
+
+interface ContextHintCardProps {
+  hint: ForYouContextHint;
+}
+
+export function ContextHintCard({ hint }: ContextHintCardProps) {
+  if (!hint.text) return null;
+  return (
+    <Link
+      to={hint.action || "/"}
+      className="block px-4 py-3 hover:bg-white/5 transition-colors"
+    >
+      <div className="text-[12px] leading-snug text-white/80">{hint.text}</div>
+    </Link>
+  );
+}
+
+// ─── RightRail ────────────────────────────────────────────────────────────────
+// Desktop-only contextual sidebar. Each section has a title + list of items.
+
+interface RailSection {
+  title: string;
+  items: React.ReactNode[];
+  viewAllHref?: string;
+  viewAllLabel?: string;
+}
+
+interface RightRailProps {
+  sections: RailSection[];
+  className?: string;
+}
+
+export function RightRail({ sections, className }: RightRailProps) {
+  const nonEmpty = sections.filter((s) => s.items.length > 0);
+  if (nonEmpty.length === 0) return null;
+
+  return (
+    <div className={`space-y-4 ${className ?? ""}`}>
+      {nonEmpty.map((section, i) => (
+        <div
+          key={i}
+          className="rounded-2xl overflow-hidden"
+          style={{
+            background: "var(--pnp-surface, #1e1e1e)",
+            border: "1px solid rgba(255,255,255,0.05)",
+          }}
+        >
+          <div className="px-4 pt-3.5 pb-2 flex items-center justify-between">
+            <span className="text-[13px] font-semibold text-white">{section.title}</span>
+            {section.viewAllHref && (
+              <Link
+                to={section.viewAllHref}
+                className="text-[11px] font-semibold transition-opacity hover:opacity-80"
+                style={{ color: "#D4007A" }}
+              >
+                {section.viewAllLabel ?? "View all"}
+              </Link>
+            )}
+          </div>
+          <ul>{section.items}</ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── AppShell ─────────────────────────────────────────────────────────────────
+// Responsive 2-col wrapper: full-width on mobile, center + 320px rail on lg+.
+// rightRail is ONLY rendered at lg+ — the hidden lg:block wrapper guarantees
+// the rail never appears on mobile regardless of what is passed.
+
+interface AppShellProps {
+  rightRail?: React.ReactNode;
+  children: React.ReactNode;
+  /** Override the center column max-width. Default: "1040px" */
+  centerMaxWidth?: string;
+  className?: string;
+}
+
+export function AppShell({
+  rightRail,
+  children,
+  centerMaxWidth = "1040px",
+  className,
+}: AppShellProps) {
+  if (!rightRail) {
+    // No rail — just render children unchanged
+    return <>{children}</>;
+  }
+
+  return (
+    <div
+      className={`lg:mx-auto lg:px-6 lg:py-0 ${className ?? ""}`}
+      style={{ maxWidth: `calc(${centerMaxWidth} + 320px + 24px)` }}
+    >
+      <div className="lg:grid lg:gap-6" style={{ gridTemplateColumns: `minmax(0,1fr) 320px` }}>
+        {/* Center column */}
+        <div className="min-w-0">{children}</div>
+
+        {/* Right rail: desktop only */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-6 space-y-4">{rightRail}</div>
+        </aside>
+      </div>
+    </div>
+  );
+}

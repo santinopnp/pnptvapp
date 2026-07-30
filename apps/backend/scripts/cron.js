@@ -316,6 +316,30 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
+    // Channel-videos stuck-processing sweeper — hourly at :47
+    // Upload pipeline (ffmpeg GIF + Directus upload) sometimes hangs after a bot
+    // crash mid-flight, leaving rows in 'processing' forever. Anything older than
+    // 1h is definitively stuck.
+    cron.schedule(process.env.CHANNEL_VIDEO_SWEEP_CRON || '47 * * * *', async () => {
+      try {
+        const { query } = require(path.join(backendPath, 'config/postgres'));
+        const result = await query(
+          `UPDATE channel_videos
+             SET status = 'failed', updated_at = NOW()
+           WHERE status = 'processing'
+             AND updated_at < NOW() - INTERVAL '1 hour'
+           RETURNING id`
+        );
+        if (result.rowCount > 0) {
+          logger.warn('Channel-videos sweeper: flipped stuck rows to failed', {
+            count: result.rowCount, ids: result.rows.map(r => r.id),
+          });
+        }
+      } catch (error) {
+        logger.error('Error in channel-videos sweeper cron:', error);
+      }
+    });
+
     // Video fetch log retention — daily at 03:13 UTC
     cron.schedule(process.env.VIDEO_LOG_CLEANUP_CRON || '13 3 * * *', async () => {
       try {

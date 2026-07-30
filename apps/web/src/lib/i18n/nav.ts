@@ -100,6 +100,19 @@ const strings = {
     tierFree: "FREE",
 
     cruiseModeFab: "🚢 Cruise Mode",
+
+    // Right rail
+    railCreatorsForYou: "Creators for you",
+    railPeopleToFollow: "People to follow",
+    railCreatorsToSubscribe: "Creators to subscribe",
+    railLiveViewersToFollow: "Live viewers to follow",
+    railYouMightFollow: "You might follow",
+    railMoreCreatorsLikeThis: "More creators like this",
+    railSubscribe: "Subscribe",
+    railView: "View",
+    railFollow: "Follow",
+    railViewAll: "View all",
+    railStudioActivity: "Recent activity",
   },
   es: {
     home: "Inicio",
@@ -202,6 +215,19 @@ const strings = {
     tierFree: "FREE",
 
     cruiseModeFab: "🚢 Cruise Mode",
+
+    // Right rail
+    railCreatorsForYou: "Creadores para ti",
+    railPeopleToFollow: "Personas para seguir",
+    railCreatorsToSubscribe: "Creadores para suscribirse",
+    railLiveViewersToFollow: "Espectadores en vivo para seguir",
+    railYouMightFollow: "Tal vez sigas",
+    railMoreCreatorsLikeThis: "Más creadores como este",
+    railSubscribe: "Suscribirse",
+    railView: "Ver",
+    railFollow: "Seguir",
+    railViewAll: "Ver todo",
+    railStudioActivity: "Actividad reciente",
   },
   pt: {
     home: "Início",

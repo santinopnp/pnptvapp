@@ -32,6 +32,7 @@ import {
 } from "@/lib/api";
 import { connectSocket } from "@/lib/socket";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 // Inline SVG icon helpers (no lucide-react dependency)
 const IcoMapPin = ({ className }: { className?: string }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -823,6 +824,7 @@ export default function Nearby() {
   useAuth(); // ensure auth context is mounted (tier-gating handled by route guards)
   const t = useI18n();
   const { showTutorial, dismissTutorial, dismissForever } = useTutorial("nearby");
+  const { data: forYou } = useForYou("discover");
 
   // ── Mode & Page state ──────────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>(() => {
@@ -1201,7 +1203,38 @@ export default function Nearby() {
   }
 
   // ─── Main render ───────────────────────────────────────────────────────────
+  const nearbyRail = (
+    <>
+      {(forYou?.contextHints ?? []).length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <ul>{(forYou?.contextHints ?? []).slice(0, 3).map((hint, i) => (
+            <ContextHintCard key={i} hint={hint} />
+          ))}</ul>
+        </div>
+      )}
+      <RightRail
+        sections={[
+          {
+            title: t.nav.railYouMightFollow,
+            items: (forYou?.suggestedFollows ?? []).slice(0, 4).map((f) => (
+              <SuggestedFollowRow
+                key={f.userId}
+                item={f}
+                followLabel={t.nav.railFollow}
+                viewLabel={t.nav.railView}
+              />
+            )),
+          },
+        ]}
+      />
+    </>
+  );
+
   return (
+    <AppShell rightRail={nearbyRail}>
     <div className="page-container !p-0 flex flex-col min-h-full" style={{ background: "var(--pnp-background)" }}>
       <Helmet>
         <title>{t.booking.pageTitle}</title>
@@ -1841,5 +1874,6 @@ export default function Nearby() {
         );
       })()}
     </div>
+    </AppShell>
   );
 }

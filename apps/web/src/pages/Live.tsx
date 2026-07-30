@@ -31,6 +31,7 @@ import {
   type CreatorMediaItem,
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
+import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, useForYou } from "@/components/Layout";
 
 const ALLOWED_IMAGE_HOSTS = ["cms.pnptv.app", "app.pnptv.app", "pnptv.app"];
 function isValidPhotoUrl(photo: string | null | undefined): photo is string {
@@ -53,6 +54,7 @@ export default function Live() {
   const navigate = useNavigate();
   const location = useLocation();
   const { showTutorial, dismissTutorial, dismissForever } = useTutorial("live");
+  const { data: forYou } = useForYou("live");
   const [liveEvents, setLiveEvents] = useState<EventItem[]>([]);
   const [detailEvent, setDetailEvent] = useState<EventItem | null>(null);
 
@@ -510,7 +512,39 @@ export default function Live() {
   const onlineCount = filteredPerformers.filter((p) => p.isOnline && !findLiveStream(p)).length;
   const offlineCount = filteredPerformers.length - liveCount - onlineCount;
 
+  const liveRail = (
+    <RightRail
+      sections={[
+        {
+          title: t.nav.railCreatorsToSubscribe,
+          viewAllHref: "/models",
+          viewAllLabel: t.nav.railViewAll,
+          items: (forYou?.suggestedCreators ?? []).slice(0, 4).map((c) => (
+            <SuggestedCreatorRow
+              key={c.userId}
+              item={c}
+              subscribeLabel={t.nav.railSubscribe}
+              viewLabel={t.nav.railView}
+            />
+          )),
+        },
+        {
+          title: t.nav.railLiveViewersToFollow,
+          items: (forYou?.suggestedFollows ?? []).slice(0, 4).map((f) => (
+            <SuggestedFollowRow
+              key={f.userId}
+              item={f}
+              followLabel={t.nav.railFollow}
+              viewLabel={t.nav.railView}
+            />
+          )),
+        },
+      ]}
+    />
+  );
+
   return (
+    <AppShell rightRail={liveRail}>
     <div className="page-container">
       <Helmet>
         <title>{t.live.pageTitle}</title>
@@ -1214,5 +1248,6 @@ export default function Live() {
         />
       )}
     </div>
+    </AppShell>
   );
 }

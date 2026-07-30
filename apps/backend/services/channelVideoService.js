@@ -127,6 +127,36 @@ const TAG_TAXONOMY = [
 
 // ── Ownership check ─────────────────────────────────────────────────────────
 
+const STORAGE_CAP_BYTES = Number(process.env.MAX_STORAGE_BYTES_PER_CREATOR) || 26843545600;
+
+async function getStorageQuota(uploaderId) {
+  const { rows } = await query(
+    `SELECT COALESCE(SUM(filesize_bytes), 0)::bigint AS used, COUNT(*)::int AS videos
+       FROM channel_videos
+      WHERE uploader_id = $1 AND status <> 'removed'`,
+    [String(uploaderId)]
+  );
+  const used = Number(rows[0]?.used || 0);
+  return {
+    usedBytes: used,
+    capBytes: STORAGE_CAP_BYTES,
+    remainingBytes: Math.max(0, STORAGE_CAP_BYTES - used),
+    videoCount: Number(rows[0]?.videos || 0),
+  };
+}
+
+async function assertStorageCapacity(uploaderId, incomingBytes) {
+  const q = await getStorageQuota(uploaderId);
+  if (q.usedBytes + Number(incomingBytes || 0) > q.capBytes) {
+    const err = new Error('Storage quota exceeded for this creator');
+    err.code = 'STORAGE_QUOTA_EXCEEDED';
+    err.status = 413;
+    err.details = { usedBytes: q.usedBytes, capBytes: q.capBytes, remainingBytes: q.remainingBytes, incomingBytes: Number(incomingBytes || 0) };
+    throw err;
+  }
+  return q;
+}
+
 /**
  * Returns the creator_channels row if user can manage it (owner, collaborator,
  * or platform admin). Throws ChannelOwnershipError otherwise.
@@ -1373,6 +1403,8 @@ async function failStuckVideoUploads() {
 
 module.exports = {
   loadOwnedChannel,
+  getStorageQuota,
+  assertStorageCapacity,
   uploadVideo,
   aiTitle,
   aiDescription,

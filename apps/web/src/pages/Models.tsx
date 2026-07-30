@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { getAllPerformers, type FeaturedPerformer } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
+import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 
 const ALLOWED_IMAGE_HOSTS = ["cms.pnptv.app", "app.pnptv.app", "pnptv.app"];
 function isValidPhotoUrl(photo: string | null | undefined): photo is string {
@@ -24,6 +25,7 @@ export default function Models() {
   const { user } = useAuth();
   const t = useI18n();
   const es = t.lang === "es";
+  const { data: forYou } = useForYou("discover");
 
   const [performers, setPerformers] = useState<FeaturedPerformer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,38 @@ export default function Models() {
     });
   }, [performers, query]);
 
+  const modelsRail = (
+    <>
+      {(forYou?.contextHints ?? []).length > 0 && (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.05)" }}
+        >
+          <ul>{(forYou?.contextHints ?? []).slice(0, 3).map((hint, i) => (
+            <ContextHintCard key={i} hint={hint} />
+          ))}</ul>
+        </div>
+      )}
+      <RightRail
+        sections={[
+          {
+            title: t.nav.railYouMightFollow,
+            items: (forYou?.suggestedFollows ?? []).slice(0, 4).map((f) => (
+              <SuggestedFollowRow
+                key={f.userId}
+                item={f}
+                followLabel={t.nav.railFollow}
+                viewLabel={t.nav.railView}
+              />
+            )),
+          },
+        ]}
+      />
+    </>
+  );
+
   return (
+    <AppShell rightRail={modelsRail}>
     <div className="page-container py-6 px-4 max-w-5xl mx-auto">
       <Helmet>
         <title>{es ? "Modelos y Creadores | PNPtv" : "Models & Creators | PNPtv"}</title>
@@ -252,5 +285,6 @@ export default function Models() {
       )}
 
     </div>
+    </AppShell>
   );
 }

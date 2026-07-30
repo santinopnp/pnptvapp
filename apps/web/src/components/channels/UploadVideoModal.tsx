@@ -122,6 +122,16 @@ export default function UploadVideoModal({
     setResume(r);
   }, [channelId]);
 
+  // Storage quota
+  const [quota, setQuota] = useState<{ usedBytes: number; capBytes: number; remainingBytes: number; videoCount: number } | null>(null);
+  useEffect(() => {
+    fetch("/api/webapp/channels/me/storage-quota", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.success) setQuota({ usedBytes: d.usedBytes, capBytes: d.capBytes, remainingBytes: d.remainingBytes, videoCount: d.videoCount }); })
+      .catch(() => {});
+  }, []);
+  const overQuota = !!(quota && file && file.size > quota.remainingBytes);
+
   // Load tag taxonomy once
   useEffect(() => {
     getChannelTagTaxonomy(channelId).then((r) => setTaxonomy(r.tags || [])).catch(() => {});
@@ -322,6 +332,39 @@ export default function UploadVideoModal({
 
   const renderPick = () => (
     <div className="p-5 space-y-4">
+      {/* Storage quota bar */}
+      {quota && (() => {
+        const pct = Math.min(100, Math.round((quota.usedBytes / quota.capBytes) * 100));
+        const warn = quota.remainingBytes < 500 * 1024 * 1024;
+        const barColor = overQuota ? "#DC2626" : warn ? "#F59E0B" : "#5ED1C4";
+        return (
+          <div className="rounded-xl px-4 py-3 space-y-2" style={{ background: "#111", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div className="flex justify-between text-xs">
+              <span className="text-white/70 font-semibold">
+                Almacenamiento · Storage
+              </span>
+              <span className="text-white/80 font-mono">
+                {fmtBytes(quota.usedBytes)} / {fmtBytes(quota.capBytes)}
+              </span>
+            </div>
+            <div className="w-full rounded-full overflow-hidden" style={{ height: 6, background: "#1E1E1E" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: barColor, transition: "width .3s" }} />
+            </div>
+            <div className="flex justify-between text-[10px] text-white/50">
+              <span>{quota.videoCount} {quota.videoCount === 1 ? "video" : "videos"}</span>
+              <span>{fmtBytes(quota.remainingBytes)} libre · free</span>
+            </div>
+            {overQuota && file && (
+              <p className="text-[11px] font-semibold" style={{ color: "#F87171" }}>
+                Este archivo ({fmtBytes(file.size)}) excede el espacio disponible. Borra un video antes de continuar.
+                <br />
+                <span className="text-white/50 font-normal">This file exceeds your available space. Delete a video to free up room.</span>
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Resume banner */}
       {resume && (
         <div
@@ -414,12 +457,12 @@ export default function UploadVideoModal({
       {error && <p className="text-xs font-medium" style={{ color: "#FF6B6B" }}>{error}</p>}
 
       <button
-        disabled={!file || !oneLiner.trim()}
-        onClick={() => file && oneLiner.trim() && startUpload(file, oneLiner)}
+        disabled={!file || !oneLiner.trim() || overQuota}
+        onClick={() => file && oneLiner.trim() && !overQuota && startUpload(file, oneLiner)}
         className="w-full py-3.5 rounded-xl text-sm font-bold transition-opacity disabled:opacity-30"
         style={{ background: "linear-gradient(90deg,#D4007A,#7B61FF)", color: "#fff" }}
       >
-        Subir a Mux →
+        {overQuota ? "Sin espacio · No storage" : "Subir a Mux →"}
       </button>
       <p className="text-center text-xs text-white/30">
         Tu video va directo a Mux — sin pasar por nuestros servidores

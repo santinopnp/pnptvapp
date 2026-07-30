@@ -6,6 +6,7 @@ const { query, getPool } = require('../../../config/postgres');
 const { hasAccess } = require('../../../services/accessService');
 const { resolveUserId } = require('../../utils/helpers');
 const XAutoCampaignService = require('../../../services/xAutoCampaignService');
+const { invalidateForYouCache } = require('../../../services/discoverService');
 const fs = require('fs');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -230,6 +231,8 @@ const subscribeToCreator = async (req, res) => {
     }
 
     const result = await CreatorService.subscribeToCreator(req.user.id, creatorId, paymentId);
+    // Bust for-you cache — subscriber's pool changes (fire-and-forget)
+    invalidateForYouCache(String(req.user.id)).catch(() => {});
     return res.json({ success: true, ...result });
   } catch (err) {
     if (err.code === 'CREATOR_LOCKED') {
@@ -252,6 +255,8 @@ const unsubscribeFromCreator = async (req, res) => {
     const creatorId = await resolveUserId(req.params.creatorId);
     if (!creatorId) return res.status(404).json({ error: 'Creator not found' });
     const result = await CreatorService.unsubscribeFromCreator(req.user.id, creatorId);
+    // Bust for-you cache — pool changes after unsubscribe (fire-and-forget)
+    invalidateForYouCache(String(req.user.id)).catch(() => {});
     return res.json({ success: true, ...result });
   } catch (err) {
     logger.error('unsubscribeFromCreator error', err);

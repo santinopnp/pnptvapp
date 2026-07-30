@@ -9669,3 +9669,46 @@ export function getCallAnalytics(): Promise<{
 }> {
   return request("/api/admin/users/analytics/calls");
 }
+
+// ─── For-You Recommendations ─────────────────────────────────────────────────
+
+export interface ForYouSuggestedCreator {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  price: string | null;
+  isLive: boolean;
+  isPrime: boolean;
+  reason: string;
+}
+
+export interface ForYouSuggestedFollow {
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+  isOnline: boolean;
+  reason: string;
+}
+
+export interface ForYouContextHint {
+  type: string;
+  text: string;
+  action: string;
+  priority: number;
+}
+
+export interface ForYouRecommendations {
+  suggestedCreators: ForYouSuggestedCreator[];
+  suggestedFollows: ForYouSuggestedFollow[];
+  contextHints: ForYouContextHint[];
+}
+
+export async function getForYouRecommendations(
+  context: string,
+  creatorId?: string | null
+): Promise<ForYouRecommendations> {
+  const qs = new URLSearchParams({ context });
+  if (creatorId) qs.set('creatorId', creatorId);
+  return request(`/api/webapp/recommendations/for-you?${qs.toString()}`);
+}
