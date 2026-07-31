@@ -5,6 +5,7 @@
  */
 const { query, getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { ensureDefaultAvailability } = require('./ensureDefaultAvailability');
 
 /**
  * Generate a deterministic SKU for a call package.
@@ -55,6 +56,10 @@ async function createPackage(creatorId, { durationMinutes, quantity, priceUsd, t
       [creatorId, durationMinutes, quantity, priceUsd, sku, title || null]
     );
     logger.info('call_package created', { id: result.rows[0].id, sku });
+    // Fire-and-forget: seed a default availability window if creator has none.
+    ensureDefaultAvailability(creatorId).catch(err =>
+      logger.warn('[callPackageService] default availability seed failed', { creatorId, error: err.message })
+    );
     return result.rows[0];
   } catch (err) {
     if (err.code === '23505') {
@@ -67,6 +72,9 @@ async function createPackage(creatorId, { durationMinutes, quantity, priceUsd, t
         [creatorId, durationMinutes, quantity, priceUsd, sku, title || null]
       );
       logger.info('call_package created (retry after 23505)', { id: result.rows[0].id, sku });
+      ensureDefaultAvailability(creatorId).catch(err =>
+        logger.warn('[callPackageService] default availability seed failed', { creatorId, error: err.message })
+      );
       return result.rows[0];
     }
     throw err;
