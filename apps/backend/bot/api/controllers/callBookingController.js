@@ -1460,6 +1460,16 @@ async function createCheckoutBtc(req, res) {
 // ---------------------------------------------------------------------------
 
 async function createCheckoutDash(req, res) {
+  // Dash retired 2026-07-31 (Phase 2). BTCPay backend gone; this endpoint
+  // used to try BTCPay and 503 with BTCPAY_NOT_CONFIGURED — now short-circuits
+  // to 410 Gone with a redirect to the still-live NowPayments crypto flow.
+  return res.status(410).json({
+    success: false,
+    error: 'Dash payments are no longer available',
+    alternatives: ['nowpayments', 'nowpayments_usdc', 'btc'],
+    redirect: '/api/webapp/book-call/checkout/nowpayments',
+  });
+  // eslint-disable-next-line no-unreachable
   try {
     const sessionUser = req.session?.user;
     if (!sessionUser?.id) {
