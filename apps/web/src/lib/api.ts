@@ -9688,6 +9688,70 @@ export function getCallAnalytics(): Promise<{
   return request("/api/admin/users/analytics/calls");
 }
 
+export interface CallDiagnosticsPendingPayment {
+  id: string;
+  user_id: string;
+  username: string | null;
+  provider: string;
+  amount: number;
+  created_at: string;
+  age_minutes: number;
+  creator_id: string | null;
+  creator_username: string | null;
+  duration: string | null;
+}
+
+export interface CallDiagnosticsAbandonedUser {
+  user_id: string;
+  username: string | null;
+  first_name: string | null;
+  abandoned: number;
+  last_attempt: string;
+  total_usd: number;
+}
+
+export interface CallDiagnosticsCreatorNoAvail {
+  creator_id: string;
+  username: string | null;
+  first_name: string | null;
+  active_packages: number;
+  min_price: number;
+}
+
+export interface CallDiagnosticsStuckBooking {
+  id: string;
+  member_id: string;
+  username: string | null;
+  creator_id: string;
+  creator_username: string | null;
+  status: string;
+  start_time_utc: string | null;
+  created_at: string;
+  age_minutes: number;
+  payment_id: string | null;
+  payment_status: string | null;
+  payment_provider: string | null;
+}
+
+export function getCallDiagnostics(): Promise<{
+  success: boolean;
+  generated_at: string;
+  totals: {
+    creators_with_packages: number;
+    creators_with_availability: number;
+    completed_last_7d: number;
+    expired_last_7d: number;
+    unused_credits: number;
+    conversion_rate_7d: number | null;
+  };
+  pending_payments: CallDiagnosticsPendingPayment[];
+  abandoned_users_7d: CallDiagnosticsAbandonedUser[];
+  creators_without_availability: CallDiagnosticsCreatorNoAvail[];
+  stuck_bookings: CallDiagnosticsStuckBooking[];
+}> {
+  return request("/api/admin/users/diagnostics/calls");
+}
+
 // ─── For-You Recommendations ─────────────────────────────────────────────────
 
 export interface ForYouSuggestedCreator {

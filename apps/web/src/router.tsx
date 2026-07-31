@@ -277,6 +277,7 @@ const MeruLinks = lazy(() => import("@/pages/admin/MeruLinks"));
 const DuplicateAccounts = lazy(() => import("@/pages/admin/DuplicateAccounts"));
 const PaymentHealth = lazy(() => import("@/pages/admin/PaymentHealth"));
 const CallAnalytics = lazy(() => import("@/pages/admin/CallAnalytics"));
+const CallDiagnostics = lazy(() => import("@/pages/admin/CallDiagnostics"));
 const HangoutTelegramHealth = lazy(() => import("@/pages/admin/HangoutTelegramHealth"));
 const Monitoring = lazy(() => import("@/pages/admin/Monitoring"));
 const WellnessShell = lazy(() => import("@/pages/WellnessShell"));
@@ -1031,6 +1032,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <CallAnalytics />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "call-diagnostics",
+        element: (
+          <ModuleLoader>
+            <CallDiagnostics />
           </ModuleLoader>
         ),
       },

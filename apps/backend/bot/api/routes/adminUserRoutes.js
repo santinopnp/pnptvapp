@@ -47,4 +47,17 @@ router.get('/analytics/calls', async (req, res) => {
   }
 });
 
+// GET /api/admin/users/diagnostics/calls — funnel health snapshot
+router.get('/diagnostics/calls', async (req, res) => {
+  try {
+    const { getCallDiagnostics } = require('../../../services/callDiagnosticsService');
+    const data = await getCallDiagnostics();
+    return res.json({ success: true, ...data });
+  } catch (err) {
+    const logger = require('../../../utils/logger');
+    logger.error('GET /diagnostics/calls error:', err);
+    return res.status(500).json({ success: false, error: { code: 'DIAGNOSTICS_ERROR', message: err.message } });
+  }
+});
+
 module.exports = router;
