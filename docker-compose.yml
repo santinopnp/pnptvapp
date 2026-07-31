@@ -604,6 +604,7 @@ services:
       - /var/www/pnptvbot-sandbox/public/media:/media
       - ./logs:/app/logs
       - ./config/jaas-private-key.pem:/app/config/jaas-private-key.pem:ro
+      - ./config/yoti-private-key.pem:/app/config/yoti-private-key.pem:ro
       - ./infrastructure/data/directus/uploads:/directus-uploads
       - ./tmp/chunks:/tmp/pnp-chunks
     env_file:
