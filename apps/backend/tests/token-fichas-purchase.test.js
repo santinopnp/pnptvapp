@@ -353,9 +353,8 @@ describe('paymentSettlementService mock interface — token purchase contract', 
 
 describe('BTCPay webhook with flow:token routes to settleTokenPurchase', () => {
   // This test validates that the webhook controller correctly dispatches
-  // flow=token metadata to settleTokenPurchase.
-  // The full webhook lifecycle is tested in btcpay-webhook.test.js.
-  // Here we verify the dispatch decision only.
+  // flow=token metadata to settleTokenPurchase. Here we verify the dispatch
+  // decision only.
 
   it('settleTokenPurchase is NOT called a second time for the same invoice (idempotency via checkInvoiceProcessed)', async () => {
     const btcpay = require('../config/btcpay');
