@@ -1,11 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
-import { createDashSubscription } from "@/lib/api";
-
 const AMOUNTS = [
   { planId: "donation-5",  usd: 5  },
   { planId: "donation-10", usd: 10 },
@@ -13,7 +11,7 @@ const AMOUNTS = [
   { planId: "donation-50", usd: 50 },
 ];
 
-type Method = "crypto" | "dash";
+type Method = "crypto";
 
 export default function Donate() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -24,7 +22,6 @@ export default function Donate() {
   const [selectedIdx, setSelectedIdx] = useState(1); // $10 default
   const [method, setMethod] = useState<Method | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [dashUrl, setDashUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -32,13 +29,6 @@ export default function Donate() {
     storageKey: "pnp_donate_order",
     onSuccess: () => setDone(true),
   });
-
-  // Dash: redirect to checkout URL as soon as it's available
-  useEffect(() => {
-    if (dashUrl) {
-      window.location.href = dashUrl;
-    }
-  }, [dashUrl]);
 
   const selected = AMOUNTS[selectedIdx];
 
@@ -53,13 +43,6 @@ export default function Donate() {
     try {
       if (method === "crypto") {
         await startPayment(selected.planId, user?.email);
-      } else if (method === "dash") {
-        const res = await createDashSubscription(selected.planId);
-        if (res.success && res.checkoutUrl) {
-          setDashUrl(res.checkoutUrl);
-        } else {
-          setError(res.error || (es ? "Error al crear el pago Dash." : "Failed to create Dash payment."));
-        }
       }
     } catch (e: any) {
       setError(e.message || (es ? "Algo salió mal." : "Something went wrong."));
@@ -161,7 +144,6 @@ export default function Donate() {
             <div className="space-y-2">
               {([
                 { id: "crypto" as Method, label: es ? "Cripto (BTC, ETH, USDC, SOL…)" : "Crypto (BTC, ETH, USDC, SOL…)", sub: es ? "Más de 100 monedas · Sin cuenta requerida" : "100+ coins · No account required", icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
-                { id: "dash" as Method, label: "Dash (BTCPay)", sub: es ? "Dash via BTCPay · Sin custodio" : "Dash via BTCPay · Non-custodial", icon: "M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" },
               ] as { id: Method; label: string; sub: string; icon: string }[]).map((m) => (
                 <button
                   key={m.id}
@@ -205,15 +187,6 @@ export default function Donate() {
               lang={lang}
               wrapperClassName="mb-4"
             />
-          )}
-
-          {/* Dash redirecting */}
-          {submitting && method === "dash" && (
-            <div className="mb-4 p-4 rounded-xl border border-orange-500/30 bg-orange-500/5 text-center">
-              <p className="text-sm text-pnp-textSecondary">
-                {es ? "Abriendo checkout de Dash…" : "Opening Dash checkout…"}
-              </p>
-            </div>
           )}
 
           {error && (

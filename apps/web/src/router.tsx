@@ -235,7 +235,6 @@ const Legal2257Page = lazy(() => import("@/pages/Legal2257Page"));
 const CommunityResourcesPage = lazy(() => import("@/pages/CommunityResourcesPage"));
 const ShopPage = lazy(() => import("@/pages/ShopPage"));
 const DownloadPage = lazy(() => import("@/pages/DownloadPage"));
-const DashBankPage = lazy(() => import("@/pages/DashBankPage"));
 const MainStage = lazy(() => import("@/pages/MainStage"));
 const MainStageAdmin = lazy(() => import("@/pages/MainStageAdmin"));
 const MainStageGuestJoin = lazy(() => import("@/pages/MainStageGuestJoin"));
@@ -1218,14 +1217,6 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <DownloadPage />
-      </ModuleLoader>
-    ),
-  },
-  {
-    path: "/bank",
-    element: (
-      <ModuleLoader>
-        <DashBankPage />
       </ModuleLoader>
     ),
   },
