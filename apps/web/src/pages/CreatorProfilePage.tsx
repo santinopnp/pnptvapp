@@ -39,10 +39,12 @@ import {
   isUserBlocked,
   createUserReport,
   togglePostLike,
+  getMyCallCredits,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
   type ViewerCreatorSubscription,
+  type MyCallCredit,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -329,6 +331,7 @@ export default function CreatorProfilePage() {
   const [showSubscribePanel, setShowSubscribePanel] = useState(false);
   const [showBookCall, setShowBookCall] = useState(false);
   const [bookCallDuration, setBookCallDuration] = useState<30 | 60>(30);
+  const [callCredits, setCallCredits] = useState<MyCallCredit[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
   const [blockLoading, setBlockLoading] = useState(false);
@@ -381,8 +384,29 @@ export default function CreatorProfilePage() {
       isUserBlocked(creatorId)
         .then((r) => { if (r.success) setIsBlocked(r.isBlocked); })
         .catch(() => {});
+
+      getMyCallCredits(creatorId)
+        .then((r) => {
+          if (!r.success) return;
+          const usable = (r.credits || []).filter(
+            (c) =>
+              (c.status === "unused" || c.status === "partial") &&
+              c.quantity_used + c.quantity_scheduled < c.quantity_total
+          );
+          setCallCredits(usable);
+        })
+        .catch(() => {});
     }
   }, [data?.creator?.id, isAuthenticated, user?.dbId, user?.id]);
+
+  const unusedCredit30 = useMemo(
+    () => callCredits.find((c) => c.duration_minutes === 30) || null,
+    [callCredits]
+  );
+  const unusedCredit60 = useMemo(
+    () => callCredits.find((c) => c.duration_minutes === 60) || null,
+    [callCredits]
+  );
 
   // Load manual lazily when the collapsible card is first expanded
   useEffect(() => {
@@ -826,20 +850,62 @@ export default function CreatorProfilePage() {
             </button>
           )}
 
+          {(unusedCredit30 || unusedCredit60) && (
+            <div
+              className="lg:max-w-md mb-2.5 px-3 py-2.5 rounded-xl text-xs flex items-center gap-2"
+              style={{
+                background: "rgba(212,0,122,0.10)",
+                border: "1px solid rgba(212,0,122,0.35)",
+                color: "#EBEBF5",
+              }}
+            >
+              <Diamond size={14} style={{ color: "#D4007A", flexShrink: 0 }} />
+              <span>
+                You already have a paid{" "}
+                <b>{unusedCredit60 ? "60-min" : "30-min"}</b> call credit — click{" "}
+                <b>Book {unusedCredit60 ? "60" : "30"} min call</b> to schedule at no extra cost.
+              </span>
+            </div>
+          )}
+
           <div className="flex gap-2.5 mb-4 lg:max-w-md">
             <button
               onClick={() => handleBookCall(30)}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90"
-              style={{ borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }}
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 relative"
+              style={
+                unusedCredit30
+                  ? { borderColor: "#D4007A", color: "#fff", background: "rgba(212,0,122,0.15)" }
+                  : { borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }
+              }
             >
               Book 30 min call
+              {unusedCredit30 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: "#D4007A", color: "#fff" }}
+                >
+                  ✓ PAID
+                </span>
+              )}
             </button>
             <button
               onClick={() => handleBookCall(60)}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90"
-              style={{ borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }}
+              className="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 relative"
+              style={
+                unusedCredit60
+                  ? { borderColor: "#D4007A", color: "#fff", background: "rgba(212,0,122,0.15)" }
+                  : { borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }
+              }
             >
               Book 60 min call
+              {unusedCredit60 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: "#D4007A", color: "#fff" }}
+                >
+                  ✓ PAID
+                </span>
+              )}
             </button>
           </div>
 

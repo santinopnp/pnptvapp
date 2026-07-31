@@ -7342,13 +7342,15 @@ export function createCallCheckoutNowPayments(
   startTimeUtc?: string,
   endTimeUtc?: string,
   payCurrency?: string,
-  clientNotes?: string
+  clientNotes?: string,
+  email?: string
 ): Promise<{ success: boolean; invoiceUrl: string; paymentId: string; amountUsd: number; expiresAt?: string; bookingId?: string; orderId?: string }> {
   const body: Record<string, unknown> = { packageId };
   if (startTimeUtc) body.startTimeUtc = startTimeUtc;
   if (endTimeUtc) body.endTimeUtc = endTimeUtc;
   if (payCurrency) body.payCurrency = payCurrency;
   if (clientNotes) body.clientNotes = clientNotes;
+  if (email) body.email = email;
   return request("/api/webapp/book-call/checkout/nowpayments", {
     method: "POST",
     body,

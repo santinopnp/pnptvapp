@@ -213,6 +213,8 @@ export function BookCallModal({
 
   // Existing paid credits for this creator
   const [existingCredit, setExistingCredit] = useState<MyCallCredit | null>(null);
+  // Credit for the OTHER duration (e.g. user picked 30 min but has a 60-min credit) — surfaces a nudge
+  const [otherDurationCredit, setOtherDurationCredit] = useState<MyCallCredit | null>(null);
   const [creditBookingLoading, setCreditBookingLoading] = useState(false);
   const [creditBookingError, setCreditBookingError] = useState<string | null>(null);
 
@@ -395,13 +397,15 @@ export function BookCallModal({
     getMyCallCredits(creator.id)
       .then((res) => {
         if (cancelled) return;
-        const usable = (res.credits ?? []).find(
+        const usableAll = (res.credits ?? []).filter(
           (c) =>
             (c.status === "unused" || c.status === "partial") &&
-            c.duration_minutes === duration &&
             c.quantity_used + c.quantity_scheduled < c.quantity_total
         );
-        setExistingCredit(usable ?? null);
+        const forThisDuration = usableAll.find((c) => c.duration_minutes === duration) ?? null;
+        const forOtherDuration = usableAll.find((c) => c.duration_minutes !== duration) ?? null;
+        setExistingCredit(forThisDuration);
+        setOtherDurationCredit(forThisDuration ? null : forOtherDuration);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -530,7 +534,8 @@ export function BookCallModal({
           selectedSlot?.startUtc ?? undefined,
           selectedSlot?.endUtc ?? undefined,
           payCurrency,
-          clientNotes.trim() || undefined
+          clientNotes.trim() || undefined,
+          email.trim() || undefined
         );
         if (npRes.invoiceUrl) {
           const safeUrl = assertPaymentUrl(npRes.invoiceUrl);
@@ -1294,6 +1299,31 @@ export function BookCallModal({
           <p className="text-xs" style={{ color: "#34C759" }}>
             You have a paid {existingCredit.duration_minutes}-min session credit — no payment needed. Select a time and confirm.
           </p>
+        </div>
+      )}
+
+      {/* Nudge: credit exists but for the OTHER duration — offer one-click switch */}
+      {!existingCredit && otherDurationCredit && (
+        <div
+          className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
+          style={{ background: "rgba(255,204,0,0.10)", border: "1px solid rgba(255,204,0,0.35)" }}
+        >
+          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FFCC00" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          <div className="flex-1 flex flex-col gap-2">
+            <p className="text-xs" style={{ color: "#FFCC00" }}>
+              You already paid for a <b>{otherDurationCredit.duration_minutes}-min</b> credit with this creator — don't buy again.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDuration(otherDurationCredit.duration_minutes as 30 | 60)}
+              className="self-start text-xs font-bold px-3 py-1.5 rounded-lg transition-opacity hover:opacity-90"
+              style={{ background: "#FFCC00", color: "#0A0A0A" }}
+            >
+              Switch to {otherDurationCredit.duration_minutes} min and use it →
+            </button>
+          </div>
         </div>
       )}
       {creditBookingError && (

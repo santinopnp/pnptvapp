@@ -667,9 +667,10 @@ async function _findReusableCallDso(userId, creatorId, packageId) {
  * @param {string} [opts.startTimeUtc] - ISO 8601
  * @param {string} [opts.endTimeUtc]   - ISO 8601
  * @param {string} [opts.payCurrency]  - Optional NowPayments pay_currency (e.g. 'btc', 'btcln')
+ * @param {string} [opts.email]        - Optional buyer email; stored in payment metadata so onCallPaymentSuccess can email the receipt
  * @returns {{ invoiceUrl, paymentId, bookingId, amountUsd, expiresAt, orderId }}
  */
-async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, endTimeUtc, payCurrency = null, clientNotes = null }) {
+async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, endTimeUtc, payCurrency = null, clientNotes = null, email = null }) {
   const axios = require('axios');
   const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
   if (!NOWPAYMENTS_API_KEY) {
@@ -734,6 +735,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
       startTimeUtc: startTimeUtc || null,
       endTimeUtc: endTimeUtc || null,
       provider: 'nowpayments',
+      email: email && typeof email === 'string' ? email.trim().slice(0, 254) : null,
     },
   });
 

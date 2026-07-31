@@ -1307,7 +1307,7 @@ async function createCheckoutNowPayments(req, res) {
     }
     const userId = String(sessionUser.id);
 
-    const { packageId, startTimeUtc, endTimeUtc, payCurrency: rawPayCurrency, clientNotes: rawClientNotesNp } = req.body;
+    const { packageId, startTimeUtc, endTimeUtc, payCurrency: rawPayCurrency, clientNotes: rawClientNotesNp, email: rawEmailNp } = req.body;
 
     if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
       return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
@@ -1343,6 +1343,9 @@ async function createCheckoutNowPayments(req, res) {
     const clientNotesNp = rawClientNotesNp && typeof rawClientNotesNp === 'string'
       ? rawClientNotesNp.trim().slice(0, 1000) || null : null;
 
+    const emailNp = rawEmailNp && typeof rawEmailNp === 'string'
+      ? rawEmailNp.trim().slice(0, 254) || null : null;
+
     const result = await callCheckoutService.createCallCheckoutNowPayments({
       userId,
       packageId: Number(packageId),
@@ -1350,6 +1353,7 @@ async function createCheckoutNowPayments(req, res) {
       endTimeUtc: slotTimes?.endTimeUtc ?? null,
       payCurrency,
       clientNotes: clientNotesNp,
+      email: emailNp,
     });
 
     return res.status(201).json({ success: true, ...result });
