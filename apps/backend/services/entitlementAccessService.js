@@ -11,7 +11,12 @@ const ENTITLEMENT_CACHE_TTL = 120;
 // AND whose actions never affect creator/platform metrics (no follow persist,
 // no like persist, no view-count increment, no live/hangout headcount).
 // Extend at runtime via SUPER_GOD_IDS env var (comma-separated).
-const HARDCODED_SUPER_GOD_IDS = new Set(['8599671840', '7246621722']);
+// 8552451957 = Carlos (@pnptv), platform owner + superadmin — was blocked by
+// hasResourceAccess (exclusive/prime content) and dmService (creator DM policy)
+// despite being superadmin in users.role, because those gates only bypass on
+// super-god. Adding him here also stops his browsing from inflating creator
+// metrics (follows, likes, view counts, live/hangout headcount).
+const HARDCODED_SUPER_GOD_IDS = new Set(['8599671840', '7246621722', '8552451957']);
 const ENV_SUPER_GOD_IDS = new Set(
   (process.env.SUPER_GOD_IDS || '')
     .split(',').map(s => s.trim()).filter(Boolean)
@@ -291,7 +296,7 @@ class EntitlementAccessService {
       // so SCAN('ent:{userId}:*') finds nothing (keys live under 'pnptv:ent:{userId}:*').
       // Fix: explicitly delete all known global key patterns via DEL (which applies the
       // prefix correctly), plus any scoped keys found in the DB.
-      const ADD_ON_IDS = ['prime', 'pnp-member', 'channel-access', 'hangout-access', 'creator-subscription', 'pnp-col'];
+      const ADD_ON_IDS = ['prime', 'pnp-member', 'channel-access', 'hangout-access', 'creator-subscription', 'pnp-col', 'private-calls'];
       const keysToDelete = [
         ...ADD_ON_IDS.map(id => `ent:${userId}:${id}`),
         `user_label:${userId}`,
