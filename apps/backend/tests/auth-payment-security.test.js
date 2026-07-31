@@ -113,7 +113,7 @@ jest.mock('../services/platformBanService', () => ({
 jest.mock('../bot/utils/helpers', () => ({
   isAdminUser: jest.fn(() => false),
 }));
-jest.mock('../services/emailService', () => ({
+jest.mock('../services/emailservice', () => ({
   send: jest.fn(async () => ({ messageId: 'test-msg' })),
 }));
 jest.mock('../services/followService', () => ({

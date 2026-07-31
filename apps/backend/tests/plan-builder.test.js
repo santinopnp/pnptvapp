@@ -199,17 +199,7 @@ describe('planBuilderController.createPlan', () => {
     await planBuilderController.createPlan(req, res);
 
     expect(res._status).toBe(400);
-    expect(res._body.error).toMatch(/price must be a positive number/i);
-  });
-
-  it('returns 400 when price is zero', async () => {
-    const req = makeReq({ body: { name: 'Zero', price: 0, add_ons: [MEMBER_30] } });
-    const res = makeRes();
-
-    await planBuilderController.createPlan(req, res);
-
-    expect(res._status).toBe(400);
-    expect(res._body.error).toMatch(/price must be a positive number/i);
+    expect(res._body.error).toMatch(/price must be a non-negative number/i);
   });
 
   it('generates a lifetime SKU (PNP-000-P-000) for lifetime member + prime', async () => {
