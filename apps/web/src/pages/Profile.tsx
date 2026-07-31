@@ -25,7 +25,6 @@ import {
   getFollowStatus,
   getCreatorSubscriptionStatus,
   unsubscribeFromCreator,
-  createDashSubscription,
   prepareUsdcSubscription,
   getUsdcAvailable,
   getBtcAvailable,
@@ -266,9 +265,8 @@ export default function Profile() {
   const [showSubscribeModal, setShowSubscribeModal] = useState(false);
   const [subscribeEmail, setSubscribeEmail] = useState("");
   const [subscribeEmailError, setSubscribeEmailError] = useState<string | null>(null);
-  const [subscribeProvider, setSubscribeProvider] = useState<"usdc" | "usdc_sol" | "dash" | "btc">("usdc");
+  const [subscribeProvider, setSubscribeProvider] = useState<"usdc" | "usdc_sol" | "btc">("usdc");
   const [npCoinPick, setNpCoinPick] = useState<string>("btc");
-  const [dashAvailable, setDashAvailable] = useState<boolean | null>(null);
   const [btcAvailable, setBtcAvailable] = useState(false);
   const [usdcAvailable, setUsdcAvailable] = useState<boolean | null>(null);
   const [subscribePaymentLoading, setSubscribePaymentLoading] = useState(false);
@@ -797,14 +795,11 @@ export default function Profile() {
     setSubscribePaymentId(null);
     setSubscribeProvider("usdc");
     setShowSubscribeModal(true);
-    // Probe all payment provider availability lazily on first open.
-    if (dashAvailable === null) {
-      setDashAvailable(false);
+    // Probe payment provider availability lazily on first open.
+    if (usdcAvailable === null) {
       getBtcAvailable()
         .then((res) => setBtcAvailable(res.available === true))
         .catch(() => setBtcAvailable(false));
-    }
-    if (usdcAvailable === null) {
       getUsdcAvailable()
         .then((res) => setUsdcAvailable(res.available === true))
         .catch(() => setUsdcAvailable(false));
@@ -863,16 +858,6 @@ export default function Profile() {
           setSubscribeAwaitingPayment(true);
         } else {
           setSubscribeError(btcRes.error || p.failedToCreatePayment);
-        }
-      } else {
-        // Dash path
-        const dashRes = await createDashSubscription("creator_monthly", trimmed, creatorId);
-        if (dashRes.success && dashRes.checkoutUrl) {
-          window.open(assertPaymentUrl(dashRes.checkoutUrl), "_blank", "noopener,noreferrer");
-          setSubscribePaymentId(dashRes.invoiceId);
-          setSubscribeAwaitingPayment(true);
-        } else {
-          setSubscribeError(dashRes.error || p.failedToCreatePayment);
         }
       }
     } catch (err) {
@@ -2200,18 +2185,6 @@ export default function Profile() {
                           : { background: "rgba(38,161,123,0.06)", color: "#26a17b", borderColor: "rgba(38,161,123,0.2)" }}
                       >
                         ₮ USDT (BSC)
-                      </button>
-                    )}
-                    {dashAvailable !== false && (
-                      <button
-                        type="button"
-                        onClick={() => setSubscribeProvider("dash")}
-                        className="py-2.5 rounded-lg text-sm font-medium text-center border transition-colors"
-                        style={subscribeProvider === "dash"
-                          ? { background: "rgba(0,141,228,0.20)", color: "#008DE4", borderColor: "rgba(0,141,228,0.5)" }
-                          : { background: "rgba(0,141,228,0.06)", color: "#008DE4", borderColor: "rgba(0,141,228,0.2)" }}
-                      >
-                        🥷 Dash
                       </button>
                     )}
                     {btcAvailable && (

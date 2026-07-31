@@ -28,7 +28,6 @@ import {
   bookCallWithCredit,
   createCallCheckoutNowPayments,
   createCallCheckoutBtc,
-  createCallCheckoutDash,
   getBtcAvailable,
   getBtcSubscriptionStatus,
   getBookingPaymentStatus,
@@ -47,7 +46,7 @@ import type { CreatorCardCreator } from "./CreatorCard";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "nowpayments" | "nowpayments_usdc" | "dash" | "btc" | "tokens";
+type Provider = "nowpayments" | "nowpayments_usdc" | "btc" | "tokens";
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -208,7 +207,6 @@ export function BookCallModal({
   const [joinCallLoading, setJoinCallLoading] = useState(false);
   const [joinCallError, setJoinCallError] = useState<string | null>(null);
   const [btcAvailable, setBtcAvailable] = useState(false);
-  const [dashAvailable, setDashAvailable] = useState(false);
 
   // Existing paid credits for this creator
   const [existingCredit, setExistingCredit] = useState<MyCallCredit | null>(null);
@@ -719,85 +717,6 @@ export function BookCallModal({
         return;
       }
 
-      // Dash — BTCPay Server Dash store
-      if (provider === "dash") {
-        const dashRes = await createCallCheckoutDash(
-          activePackage.id,
-          selectedSlot?.startUtc ?? undefined,
-          selectedSlot?.endUtc ?? undefined,
-          clientNotes.trim() || undefined,
-          email.trim() || undefined
-        );
-        if (dashRes.checkoutUrl) {
-          const safeUrl = assertPaymentUrl(dashRes.checkoutUrl);
-          const pw = 560, ph = 780;
-          const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-          const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-          paymentPopupRef.current = window.open(
-            safeUrl, "dash_call_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
-          );
-        }
-        const dashInvoiceId = dashRes.invoiceId;
-        setDashPaymentId(dashInvoiceId ?? null);
-
-        // FIX HIGH-03: only poll with a UUID; dashInvoiceId is a BTCPay string and
-        // getBookingPaymentStatus will always 404 on it.
-        const pollId = dashRes.bookingId ?? dashRes.paymentId;
-        if (pollId) {
-          if (dashPollRef.current) clearInterval(dashPollRef.current);
-
-          const POLL_INTERVAL_MS = 6_000;
-          const POLL_TIMEOUT_MS = 900_000; // 15 min
-          const pollStart = Date.now();
-
-          dashPollRef.current = setInterval(async () => {
-            if (Date.now() - pollStart >= POLL_TIMEOUT_MS) {
-              if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-              setCheckoutLoading(false);
-              setIsProcessing(false);
-              checkoutInFlight.current = false;
-              setDashTimedOut(true);
-              return;
-            }
-            try {
-              const status = await getBookingPaymentStatus(String(pollId));
-              if (status.status === "paid") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                paymentPopupRef.current?.close();
-                paymentPopupRef.current = null;
-                setConfirmedRoomName(status.roomName ?? null);
-                setConfirmedBookingId((prev) => status.bookingId ?? prev);
-                if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
-                setStep("SUCCESS");
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              } else if (status.status === "expired" || status.status === "failed") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                setCheckoutError(
-                  status.status === "expired"
-                    ? "Invoice expired. Please try again."
-                    : "Payment failed. Please try again."
-                );
-                setRetryPayload({
-                  packageId: activePackage.id,
-                  provider: "dash",
-                  email,
-                  quantity: 1,
-                  selectedSlot: selectedSlot?.startUtc ?? null,
-                });
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              }
-            } catch {
-              // Network hiccup — keep polling
-            }
-          }, POLL_INTERVAL_MS);
-        }
-        return;
-      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t.creator.checkoutFailed;
       setCheckoutError(msg);
@@ -1444,18 +1363,6 @@ export function BookCallModal({
           >
             ₮ USDT
           </button>
-          {dashAvailable && (
-            <button
-              type="button"
-              onClick={() => setProvider("dash")}
-              className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-              style={provider === "dash"
-                ? { background: "rgba(18,152,219,0.16)", border: "1.5px solid #1298DB", color: "#1298DB" }
-                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-            >
-              Ð Dash
-            </button>
-          )}
           {btcAvailable && (
             <button
               type="button"
@@ -1599,7 +1506,7 @@ export function BookCallModal({
       </div>
 
       {/* Crypto: 15-min timeout recovery card */}
-      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "dash" || provider === "btc") && dashTimedOut && (
+      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && dashTimedOut && (
         <div
           className="rounded-xl px-4 py-4 space-y-3"
           style={{ background: "rgba(255,159,10,0.10)", border: "1px solid rgba(255,159,10,0.25)" }}
@@ -1639,7 +1546,7 @@ export function BookCallModal({
       )}
 
       {/* Crypto: waiting for payment indicator */}
-      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "dash" || provider === "btc") && checkoutLoading && !dashTimedOut && (
+      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && checkoutLoading && !dashTimedOut && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)" }}>
             <div className="flex items-center gap-2">
@@ -1744,7 +1651,7 @@ export function BookCallModal({
       )}
 
       {/* Submit */}
-      {!((provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "dash" || provider === "btc") && (checkoutLoading || dashTimedOut)) && (
+      {!((provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && (checkoutLoading || dashTimedOut)) && (
         <button
           type="button"
           disabled={checkoutLoading || !activePackage}

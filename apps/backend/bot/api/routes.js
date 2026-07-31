@@ -9282,8 +9282,8 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
   if (!Number.isFinite(hangoutId)) {
     return res.status(400).json({ error: 'Invalid hangout ID' });
   }
-  if (!provider || !['dash', 'nowpayments'].includes(provider)) {
-    return res.status(400).json({ error: 'Provider must be dash or nowpayments' });
+  if (!provider || provider !== 'nowpayments') {
+    return res.status(400).json({ error: 'Provider must be nowpayments' });
   }
 
   const { rows: groups } = await getPool().query(
@@ -9321,41 +9321,6 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
     hangoutName: hangout.name,
     ...(email ? { email } : {}),
   };
-
-  // ── Dash / BTCPay branch ──────────────────────────────────────────────────
-  if (provider === 'dash') {
-    try {
-      const orderId = `pnptv-hangout-${userId}-${hangout.id}-${Date.now()}`;
-      const invoice = await createDashInvoice({
-        usdAmount: hangoutPrice,
-        userId,
-        orderId,
-        description: 'Community access',
-        redirectUrl: `${webappUrlHangout}/chat/${hangout.id}`,
-      });
-      const insertRes = await getPool().query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, 'hangout_access', $2, $3, $4, 'pending', $5)
-         ON CONFLICT (btcpay_invoice_id) DO UPDATE
-           SET status = dash_subscription_orders.status
-         RETURNING id`,
-        [userId, email || null, hangoutPrice, invoice.invoiceId, JSON.stringify(scopeMetadata)]
-      );
-      return res.json({
-        success: true,
-        paymentId: String(insertRes.rows[0].id),
-        invoiceId: invoice.invoiceId,
-        checkoutUrl: invoice.checkoutUrl,
-      });
-    } catch (err) {
-      logger.error(`Hangout dash purchase failed: ${err.message}`);
-      if (err.message?.includes('not configured')) {
-        return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'BTCPAY_NOT_CONFIGURED' });
-      }
-      return res.status(500).json({ error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
-    }
-  }
 
   // ── NowPayments branch ────────────────────────────────────────────────────
   if (provider === 'nowpayments') {
@@ -9418,8 +9383,8 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
   if (!Number.isFinite(channelId)) {
     return res.status(400).json({ error: 'Invalid channel ID' });
   }
-  if (!provider || !['dash', 'nowpayments'].includes(provider)) {
-    return res.status(400).json({ error: 'Provider must be dash or nowpayments' });
+  if (!provider || provider !== 'nowpayments') {
+    return res.status(400).json({ error: 'Provider must be nowpayments' });
   }
 
   const { rows: channels } = await getPool().query(
@@ -9453,42 +9418,6 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
     channelName: channel.name,
     ...(email ? { email } : {}),
   };
-
-  // ── Dash / BTCPay branch (5% crypto discount) ─────────────────────────────
-  if (provider === 'dash') {
-    try {
-      const discountedChannelPrice = Math.round(channelPrice * 0.95 * 100) / 100;
-      const orderId = `pnptv-channel-${userId}-${channel.id}-${Date.now()}`;
-      const invoice = await createDashInvoice({
-        usdAmount: discountedChannelPrice,
-        userId,
-        orderId,
-        description: `Channel access: ${channel.name}`,
-        redirectUrl: `${webappUrlChannel}/chat/${channel.hangout_group_id || ''}`,
-      });
-      const insertRes = await getPool().query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, 'channel_access', $2, $3, $4, 'pending', $5)
-         ON CONFLICT (btcpay_invoice_id) DO UPDATE
-           SET status = dash_subscription_orders.status
-         RETURNING id`,
-        [userId, email || null, discountedChannelPrice, invoice.invoiceId, JSON.stringify(scopeMetadata)]
-      );
-      return res.json({
-        success: true,
-        paymentId: String(insertRes.rows[0].id),
-        invoiceId: invoice.invoiceId,
-        checkoutUrl: invoice.checkoutUrl,
-      });
-    } catch (err) {
-      logger.error(`Channel dash purchase failed: ${err.message}`);
-      if (err.message?.includes('not configured')) {
-        return res.status(503).json({ error: 'Crypto payments are not available yet.', code: 'BTCPAY_NOT_CONFIGURED' });
-      }
-      return res.status(500).json({ error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
-    }
-  }
 
   // ── NowPayments branch ────────────────────────────────────────────────────
   if (provider === 'nowpayments') {
@@ -10203,91 +10132,17 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
       });
     }
 
-    // --- Dash direct tip (BTCPay invoice) ---
+    // Dash direct tips retired 2026-07-31 — BTCPay account closed.
+    // Tokens is the only supported live-tip method.
     if (paymentMethod === 'dash') {
-      const { createInvoice: createBtcpayInvoiceForTip } = require('../../config/btcpay');
-
-      // LIVE-H-05: Redis dedup lock — prevents double-submission of Dash tips.
-      // Key is scoped to creatorId + userId; 10s TTL covers the invoice-creation window.
-      const dashTipLockKey = `live:tip:dash:${resolvedPerformerId}:${userId}`;
-      try {
-        const dashLockRedis = getRedis();
-        if (dashLockRedis) {
-          const dashLockAcquired = await dashLockRedis.set(dashTipLockKey, '1', 'NX', 'EX', 10);
-          if (!dashLockAcquired) {
-            return res.status(429).json({ success: false, error: 'Tip already in progress. Please wait a moment.' });
-          }
-        }
-      } catch (dashLockErr) {
-        logger.warn('Dash tip dedup lock check failed (fail-open)', { userId, performerId: resolvedPerformerId, error: dashLockErr.message });
-      }
-
-      // Create tip record first (pending)
-      const tip = await PNPLiveTipsService.createTip(
-        userId, null, null,
-        numAmount,
-        (message || '').slice(0, 200),
-        String(resolvedPerformerId)
-      );
-
-      if (!tip) {
-        return res.status(500).json({ success: false, error: 'Failed to create tip' });
-      }
-
-      // Create BTCPay invoice — use createInvoice (not createDashInvoice) so tip
-      // metadata is threaded into BTCPay's record. The webhook handler reads
-      // event.metadata.{type,tipId,userId,performerId} on InvoiceSettled.
-      // planId='tip' is required by createInvoice but is informational only here.
-      // numAmount is in Tokens (6 Tokens = $1 USD); BTCPay expects USD.
-      const TOKENS_PER_USD = 6;
-      try {
-        const inv = await createBtcpayInvoiceForTip({
-          amount: numAmount / TOKENS_PER_USD,
-          currency: 'USD',
-          orderId: `pnptv-tips-${userId}-${tip.id}`,
-          userId,
-          planId: 'tip',
-          metadata: {
-            type: 'tip',
-            tipId: tip.id,
-            userId,
-            performerId: String(resolvedPerformerId),
-          },
-          redirectUrl: `${process.env.WEBAPP_URL || 'https://pnptv.app'}/live`,
-        });
-
-        // Store invoice ID on the tip record
-        await getPool().query(
-          `UPDATE pnp_tips SET transaction_id = $2, payment_method = 'dash' WHERE id = $1`,
-          [tip.id, inv.invoiceId]
-        );
-
-        return res.json({
-          success: true,
-          tipId: tip.id,
-          invoiceId: inv.invoiceId,
-          checkoutUrl: inv.checkoutLink,
-          paymentUrl: null,
-          amount: numAmount,
-          paymentMethod: 'dash',
-        });
-      } catch (tipInvErr) {
-        logger.error(`Live tip Dash invoice creation failed: ${tipInvErr.message}`);
-        // Mark the tip cancelled so it doesn't sit pending forever
-        await getPool().query(
-          `UPDATE pnp_tips SET payment_status = 'cancelled' WHERE id = $1 AND payment_status = 'pending'`,
-          [tip.id]
-        ).catch(() => {});
-        if (tipInvErr.message?.includes('not configured')) {
-          return res.status(503).json({ success: false, error: 'Crypto tips are not available yet. Please use tokens.', code: 'BTCPAY_NOT_CONFIGURED' });
-        }
-        return res.status(500).json({ success: false, error: 'Failed to create Dash tip invoice. Please try again.', code: 'BTCPAY_ERROR' });
-      }
+      return res.status(410).json({
+        success: false,
+        error: 'Dash tips have been retired. Use tokens.',
+        code: 'DASH_RETIRED',
+      });
     }
 
-    // Unreachable — the early payment-method gate above guarantees one of the
-    // two return-path blocks above (tokens / dash) handled the request.
-    return res.status(500).json({ success: false, error: 'Unhandled payment method' });
+    return res.status(400).json({ success: false, error: 'Unsupported payment method. Use tokens.' });
   } catch (error) {
     logger.error(`Live tips proxy create error: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to create tip' });
@@ -11002,7 +10857,6 @@ app.post('/api/proxy/live/tips/callback', webhookLimiter, asyncHandler(async (re
 // ==========================================
 const DashTokenService = require('../../services/dashTokenService');
 const {
-  createDashInvoice,
   createInvoice: createBtcpayInvoice,
   validateWebhookSignature,
   checkInvoiceProcessed,
@@ -11043,33 +10897,14 @@ app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res)
   res.json({ success: true, history });
 }));
 
-const TokenCheckoutService = require('../../services/tokenCheckoutService');
-
-// POST /api/wallet/buy — create a BTCPay Dash invoice for token purchase
-app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-
-  const { packageId } = req.body;
-  if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
-
-  const userId = String(user.telegram_id || user.id);
-
-  try {
-    const result = await TokenCheckoutService.createDashCheckout(userId, packageId);
-    res.json(result);
-  } catch (err) {
-    logger.error(`Wallet buy (Dash) error: ${err.message}`);
-    if (err.code === 'INVALID_PACKAGE') {
-      return res.status(400).json({ success: false, error: 'Invalid package ID' });
-    }
-    if (err.message?.includes('not configured')) {
-      return res.status(503).json({ success: false, error: 'Crypto payments are not available yet. Please use another payment method.', code: 'BTCPAY_NOT_CONFIGURED' });
-    }
-    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
-      return res.status(503).json({ success: false, error: 'Payment server is temporarily unavailable. Please try again later.', code: 'BTCPAY_UNREACHABLE' });
-    }
-    res.status(500).json({ success: false, error: 'Failed to create Dash invoice. Please try again.', code: 'BTCPAY_ERROR' });
-  }
+// POST /api/wallet/buy retired 2026-07-31 — BTCPay/Dash token top-ups removed.
+// Use /api/wallet/nowpayments-buy for crypto or /api/wallet/meru-token-link for Meru.
+app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(async (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'Dash token top-ups retired. Use crypto (NowPayments) or Meru.',
+    code: 'DASH_RETIRED',
+  });
 }));
 
 // POST /api/wallet/meru-token-link — reserve a Meru payment link for a token package

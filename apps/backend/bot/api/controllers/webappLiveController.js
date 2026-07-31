@@ -1198,83 +1198,12 @@ const buySlotTicket = async (req, res) => {
 
     // ── Dash / BTCPay crypto purchase path ───────────────────────────────────
     if (currency === 'dash') {
-      const priceUsd = parseFloat(slot.ticket_price_usd);
-      if (!priceUsd || priceUsd <= 0) {
-        return res.status(400).json({ success: false, error: 'USD price not configured for this slot' });
-      }
-
-      // HIGH-02: Idempotency guard — return the existing pending Dash invoice if one was
-      // created within the last 15 minutes. Prevents double-charge on retry. Fail-open.
-      try {
-        const { rows: existingDash } = await getPool().query(
-          `SELECT btcpay_invoice_id, metadata
-             FROM dash_subscription_orders
-            WHERE user_id = $1
-              AND status = 'pending'
-              AND metadata->>'resource' = 'live_show_ticket'
-              AND metadata->>'slotId' = $2
-              AND created_at > NOW() - INTERVAL '15 minutes'
-            ORDER BY created_at DESC
-            LIMIT 1`,
-          [userId, id]
-        );
-        if (existingDash.length > 0) {
-          const { createDashInvoice: _cdi } = require('../../../config/btcpay');
-          const WEB_APP_URL_CHECK = process.env.WEB_APP_URL || 'https://pnptv.app';
-          const existingInvoiceId = existingDash[0].btcpay_invoice_id;
-          logger.info('buySlotTicket (dash): returning existing pending invoice', { userId, slotId: id, invoiceId: existingInvoiceId });
-          return res.json({
-            success: true,
-            provider: 'dash',
-            invoiceId: existingInvoiceId,
-            checkoutUrl: `${process.env.BTCPAY_URL || 'https://btcpay.pnptv.app'}/i/${existingInvoiceId}`,
-            idempotent: true,
-          });
-        }
-      } catch (dashIdempErr) {
-        logger.warn('buySlotTicket (dash): idempotency check failed, proceeding with new invoice', { error: dashIdempErr.message });
-      }
-
-      const { createDashInvoice } = require('../../../config/btcpay');
-      const WEB_APP_URL = process.env.WEB_APP_URL || 'https://pnptv.app';
-
-      const invoice = await createDashInvoice({
-        usdAmount: priceUsd,
-        userId,
-        orderId: `pnptv-ticket-${userId}-${id}-${Date.now()}`,
-        description: 'Online event access',
-        redirectUrl: `${WEB_APP_URL}/live/${id}`,
-      });
-
-      // Store in dash_subscription_orders so the BTCPay webhook can settle it.
-      // metadata.resource = 'live_show_ticket' is the routing key in the webhook handler.
-      await getPool().query(
-        `INSERT INTO dash_subscription_orders
-           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6::jsonb)
-         ON CONFLICT DO NOTHING`,
-        [
-          userId,
-          'live_show_ticket',
-          userEmail,
-          priceUsd,
-          invoice.invoiceId,
-          JSON.stringify({
-            resource: 'live_show_ticket',
-            slotId: id,
-            slotTitle: slot.title || null,
-            userId,
-          }),
-        ]
-      );
-
-      logger.info('Live ticket checkout created (dash)', { userId, slotId: id, invoiceId: invoice.invoiceId, priceUsd });
-
-      return res.json({
-        success: true,
-        provider: 'dash',
-        invoiceId: invoice.invoiceId,
-        checkoutUrl: invoice.checkoutUrl,
+      // Dash retired 2026-07-31 — BTCPay account closed. Live-show tickets are
+      // token-only until a NowPayments/Meru path is wired.
+      return res.status(410).json({
+        success: false,
+        error: 'Dash ticket purchases retired. Use tokens.',
+        code: 'DASH_RETIRED',
       });
     }
 
