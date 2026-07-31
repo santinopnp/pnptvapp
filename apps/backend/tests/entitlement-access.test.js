@@ -46,7 +46,26 @@ const mockRedis = {
     const matched = Object.keys(redisMem).filter(k => regex.test(k));
     return ['0', matched]; // cursor '0' = done
   }),
+  smembers: jest.fn(async (k) => Array.from(redisMemSets[k] ?? [])),
+  sadd:     jest.fn(async (k, ...members) => {
+    if (!redisMemSets[k]) redisMemSets[k] = new Set();
+    members.forEach(m => redisMemSets[k].add(m));
+    return members.length;
+  }),
+  expire:   jest.fn(async () => 1),
+  pipeline: jest.fn(() => {
+    const ops = [];
+    const pipe = {
+      set:  (k, v)     => { ops.push(() => mockRedis.set(k, v));       return pipe; },
+      del:  (k)        => { ops.push(() => mockRedis.del(k));          return pipe; },
+      sadd: (k, ...m)  => { ops.push(() => mockRedis.sadd(k, ...m));   return pipe; },
+      expire: (k, s)   => { ops.push(() => mockRedis.expire(k, s));    return pipe; },
+      exec: async () => { for (const op of ops) await op(); return []; },
+    };
+    return pipe;
+  }),
 };
+const redisMemSets = {};
 
 jest.mock('../config/redis', () => ({
   getRedis: () => mockRedis,
@@ -97,6 +116,7 @@ function makeRes() {
 beforeEach(() => {
   // Wipe in-memory Redis store
   for (const k of Object.keys(redisMem)) delete redisMem[k];
+  for (const k of Object.keys(redisMemSets)) delete redisMemSets[k];
 
   // Reset all mock call history
   mockQuery.mockReset();
@@ -104,6 +124,10 @@ beforeEach(() => {
   mockRedis.set.mockClear();
   mockRedis.del.mockClear();
   mockRedis.keys.mockClear();
+  mockRedis.smembers.mockClear();
+  mockRedis.sadd.mockClear();
+  mockRedis.expire.mockClear();
+  mockRedis.pipeline.mockClear();
 });
 
 // ── hasEntitlement ────────────────────────────────────────────────────────────

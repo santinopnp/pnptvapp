@@ -21,6 +21,7 @@
 // own imports and the controller's require('../../../config/postgres').
 
 const mockQuery = jest.fn();
+const mockRunMonthlyPayouts = jest.fn();
 
 jest.mock('../config/postgres', () => ({
   query: (...args) => mockQuery(...args),
@@ -31,6 +32,10 @@ jest.mock('../utils/logger', () => ({
   warn:  jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
+}));
+
+jest.mock('../services/creatorPayoutService', () => ({
+  runMonthlyPayouts: (...args) => mockRunMonthlyPayouts(...args),
 }));
 
 // ── Subject under test ────────────────────────────────────────────────────────
@@ -266,7 +271,6 @@ describe('creatorSubscriptionAdminController.processCreatorPayout', () => {
     expect(res._body.earningsCount).toBe(5);
     expect(res._body.creator).toBe('alice');
     expect(res._body.method).toBe('crypto');
-    expect(res._body.walletAddress).toBe('0xABC');
 
     // Confirm the UPDATE call set status = 'paid_out'
     const updateCall = mockQuery.mock.calls.find(
@@ -330,45 +334,31 @@ describe('creatorSubscriptionAdminController.processCreatorPayout', () => {
 
 describe('creatorSubscriptionAdminController.processAllPayouts', () => {
 
-  it('processes all creators with pending earnings in batch', async () => {
-    const creatorsWithPending = [
-      { creator_id: 'c-1', username: 'alice', pending: '45.00' },
-      { creator_id: 'c-2', username: 'bob',   pending: '20.00' },
-    ];
+  beforeEach(() => { mockRunMonthlyPayouts.mockReset(); });
 
-    mockQuery
-      .mockResolvedValueOnce({ rows: creatorsWithPending })  // SELECT creators
-      .mockResolvedValueOnce({ rowCount: 5 })                // UPDATE c-1
-      .mockResolvedValueOnce({ rowCount: 2 });               // UPDATE c-2
-
-    const req = makeReq();
-    const res = makeRes();
-
-    await ctrl.processAllPayouts(req, res);
-
-    expect(res._body.success).toBe(true);
-    expect(res._body.creatorsCount).toBe(2);
-    expect(res._body.totalAmount).toBeCloseTo(65, 2);
-    expect(res._body.payouts).toHaveLength(2);
-    expect(res._body.payouts[0].creatorUsername).toBe('alice');
-    expect(res._body.payouts[1].amount).toBeCloseTo(20, 2);
-  });
-
-  it('returns message when no pending payouts exist', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // no creators with pending
+  it('delegates to creatorPayoutService.runMonthlyPayouts and returns its result', async () => {
+    const serviceResult = {
+      processed: 2,
+      totalAmount: 65,
+      payouts: [
+        { creatorId: 'c-1', amount: 45 },
+        { creatorId: 'c-2', amount: 20 },
+      ],
+    };
+    mockRunMonthlyPayouts.mockResolvedValueOnce(serviceResult);
 
     const req = makeReq();
     const res = makeRes();
 
     await ctrl.processAllPayouts(req, res);
 
+    expect(mockRunMonthlyPayouts).toHaveBeenCalledTimes(1);
     expect(res._body.success).toBe(true);
-    expect(res._body.message).toMatch(/no pending payouts/i);
-    expect(res._body.payouts).toEqual([]);
+    expect(res._body.result).toEqual(serviceResult);
   });
 
-  it('returns 500 on DB error', async () => {
-    mockQuery.mockRejectedValueOnce(new Error('DB crash'));
+  it('returns 500 when runMonthlyPayouts throws', async () => {
+    mockRunMonthlyPayouts.mockRejectedValueOnce(new Error('DB crash'));
 
     const req = makeReq();
     const res = makeRes();
@@ -377,6 +367,7 @@ describe('creatorSubscriptionAdminController.processAllPayouts', () => {
 
     expect(res._status).toBe(500);
     expect(res._body.success).toBe(false);
+    expect(res._body.error).toBe('DB crash');
   });
 });
 

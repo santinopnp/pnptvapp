@@ -237,6 +237,8 @@ describe('directMessagesController.getMessages', () => {
   });
 
   it('returns only messages between the session user and the specified user', async () => {
+    // Block-check SELECT (added by controller — no block found)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // Main SELECT
     mockQuery.mockResolvedValueOnce({
       rows: [

@@ -449,7 +449,12 @@ describe('settleCreatorSubscription', () => {
 
     expect(result.ok).toBe(true);
     expect(result.creatorId).toBe('cr-7');
-    expect(mockCreatorSubscribe).toHaveBeenCalledWith('user-abc', 'cr-7', null);
+    // 3rd arg is now a UUID derived from invoiceId (see invoiceToUUID in paymentSettlementService.js)
+    expect(mockCreatorSubscribe).toHaveBeenCalledWith(
+      'user-abc',
+      'cr-7',
+      expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+    );
     expect(mockMarkInvoiceProcessed).toHaveBeenCalledWith(
       'inv-crs',
       expect.objectContaining({ source: 'creator_subscription' })

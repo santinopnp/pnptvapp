@@ -15,6 +15,7 @@ jest.mock('../config/postgres', () => ({
 
 jest.mock('../config/redis', () => ({
   getRedis: jest.fn(() => ({
+    get: jest.fn(async () => null),
     set: jest.fn(async () => 'OK'),
     del: jest.fn(async () => 1),
   })),
@@ -104,15 +105,16 @@ describe('hangout call backend regressions', () => {
 
   test('startCall preserves moderator grants when owner joins an already-active call', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [] }) // ensureMainGroupMembership
-      .mockResolvedValueOnce({ rows: [] }) // ensureLanguageGroupMembership select
+      .mockResolvedValueOnce({ rows: [] }) // ensureMainGroupMembership insert
+      .mockResolvedValueOnce({ rows: [] }) // ensureLanguageGroupMembership select (empty → early return)
       .mockResolvedValueOnce({ rows: [{}] }) // isMember
-      .mockResolvedValueOnce({ rows: [{ id: 7, is_paid: false, price_usd: 0 }] }) // group (checkPaidHangoutAccess)
+      .mockResolvedValueOnce({ rows: [{ id: 7, is_paid: false, price_usd: 0, parent_group_id: null }] }) // checkPaidHangoutAccess group
+      .mockResolvedValueOnce({ rows: [] }) // isOwnerOrMod inside checkPaidHangoutAccess (added by isPrimeCoFounder path)
       .mockResolvedValueOnce({ rows: [] }) // expire stale calls
       .mockResolvedValueOnce({
         rows: [{ id: 'call-1', room_name: 'hangout-7', creator_id: 'creator-1' }],
       }) // active call found → generateCallAccess
-      .mockResolvedValueOnce({ rows: [{ role: 'owner' }] }) // isOwnerOrMod
+      .mockResolvedValueOnce({ rows: [{ role: 'owner' }] }) // isOwnerOrMod (generateCallAccess)
       .mockResolvedValueOnce({ rows: [{ creator_id: 'creator-1' }] }) // SELECT creator_id
       .mockResolvedValueOnce({ rows: [] }); // INSERT hangout_call_participants
 
@@ -143,15 +145,16 @@ describe('hangout call backend regressions', () => {
     uniqueViolation.code = '23505';
 
     mockQuery
-      .mockResolvedValueOnce({ rows: [] }) // ensureMainGroupMembership
-      .mockResolvedValueOnce({ rows: [] }) // ensureLanguageGroupMembership select
+      .mockResolvedValueOnce({ rows: [] }) // ensureMainGroupMembership insert
+      .mockResolvedValueOnce({ rows: [] }) // ensureLanguageGroupMembership select (empty)
       .mockResolvedValueOnce({ rows: [{}] }) // isMember
-      .mockResolvedValueOnce({ rows: [{ id: 7, is_paid: false, price_usd: 0 }] }) // group (checkPaidHangoutAccess)
+      .mockResolvedValueOnce({ rows: [{ id: 7, is_paid: false, price_usd: 0, parent_group_id: null }] }) // checkPaidHangoutAccess group
+      .mockResolvedValueOnce({ rows: [] }) // isOwnerOrMod inside checkPaidHangoutAccess
       .mockResolvedValueOnce({ rows: [] }) // expire stale calls
       .mockResolvedValueOnce({ rows: [] }) // no active call
       .mockRejectedValueOnce(uniqueViolation) // INSERT hangout_video_calls → race collision
       .mockResolvedValueOnce({ rows: [{ id: 'call-2', room_name: 'hangout-7' }] }) // race winner SELECT
-      .mockResolvedValueOnce({ rows: [{ role: 'owner' }] }) // isOwnerOrMod (in generateCallAccess)
+      .mockResolvedValueOnce({ rows: [{ role: 'owner' }] }) // isOwnerOrMod (generateCallAccess)
       .mockResolvedValueOnce({ rows: [] }) // SELECT creator_id (user '42' is not call-2's creator)
       .mockResolvedValueOnce({ rows: [] }); // INSERT hangout_call_participants
 

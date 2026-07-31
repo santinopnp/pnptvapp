@@ -41,7 +41,26 @@ const mockRedis = {
     const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
     return ['0', Object.keys(redisMem).filter((k) => regex.test(k))];
   }),
+  smembers: jest.fn(async (k) => Array.from(redisMemSets[k] ?? [])),
+  sadd:     jest.fn(async (k, ...members) => {
+    if (!redisMemSets[k]) redisMemSets[k] = new Set();
+    members.forEach((m) => redisMemSets[k].add(m));
+    return members.length;
+  }),
+  expire:   jest.fn(async () => 1),
+  pipeline: jest.fn(() => {
+    const ops = [];
+    const pipe = {
+      set:    (k, v)    => { ops.push(() => mockRedis.set(k, v));      return pipe; },
+      del:    (k)       => { ops.push(() => mockRedis.del(k));         return pipe; },
+      sadd:   (k, ...m) => { ops.push(() => mockRedis.sadd(k, ...m));  return pipe; },
+      expire: (k, s)    => { ops.push(() => mockRedis.expire(k, s));   return pipe; },
+      exec:   async () => { for (const op of ops) await op(); return []; },
+    };
+    return pipe;
+  }),
 };
+const redisMemSets = {};
 
 jest.mock('../config/redis', () => ({
   getRedis: () => mockRedis,
@@ -79,6 +98,7 @@ function queueDb(...responses) {
 
 beforeEach(() => {
   for (const k of Object.keys(redisMem)) delete redisMem[k];
+  for (const k of Object.keys(redisMemSets)) delete redisMemSets[k];
   mockQuery.mockReset();
   mockRedis.get.mockClear();
   mockRedis.set.mockClear();
@@ -112,16 +132,16 @@ describe('hasResourceAccess — channel', () => {
     expect(result.code).toBe('NOT_FOUND');
   });
 
-  it('allows free channels without any entitlement', async () => {
+  it('allows free channels to members (pnp-member gate — post-434a66fb)', async () => {
     queueDb(
       [],                                           // isBanned=false
       [{ id: 'c-free', access_type: 'free', creator_id: 'u-1' }], // loadResource
       [],                                           // scoped channel-access lookup (no row)
-      [],                                           // prime lookup (no row)
+      [{ 1: 1 }],                                   // pnp-member EXISTS
     );
     const result = await EntitlementAccessService.hasResourceAccess('42', 'channel', 'c-free');
     expect(result.allowed).toBe(true);
-    expect(result.reason).toBe('free');
+    expect(result.reason).toBe('member_free_channel');
   });
 
   it('allows a user with channel-access entitlement for this channel (scoped)', async () => {

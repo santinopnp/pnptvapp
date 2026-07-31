@@ -307,7 +307,7 @@ describe('tokenService.processStreamHeartbeat', () => {
   test('skips charge when viewer IS the streamer (self-watch)', async () => {
     userService.findUserByChannelRef.mockResolvedValueOnce({
       id: 'streamer1',
-      creator_status: 'active',
+      creatorStatus: 'active',
     });
     query.mockResolvedValueOnce({ rows: [{ total: 1200 }] }); // balance fetch
     const result = await svc.processStreamHeartbeat('streamer1', 'own-channel');
@@ -317,10 +317,10 @@ describe('tokenService.processStreamHeartbeat', () => {
     expect(updateCalls.length).toBe(0);
   });
 
-  test('returns INSUFFICIENT_FUNDS when viewer has < 100 tokens', async () => {
+  test('returns INSUFFICIENT_FUNDS when viewer has < 1 token', async () => {
     userService.findUserByChannelRef.mockResolvedValueOnce({
       id: 'streamer2',
-      creator_status: 'active',
+      creatorStatus: 'active',
     });
     const mockClient = {
       query:   jest.fn()
@@ -335,10 +335,10 @@ describe('tokenService.processStreamHeartbeat', () => {
     expect(result.error).toBe('INSUFFICIENT_FUNDS');
   });
 
-  test('deducts exactly 100 tokens from viewer on success', async () => {
+  test('deducts exactly 1 token from viewer on success (STREAM_HEARTBEAT_COST)', async () => {
     userService.findUserByChannelRef.mockResolvedValueOnce({
       id: 'streamer3',
-      creator_status: 'active',
+      creatorStatus: 'active',
     });
     const mockClient = {
       query: jest.fn()
@@ -356,9 +356,9 @@ describe('tokenService.processStreamHeartbeat', () => {
     expect(result.success).toBe(true);
     expect(result.newBalance).toBe(400);
 
-    // Verify the debit UPDATE used $2 = 100 (STREAM_HEARTBEAT_COST)
+    // Verify the debit UPDATE used $2 = 1 (STREAM_HEARTBEAT_COST)
     const debitCall = mockClient.query.mock.calls[1];
-    expect(debitCall[1][1]).toBe(100); // [userId, amount]
+    expect(debitCall[1][1]).toBe(1); // [userId, amount]
   });
 });
 

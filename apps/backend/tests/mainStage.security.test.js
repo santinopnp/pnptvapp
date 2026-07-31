@@ -173,6 +173,7 @@ jest.mock('../services/mainStageService', () => {
     startRotation: jest.fn(),
     stopRotation: jest.fn(),
     logAdminAction: jest.fn(),
+    kickFromMainStageRoom: jest.fn(async () => {}),
   };
 });
 
@@ -192,6 +193,7 @@ jest.mock('livekit-server-sdk', () => ({
   RoomServiceClient: jest.fn().mockImplementation(() => ({
     mutePublishedTrack: jest.fn(),
     removeParticipant: jest.fn(),
+    updateParticipant: jest.fn(),
   })),
 }));
 
@@ -315,7 +317,7 @@ describe('POST /api/main-stage/token — auth guard', () => {
 // ── 2. Member token — video publish only ──────────────────────────────────────
 
 describe('POST /api/main-stage/token — member grants', () => {
-  it('should return role=member with video publish enabled and audio publish disabled', async () => {
+  it('should return role=member with video + audio publish enabled (members get mic per current tier spec)', async () => {
     mockUserRow(VIEWER_USER);
 
     const app = buildApp(VIEWER_USER);
@@ -327,7 +329,7 @@ describe('POST /api/main-stage/token — member grants', () => {
 
     const decoded = decodeToken(res.body.token);
     expect(decoded.grants.canPublishVideo).toBe(true);
-    expect(decoded.grants.canPublishAudio).toBe(false);
+    expect(decoded.grants.canPublishAudio).toBe(true);
     expect(decoded.grants.canPublishData).toBe(false);
     expect(decoded.grants.roomAdmin).toBe(false);
   });
@@ -350,7 +352,7 @@ describe('POST /api/main-stage/token — member grants', () => {
 
     const decoded = decodeToken(res.body.token);
     expect(decoded.grants.canPublishVideo).toBe(true);
-    expect(decoded.grants.canPublishAudio).toBe(false);
+    expect(decoded.grants.canPublishAudio).toBe(true);
     expect(decoded.grants.canPublishData).toBe(false);
     expect(decoded.grants.roomAdmin).toBe(false);
   });
@@ -785,16 +787,22 @@ describe('Consent gate — POST /api/main-stage/token', () => {
 // ── 18. Entitlement gate — token endpoint ────────────────────────────────────
 
 describe('Entitlement gate — POST /api/main-stage/token', () => {
-  it('should return 403 MEMBERSHIP_REQUIRED when user lacks pnp-member entitlement', async () => {
+  it('should downgrade to newcomer role (60-min preview + cooldown) when user lacks pnp-member — non-blocking gate', async () => {
     mockUserRow(VIEWER_USER);
     const entSvc = require('../services/entitlementAccessService');
-    entSvc.hasEntitlement.mockResolvedValueOnce(false);
+    // mockResolvedValue (not Once) so any earlier lingering `Once` queue can't win
+    entSvc.hasEntitlement.mockResolvedValue(false);
 
     const app = buildApp(VIEWER_USER);
     const res = await supertest(app).post('/api/main-stage/token');
 
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe('MEMBERSHIP_REQUIRED');
+    // Restore default for subsequent tests
+    entSvc.hasEntitlement.mockResolvedValue(true);
+
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe('member'); // response.role is admin|member; tier is what changes
+    expect(res.body.participantTier).toBe('newcomer');
+    expect(res.body.sessionLimitSeconds).toBe(3600);
   });
 
   it('should call hasEntitlement with the pnp-member SKU', async () => {

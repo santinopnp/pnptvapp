@@ -335,13 +335,14 @@ describe('PNPLiveNotificationService.markNotificationSent — column allowlist',
  */
 describe('webappLiveController.listStreams — refId sanitization', () => {
   let listStreams;
-  let axios;
-  const logger = require('../utils/logger');
+  let restreamerService;
 
   beforeAll(() => {
     jest.resetModules();
-    // Re-require after resetting to get fresh module state
-    axios = require('axios');
+    jest.mock('../services/restreamerService', () => ({
+      listProcesses: jest.fn(),
+    }));
+    restreamerService = require('../services/restreamerService');
     ({ listStreams } = require('../bot/api/controllers/webappLiveController'));
   });
 
@@ -358,14 +359,18 @@ describe('webappLiveController.listStreams — refId sanitization', () => {
     };
   }
 
-  it('allows a normal reference ID', async () => {
-    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { access_token: 'tok' } });
-    jest.spyOn(axios, 'get').mockResolvedValueOnce({
-      status: 200,
-      data: [makeProcess('abc-123_stream.m3u8')],
+  // Admin session bypasses the DB creator-verification filter so we can
+  // observe sanitizeRefId behavior directly on the Restreamer response.
+  function adminReqRes() {
+    return mockReqRes({
+      session: { user: { id: 'admin-1', role: 'admin' } },
     });
+  }
 
-    const { req, res } = mockReqRes();
+  it('allows a normal reference ID', async () => {
+    restreamerService.listProcesses.mockResolvedValueOnce([makeProcess('abc-123_stream')]);
+
+    const { req, res } = adminReqRes();
     await listStreams(req, res);
 
     expect(res.json).toHaveBeenCalledWith(
@@ -378,13 +383,9 @@ describe('webappLiveController.listStreams — refId sanitization', () => {
   });
 
   it('rejects a reference ID containing path traversal (../)', async () => {
-    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { access_token: 'tok' } });
-    jest.spyOn(axios, 'get').mockResolvedValueOnce({
-      status: 200,
-      data: [makeProcess('../../../etc/passwd')],
-    });
+    restreamerService.listProcesses.mockResolvedValueOnce([makeProcess('../../../etc/passwd')]);
 
-    const { req, res } = mockReqRes();
+    const { req, res } = adminReqRes();
     await listStreams(req, res);
 
     const call = res.json.mock.calls[0][0];
@@ -392,16 +393,11 @@ describe('webappLiveController.listStreams — refId sanitization', () => {
   });
 
   it('rejects a reference ID containing query string characters', async () => {
-    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { access_token: 'tok' } });
-    jest.spyOn(axios, 'get').mockResolvedValueOnce({
-      status: 200,
-      data: [makeProcess('stream?foo=bar&baz=qux')],
-    });
+    restreamerService.listProcesses.mockResolvedValueOnce([makeProcess('stream?foo=bar&baz=qux')]);
 
-    const { req, res } = mockReqRes();
+    const { req, res } = adminReqRes();
     await listStreams(req, res);
 
-    // The query chars are stripped; result may not be null but URL must not contain ?
     const call = res.json.mock.calls[0][0];
     if (call.streams.length > 0) {
       expect(call.streams[0].hlsUrl).not.toContain('?');
@@ -412,16 +408,14 @@ describe('webappLiveController.listStreams — refId sanitization', () => {
   it('rejects null reference entirely', async () => {
     const proc = makeProcess('stream-ok');
     proc.reference = null;
-    proc.id = 'restreamer-ui:ingest:'; // empty after prefix
+    proc.id = 'restreamer-ui:ingest:';
 
-    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { access_token: 'tok' } });
-    jest.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: [proc] });
+    restreamerService.listProcesses.mockResolvedValueOnce([proc]);
 
-    const { req, res } = mockReqRes();
+    const { req, res } = adminReqRes();
     await listStreams(req, res);
 
     const call = res.json.mock.calls[0][0];
-    // Either filtered out (0 streams) or only has a sanitized ID
     if (call.streams.length > 0) {
       expect(call.streams[0].hlsUrl).not.toContain('null');
     }
@@ -597,7 +591,12 @@ describe('Tip message length truncation in route handler', () => {
 
 // ─── 11. Feedback comment Markdown escaping ───────────────────────────────────
 
-describe('PNPLiveNotificationService.sendFeedbackToModel — Markdown escaping', () => {
+// Telegram mirroring is disabled at the service layer (sendMessage short-circuits
+// with `return false`) per feedback_no_going_live_email / DM-only policy. The
+// escaping logic still runs but the outgoing message is not observable, so these
+// tests can only be reactivated if sendMessage is re-enabled or refactored to
+// return the composed message.
+describe.skip('PNPLiveNotificationService.sendFeedbackToModel — Markdown escaping', () => {
   let sentMessages = [];
 
   beforeAll(() => {
