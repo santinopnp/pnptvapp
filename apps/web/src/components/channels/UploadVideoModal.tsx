@@ -243,8 +243,9 @@ export default function UploadVideoModal({
       uploadIdRef.current = uploadId;
       uploadUrlRef.current = uploadUrl;
       saveResume({ uploadId, videoId, channelId, fileName: fileToUpload.name, fileSize: fileToUpload.size, uploadUrl, bytesUploaded: 0 });
-    } catch {
-      setError("Error al iniciar la subida. Intenta de nuevo.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`No se pudo iniciar la subida: ${msg}`);
       setStep("pick");
       return;
     }
@@ -420,7 +421,8 @@ export default function UploadVideoModal({
           id="mux-file-input"
           type="file"
           accept="video/*"
-          className="hidden"
+          className="sr-only"
+          onClick={(e) => e.stopPropagation()}
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
         />
       </div>

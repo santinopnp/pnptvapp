@@ -109,7 +109,7 @@ export default function PrimeChannel() {
     try {
       const [videosRes, taxRes] = await Promise.all([
         listAdminPrimeVideos(1, 200),
-        getChannelTagTaxonomy(5),
+        getChannelTagTaxonomy(209),
       ]);
       setItems(videosRes.items);
       const newDrafts: Record<number, DraftEdits> = {};
@@ -141,7 +141,7 @@ export default function PrimeChannel() {
     }
     setSavingId(item.id);
     try {
-      const res = await updateChannelVideo(5, item.id, patch);
+      const res = await updateChannelVideo(209, item.id, patch);
       const updated = res.video;
       setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, ...updated } : p)));
       setDrafts((prev) => ({ ...prev, [item.id]: buildDraft({ ...item, ...updated }) }));
@@ -238,7 +238,7 @@ export default function PrimeChannel() {
         </div>
         <div className="flex items-center gap-2">
           <UploadVideoButton
-            channelId={5}
+            channelId={209}
             channelName="PNPtv! PRIME"
             channelSlug="pnptv-prime"
             accessType="prime"
