@@ -158,12 +158,18 @@ async function reconcileRow(table, row) {
   const durationSec = asset.duration ? Math.round(asset.duration) : null;
 
   if (table === 'channel_videos') {
+    // Resurrect status when Mux confirms ready: the 1h→6h stuck scheduler still
+    // won't cover every long upload, and Mux sometimes takes hours to finish
+    // processing. If our row was flipped to 'failed' but Mux says the asset is
+    // ready, publish it. Only 'removed' (explicit user delete) is respected.
     await query(
       `UPDATE channel_videos
           SET mux_playback_id = $1,
               mux_status = 'ready',
               duration_sec = COALESCE(duration_sec, $2),
-              thumbnail_url = COALESCE(thumbnail_url, $3)
+              thumbnail_url = COALESCE(thumbnail_url, $3),
+              status = CASE WHEN status = 'removed' THEN status ELSE 'published' END,
+              updated_at = NOW()
         WHERE id = $4`,
       [playbackId, durationSec, thumbUrl, id]
     );

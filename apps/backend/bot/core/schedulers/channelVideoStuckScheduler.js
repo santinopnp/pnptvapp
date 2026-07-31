@@ -26,11 +26,16 @@ class ChannelVideoStuckScheduler {
 
   async runChecks() {
     try {
+      // 6h threshold (was 1h): tus resumable uploads + Mux processing can legitimately
+      // exceed an hour for large files; a 1h cutoff was flipping ~44% of uploads to
+      // failed prematurely — the video would still land in Mux minutes later but our
+      // row stayed 'failed'. muxReconciler now resurrects such rows when Mux confirms
+      // ready, but this longer window prevents most false-negatives at the source.
       const result = await query(`
         UPDATE channel_videos
         SET status = 'failed', updated_at = NOW()
         WHERE status = 'processing'
-          AND created_at < NOW() - INTERVAL '1 hour'
+          AND created_at < NOW() - INTERVAL '6 hours'
         RETURNING id, title, channel_id
       `);
       if (result.rows.length > 0) {
