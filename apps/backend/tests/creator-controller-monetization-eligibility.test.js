@@ -97,8 +97,10 @@ describe('creatorController monetization eligibility', () => {
 
   it('blocks creating a paid channel before 5 eligible videos', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ creator_status: 'active' }] })
-      .mockResolvedValueOnce({ rows: [{ eligible_count: 4 }] });
+      .mockResolvedValueOnce({ rows: [{ creator_status: 'active' }] })    // user status
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] })                         // channel count guard
+      .mockResolvedValueOnce({ rows: [] })                                  // one-paid-channel dup check
+      .mockResolvedValueOnce({ rows: [{ eligible_count: 4 }] });           // eligibility fails
 
     const res = makeRes();
     await ctrl.createChannel(makeReq({
@@ -111,7 +113,7 @@ describe('creatorController monetization eligibility', () => {
 
     expect(res._status).toBe(403);
     expect(res._body.code).toBe('CREATOR_MONETIZATION_CONTENT_REQUIRED');
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(4);
   });
 
   it('blocks changing a free channel to paid before 5 eligible videos', async () => {
