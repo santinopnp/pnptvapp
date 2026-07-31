@@ -566,6 +566,39 @@ class CreatorPayoutService {
     const { createDashInvoice } = require('../config/btcpay');
     const { query: dbQuery } = require('../config/postgres');
 
+    // 2026-07-31: Dash/BTCPay retired. This renewal path hardcodes Dash — every
+    // renewal since Phase 1 has been generating stuck pending payments that
+    // never settle. Short-circuit: disable auto_renew, notify subscriber to
+    // re-subscribe manually via the working NowPayments/USDC flow, and stop
+    // creating orphan payments. Full rewrite (route to NowPayments) is deferred
+    // Phase 3 — needs staging test since paymentSettlementService is shared.
+    try {
+      await dbQuery(
+        'UPDATE creator_subscriptions SET auto_renew=FALSE, updated_at=NOW() WHERE id=$1',
+        [subscription_id]
+      );
+      logger.warn('[CreatorPayoutService] auto-renew disabled — Dash retired, no NP renewal path yet', {
+        subscriptionId: subscription_id, subscriberId: subscriber_id, creatorId: creator_id,
+      });
+      await NotificationEmitter.emit({
+        type: 'subscription_renewal_failed',
+        category: 'commerce',
+        priority: 'high',
+        targetUserId: String(subscriber_id),
+        entityType: 'creator_subscription',
+        entityId: String(subscription_id),
+        message: `Your subscription to ${creatorName} won't auto-renew. Re-subscribe from their profile to keep access.`,
+        metadata: { creatorId: String(creator_id), creatorName, priceUsd, reason: 'dash_retired_no_renewal_path' },
+      }).catch(() => {});
+    } catch (guardErr) {
+      logger.warn('[CreatorPayoutService] failed to disable auto_renew during Dash short-circuit', {
+        subscriptionId: subscription_id, error: guardErr.message,
+      });
+    }
+    return { renewed: false };
+    // eslint-disable-next-line no-unreachable
+    ;
+
     // price_usd can be NULL when the subscription was originally created without
     // recording the price (legacy path). Fall back to the creator's current price.
     if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
