@@ -26,7 +26,6 @@ import {
   getCreatorSubscriptionStatus,
   unsubscribeFromCreator,
   createDashSubscription,
-  getDashAvailable,
   prepareUsdcSubscription,
   getUsdcAvailable,
   getBtcAvailable,

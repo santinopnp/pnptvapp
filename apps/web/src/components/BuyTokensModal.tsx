@@ -10,7 +10,6 @@ import {
   buyTokensWithNowPayments,
   getNowPaymentsOrderStatus,
   getBtcAvailable,
-  getDashAvailable,
   getBtcSubscriptionStatus,
   getDashPaymentDetails,
   getDashSubscriptionStatus,

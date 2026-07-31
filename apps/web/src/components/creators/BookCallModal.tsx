@@ -30,7 +30,6 @@ import {
   createCallCheckoutBtc,
   createCallCheckoutDash,
   getBtcAvailable,
-  getDashAvailable,
   getBtcSubscriptionStatus,
   getBookingPaymentStatus,
   assertPaymentUrl,
