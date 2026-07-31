@@ -99,7 +99,6 @@ function shouldSkip(parsed) {
 
 async function startAutoReplyPolling() {
   if (!INBOX_USER || !INBOX_PASS) {
-    logger.warn('[autoReply] HELLO_EMAIL_USER/PASS not configured — skipping poll');
     return;
   }
 

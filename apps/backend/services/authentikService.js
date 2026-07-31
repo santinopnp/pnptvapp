@@ -906,7 +906,7 @@ class AuthentikService {
 
       const user = res.data.results.find(u => u.uuid === authentikSub);
       if (!user) {
-        logger.warn('[Authentik] isUserInAdminsGroup: user not found', { authentikSub });
+        logger.debug('[Authentik] isUserInAdminsGroup: user not found', { authentikSub });
         return false;
       }
 
