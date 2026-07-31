@@ -102,7 +102,6 @@ export default function Live() {
   // Dash token wallet
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [giftedBalance, setGiftedBalance] = useState<number>(0);
-  const [santinoGiftBalance, setSantinoGiftBalance] = useState<number>(0);
   const [dpnsHandle, setDpnsHandle] = useState<string | null>(null);
   const [showBuyModal, setShowBuyModal] = useState(false);
 
@@ -293,7 +292,6 @@ export default function Live() {
           setTokenBalance(data.balance);
         }
         setGiftedBalance(data.giftedBalance ?? 0);
-        setSantinoGiftBalance(Number(data.creatorGifts?.['8599671840'] ?? 0));
         setDpnsHandle(data.dpnsHandle);
       })
       .catch(() => {});

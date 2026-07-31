@@ -212,9 +212,18 @@ export interface TelegramAuthResponse {
     email?: string | null;
     onboarding_complete?: boolean;
     live_channel?: string | null;
+    is_super_god?: boolean;
+    super_god_eligible?: boolean;
   };
   requiresTerms?: boolean;
   error?: string;
+}
+
+export function toggleSuperGod(enabled: boolean): Promise<{ success: boolean; enabled: boolean; disabled: boolean }> {
+  return request("/api/webapp/super-god/toggle", {
+    method: "POST",
+    body: { enabled },
+  });
 }
 
 export interface AuthMethods {

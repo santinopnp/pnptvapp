@@ -253,9 +253,19 @@ export function PayWithCryptoWizard({
               </div>
             )}
             <div>
-              <p className="text-xs text-pnp-textSecondary mb-2">
-                {es ? "USDT es la opción más fácil para principiantes." : "USDT is the easiest option for first-timers."}
-              </p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs text-pnp-textSecondary">
+                  {es ? "USDT es la opción más fácil para principiantes." : "USDT is the easiest option for first-timers."}
+                </p>
+                <a
+                  href="/crypto-guide"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+                >
+                  {es ? "¿Qué red? →" : "Which network? →"}
+                </a>
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {NP_COINS.map((coin) => {
                   const isUsdt = coin.code === "usdtbsc" || coin.code === "usdttrc20";

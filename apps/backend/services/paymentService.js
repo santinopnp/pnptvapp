@@ -13,10 +13,11 @@ const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
 const crypto = require('crypto');
 const { Telegraf } = require('telegraf');
-const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
-
-// Santino's "Santino's Subscribers" hangout — every PRIME holder is auto-joined here.
-const PRIME_HANGOUT_GROUP_ID = 719;
+const {
+  CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS,
+  PRIME_PLATFORM_RATE, PRIME_CREATOR_RATE, PRIME_REVENUE_RECIPIENTS,
+  PRIME_HANGOUT_GROUP_IDS,
+} = require('../config/monetizationConfig');
 
 // Singleton bot instance — avoids spawning a new Telegraf per payment event.
 let _botInstance = null;
@@ -884,29 +885,69 @@ class PaymentService {
         }
       }
 
-      // Auto-join qualifying PRIME entitlement holders into Santino's private hangout.
+      // Auto-join qualifying PRIME entitlement holders into BOTH co-founder hangouts
+      // (Santino's + Lex's — independent rooms, one auto-join each).
       // Only lifetime plans or 30+ day plans qualify; trials and week passes do NOT.
       if (addOnsResult.rows.some(r => r.add_on_id === 'prime')) {
         try {
           const { rows: planRows } = await query(
-            `SELECT (is_lifetime = true OR duration_days >= 30) AS qualifies FROM plans WHERE id = $1`,
+            `SELECT (is_lifetime = true OR duration_days >= 30) AS qualifies, price FROM plans WHERE id = $1`,
             [planId]
           );
           if (planRows[0]?.qualifies) {
-            await query(
-              'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-              [PRIME_HANGOUT_GROUP_ID, userId, 'member']
-            );
-            logger.info('Auto-joined PRIME hangout after qualifying prime grant', {
-              userId, groupId: PRIME_HANGOUT_GROUP_ID, planId,
-            });
+            for (const groupId of PRIME_HANGOUT_GROUP_IDS) {
+              try {
+                await query(
+                  'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+                  [groupId, userId, 'member']
+                );
+                logger.info('Auto-joined PRIME hangout after qualifying prime grant', {
+                  userId, groupId, planId,
+                });
+              } catch (joinErr) {
+                logger.warn('Failed to auto-join one PRIME hangout after prime grant', { userId, groupId, error: joinErr.message });
+              }
+            }
           } else {
             logger.info('Skipped PRIME hangout auto-join — non-qualifying plan (trial or week pass)', {
               userId, planId,
             });
           }
-        } catch (joinErr) {
-          logger.warn('Failed to auto-join PRIME hangout after prime grant', { error: joinErr.message });
+
+          // PRIME revenue split — 20% platform / 40% Santino / 40% Lex.
+          // Records one creator_earnings row per co-founder, idempotent by (source_payment_id, creator_id).
+          // Skips $0 trials. Requires a sourcePaymentId to be traceable.
+          const primeGross = parseFloat(planRows[0]?.price || 0);
+          if (primeGross > 0 && resolvedPaymentId) {
+            const perCreator = Math.round(primeGross * PRIME_CREATOR_RATE * 100) / 100;
+            const platformCut = Math.round(primeGross * PRIME_PLATFORM_RATE * 100) / 100;
+            for (const creatorId of PRIME_REVENUE_RECIPIENTS) {
+              try {
+                const existing = await query(
+                  `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
+                  [resolvedPaymentId, creatorId]
+                );
+                if (existing.rowCount === 0) {
+                  await query(
+                    `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+                     VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+                    [creatorId, primeGross, perCreator, platformCut, String(EARNINGS_HOLD_HOURS), resolvedPaymentId]
+                  );
+                  logger.info('PRIME earnings recorded (80/20 split, holding)', {
+                    creatorId, planId, primeGross, perCreator, platformCut, sourcePaymentId: resolvedPaymentId,
+                  });
+                }
+              } catch (earnErr) {
+                logger.warn('Failed to record PRIME earnings for co-founder (non-critical)', {
+                  creatorId, planId, error: earnErr.message,
+                });
+              }
+            }
+          } else if (primeGross > 0 && !resolvedPaymentId) {
+            logger.warn('PRIME earnings skipped — missing sourcePaymentId', { userId, planId, primeGross });
+          }
+        } catch (primeErr) {
+          logger.warn('Failed PRIME post-grant hooks (auto-join + earnings)', { error: primeErr.message });
         }
       }
 

@@ -14,7 +14,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -720,7 +720,20 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 export function Layout() {
-  const { isAuthenticated, isAdmin, user, isLoading, logout } = useAuth();
+  const { isAuthenticated, isAdmin, isSuperGod, isSuperGodEligible, user, isLoading, logout, refreshUser } = useAuth();
+  const [godToggling, setGodToggling] = useState(false);
+  const handleToggleGod = useCallback(async () => {
+    if (godToggling) return;
+    setGodToggling(true);
+    try {
+      await toggleSuperGod(!isSuperGod);
+      await refreshUser();
+    } catch (err) {
+      console.error("[GOD MODE] toggle failed:", err);
+    } finally {
+      setGodToggling(false);
+    }
+  }, [godToggling, isSuperGod, refreshUser]);
   const { tier, isPrime, isMember } = useTier();
   const { isTelegram } = useTelegram();
   useViewportHeight();
@@ -1095,7 +1108,29 @@ export function Layout() {
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col border-r border-pnp-border glass-nav">
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
-          <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+          <div className="flex items-center gap-2">
+            <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+            {isSuperGodEligible && (
+              <button
+                type="button"
+                onClick={handleToggleGod}
+                disabled={godToggling}
+                className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white transition-opacity ${
+                  isSuperGod ? "shadow-[0_0_8px_rgba(212,0,122,0.6)] animate-pulse" : "opacity-70"
+                } ${godToggling ? "opacity-50" : "hover:opacity-100"}`}
+                style={{
+                  background: isSuperGod
+                    ? "linear-gradient(135deg,#D4007A,#E69138)"
+                    : "#4B5563",
+                }}
+                title={isSuperGod
+                  ? "GOD MODE ON — click to disable and behave as a normal user"
+                  : "GOD MODE OFF — click to re-enable bypass"}
+              >
+                {isSuperGod ? "GOD MODE" : "GOD OFF"}
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             {/* Search */}
             <button
@@ -1298,8 +1333,30 @@ export function Layout() {
 
       {/* ── Mobile topbar ────────────────────────────────────────────────────── */}
       <header className="lg:hidden sticky top-0 z-40 h-14 flex items-center justify-between px-3 glass-nav border-b border-pnp-border">
-        {/* Left: logo */}
-        <img src="/logo-header.png" alt="PNPtv!" className="h-8 w-auto max-w-[110px] object-contain" />
+        {/* Left: logo + optional GOD MODE badge (click to toggle) */}
+        <div className="flex items-center gap-2">
+          <img src="/logo-header.png" alt="PNPtv!" className="h-8 w-auto max-w-[110px] object-contain" />
+          {isSuperGodEligible && (
+            <button
+              type="button"
+              onClick={handleToggleGod}
+              disabled={godToggling}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white transition-opacity ${
+                isSuperGod ? "shadow-[0_0_8px_rgba(212,0,122,0.6)] animate-pulse" : "opacity-70"
+              } ${godToggling ? "opacity-50" : "hover:opacity-100"}`}
+              style={{
+                background: isSuperGod
+                  ? "linear-gradient(135deg,#D4007A,#E69138)"
+                  : "#4B5563",
+              }}
+              title={isSuperGod
+                ? "GOD MODE ON — click to disable"
+                : "GOD MODE OFF — click to re-enable"}
+            >
+              {isSuperGod ? "GOD MODE" : "GOD OFF"}
+            </button>
+          )}
+        </div>
 
         {/* Right: Search + DM + Bell + Hamburger + Logout */}
         <div className="flex items-center gap-0.5">
@@ -2067,6 +2124,244 @@ function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
 
 const forYouCache = new Map<string, { data: ForYouRecommendations; ts: number }>();
 const FOR_YOU_TTL_MS = 15 * 60 * 1000;
+
+// Crypto-guide status is per-user, session-scoped. Single in-memory cache
+// avoids hammering the /me endpoint every time a callout mounts.
+let cryptoGuideCache: { data: CryptoGuideStatus; ts: number } | null = null;
+const CRYPTO_GUIDE_TTL_MS = 5 * 60 * 1000;
+
+export function useCryptoGuideStatus(): { status: CryptoGuideStatus | null; refetch: () => void } {
+  const [status, setStatus] = useState<CryptoGuideStatus | null>(cryptoGuideCache?.data || null);
+  const refetch = useCallback(() => {
+    getCryptoGuideStatus()
+      .then((s) => { cryptoGuideCache = { data: s, ts: Date.now() }; setStatus(s); })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (cryptoGuideCache && Date.now() - cryptoGuideCache.ts < CRYPTO_GUIDE_TTL_MS) {
+      setStatus(cryptoGuideCache.data);
+      return;
+    }
+    refetch();
+  }, [refetch]);
+  return { status, refetch };
+}
+
+/**
+ * CryptoGuideCallout — reusable pill/banner nudging users to complete
+ * the crypto onboarding guide. Only renders when the user hasn't
+ * completed it. Deep-links to /crypto-guide?returnTo=<current-path>.
+ *
+ * Variants:
+ *   - "inline"  → compact pill for above payment method selectors.
+ *   - "banner"  → full-width banner (used on Home).
+ *   - "sticky"  → mid-flow reminder inside modals/waiting panels.
+ *
+ * showProgress=true will display "Step X of 7" if the user already
+ * started the wizard (more compelling than a cold pitch).
+ */
+export function CryptoGuideCallout({
+  variant = "inline",
+  className,
+  onDismiss,
+}: {
+  variant?: "inline" | "banner" | "sticky";
+  className?: string;
+  onDismiss?: () => void;
+}) {
+  const { status } = useCryptoGuideStatus();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const t = useI18n();
+  const es = t.lang === "es";
+
+  if (!status || status.completedAt) return null;
+
+  const started = (status.progressStep || 0) > 0;
+  const returnTo = encodeURIComponent(location.pathname + location.search);
+  const href = `/crypto-guide?returnTo=${returnTo}`;
+
+  const headline = started
+    ? (es ? `Casi lo tienes — paso ${status.progressStep}/7` : `Almost there — step ${status.progressStep}/7`)
+    : (es ? "¿Nuevo en cripto? Setup en 5 min" : "New to crypto? 5-min setup");
+  const sub = started
+    ? (es ? "Termina y llévate 100 tokens gratis 🎁" : "Finish and grab your 100 free tokens 🎁")
+    : (es ? "Wallet lista + 100 tokens gratis al terminar 🎁" : "Wallet ready + 100 free tokens on completion 🎁");
+  const cta = started
+    ? (es ? "Continuar →" : "Continue →")
+    : (es ? "Empezar →" : "Start →");
+
+  if (variant === "inline") {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate(href)}
+        className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-left transition-opacity hover:opacity-90 ${className || ""}`}
+        style={{
+          background: "linear-gradient(90deg, rgba(245,158,11,0.12), rgba(212,0,122,0.12))",
+          border: "1px solid rgba(245,158,11,0.35)",
+        }}
+      >
+        <span style={{ fontSize: 18 }}>💰</span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-[12px] font-bold text-white leading-tight">{headline}</span>
+          <span className="block text-[10.5px] mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>{sub}</span>
+        </span>
+        <span className="text-[11px] font-bold" style={{ color: "#F59E0B" }}>{cta}</span>
+      </button>
+    );
+  }
+
+  if (variant === "sticky") {
+    return (
+      <div
+        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] ${className || ""}`}
+        style={{
+          background: "rgba(245,158,11,0.10)",
+          border: "1px solid rgba(245,158,11,0.30)",
+        }}
+      >
+        <span style={{ fontSize: 14 }}>💡</span>
+        <span className="flex-1" style={{ color: "rgba(255,255,255,0.85)" }}>
+          {es ? "¿Trabado con cripto? " : "Stuck with crypto? "}
+          <button
+            type="button"
+            onClick={() => navigate(href)}
+            className="font-bold underline"
+            style={{ color: "#F59E0B" }}
+          >
+            {es ? "Ver guía" : "See guide"}
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  // banner
+  return (
+    <div
+      className={`rounded-xl p-4 flex items-center gap-3 ${className || ""}`}
+      style={{
+        background: "linear-gradient(90deg, rgba(245,158,11,0.10), rgba(212,0,122,0.10))",
+        border: "1px solid rgba(245,158,11,0.35)",
+      }}
+    >
+      <div style={{ fontSize: 24 }}>💰</div>
+      <div className="flex-1 min-w-0">
+        <p className="m-0 text-sm font-bold text-white">{headline}</p>
+        <p className="m-0 text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>{sub}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate(href)}
+        className="px-3.5 py-2 rounded-lg text-xs font-bold text-white flex-shrink-0"
+        style={{ background: "linear-gradient(135deg, #F59E0B, #D4007A)" }}
+      >
+        {cta}
+      </button>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={es ? "Cerrar" : "Dismiss"}
+          className="text-white/50 hover:text-white/90 text-lg leading-none flex-shrink-0"
+          style={{ padding: "4px 6px" }}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CryptoFirstTimeInterstitial — full-screen modal shown once (localStorage
+ * flag `pnp_crypto_interstitial_seen`) when a user is about to pay with
+ * crypto and hasn't completed the guide. Skippable but attention-grabbing.
+ *
+ * The parent controls `open` — usually toggled by an onClick handler on a
+ * "Pay with crypto" button that first checks status. On confirm, navigates
+ * to /crypto-guide?returnTo=<current-path>; on skip, calls onSkip() so the
+ * parent can proceed with the original crypto pay flow.
+ */
+export function CryptoFirstTimeInterstitial({
+  open,
+  onSkip,
+  onClose,
+}: {
+  open: boolean;
+  onSkip: () => void;
+  onClose: () => void;
+}) {
+  const { status } = useCryptoGuideStatus();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const t = useI18n();
+  const es = t.lang === "es";
+
+  useEffect(() => {
+    if (!open) return;
+    try { localStorage.setItem("pnp_crypto_interstitial_seen", "1"); } catch {}
+  }, [open]);
+
+  if (!open) return null;
+  if (status?.completedAt) return null;
+
+  const started = (status?.progressStep || 0) > 0;
+  const returnTo = encodeURIComponent(location.pathname + location.search);
+  const href = `/crypto-guide?returnTo=${returnTo}`;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.75)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl p-6"
+        style={{
+          background: "linear-gradient(135deg, #1a1a1f 0%, #0a0a0d 100%)",
+          border: "1px solid rgba(245,158,11,0.4)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center">
+          <div className="text-5xl mb-3">💰</div>
+          <h2 className="text-lg font-bold text-white mb-2">
+            {started
+              ? (es ? "Estás cerca — termina y gana 100 tokens" : "Almost there — finish and earn 100 tokens")
+              : (es ? "¿Primera vez con cripto?" : "First time with crypto?")}
+          </h2>
+          <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
+            {es
+              ? "Tenemos una guía visual de 5 minutos que te enseña cómo abrir una wallet y comprar tu primera cripto. Al terminar te regalamos 100 tokens (~$1) para tu primera compra."
+              : "We've got a visual 5-minute guide that walks you through opening a wallet and buying your first crypto. Complete it and we'll gift you 100 tokens (~$1) for your first purchase."}
+          </p>
+          <button
+            type="button"
+            onClick={() => { onClose(); navigate(href); }}
+            className="w-full py-3 rounded-xl font-bold text-sm text-white mb-2"
+            style={{ background: "linear-gradient(135deg, #F59E0B, #D4007A)" }}
+          >
+            {started
+              ? (es ? "Continuar guía →" : "Continue guide →")
+              : (es ? "Ver la guía (5 min) →" : "See the guide (5 min) →")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { onClose(); onSkip(); }}
+            className="w-full py-2.5 rounded-xl text-xs font-semibold"
+            style={{ color: "rgba(255,255,255,0.55)", background: "transparent" }}
+          >
+            {es ? "Ya sé cómo — continuar con el pago" : "I know how — continue with payment"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 export function useForYou(context: string, creatorId?: string | null): {
   data: ForYouRecommendations | null;

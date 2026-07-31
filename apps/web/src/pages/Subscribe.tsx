@@ -1029,9 +1029,20 @@ export default function Subscribe() {
                   </button>
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
                       <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
-                      <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
+                      <div className="flex items-center gap-3">
+                        <a
+                          href="/crypto-guide"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+                        >
+                          {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
+                        </a>
+                        <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {NP_COINS_SUBSCRIBE.map((coin) => (
@@ -1316,9 +1327,20 @@ export default function Subscribe() {
                   </button>
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center justify-between gap-2 mb-2.5">
                       <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
-                      <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
+                      <div className="flex items-center gap-3">
+                        <a
+                          href="/crypto-guide"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+                        >
+                          {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
+                        </a>
+                        <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5">
                       {NP_COINS_SUBSCRIBE.map((coin) => (

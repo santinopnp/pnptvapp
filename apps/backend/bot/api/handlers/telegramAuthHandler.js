@@ -571,6 +571,11 @@ const checkAuthStatus = async (req, res) => {
         email: user.email || null,
         // Stream ownership
         live_channel: user.liveChannel || null,
+        // Super-god ops flag: bypasses gates + suppresses metric writes.
+        // `eligible` = user is on the allowlist (badge always renders for them).
+        // `is_super_god` = currently ACTIVE (eligible AND not toggled off).
+        is_super_god: EntitlementAccessService.isSuperGod(user.id),
+        super_god_eligible: EntitlementAccessService.isSuperGodEligible(user.id),
       }
     });
 

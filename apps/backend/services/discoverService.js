@@ -522,12 +522,20 @@ async function _fetchScoredCreators(userId, viewerLat, viewerLng, limit) {
        WHERE created_at > NOW() - INTERVAL '24 hours'
          AND is_deleted = false
     ),
-    -- which creators have PNPtv! PRIME channel (id=209)
+    -- which creators own or co-manage the PNPtv! PRIME channel (id=209).
+    -- Both the creator_id AND every user in collaborators[] get the discovery boost —
+    -- keeps co-founders (Lex + Santino) treated equally by the ranker.
     prime_channel_creators AS (
       SELECT DISTINCT creator_id
         FROM creator_channels
        WHERE id = 209
          AND is_active = true
+      UNION
+      SELECT DISTINCT unnest(collaborators) AS creator_id
+        FROM creator_channels
+       WHERE id = 209
+         AND is_active = true
+         AND collaborators IS NOT NULL
     ),
     -- mutual: people who follow the viewer AND subscribe to this creator
     mutual_counts AS (

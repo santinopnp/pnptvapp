@@ -4576,6 +4576,19 @@ app.get('/api/webapp/admin/revenue-report', adminGuard, asyncHandler(async (req,
   }
 }));
 
+// Super-god toggle — eligible ops accounts can turn their god-mode off (behave
+// as normal user) or back on. Rejects anyone not on the allowlist so a
+// compromised session can't grant itself a bypass.
+app.post('/api/webapp/super-god/toggle', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  if (!EntitlementAccessService.isSuperGodEligible(user.id)) {
+    return res.status(403).json({ success: false, error: 'NOT_ELIGIBLE' });
+  }
+  const enabled = req.body?.enabled === true;
+  await EntitlementAccessService.setSuperGodEnabled(user.id, enabled);
+  return res.json({ success: true, enabled, disabled: !enabled });
+}));
+
 // Web App Follow System
 const followController = require('./controllers/followController');
 app.post('/api/webapp/users/follow',                   requireSessionAuth, socialActionLimiter, asyncHandler(followController.followUser));
@@ -9761,7 +9774,8 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
     if (!locked) {
       const videosRes = await getPool().query(
         `SELECT id, title, description, tags, duration_sec, thumbnail_url, gif_url, video_url,
-                status, created_at, directus_file_id, view_count, promo_post_id, tagged_creator_ids
+                status, created_at, directus_file_id, view_count, promo_post_id, tagged_creator_ids,
+                mux_playback_id, mux_status
          FROM channel_videos
          WHERE channel_id = $1 AND status = 'published'
          ORDER BY created_at DESC
@@ -9795,7 +9809,14 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           gif_url: cv.gif_url,
           directus_file_id: cv.directus_file_id ?? null,
           directus_video_url: cv.directus_file_id ? `${directusBase}/assets/${cv.directus_file_id}` : null,
-          video_url: `/api/webapp/channels/${channelId}/videos/${cv.id}/stream`,
+          // For Mux-uploaded videos, hand the browser the HLS URL directly —
+          // <video src=".m3u8"> gets picked up by hls.js. A 302 from /stream
+          // does NOT work here (browsers try to play the playlist as mp4).
+          video_url: cv.mux_playback_id
+            ? `https://stream.mux.com/${cv.mux_playback_id}.m3u8`
+            : `/api/webapp/channels/${channelId}/videos/${cv.id}/stream`,
+          mux_playback_id: cv.mux_playback_id ?? null,
+          mux_status: cv.mux_status ?? null,
           status: cv.status,
           created_at: cv.created_at,
           view_count: cv.view_count ?? 0,
@@ -9869,7 +9890,7 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
 
   try {
     const { rows } = await getPool().query(
-      `SELECT cv.directus_file_id, cv.video_url, cc.creator_id
+      `SELECT cv.directus_file_id, cv.video_url, cv.mux_playback_id, cc.creator_id
        FROM channel_videos cv
        JOIN creator_channels cc ON cc.id = cv.channel_id
        WHERE cv.id = $1 AND cv.channel_id = $2 AND cv.status = 'published'`,
@@ -9886,6 +9907,12 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
       if (!viewerId) return res.status(401).json({ error: 'Authentication required' });
       const decision = await EntitlementAccessService.hasResourceAccess(viewerId, 'channel', channelId);
       if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
+    }
+
+    if (video.mux_playback_id) {
+      // Videos uploaded via Studio Express go through Mux; hand the browser the
+      // public HLS URL directly (Mux serves it CDN-cached with CORS).
+      return res.redirect(302, `https://stream.mux.com/${video.mux_playback_id}.m3u8`);
     }
 
     if (video.directus_file_id) {

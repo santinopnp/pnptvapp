@@ -17,8 +17,27 @@ const TIP_CREATOR_RATE         = 1.0; // 100% to creator — tips are fully exem
 // PNPLatinoBoy. Regular purchased tokens work for any performer.
 const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840', '7246621722'];
 
-// Santino Furioso's user ID — purchase-bonus tokens (creator_gifts) are locked to his streams/tips.
+// Santino Furioso's user ID — historical key for the purchase-bonus token pool.
+// The JSONB pool (user_token_wallets.creator_gifts['8599671840']) is now spendable
+// on BOTH Santino AND Lex streams/tips (PRIME co-founders share this pool).
 const SANTINO_USER_ID = '8599671840';
+
+// PNPLatinoBoy (Lex) — co-founder of PNPtv, co-owner of the PRIME channel.
+// Tips to Lex also draw from the SANTINO bonus pool above.
+const LEX_USER_ID = '7246621722';
+
+// PRIME revenue split — 20% platform / 40% Santino / 40% Lex.
+// Applies to every paid PRIME plan grant (price>0 only, trials skip).
+// The two 40%s must equal 1 - PRIME_PLATFORM_RATE and be split equally to stay equitable.
+const PRIME_PLATFORM_RATE = 0.20;
+const PRIME_CREATOR_RATE  = 0.40; // per co-founder — Santino AND Lex each get this
+const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID, LEX_USER_ID];
+
+// PRIME hangout group IDs — every qualifying PRIME member is auto-joined to BOTH.
+// Kept independent (per co-founder choice) instead of a shared room.
+const SANTINO_PRIME_HANGOUT_GROUP_ID = 719;
+const LEX_PRIME_HANGOUT_GROUP_ID     = 785;
+const PRIME_HANGOUT_GROUP_IDS = [SANTINO_PRIME_HANGOUT_GROUP_ID, LEX_PRIME_HANGOUT_GROUP_ID];
 
 // ── Creator content-compliance policy ────────────────────────────────────────
 // New creator_monthly subscribers' membership start is held until the creator has
@@ -51,6 +70,13 @@ module.exports = {
   EARNINGS_HOLD_HOURS_EFIPAY,
   GIFTED_ALLOWED_PERFORMER_USER_IDS,
   SANTINO_USER_ID,
+  LEX_USER_ID,
+  PRIME_PLATFORM_RATE,
+  PRIME_CREATOR_RATE,
+  PRIME_REVENUE_RECIPIENTS,
+  SANTINO_PRIME_HANGOUT_GROUP_ID,
+  LEX_PRIME_HANGOUT_GROUP_ID,
+  PRIME_HANGOUT_GROUP_IDS,
   CONTENT_COMPLIANCE_MIN_SECONDS,
   CONTENT_COMPLIANCE_GRACE_DAYS,
   CONTENT_COMPLIANCE_SUSPENSION_MONTHS,

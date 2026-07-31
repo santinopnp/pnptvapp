@@ -520,14 +520,13 @@ function CruiseSwitchFAB({ onSwitch }: { onSwitch: () => void }) {
   return (
     <button
       onClick={onSwitch}
-      className="fixed right-4 bottom-24 z-[99] lg:hidden flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold"
+      className="fixed left-2 bottom-24 z-[99] lg:hidden flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold opacity-70 hover:opacity-100 transition-opacity"
       style={{
-        background: "rgba(22,22,30,.96)",
-        border: "1px solid rgba(212,0,122,.35)",
+        background: "rgba(22,22,30,.85)",
+        border: "1px solid rgba(212,0,122,.25)",
         color: "#D4007A",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        boxShadow: "0 4px 16px rgba(0,0,0,.5)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
       }}
     >
       {nav.cruiseModeFab || "🚢 Cruise Mode"}

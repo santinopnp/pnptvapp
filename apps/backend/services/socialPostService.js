@@ -372,6 +372,31 @@ class SocialPostService {
       const postTier = (post.content_tier || 'free').toLowerCase();
       const isAllowed = allowedTiers.has(post.content_tier) || allowedTiers.has(postTier);
       if (isAllowed) {
+        // channel_promo hype posts are content_tier='free' by design (teaser is
+        // public), but metadata.video_url / metadata.video_directus_id point at
+        // the raw CDN asset for the gated video. Redact those fields when the
+        // viewer isn't entitled — otherwise a determined user can inspect the
+        // DOM and open the URL directly, bypassing the UI gate.
+        const meta = typeof post.metadata === 'string'
+          ? (() => { try { return JSON.parse(post.metadata); } catch { return null; } })()
+          : post.metadata;
+        if (meta && meta.kind === 'channel_promo') {
+          const accessType = (meta.access_type || 'free').toLowerCase();
+          let redact = false;
+          if (accessType === 'prime' && normalizedViewer !== 'prime') redact = true;
+          // sub/paid: we don't resolve per-channel entitlement here (would need
+          // an async DB round-trip per post). Redact by default — entitled
+          // viewers still play the video from the channel page itself.
+          if (accessType === 'subscription' || accessType === 'paid') redact = true;
+          if (redact) {
+            const safeMeta = { ...meta, video_url: '', video_directus_id: '' };
+            return {
+              ...post,
+              content_locked: false,
+              metadata: safeMeta,
+            };
+          }
+        }
         return { ...post, content_locked: false };
       }
       // Blur: keep metadata, null out content and media, set content_locked flag
@@ -500,7 +525,10 @@ class SocialPostService {
        LIMIT $1`,
       [lim]
     );
-    return { posts: await sanitizePostRows(rows, { hideDeletedHypeOriginals: true }) };
+    const sanitized = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    // Unauthenticated preview: force redaction of gated channel_promo media URLs.
+    const redacted = SocialPostService._applyContentTierBlur(sanitized, 'free', false);
+    return { posts: redacted };
   }
 
   // ── Wall of Fame Feed ───────────────────────────────────────────────────────
@@ -862,6 +890,16 @@ class SocialPostService {
   // ── Toggle Like ───────────────────────────────────────────────────────────
 
   static async toggleLike(postId, userId) {
+    // Super-god: skip the INSERT/DELETE so the count trigger never fires.
+    // Return synthetic liked=true + current count so the heart animates in UI.
+    const EntitlementAccessService = require('./entitlementAccessService');
+    if (EntitlementAccessService.isSuperGod(userId)) {
+      const { rows } = await query(
+        `SELECT likes_count FROM social_posts WHERE id=$1`,
+        [postId]
+      );
+      return { liked: true, likes_count: rows[0]?.likes_count ?? 0, superGod: true };
+    }
     // likes_count is maintained by trigger trg_social_post_likes_count
     // (migration 222). We only insert/delete the row here; the trigger
     // keeps social_posts.likes_count in sync on INSERT and DELETE.

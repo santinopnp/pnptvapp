@@ -21,6 +21,7 @@ const { validateTierFresh } = require('../../../services/accessService');
 const { resolveUserId } = require('../../utils/helpers');
 const { archivePromotedSourceForSocialPost } = require('../utils/promotedPostDeletion');
 const IdentityVerificationService = require('../../../services/identityVerificationService');
+const EntitlementAccessService = require('../../../services/entitlementAccessService');
 
 async function extractVideoThumbnail(videoPath, thumbPath) {
   try {
@@ -1494,10 +1495,13 @@ const createPostWithMultiMedia = async (req, res) => {
       post.video_thumbnail_url = firstVideoThumb;
     }
 
-    if (replyToId) {
+    // Super-god actor: skip target counter bumps so their QA replies/reposts
+    // don't inflate creator engagement metrics.
+    const actorIsSuperGod = EntitlementAccessService.isSuperGod(user.id);
+    if (replyToId && !actorIsSuperGod) {
       await dbQuery('UPDATE social_posts SET replies_count = replies_count + 1 WHERE id = $1 AND is_deleted = false', [replyToId]);
     }
-    if (repostOfId) {
+    if (repostOfId && !actorIsSuperGod) {
       await dbQuery('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
     }
 

@@ -7,7 +7,122 @@ const logger = require('../utils/logger');
 // Cache TTL: 2 minutes for entitlement checks
 const ENTITLEMENT_CACHE_TTL = 120;
 
+// Super-god user IDs — hardcoded ops accounts that bypass every access gate
+// AND whose actions never affect creator/platform metrics (no follow persist,
+// no like persist, no view-count increment, no live/hangout headcount).
+// Extend at runtime via SUPER_GOD_IDS env var (comma-separated).
+const HARDCODED_SUPER_GOD_IDS = new Set(['8599671840', '7246621722']);
+const ENV_SUPER_GOD_IDS = new Set(
+  (process.env.SUPER_GOD_IDS || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+);
+
+// Per-user runtime disable set. When a user toggles GOD MODE off, we remove
+// them from active super-god behavior WITHOUT losing eligibility — they can
+// re-enable at any time from the same UI badge.
+// Redis is the source of truth (key = `supergod:disabled:{userId}` = '1');
+// the in-memory Set is a hot cache warmed at boot and kept in sync by the
+// toggle endpoint (single Node process → no pub/sub needed).
+const DISABLED_SUPER_GODS = new Set();
+let _disabledWarmed = false;
+
+async function _warmDisabledSet() {
+  if (_disabledWarmed) return;
+  _disabledWarmed = true;
+  try {
+    const redis = getRedis();
+    // ioredis SCAN honors keyPrefix on the returned keys but not on the MATCH
+    // pattern (same quirk noted in invalidateCache). We iterate SCAN over the
+    // prefixed pattern that Redis will actually see.
+    const prefix = redis.options?.keyPrefix || '';
+    const stream = redis.scanStream({ match: `${prefix}supergod:disabled:*`, count: 100 });
+    stream.on('data', (keys) => {
+      for (const rawKey of keys) {
+        const key = prefix && rawKey.startsWith(prefix) ? rawKey.slice(prefix.length) : rawKey;
+        const id = key.replace(/^supergod:disabled:/, '');
+        if (id) DISABLED_SUPER_GODS.add(id);
+      }
+    });
+    stream.on('end', () => {
+      logger.info('super-god disabled set warmed', { count: DISABLED_SUPER_GODS.size });
+    });
+    stream.on('error', (err) => {
+      logger.warn('super-god disabled set warmup error', { error: err.message });
+    });
+  } catch (err) {
+    logger.warn('super-god disabled set warmup failed', { error: err.message });
+  }
+}
+// Fire-and-forget on module load. Any brief window before warmup completes
+// just means a disabled super-god is briefly still active — worst case a
+// couple of gates pass; converges within milliseconds.
+_warmDisabledSet();
+
 class EntitlementAccessService {
+
+  /**
+   * Is `userId` in the super-god allowlist (hardcoded or env), regardless of
+   * whether they've toggled the mode off? Used by the toggle endpoint to
+   * authorize a user to control their own state, and by the frontend to
+   * decide whether to render the badge at all (even in the OFF state).
+   *
+   * @param {string|number} userId
+   * @returns {boolean}
+   */
+  static isSuperGodEligible(userId) {
+    if (!userId) return false;
+    const id = String(userId);
+    return HARDCODED_SUPER_GOD_IDS.has(id) || ENV_SUPER_GOD_IDS.has(id);
+  }
+
+  /**
+   * Is the super-god user currently ACTIVE (eligible AND not disabled)?
+   * All gate/metric bypass code paths call this. When a user turns GOD MODE
+   * off, this returns false and they behave exactly like a normal user.
+   *
+   * @param {string|number} userId
+   * @returns {boolean}
+   */
+  static isSuperGod(userId) {
+    if (!userId) return false;
+    const id = String(userId);
+    if (!(HARDCODED_SUPER_GOD_IDS.has(id) || ENV_SUPER_GOD_IDS.has(id))) return false;
+    return !DISABLED_SUPER_GODS.has(id);
+  }
+
+  /**
+   * Read-only accessor: has this eligible user turned GOD MODE off?
+   * @param {string|number} userId
+   * @returns {boolean}
+   */
+  static isSuperGodDisabled(userId) {
+    if (!userId) return false;
+    return DISABLED_SUPER_GODS.has(String(userId));
+  }
+
+  /**
+   * Toggle GOD MODE for a super-god user. Persists to Redis + updates the
+   * in-memory Set atomically. Callers MUST verify eligibility first — this
+   * method does not re-check because ineligible IDs would still write junk
+   * Redis keys.
+   *
+   * @param {string|number} userId
+   * @param {boolean} enabled - true = restore super-god behavior, false = disable
+   * @returns {Promise<{enabled: boolean}>}
+   */
+  static async setSuperGodEnabled(userId, enabled) {
+    const id = String(userId);
+    const redis = getRedis();
+    const key = `supergod:disabled:${id}`;
+    if (enabled) {
+      DISABLED_SUPER_GODS.delete(id);
+      await redis.del(key).catch(() => {});
+    } else {
+      DISABLED_SUPER_GODS.add(id);
+      await redis.set(key, '1').catch(() => {});
+    }
+    return { enabled };
+  }
 
   /**
    * Check if user has a specific active entitlement.
@@ -21,6 +136,8 @@ class EntitlementAccessService {
    */
   static async hasEntitlement(userId, addOnId, { creatorId = null } = {}) {
     if (!userId || !addOnId) return false;
+    // Super-god bypass — every entitlement check is a pass.
+    if (EntitlementAccessService.isSuperGod(userId)) return true;
     try {
       const redis = getRedis();
       const cacheKey = `ent:${userId}:${addOnId}${creatorId ? `:${creatorId}` : ''}`;
@@ -375,6 +492,7 @@ class EntitlementAccessService {
       // Admins bypass all entitlement gates
       const role = (user.role || '').toLowerCase();
       if (role === 'admin' || role === 'superadmin') return next();
+      if (EntitlementAccessService.isSuperGod(user.id)) return next();
 
       // Check ban status before anything else
       const banned = await EntitlementAccessService.isBanned(user.id);
@@ -485,6 +603,10 @@ class EntitlementAccessService {
   static async hasResourceAccess(userId, kind, resourceId) {
     if (!userId) {
       return { allowed: false, reason: 'unauthenticated', code: 'AUTH_REQUIRED' };
+    }
+    // Super-god bypass — allow everything, no DB round-trip.
+    if (EntitlementAccessService.isSuperGod(userId)) {
+      return { allowed: true, reason: 'super_god' };
     }
 
     // isBanned is Redis-cached (120s TTL), so in steady state the cold DB
@@ -698,6 +820,7 @@ class EntitlementAccessService {
       // Admins bypass
       const role = (user.role || '').toLowerCase();
       if (role === 'admin' || role === 'superadmin') return next();
+      if (EntitlementAccessService.isSuperGod(user.id)) return next();
 
       const resourceId = req.params?.[paramName];
       if (!resourceId) {

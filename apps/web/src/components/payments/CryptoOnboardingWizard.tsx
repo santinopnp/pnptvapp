@@ -39,12 +39,47 @@ const T = {
   addMoney:  { en: "Add money", es: "Ponle dinero" },
   addMoneySub: { en: "Tap 'Buy' in your wallet and pay by card.", es: "Toca 'Comprar' en tu wallet y paga con tarjeta." },
   addMoneyBody: {
-    en: "Choose ",
-    es: "Elige ",
+    en: "Buy ",
+    es: "Compra ",
   },
   addMoneyBodyRest: {
-    en: " — they're locked to the dollar, so your balance never moves on its own.",
-    es: " — están atados al dólar, así tu saldo no se mueve solo.",
+    en: " — this is the exact token + network PNPtv charges on. Same USD value, cheap fees, instant confirmation.",
+    es: " — es exactamente el token y la red en la que PNPtv cobra. Igual al dólar, comisiones bajas, confirmación instantánea.",
+  },
+  altLabel:  { en: "ALSO ACCEPTED", es: "TAMBIÉN ACEPTADO" },
+  altBody:   {
+    en: "USDT on TRON (TRC-20) — even cheaper fees, same USD value. Pick this if your wallet shows it.",
+    es: "USDT en TRON (TRC-20) — comisiones aún más bajas, igual al dólar. Elígelo si tu wallet lo muestra.",
+  },
+  networkWarnLabel: { en: "⚠ NETWORK MATTERS", es: "⚠ LA RED IMPORTA" },
+  networkWarnBody: {
+    en: "Same token name (USDT), different network = money lost forever. The Tether logo is identical everywhere — the tiny badge next to it (BSC, TRON, ETH…) is what changes. Always match the network on your PNPtv invoice.",
+    es: "Mismo nombre (USDT), red distinta = dinero perdido para siempre. El logo de Tether es igual en todas — lo que cambia es la insignia pequeña a un lado (BSC, TRON, ETH…). Elige siempre la misma red que muestre tu factura de PNPtv.",
+  },
+
+  // Screen 6 — network rows visual guide
+  rowsHeader: {
+    en: "How USDT looks in your wallet",
+    es: "Cómo se ve USDT en tu wallet",
+  },
+  rowsSub: {
+    en: "You'll see USDT listed several times — one per network. The Tether logo is the same. Only the small chain badge changes.",
+    es: "Verás USDT varias veces — una por cada red. El logo de Tether es igual. Solo cambia la insignia pequeña de la red.",
+  },
+  rowBscOk:     { en: "Best. This is what PNPtv invoices on.",     es: "La mejor. Es la red en la que PNPtv cobra." },
+  rowTronOk:    { en: "Also accepted. Cheapest fees.",              es: "También aceptada. Comisiones más bajas." },
+  rowEthNo:     { en: "Skip. Same name, wrong network, high fees.", es: "No. Mismo nombre, red equivocada, comisiones altas." },
+  rowOthersNo:  { en: "Polygon · Arbitrum · Base · Optimism — none of these are accepted.", es: "Polygon · Arbitrum · Base · Optimism — ninguna de estas se acepta." },
+
+  // Screen 6 — wallet-specific step-by-step
+  howHeader:    { en: "Step-by-step", es: "Paso a paso" },
+  howTrust: {
+    en: "Tap Buy → USDT. USDT will appear listed multiple times — one row per network. Pick the row that shows 'BEP20' or 'BNB Smart Chain' underneath the Tether icon.",
+    es: "Toca Comprar → USDT. USDT aparecerá varias veces — una fila por red. Elige la fila que dice 'BEP20' o 'BNB Smart Chain' debajo del ícono de Tether.",
+  },
+  howMetamask: {
+    en: "Top-left of the wallet, tap the network dropdown and switch to BNB Smart Chain. Then tap Buy → USDT. If BSC isn't in the list, tap 'Add network' → search 'BNB Smart Chain' → Add.",
+    es: "Arriba a la izquierda del wallet, toca el menú de redes y cambia a BNB Smart Chain. Luego toca Comprar → USDT. Si BSC no aparece, toca 'Agregar red' → busca 'BNB Smart Chain' → Agregar.",
   },
   tipLabel:  { en: "TIP", es: "TIP" },
   tipBody:   { en: "Start with $20–30. You can always add more later.", es: "Empieza con $20–30. Siempre puedes agregar más después." },
@@ -138,8 +173,8 @@ const SCREENSHOT_HINTS: Record<string, { en: string; es: string; src: string }> 
   "metamask-2": { en: "MetaMask — password",        es: "MetaMask — contraseña", src: "/crypto-guide-media/mm-2.png" },
   "metamask-3": { en: "MetaMask — secret phrase",   es: "MetaMask — frase secreta", src: "/crypto-guide-media/mm-3.png" },
   "metamask-4": { en: "MetaMask — confirm phrase",  es: "MetaMask — confirmar frase", src: "/crypto-guide-media/mm-4.png" },
-  "trust-5":  { en: "Trust Wallet — buy USDT/USDC", es: "Trust Wallet — comprar USDT/USDC", src: "/crypto-guide-media/tw-5.png" },
-  "metamask-5": { en: "MetaMask — buy USDT/USDC",   es: "MetaMask — comprar USDT/USDC", src: "/crypto-guide-media/mm-5.png" },
+  "trust-5":  { en: "Trust Wallet — buy USDT on BSC", es: "Trust Wallet — comprar USDT en BSC", src: "/crypto-guide-media/tw-5.png" },
+  "metamask-5": { en: "MetaMask — buy USDT on BSC",   es: "MetaMask — comprar USDT en BSC", src: "/crypto-guide-media/mm-5.png" },
   "buy":      { en: "Wallet 'Buy' screen", es: "Pantalla 'Comprar' de la wallet", src: "/crypto-guide-media/buy.png" },
 };
 
@@ -264,18 +299,19 @@ function TrustWalletMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }
         {step === 5 && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "10px 14px 16px", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 14, fontWeight: 700 }}>{es ? "Comprar" : "Buy"}</span>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>{es ? "Comprar USDT" : "Buy USDT"}</span>
               <span style={{ fontSize: 12, color: "#6b6b70" }}>✕</span>
             </div>
+            <p style={{ margin: 0, fontSize: 8, color: "#6b6b70", fontWeight: 600 }}>{es ? "Elige la red" : "Choose network"}</p>
             <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-              <div style={{ flex: 1, padding: "5px 0", background: "#0500FF", color: "#fff", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 700 }}>USDT</div>
-              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>USDC</div>
-              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>BTC</div>
+              <div style={{ flex: 1.4, padding: "5px 0", background: "#0500FF", color: "#fff", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 700 }}>BSC ★</div>
+              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>TRON</div>
+              <div style={{ flex: 1, padding: "5px 0", background: "#F4F5F7", color: "#6b6b70", borderRadius: 6, textAlign: "center", fontSize: 9, fontWeight: 600 }}>ETH</div>
             </div>
             <div style={{ background: "#F4F5F7", borderRadius: 10, padding: "12px 10px", textAlign: "center", marginTop: 6 }}>
               <p style={{ margin: 0, fontSize: 9, color: "#6b6b70", fontWeight: 600 }}>{es ? "Pagas" : "You pay"}</p>
               <p style={{ margin: "3px 0 0", fontSize: 22, fontWeight: 800, color: "#0F111C" }}>$25<span style={{ fontSize: 11, color: "#9AA0A6", marginLeft: 3 }}>USD</span></p>
-              <p style={{ margin: "3px 0 0", fontSize: 8, color: "#9AA0A6" }}>≈ 25.02 USDT</p>
+              <p style={{ margin: "3px 0 0", fontSize: 8, color: "#9AA0A6" }}>≈ 25.02 USDT · BSC</p>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 8px", fontSize: 8, color: "#6b6b70" }}>
               <span>{es ? "Pago con" : "Pay with"}</span>
@@ -286,7 +322,7 @@ function TrustWalletMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }
               <span style={{ color: "#0F111C", fontWeight: 600 }}>MoonPay</span>
             </div>
             <button style={{ marginTop: "auto", padding: "9px 0", borderRadius: 999, border: "none", background: "#0500FF", color: "#fff", fontSize: 11, fontWeight: 700 }}>
-              {es ? "Comprar USDT" : "Buy USDT"}
+              {es ? "Comprar USDT (BSC)" : "Buy USDT (BSC)"}
             </button>
           </div>
         )}
@@ -423,15 +459,24 @@ function MetaMaskMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }) {
               <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{es ? "Comprar cripto" : "Buy crypto"}</p>
               <span style={{ fontSize: 12, color: "#57606A" }}>✕</span>
             </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#FFF7EE", border: "1px solid #F6851B", borderRadius: 6, padding: "5px 8px" }}>
+              <span style={{ fontSize: 9, color: "#57606A", fontWeight: 600 }}>{es ? "Red" : "Network"}</span>
+              <span style={{ fontSize: 9, color: "#F6851B", fontWeight: 700 }}>▾ BNB Smart Chain</span>
+            </div>
+            <p style={{ margin: 0, fontSize: 8, color: "#8B949E", lineHeight: 1.5 }}>
+              {es
+                ? "Primero cambia la red a BNB Smart Chain (arriba a la izquierda). MetaMask empieza en Ethereum."
+                : "Switch network to BNB Smart Chain first (top-left). MetaMask starts on Ethereum."}
+            </p>
             <div style={{ display: "flex", gap: 4 }}>
-              <div style={{ flex: 1, padding: "6px 0", background: "#F6851B", color: "#fff", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 700 }}>USDT</div>
+              <div style={{ flex: 1, padding: "6px 0", background: "#F6851B", color: "#fff", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 700 }}>USDT ★</div>
               <div style={{ flex: 1, padding: "6px 0", background: "#F6F8FA", color: "#57606A", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 600, border: "1px solid #D0D7DE" }}>USDC</div>
-              <div style={{ flex: 1, padding: "6px 0", background: "#F6F8FA", color: "#57606A", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 600, border: "1px solid #D0D7DE" }}>ETH</div>
+              <div style={{ flex: 1, padding: "6px 0", background: "#F6F8FA", color: "#57606A", borderRadius: 5, textAlign: "center", fontSize: 10, fontWeight: 600, border: "1px solid #D0D7DE" }}>BNB</div>
             </div>
             <div style={{ background: "#F6F8FA", border: "1px solid #D0D7DE", borderRadius: 8, padding: "12px 12px", textAlign: "center", marginTop: 4 }}>
               <p style={{ margin: 0, fontSize: 10, color: "#57606A", fontWeight: 600 }}>{es ? "Pagas" : "You pay"}</p>
               <p style={{ margin: "4px 0 0", fontSize: 22, fontWeight: 800, color: "#24292F" }}>$25<span style={{ fontSize: 11, color: "#8B949E", marginLeft: 3 }}>USD</span></p>
-              <p style={{ margin: "3px 0 0", fontSize: 9, color: "#8B949E" }}>≈ 25.02 USDT</p>
+              <p style={{ margin: "3px 0 0", fontSize: 9, color: "#8B949E" }}>≈ 25.02 USDT · BSC</p>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#57606A", padding: "0 4px" }}>
               <span>{es ? "Proveedor" : "Provider"}</span>
@@ -442,7 +487,7 @@ function MetaMaskMock({ step, lang }: { step: 1 | 2 | 3 | 4 | 5; lang: Lang }) {
               <span style={{ color: "#24292F", fontWeight: 600 }}>💳 {es ? "Tarjeta" : "Card"}</span>
             </div>
             <button style={{ padding: "9px 0", borderRadius: 6, border: "none", background: "#F6851B", color: "#fff", fontSize: 11, fontWeight: 700, marginTop: 4 }}>
-              {es ? "Continuar" : "Continue"}
+              {es ? "Comprar USDT (BSC)" : "Buy USDT (BSC)"}
             </button>
           </div>
         )}
@@ -524,6 +569,62 @@ function StoreButton({ href, glyph, title, sub }: { href: string; glyph: React.R
       </span>
       <span style={{ fontSize: 11, color: "#6b6b70" }}>↗</span>
     </a>
+  );
+}
+
+// Small badge showing the Tether logo + a chain-colored chip beside it. Used
+// on Screen 6 to teach users that the same "USDT" appears under multiple
+// networks — the only difference is the tiny chain badge.
+function TetherBadge() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="16" cy="16" r="16" fill="#26A17B"/>
+      <path d="M17.9 17.4v-.01c-.11 0-.68.04-1.94.04-1 0-1.71-.03-1.96-.04v.01c-3.9-.17-6.81-.85-6.81-1.66 0-.81 2.91-1.49 6.81-1.66v2.65c.25.02 1 .06 1.98.06 1.2 0 1.81-.05 1.92-.06v-2.65c3.89.17 6.79.85 6.79 1.66 0 .81-2.9 1.49-6.79 1.66zm0-3.59v-2.37h5.42V7.83H8.66v3.61h5.42v2.37c-4.41.2-7.72.99-7.72 1.94s3.31 1.74 7.72 1.94v7.59h3.82v-7.59c4.4-.2 7.71-.99 7.71-1.94s-3.3-1.74-7.71-1.94z" fill="#fff"/>
+    </svg>
+  );
+}
+function ChainChip({ label, bg, fg }: { label: string; bg: string; fg: string }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      minWidth: 46, padding: "2px 6px", borderRadius: 6, background: bg, color: fg,
+      fontSize: 9, fontWeight: 800, letterSpacing: ".04em",
+    }}>{label}</span>
+  );
+}
+function NetworkRow({
+  chipLabel, chipBg, chipFg, verdict, verdictColor, verdictBg, name, note,
+}: {
+  chipLabel: string; chipBg: string; chipFg: string;
+  verdict: string; verdictColor: string; verdictBg: string;
+  name: string; note: string;
+}) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12,
+      border: "1px solid #2A2A2A", background: "#161616",
+      borderRadius: 12, padding: "10px 12px",
+    }}>
+      <div style={{ position: "relative", flexShrink: 0, width: 32, height: 32 }}>
+        <TetherBadge />
+        <span style={{ position: "absolute", right: -6, bottom: -4, background: chipBg, color: chipFg,
+          fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 4, border: "1.5px solid #161616" }}>
+          {chipLabel.split(" ")[0]}
+        </span>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{name}</span>
+          <ChainChip label={chipLabel} bg={chipBg} fg={chipFg} />
+        </div>
+        <p style={{ margin: "3px 0 0", fontSize: 10, color: "#A1A1A3", lineHeight: 1.5 }}>{note}</p>
+      </div>
+      <span style={{
+        flexShrink: 0, padding: "3px 8px", borderRadius: 999,
+        background: verdictBg, color: verdictColor,
+        fontSize: 10, fontWeight: 800, letterSpacing: ".04em",
+      }}>{verdict}</span>
+    </div>
   );
 }
 
@@ -710,13 +811,59 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
           <p style={{ margin: "14px 0 0", fontSize: 11, color: "#A1A1A3", lineHeight: 1.7 }}>
             {T.addMoneyBody[lang]}
             <b style={{ color: "#fff" }}>USDT</b>
-            {es ? " o " : " or "}
-            <b style={{ color: "#fff" }}>USDC</b>
+            {es ? " en la red " : " on "}
+            <b style={{ color: "#fff" }}>BNB Smart Chain (BSC)</b>
             {T.addMoneyBodyRest[lang]}
           </p>
 
+          <Callout variant="red" label={T.networkWarnLabel[lang]} body={T.networkWarnBody[lang]} />
+
+          {/* Network disambiguation — show the same USDT under 3 different networks */}
+          <div style={{ marginTop: 18 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#fff" }}>{T.rowsHeader[lang]}</p>
+            <p style={{ margin: "4px 0 10px", fontSize: 11, color: "#A1A1A3", lineHeight: 1.6 }}>{T.rowsSub[lang]}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <NetworkRow
+                name="USDT"
+                chipLabel="BSC (BEP20)"
+                chipBg="#F0B90B"   chipFg="#0F111C"
+                verdict={es ? "USA ESTA" : "USE THIS"}
+                verdictColor="#5ED1C4" verdictBg="rgba(94,209,196,.14)"
+                note={T.rowBscOk[lang]}
+              />
+              <NetworkRow
+                name="USDT"
+                chipLabel="TRON (TRC20)"
+                chipBg="#EF0027"   chipFg="#fff"
+                verdict={es ? "OK" : "OK"}
+                verdictColor="#5ED1C4" verdictBg="rgba(94,209,196,.14)"
+                note={T.rowTronOk[lang]}
+              />
+              <NetworkRow
+                name="USDT"
+                chipLabel="Ethereum (ERC20)"
+                chipBg="#627EEA"   chipFg="#fff"
+                verdict={es ? "NO" : "NO"}
+                verdictColor="#EF4444" verdictBg="rgba(239,68,68,.10)"
+                note={T.rowEthNo[lang]}
+              />
+              <p style={{ margin: "6px 4px 0", fontSize: 10, color: "#6b6b70", lineHeight: 1.5 }}>{T.rowOthersNo[lang]}</p>
+            </div>
+          </div>
+
+          {/* Wallet-specific how-to (differs between Trust and MetaMask) */}
+          <div style={{ marginTop: 18, border: "1px solid #2A2A2A", background: "#161616", borderRadius: 12, padding: 14 }}>
+            <p style={{ margin: 0, fontSize: 10, fontWeight: 700, letterSpacing: ".08em", color: "#A1A1A3" }}>
+              {wallet.name.toUpperCase()} — {T.howHeader[lang]}
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#c9c9cc", lineHeight: 1.7 }}>
+              {walletKey === "trust" ? T.howTrust[lang] : T.howMetamask[lang]}
+            </p>
+          </div>
+
           <ScreenshotSlot slotId={`${walletKey}-5`} height={280} lang={lang} />
 
+          <Callout variant="gold" label={T.altLabel[lang]} body={T.altBody[lang]} />
           <Callout variant="gold" label={T.tipLabel[lang]} body={T.tipBody[lang]} />
         </div>
       )}

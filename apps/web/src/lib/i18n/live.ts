@@ -76,7 +76,7 @@ const strings = {
     invalidDpnsHandle: "Invalid DPNS handle",
     viewPurchaseHistory: "View purchase history",
     giftTokensLabel: "gift tokens",
-    santinoGiftLabel: "Santino gift tokens",
+    santinoGiftLabel: "Santino & Lex gift tokens",
     walletTooltip: (balance: number, gift: number) =>
       gift > 0
         ? `${balance} tokens · +${gift} gift tokens — tap to buy`
@@ -494,7 +494,7 @@ const strings = {
     invalidDpnsHandle: "Identificador DPNS inválido",
     viewPurchaseHistory: "Ver historial de compras",
     giftTokensLabel: "tokens de regalo",
-    santinoGiftLabel: "regalo de Santino",
+    santinoGiftLabel: "regalo de Santino y Lex",
     walletTooltip: (balance: number, gift: number) =>
       gift > 0
         ? `${balance} tokens · +${gift} tokens de regalo — toca para comprar`

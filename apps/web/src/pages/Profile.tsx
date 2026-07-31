@@ -2232,7 +2232,17 @@ export default function Profile() {
                   </div>
                   {subscribeProvider === "usdc" && (
                     <div className="mt-2 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in duration-150">
-                      <p className="text-[9px] text-pnp-textSecondary/60 mb-1.5">Choose coin:</p>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <p className="text-[9px] text-pnp-textSecondary/60">Choose coin:</p>
+                        <a
+                          href="/crypto-guide"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-[9px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+                        >
+                          Which network? →
+                        </a>
+                      </div>
                       <div className="flex gap-1.5 flex-wrap">
                         {NP_COINS.map((coin) => (
                           <button

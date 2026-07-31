@@ -8,6 +8,7 @@ const { isEnforcedFollow } = require('../../../services/followService');
 const { validateTierFresh } = require('../../../services/accessService');
 const { resolveUserId } = require('../../utils/helpers');
 const { invalidateForYouCache } = require('../../../services/discoverService');
+const EntitlementAccessService = require('../../../services/entitlementAccessService');
 
 const authGuard = (req, res) => {
   const user = req.session?.user;
@@ -23,6 +24,23 @@ const followUser = async (req, res) => {
 
   if (!targetId) return res.status(400).json({ error: 'userId required' });
   if (String(targetId) === String(actor.id)) return res.status(400).json({ error: 'Cannot follow yourself' });
+
+  // Super-god: no-op. Return synthetic success so the UI toggles without
+  // polluting followers_count / following_count / notifications / for-you cache.
+  if (EntitlementAccessService.isSuperGod(actor.id)) {
+    const countsRes = await query(
+      'SELECT followers_count, following_count FROM users WHERE id = $1',
+      [targetId]
+    );
+    const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
+    return res.json({
+      success: true,
+      isFollowing: true,
+      followerCount: counts.followers_count,
+      followingCount: counts.following_count,
+      superGod: true,
+    });
+  }
 
   try {
     // Check target exists
@@ -110,6 +128,22 @@ const unfollowUser = async (req, res) => {
   const targetId = await resolveUserId(req.body?.userId);
 
   if (!targetId) return res.status(400).json({ error: 'userId required' });
+
+  // Super-god never persisted the follow row → unfollow is a no-op.
+  if (EntitlementAccessService.isSuperGod(actor.id)) {
+    const countsRes = await query(
+      'SELECT followers_count, following_count FROM users WHERE id = $1',
+      [targetId]
+    );
+    const counts = countsRes.rows[0] || { followers_count: 0, following_count: 0 };
+    return res.json({
+      success: true,
+      isFollowing: false,
+      followerCount: counts.followers_count,
+      followingCount: counts.following_count,
+      superGod: true,
+    });
+  }
 
   // Block unfollowing enforced accounts
   if (isEnforcedFollow(targetId)) {

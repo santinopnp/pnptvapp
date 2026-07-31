@@ -6,7 +6,7 @@
 const { query, getClient } = require('../config/postgres');
 const logger = require('../utils/logger');
 const { getRedis, cache } = require('../config/redis');
-const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS, SANTINO_USER_ID } = require('../config/monetizationConfig');
+const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS, SANTINO_USER_ID, LEX_USER_ID } = require('../config/monetizationConfig');
 const { applyCreatorBonus } = require('./tokenService');
 
 class PNPLiveTipsService {
@@ -136,12 +136,12 @@ class PNPLiveTipsService {
       await client.query('BEGIN');
 
       // Debit tokens atomically — pool selection depends on performer:
-      // • Santino: creator_gifts['SANTINO'] first, then gifted_balance, then balance_tokens.
-      // • Other allowed performers (PNPLatinoBoy): gifted_balance first, then balance_tokens.
+      // • Santino OR Lex (PRIME co-founders): creator_gifts['SANTINO'] first, then gifted_balance, then balance_tokens.
+      // • Other allowed performers: gifted_balance first, then balance_tokens.
       // • All others: regular balance_tokens only (gifted tokens are not accepted).
       let debitResult;
-      const isSantino = perfUserId === SANTINO_USER_ID;
-      if (isSantino) {
+      const isBonusEligible = perfUserId === SANTINO_USER_ID || perfUserId === LEX_USER_ID;
+      if (isBonusEligible) {
         debitResult = await client.query(
           `WITH before AS (
              SELECT COALESCE((creator_gifts->>$3)::numeric, 0) AS cg_val, gifted_balance
@@ -206,9 +206,9 @@ class PNPLiveTipsService {
       const newBalance = (reg || 0) + (gift || 0) + cgTotal;
 
       // Determine how many tokens came from the purchased (balance_tokens) pool.
-      // Santino and isGiftedAllowed paths return balance_tokens_spent from the CTE.
+      // Bonus-eligible (Santino/Lex) and isGiftedAllowed paths return balance_tokens_spent from the CTE.
       // Regular path debits only from balance_tokens, so the full amount is purchased.
-      const balanceTokensSpent = isSantino || isGiftedAllowed
+      const balanceTokensSpent = isBonusEligible || isGiftedAllowed
         ? (debitResult.rows[0].balance_tokens_spent ?? amount)
         : amount;
 

@@ -967,14 +967,61 @@ export default function PostCard({
             if (!m || m.kind !== "channel_promo") return null;
             const channelSlug = (m.channel_slug as string | undefined) || "";
             const channelName = (m.channel_name as string | undefined) || "";
+            const accessType = (m.access_type as "free" | "prime" | "subscription" | "paid" | undefined) || "free";
+            const creatorUsername = (m.creator_username as string | undefined) || "";
+            const priceUsd = m.price_usd as number | null | undefined;
             const videoUrl = ((m.video_url as string | undefined) && (m.video_url as string).length > 10)
               ? (m.video_url as string)
               : ((m.video_directus_id as string | undefined) ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
-            const href = channelSlug ? `/channels?channel=${channelSlug}` : "/channels";
+            const channelHref = channelSlug ? `/channels?channel=${channelSlug}` : "/channels";
+
+            // Per-tier gate — mirrors SocialPostCard.resolveChannelPromoCta so the
+            // profile-wall render matches the feed. PRIME videos NEVER open the
+            // raw asset URL for non-PRIME viewers; they route to /subscribe.
+            let canPlayInline = false;
+            let ctaLabel = "▶ Watch now";
+            let ctaHref: string = videoUrl ?? channelHref;
+            let locked = false;
+            switch (accessType) {
+              case "free":
+                canPlayInline = !!videoUrl;
+                ctaHref = videoUrl ?? channelHref;
+                break;
+              case "prime":
+                if (isPrime) {
+                  canPlayInline = !!videoUrl;
+                  ctaHref = videoUrl ?? channelHref;
+                } else {
+                  canPlayInline = false;
+                  locked = true;
+                  ctaLabel = "🔒 Subscribe to PRIME →";
+                  ctaHref = `/subscribe?plan=prime&return=${encodeURIComponent(channelHref)}`;
+                }
+                break;
+              case "subscription":
+                // Subscription channel: link to the creator's profile to subscribe.
+                // Existing subscribers hit the channel and get inline access there.
+                canPlayInline = false;
+                locked = true;
+                ctaLabel = creatorUsername
+                  ? `Subscribe to @${creatorUsername} →`
+                  : "Subscribe to Watch →";
+                ctaHref = creatorUsername
+                  ? `/profile/${creatorUsername}?action=subscribe`
+                  : channelHref;
+                break;
+              case "paid":
+                canPlayInline = false;
+                locked = true;
+                ctaLabel = `Get pass — $${priceUsd ?? "?"}/mo →`;
+                ctaHref = `${channelHref}&action=purchase`;
+                break;
+            }
+
             return (
               <div className="mt-3">
                 {post.media_url && (
-                  <a href={href} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group">
+                  <a href={ctaHref} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group">
                     <img
                       src={post.media_url}
                       alt={channelName || "Channel promo"}
@@ -994,14 +1041,19 @@ export default function PostCard({
                         📺 PNP Channels · {channelName}
                       </div>
                     )}
+                    {locked && (
+                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                        🔒
+                      </div>
+                    )}
                   </a>
                 )}
                 <a
-                  href={videoUrl ?? href}
+                  href={ctaHref}
                   className="block w-full text-center text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
                   style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
                 >
-                  {videoUrl ? "▶ Watch now" : "🔒 Subscribe to Watch"}
+                  {canPlayInline ? "▶ Watch now" : ctaLabel}
                 </a>
               </div>
             );

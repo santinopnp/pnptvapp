@@ -1460,9 +1460,19 @@ export function BookCallModal({
         {/* Crypto coin picker — same 2-col token grid pattern as Prime/Subscribe checkout */}
         {provider === "nowpayments" && (
           <div className="mt-3 rounded-xl border border-green-500/20 bg-[#0a1f0a]/40 p-3 animate-in fade-in slide-in-from-top-1 duration-200">
-            <p className="text-[11px] font-semibold mb-2.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              {t.lang === "es" ? "Elige tu token:" : "Choose your token:"}
-            </p>
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <p className="text-[11px] font-semibold" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                {t.lang === "es" ? "Elige tu token:" : "Choose your token:"}
+              </p>
+              <a
+                href="/crypto-guide"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+              >
+                {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
+              </a>
+            </div>
             <div className="grid grid-cols-2 gap-1.5">
               {NP_COINS_SUBSCRIBE.map((coin) => {
                 const selected = npCoinPick === coin.code;

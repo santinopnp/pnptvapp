@@ -36,6 +36,10 @@ interface PnptvUser {
   /** Entitlement-derived display label: 'PRIME' | 'BASIC' | 'FREE' */
   label?: string;
   liveChannel?: string | null;
+  /** Ops "super-god" flag: user bypasses every gate and never registers in metrics. */
+  isSuperGod?: boolean;
+  /** User is on the super-god allowlist (badge renders even when currently OFF). */
+  isSuperGodEligible?: boolean;
 }
 
 interface AuthState {
@@ -43,6 +47,8 @@ interface AuthState {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isCreatorAdmin: boolean;
+  isSuperGod: boolean;
+  isSuperGodEligible: boolean;
   isLoading: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
@@ -81,6 +87,8 @@ function mapTelegramUser(u: NonNullable<TelegramAuthResponse["user"]>): PnptvUse
     country: u.country ?? null,
     onboardingComplete: u.onboarding_complete ?? false,
     liveChannel: u.live_channel ?? null,
+    isSuperGod: (u as { is_super_god?: boolean }).is_super_god === true,
+    isSuperGodEligible: (u as { super_god_eligible?: boolean }).super_god_eligible === true,
   };
 }
 
@@ -202,12 +210,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isAdmin = !!user && (user.role === "admin" || user.role === "superadmin");
   const isCreatorAdmin = !!user && user.role === "creator";
+  const isSuperGod = !!user && user.isSuperGod === true;
+  const isSuperGodEligible = !!user && user.isSuperGodEligible === true;
 
   const value: AuthState = {
     user,
     isAuthenticated: !!user,
     isAdmin,
     isCreatorAdmin,
+    isSuperGod,
+    isSuperGodEligible,
     isLoading,
     login: handleLogin,
     logout: handleLogout,

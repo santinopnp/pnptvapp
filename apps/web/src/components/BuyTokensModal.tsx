@@ -478,10 +478,18 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                 <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-200">
                   {/* Coin grid — matches the Prime/Subscribe checkout token pattern
                       (2-col cards, coin-color icon, label + network, ★ for recommended). */}
-                  <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
                     <p className="text-[11px] font-semibold text-pnp-textSecondary">
                       {es ? "Elige tu token:" : "Choose your token:"}
                     </p>
+                    <a
+                      href="/crypto-guide"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+                    >
+                      {es ? "¿Qué red? →" : "Which network? →"}
+                    </a>
                   </div>
                   <div className="grid grid-cols-2 gap-1.5 mb-2">
                     {NP_COINS_SUBSCRIBE.map((coin) => {
@@ -1052,10 +1060,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                           className="text-[9px] leading-tight mb-1"
                           style={{ color: "#D4007A" }}
                           title={es
-                            ? "Estos tokens de bono solo pueden gastarse en streams y contenido de Santino."
-                            : "These bonus tokens can only be spent on Santino streams and content."}
+                            ? "Estos tokens de bono solo pueden gastarse en streams y contenido de Santino y Lex (@PNPLatinoBoy)."
+                            : "These bonus tokens can only be spent on Santino and Lex (@PNPLatinoBoy) streams and content."}
                         >
-                          +{bonusTokens.toLocaleString()} {es ? "para Santino (solo Santino)" : "Santino only"}
+                          +{bonusTokens.toLocaleString()} {es ? "para Santino & Lex" : "Santino & Lex only"}
                         </p>
                       )}
                       <p className="text-[11px] text-pnp-textSecondary mb-1">tokens</p>

@@ -2438,25 +2438,31 @@ function initSocketIO(io) {
 
         const redis = getRedis();
 
-        // SOCK-H1: Deduplicate viewer-count increments per user per stream.
-        // A user opening multiple tabs or reconnecting rapidly must only count
-        // once in the viewer total.  SET NX with an 8-hour TTL acts as the gate;
-        // if the key already exists the increment is skipped, but the TTL is
-        // still refreshed so long-running streams never reset to 0 at hour 1.
-        const joinKey = `live:joined:${streamId}:${user.id}`;
-        const firstJoin = await redis.set(joinKey, '1', 'EX', 28800, 'NX');
-        if (firstJoin === 'OK') {
-          await redis.incr(`live:viewers:${streamId}`);
-        } else {
-          // Reconnect path: slide the dedup window forward so it doesn't expire
-          // mid-stream and accidentally double-count on the next reconnect.
-          await redis.expire(joinKey, 28800);
+        // Super-god: join room silently — no viewer-count bump, no roster entry.
+        const EntitlementAccessServiceLive = require('../../services/entitlementAccessService');
+        const viewerIsSuperGod = EntitlementAccessServiceLive.isSuperGod(user.id);
+
+        if (!viewerIsSuperGod) {
+          // SOCK-H1: Deduplicate viewer-count increments per user per stream.
+          // A user opening multiple tabs or reconnecting rapidly must only count
+          // once in the viewer total.  SET NX with an 8-hour TTL acts as the gate;
+          // if the key already exists the increment is skipped, but the TTL is
+          // still refreshed so long-running streams never reset to 0 at hour 1.
+          const joinKey = `live:joined:${streamId}:${user.id}`;
+          const firstJoin = await redis.set(joinKey, '1', 'EX', 28800, 'NX');
+          if (firstJoin === 'OK') {
+            await redis.incr(`live:viewers:${streamId}`);
+          } else {
+            // Reconnect path: slide the dedup window forward so it doesn't expire
+            // mid-stream and accidentally double-count on the next reconnect.
+            await redis.expire(joinKey, 28800);
+          }
+          // Always refresh the viewer-count key TTL — keeps long streams alive.
+          await redis.expire(`live:viewers:${streamId}`, 28800);
         }
-        // Always refresh the viewer-count key TTL — keeps long streams alive.
-        await redis.expire(`live:viewers:${streamId}`, 28800);
 
         // Store viewer in creator dashboard roster (hash per stream, 8h TTL)
-        await redis.hset(
+        if (!viewerIsSuperGod) await redis.hset(
           `live:roster:${streamId}`,
           String(user.id),
           JSON.stringify({ username: user.username || user.first_name || 'Viewer', joinedAt: Date.now() })
@@ -2543,6 +2549,9 @@ function initSocketIO(io) {
       if (socket.data.liveRooms) socket.data.liveRooms.delete(streamId);
 
       try {
+        // Super-god never incremented on join → skip decrement to avoid drift.
+        const EntitlementAccessServiceLeave = require('../../services/entitlementAccessService');
+        if (EntitlementAccessServiceLeave.isSuperGod(user.id)) return;
         // H4: Atomic decrement clamped to 0 via Lua script.
         // Also clear the deduplication key so a rejoin is counted fresh.
         const redis = getRedis();
@@ -3185,11 +3194,15 @@ function initSocketIO(io) {
       }
 
       if (socket.data.liveRooms && socket.data.liveRooms.size > 0) {
+        // Super-god never incremented on join → skip decrement.
+        const EntitlementAccessServiceDisc = require('../../services/entitlementAccessService');
+        const isSuperGodViewer = EntitlementAccessServiceDisc.isSuperGod(user.id);
         // H4: Atomic decrement clamped to 0 via Lua script.
         // SOCK-H1: Also delete the deduplication join key so that if the same
         // user reconnects (e.g., page refresh) their next join is counted fresh.
         const redis = getRedis();
         for (const streamId of socket.data.liveRooms) {
+          if (isSuperGodViewer) continue;
           try {
             const count = await atomicViewerDecrement(redis, streamId);
             await redis.del(`live:joined:${streamId}:${user.id}`);

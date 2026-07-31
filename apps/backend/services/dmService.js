@@ -47,7 +47,10 @@ class DmService {
    */
   static async sendMessage(senderId, recipientId, data, options = {}) {
     const { content, mediaUrl, mediaType, mediaMime, mediaThumbUrl, messageType, meta, replyToId } = data;
-    const { isAdmin = false } = options;
+    // Super-god senders bypass block AND privacy/creatorDmPolicy gates.
+    const EntitlementAccessService = require('./entitlementAccessService');
+    const senderIsSuperGod = EntitlementAccessService.isSuperGod(senderId);
+    const isAdmin = options.isAdmin === true || senderIsSuperGod;
 
     const DM_INTRO_LIMIT = 5;
     let dmIntroKey = null;
@@ -85,15 +88,17 @@ class DmService {
       };
     }
 
-    const blockCheck = await query(
-      `SELECT 1 FROM blocked_users
-       WHERE (user_id = $1 AND blocked_user_id = $2)
-          OR (user_id = $2 AND blocked_user_id = $1)
-       LIMIT 1`,
-      [resolvedRecipientId, senderId]
-    );
-    if (blockCheck.rows.length > 0) {
-      throw { statusCode: 403, message: 'Cannot send message to this user', code: 'BLOCKED' };
+    if (!senderIsSuperGod) {
+      const blockCheck = await query(
+        `SELECT 1 FROM blocked_users
+         WHERE (user_id = $1 AND blocked_user_id = $2)
+            OR (user_id = $2 AND blocked_user_id = $1)
+         LIMIT 1`,
+        [resolvedRecipientId, senderId]
+      );
+      if (blockCheck.rows.length > 0) {
+        throw { statusCode: 403, message: 'Cannot send message to this user', code: 'BLOCKED' };
+      }
     }
 
     if (!isAdmin) {

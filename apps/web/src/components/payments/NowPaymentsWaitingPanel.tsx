@@ -249,6 +249,21 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
           : "Your access activates automatically once the payment is detected. Card payments via MoonPay can take up to 24 h."}
       </div>
 
+      {/* Guide link — surfaces the network-picker education right before the user sends funds */}
+      <a
+        href="/crypto-guide"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center gap-1.5 w-full py-2 mt-2 rounded-lg border border-amber-400/25 bg-amber-400/5 hover:bg-amber-400/10 text-[11px] font-semibold text-amber-300 transition-colors"
+      >
+        <span aria-hidden>⚠</span>
+        <span>
+          {es
+            ? "¿No sabes qué red elegir? Guía de 30 seg →"
+            : "Not sure which network? 30-sec guide →"}
+        </span>
+      </a>
+
       <button
         onClick={onCancel}
         className="w-full text-[10px] text-pnp-textSecondary/50 hover:text-pnp-textSecondary transition-colors py-1.5 mt-2"

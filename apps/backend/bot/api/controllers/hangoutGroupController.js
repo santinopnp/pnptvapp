@@ -18,6 +18,20 @@ const fs = require('fs').promises;
 const { invalidateLinkedCache } = require('../../core/middleware/groupSecurityEnforcement');
 const wellnessModeService = require('../../../services/wellnessModeService');
 const mentionService = require('../../../services/mentionService');
+const {
+  SANTINO_PRIME_HANGOUT_GROUP_ID,
+  LEX_PRIME_HANGOUT_GROUP_ID,
+} = require('../../../config/monetizationConfig');
+
+// A hangout is a PRIME co-founder room if it IS a root PRIME hangout or a topic under one.
+function isPrimeCoFounderHangout(groupId, parentGroupId) {
+  const gid = Number(groupId);
+  const pid = parentGroupId != null ? Number(parentGroupId) : null;
+  return gid === SANTINO_PRIME_HANGOUT_GROUP_ID
+      || gid === LEX_PRIME_HANGOUT_GROUP_ID
+      || pid === SANTINO_PRIME_HANGOUT_GROUP_ID
+      || pid === LEX_PRIME_HANGOUT_GROUP_ID;
+}
 
 // In-memory cache for Telegram video chat status (30s TTL)
 const _videoChatCache = new Map();
@@ -630,18 +644,17 @@ const joinGroup = async (req, res) => {
 
     // Access gate — channel-linked hangouts use channel access rules; standalone use is_paid
     if (!isOwner) {
-      // Santino's Subscribers hangout (id=719 + its child topics): PRIME monthly and up only.
-      // Trials (prime-trial-3d, week-trial-pass, prime-week-pass-7d) do NOT qualify.
-      const isSantinoHangout = groupId === 719 || group.parent_group_id === 719;
-      if (isSantinoHangout) {
+      // PRIME co-founder hangouts (Santino's + Lex's, plus their child topics):
+      // PRIME monthly-and-up only. Trials + week passes do NOT qualify.
+      if (isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
         const EntitlementAccessService = require('../../../services/entitlementAccessService');
         const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
         if (!qualifies) {
           return res.status(402).json({
             error: 'PRIME membership required',
             errorEs: 'Se requiere membresía PRIME',
-            message: "Santino's Subscribers is for active PRIME monthly members and above. Trials and week passes do not qualify.",
-            messageEs: 'Los Suscriptores de Santino es para miembros PRIME mensuales activos y superiores. Las pruebas y pases semanales no califican.',
+            message: 'This hangout is for active PRIME monthly members and above. Trials and week passes do not qualify.',
+            messageEs: 'Este hangout es para miembros PRIME mensuales activos y superiores. Las pruebas y pases semanales no califican.',
             requiresPrime: true,
             subscribeUrl: '/subscribe',
             groupName: group.name,
@@ -1484,6 +1497,12 @@ const discoverGroups = async (req, res) => {
            g.creator_id IS NULL OR g.creator_id = ''
            -- owner always sees own hangout
            OR g.creator_id = $1
+           -- PRIME co-founder hangouts (Santino=719, Lex=785) → any active PRIME entitlement
+           OR (g.id IN (719, 785) AND EXISTS (
+             SELECT 1 FROM user_entitlements ue
+             WHERE ue.user_id = $1 AND ue.add_on_id = 'prime'
+               AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+           ))
            -- channel-linked: gate on channel access
            OR (g.channel_id IS NOT NULL AND (
              cc.access_type = 'free'
@@ -3539,10 +3558,9 @@ async function checkPaidHangoutAccess(groupId, user, res) {
 
   const ownerMod = await isOwnerOrMod(groupId, user.id);
 
-  // Santino's Subscribers hangout (id=719 + its child topics): PRIME monthly and up only.
+  // PRIME co-founder hangouts (Santino's + Lex's, plus child topics): PRIME monthly-and-up only.
   // Mirrors the joinGroup gate so start/join call cannot be reached via a stale membership.
-  const isSantinoHangout = groupId === 719 || grp.parent_group_id === 719;
-  if (isSantinoHangout && !ownerMod) {
+  if (isPrimeCoFounderHangout(groupId, grp.parent_group_id) && !ownerMod) {
     const EntitlementAccessService = require('../../../services/entitlementAccessService');
     const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
     if (!qualifies) {
@@ -3595,12 +3613,16 @@ async function generateCallAccess(groupId, callId, roomName, user) {
     isModerator,
     { ttlSeconds: ttl, identityOverride },
   );
-  await query(
-    `INSERT INTO hangout_call_participants (call_id, user_id, display_name, joined_at)
-     VALUES ($1, $2, $3, NOW())
-     ON CONFLICT (call_id, user_id) DO UPDATE SET left_at = NULL, joined_at = EXCLUDED.joined_at`,
-    [callId, user.id, displayName]
-  );
+  // Super-god: skip participant row so participant_count trigger doesn't bump.
+  const EntitlementAccessServiceHo = require('../../../services/entitlementAccessService');
+  if (!EntitlementAccessServiceHo.isSuperGod(user.id)) {
+    await query(
+      `INSERT INTO hangout_call_participants (call_id, user_id, display_name, joined_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (call_id, user_id) DO UPDATE SET left_at = NULL, joined_at = EXCLUDED.joined_at`,
+      [callId, user.id, displayName]
+    );
+  }
   const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
   return { token, livekitUrl: livekitService.LIVEKIT_WS_URL, roomName, expiresAt };
 }
@@ -3664,13 +3686,17 @@ async function startCall(req, res) {
     }
 
     const displayName = user.firstName || user.first_name || user.username || 'User';
-    // Insert creator as first participant — trigger sets participant_count to 1
-    await query(
-      `INSERT INTO hangout_call_participants (call_id, user_id, display_name, joined_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (call_id, user_id) DO UPDATE SET left_at = NULL, joined_at = EXCLUDED.joined_at`,
-      [callId, user.id, displayName]
-    );
+    // Insert creator as first participant — trigger sets participant_count to 1.
+    // Super-god: skip so their QA presence doesn't inflate the count.
+    const EntitlementAccessServiceStart = require('../../../services/entitlementAccessService');
+    if (!EntitlementAccessServiceStart.isSuperGod(user.id)) {
+      await query(
+        `INSERT INTO hangout_call_participants (call_id, user_id, display_name, joined_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (call_id, user_id) DO UPDATE SET left_at = NULL, joined_at = EXCLUDED.joined_at`,
+        [callId, user.id, displayName]
+      );
+    }
     // Creator of a new call is always owner/mod — use 4h TTL.
     // Per-mint suffix so opening a second tab doesn't kick the first (B1 fix).
     const creatorSuffix = randomBytes(4).toString('hex');

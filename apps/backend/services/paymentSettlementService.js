@@ -669,7 +669,8 @@ class PaymentSettlementService {
     const { user_id: userId, tokens_credited: tokens, usd_amount: usdAmount } = purchaseResult.rows[0];
 
     // Compute bonus split: look up matching TOKEN_PACKAGES entry by token count.
-    // Bonus tokens (package-tier loyalty bonus) go into creator_gifts['SANTINO'].
+    // Bonus tokens (package-tier loyalty bonus) go into creator_gifts[SANTINO_USER_ID],
+    // spendable on both Santino and Lex streams (PRIME co-founders).
     const TOKEN_PKGS = dashTokenSvc.TOKEN_PACKAGES || [];
     const matchedPkg = TOKEN_PKGS.find((p) => p.tokens === tokens);
     const bonusTokens = matchedPkg ? Math.max(0, matchedPkg.tokens - matchedPkg.usd * 100) : 0;
@@ -680,7 +681,7 @@ class PaymentSettlementService {
     );
 
     if (!alreadyProcessed) {
-      // Credit bonus tokens to Santino-restricted creator_gifts pool
+      // Credit bonus tokens to the Santino+Lex creator_gifts pool
       if (bonusTokens > 0) {
         const { SANTINO_USER_ID } = require('../config/monetizationConfig');
         const TokenSvc = require('./tokenService');

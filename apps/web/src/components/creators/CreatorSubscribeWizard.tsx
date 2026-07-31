@@ -342,9 +342,19 @@ export default function CreatorSubscribeWizard({
       )}
 
       <div>
-        <p className="text-[11px] font-semibold mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          {lang === "es" ? "O paga con crypto — bajas comisiones" : "Or pay with crypto — low fees"}
-        </p>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <p className="text-[11px] font-semibold" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {lang === "es" ? "O paga con crypto — bajas comisiones" : "Or pay with crypto — low fees"}
+          </p>
+          <a
+            href="/crypto-guide"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
+          >
+            {lang === "es" ? "¿Qué red? →" : "Which network? →"}
+          </a>
+        </div>
         <div className="grid grid-cols-2 gap-1.5">
           {NP_COINS_SUBSCRIBE.map((coin) => (
             <button
