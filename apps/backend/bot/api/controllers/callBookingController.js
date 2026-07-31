@@ -1391,7 +1391,7 @@ async function createCheckoutBtc(req, res) {
     }
     const userId = String(sessionUser.id);
 
-    const { packageId, startTimeUtc, endTimeUtc, clientNotes: rawClientNotesBtc } = req.body;
+    const { packageId, startTimeUtc, endTimeUtc, clientNotes: rawClientNotesBtc, email: rawEmailBtc } = req.body;
 
     if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
       return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
@@ -1423,12 +1423,16 @@ async function createCheckoutBtc(req, res) {
     const clientNotesBtc = rawClientNotesBtc && typeof rawClientNotesBtc === 'string'
       ? rawClientNotesBtc.trim().slice(0, 1000) || null : null;
 
+    const emailBtc = rawEmailBtc && typeof rawEmailBtc === 'string'
+      ? rawEmailBtc.trim().slice(0, 254) || null : null;
+
     const result = await callCheckoutService.createCallCheckoutBtc({
       userId,
       packageId: Number(packageId),
       startTimeUtc: slotTimes?.startTimeUtc ?? null,
       endTimeUtc: slotTimes?.endTimeUtc ?? null,
       clientNotes: clientNotesBtc,
+      email: emailBtc,
     });
 
     return res.status(201).json({ success: true, ...result });
@@ -1463,7 +1467,7 @@ async function createCheckoutDash(req, res) {
     }
     const userId = String(sessionUser.id);
 
-    const { packageId, startTimeUtc, endTimeUtc, clientNotes: rawClientNotesDash } = req.body;
+    const { packageId, startTimeUtc, endTimeUtc, clientNotes: rawClientNotesDash, email: rawEmailDash } = req.body;
 
     if (!packageId || !Number.isInteger(Number(packageId)) || Number(packageId) < 1) {
       return res.status(400).json({ success: false, error: 'packageId must be a positive integer' });
@@ -1495,12 +1499,16 @@ async function createCheckoutDash(req, res) {
     const clientNotesDash = rawClientNotesDash && typeof rawClientNotesDash === 'string'
       ? rawClientNotesDash.trim().slice(0, 1000) || null : null;
 
+    const emailDash = rawEmailDash && typeof rawEmailDash === 'string'
+      ? rawEmailDash.trim().slice(0, 254) || null : null;
+
     const result = await callCheckoutService.createCallCheckoutDash({
       userId,
       packageId: Number(packageId),
       startTimeUtc: slotTimes?.startTimeUtc ?? null,
       endTimeUtc: slotTimes?.endTimeUtc ?? null,
       clientNotes: clientNotesDash,
+      email: emailDash,
     });
 
     return res.status(201).json({ success: true, ...result });

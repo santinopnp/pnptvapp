@@ -1055,6 +1055,32 @@ class PaymentRecoveryService {
                      WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','expired')`,
                     [row.order_id]
                   ).catch(() => {});
+                  // D1: propagate expiry to the linked payments row + free the held slot.
+                  // Without this, call_package payments accumulate as "pending" forever and
+                  // block reuse-dedup for the same user+package.
+                  if (row.plan_id === 'call_package') {
+                    const rowMeta2 = row.metadata && typeof row.metadata === 'object'
+                      ? row.metadata
+                      : (typeof row.metadata === 'string'
+                          ? (() => { try { return JSON.parse(row.metadata); } catch { return null; } })()
+                          : null);
+                    const linkedPaymentId = rowMeta2?.paymentId;
+                    const linkedBookingId = rowMeta2?.bookingId;
+                    if (linkedPaymentId) {
+                      await query(
+                        `UPDATE payments SET status = 'expired', updated_at = NOW()
+                         WHERE id = $1 AND status = 'pending'`,
+                        [linkedPaymentId]
+                      ).catch((e) => logger.warn('NP reconciler: failed to expire linked payment', { paymentId: linkedPaymentId, error: e.message }));
+                    }
+                    if (linkedBookingId) {
+                      await query(
+                        `UPDATE bookings SET status = 'expired', updated_at = NOW()
+                         WHERE id = $1 AND status IN ('held','awaiting_payment')`,
+                        [linkedBookingId]
+                      ).catch((e) => logger.warn('NP reconciler: failed to expire linked booking', { bookingId: linkedBookingId, error: e.message }));
+                    }
+                  }
                 }
                 results.stillPending++;
                 continue;

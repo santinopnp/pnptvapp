@@ -13,7 +13,7 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import {
   ChevronLeft,
@@ -304,6 +304,7 @@ function CreatorRightRail({ excludeCreatorId }: { excludeCreatorId: string }) {
 
 export default function CreatorProfilePage() {
   const { username } = useParams<{ username: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
   const t = useI18n();
@@ -407,6 +408,19 @@ export default function CreatorProfilePage() {
     () => callCredits.find((c) => c.duration_minutes === 60) || null,
     [callCredits]
   );
+
+  // D2: deep-link from MyAccess → auto-open Book Call modal at the credit's duration
+  const bookActionHandled = useRef(false);
+  useEffect(() => {
+    if (bookActionHandled.current) return;
+    if (!data?.creator?.id || !isAuthenticated) return;
+    if (searchParams.get("action") !== "book") return;
+    const durParam = Number(searchParams.get("duration"));
+    const dur: 30 | 60 = durParam === 60 ? 60 : 30;
+    bookActionHandled.current = true;
+    setBookCallDuration(dur);
+    setShowBookCall(true);
+  }, [data?.creator?.id, isAuthenticated, searchParams]);
 
   // Load manual lazily when the collapsible card is first expanded
   useEffect(() => {

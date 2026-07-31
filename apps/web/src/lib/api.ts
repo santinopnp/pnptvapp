@@ -7360,12 +7360,14 @@ export function createCallCheckoutBtc(
   packageId: number,
   startTimeUtc?: string,
   endTimeUtc?: string,
-  clientNotes?: string
+  clientNotes?: string,
+  email?: string
 ): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; amountUsd: number; bookingId?: string; paymentId?: string }> {
   const body: Record<string, unknown> = { packageId };
   if (startTimeUtc) body.startTimeUtc = startTimeUtc;
   if (endTimeUtc) body.endTimeUtc = endTimeUtc;
   if (clientNotes) body.clientNotes = clientNotes;
+  if (email) body.email = email;
   return request("/api/webapp/book-call/checkout/btc", { method: "POST", body });
 }
 
@@ -7373,12 +7375,14 @@ export function createCallCheckoutDash(
   packageId: number,
   startTimeUtc?: string,
   endTimeUtc?: string,
-  clientNotes?: string
+  clientNotes?: string,
+  email?: string
 ): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; paymentId: string; amountUsd: number; bookingId?: string; orderId?: string }> {
   const body: Record<string, unknown> = { packageId };
   if (startTimeUtc) body.startTimeUtc = startTimeUtc;
   if (endTimeUtc) body.endTimeUtc = endTimeUtc;
   if (clientNotes) body.clientNotes = clientNotes;
+  if (email) body.email = email;
   return request("/api/webapp/book-call/checkout/dash", { method: "POST", body });
 }
 

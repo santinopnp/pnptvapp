@@ -628,6 +628,34 @@ async function _getPerformerId(client, creatorUserId) {
 }
 
 // ---------------------------------------------------------------------------
+// _acquireCheckoutMutex — Redis SETNX lock (10s) to prevent parallel duplicate
+// checkouts. Race: `_findReusableCallDso` runs BEFORE the DSO row is inserted
+// (which happens ~800ms later after the NowPayments API call). Without the lock,
+// two rapid clicks both pass dedup, creating two invoices for the same intent.
+// ---------------------------------------------------------------------------
+
+async function _acquireCheckoutMutex(userId, packageId) {
+  try {
+    const { getRedis } = require('../config/redis');
+    const redis = getRedis();
+    const key = `callco:mtx:${userId}:${packageId}`;
+    const acquired = await redis.set(key, '1', 'EX', 10, 'NX');
+    return acquired === 'OK';
+  } catch (err) {
+    logger.warn('[callCheckoutService] mutex acquire failed (allowing checkout)', { error: err.message });
+    return true; // fail-open: don't block checkouts if Redis is down
+  }
+}
+
+async function _releaseCheckoutMutex(userId, packageId) {
+  try {
+    const { getRedis } = require('../config/redis');
+    const redis = getRedis();
+    await redis.del(`callco:mtx:${userId}:${packageId}`);
+  } catch (_) { /* non-fatal */ }
+}
+
+// ---------------------------------------------------------------------------
 // _findReusableCallDso — dedup helper (prevents duplicate DSO accumulation)
 // ---------------------------------------------------------------------------
 
@@ -690,6 +718,14 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // D5: acquire per-user+package mutex so parallel clicks don't race past dedup
+  const gotMutexNp = await _acquireCheckoutMutex(userId, packageId);
+  if (!gotMutexNp) {
+    // Another checkout in flight → try to return whatever DSO gets created; if
+    // still nothing, ask the client to retry shortly.
+    await new Promise((r) => setTimeout(r, 1200));
   }
 
   // 1b. Dedup: if a pending checkout for the same user+creator+package exists and
@@ -882,7 +918,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
  * @param {string} [opts.endTimeUtc]   - ISO 8601
  * @returns {{ invoiceId, checkoutUrl, bookingId, usdAmount, orderId }}
  */
-async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeUtc, clientNotes = null }) {
+async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeUtc, clientNotes = null, email = null }) {
   const { createInvoice } = require('../config/btcpay');
 
   // 1. Load package
@@ -895,6 +931,12 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // D5: acquire per-user+package mutex so parallel clicks don't race past dedup
+  const gotMutexBtc = await _acquireCheckoutMutex(userId, packageId);
+  if (!gotMutexBtc) {
+    await new Promise((r) => setTimeout(r, 1200));
   }
 
   // 1b. Dedup: return existing pending checkout when still valid.
@@ -935,6 +977,7 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
       startTimeUtc: startTimeUtc || null,
       endTimeUtc: endTimeUtc || null,
       provider: 'btc',
+      email: email && typeof email === 'string' ? email.trim().slice(0, 254) : null,
     },
   });
 
@@ -1065,7 +1108,7 @@ async function createCallCheckoutBtc({ userId, packageId, startTimeUtc, endTimeU
  * @param {string|null} [opts.clientNotes]
  * @returns {{ invoiceId, checkoutUrl, paymentId, bookingId, usdAmount, orderId }}
  */
-async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTimeUtc, clientNotes = null }) {
+async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTimeUtc, clientNotes = null, email = null }) {
   const { createDashInvoice } = require('../config/btcpay');
 
   // 1. Load package
@@ -1078,6 +1121,12 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
     const err = new Error(`Call package ${packageId} not found or inactive`);
     err.code = 'PACKAGE_NOT_FOUND';
     throw err;
+  }
+
+  // D5: acquire per-user+package mutex so parallel clicks don't race past dedup
+  const gotMutexDash = await _acquireCheckoutMutex(userId, packageId);
+  if (!gotMutexDash) {
+    await new Promise((r) => setTimeout(r, 1200));
   }
 
   // 1b. Dedup: return existing pending checkout when still valid.
@@ -1118,6 +1167,7 @@ async function createCallCheckoutDash({ userId, packageId, startTimeUtc, endTime
       startTimeUtc: startTimeUtc || null,
       endTimeUtc: endTimeUtc || null,
       provider: 'dash',
+      email: email && typeof email === 'string' ? email.trim().slice(0, 254) : null,
     },
   });
 
@@ -1384,11 +1434,22 @@ async function expireAbandonedBookings() {
   let expired = 0;
   let errors = 0;
   try {
+    // D3: two paths — (a) legacy 2h fallback for anything stuck, (b) IMMEDIATE
+    // expiry when the linked payment is already in a terminal-failed state.
+    // Path (b) frees slots ~15 min after abandonment (next reconciler tick)
+    // instead of waiting 2h, so other buyers can grab them.
     const result = await query(
-      `UPDATE bookings
+      `UPDATE bookings b
        SET status = 'expired', updated_at = NOW()
-       WHERE status = 'awaiting_payment'
-         AND created_at < NOW() - INTERVAL '2 hours'
+       WHERE b.status = 'awaiting_payment'
+         AND (
+           b.created_at < NOW() - INTERVAL '2 hours'
+           OR EXISTS (
+             SELECT 1 FROM payments p
+             WHERE p.id = b.payment_id
+               AND p.status IN ('expired','failed','abandoned','cancelled')
+           )
+         )
        RETURNING id, payment_id`,
     );
     expired = result.rows.length;

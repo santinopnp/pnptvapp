@@ -298,7 +298,12 @@ export default function MyAccess() {
               subtitle={t.myAccess.callCreditsSubtitle}
               empty={t.myAccess.callCreditsEmpty}
             >
-              {credits.map((cr) => {
+              {credits
+                .filter((c) =>
+                  (c.status === "unused" || c.status === "partial") &&
+                  c.quantity_used + c.quantity_scheduled < c.quantity_total
+                )
+                .map((cr) => {
                 const remaining = Math.max(
                   0,
                   cr.quantity_total - cr.quantity_used - cr.quantity_scheduled
@@ -314,7 +319,7 @@ export default function MyAccess() {
                     thumbnailUrl={cr.creator_photo ?? null}
                     onClick={
                       cr.creator_username
-                        ? () => navigate(`/profile/${cr.creator_username}?action=book`)
+                        ? () => navigate(`/c/${cr.creator_username}?action=book&duration=${cr.duration_minutes}`)
                         : undefined
                     }
                   />

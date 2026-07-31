@@ -620,7 +620,8 @@ export function BookCallModal({
           activePackage.id,
           selectedSlot?.startUtc ?? undefined,
           selectedSlot?.endUtc ?? undefined,
-          clientNotes.trim() || undefined
+          clientNotes.trim() || undefined,
+          email.trim() || undefined
         );
         if (btcRes.checkoutUrl) {
           const safeUrl = assertPaymentUrl(btcRes.checkoutUrl);
@@ -726,7 +727,8 @@ export function BookCallModal({
           activePackage.id,
           selectedSlot?.startUtc ?? undefined,
           selectedSlot?.endUtc ?? undefined,
-          clientNotes.trim() || undefined
+          clientNotes.trim() || undefined,
+          email.trim() || undefined
         );
         if (dashRes.checkoutUrl) {
           const safeUrl = assertPaymentUrl(dashRes.checkoutUrl);
