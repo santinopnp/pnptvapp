@@ -11005,17 +11005,10 @@ const {
   createDashInvoice,
   createInvoice: createBtcpayInvoice,
   validateWebhookSignature,
-  checkBtcpayHealth,
   checkInvoiceProcessed,
   markInvoiceProcessed,
   isConfigured: btcpayConfigured,
 } = require('../../config/btcpay');
-
-// GET /api/webapp/dash/btcpay-status — check if BTCPay is configured and reachable
-app.get('/api/webapp/dash/btcpay-status', requireSessionAuth, asyncHandler(async (req, res) => {
-  const health = await checkBtcpayHealth();
-  res.json({ success: true, ...health });
-}));
 
 // GET /api/wallet/balance — get current user's token balance + DPNS
 app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res) => {

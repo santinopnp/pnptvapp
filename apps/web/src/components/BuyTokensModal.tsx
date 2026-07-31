@@ -100,7 +100,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
 
   useEffect(() => {
     getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
-    getDashAvailable().then((r) => setDashAvailable(r.available === true)).catch(() => {});
     getPresaleStatus().then((r) => {
       if (r.presale?.active) {
         setPresaleActive(true);

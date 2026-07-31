@@ -800,9 +800,7 @@ export default function Profile() {
     setShowSubscribeModal(true);
     // Probe all payment provider availability lazily on first open.
     if (dashAvailable === null) {
-      getDashAvailable()
-        .then((res) => setDashAvailable(res.available === true && res.configured === true))
-        .catch(() => setDashAvailable(false));
+      setDashAvailable(false);
       getBtcAvailable()
         .then((res) => setBtcAvailable(res.available === true))
         .catch(() => setBtcAvailable(false));

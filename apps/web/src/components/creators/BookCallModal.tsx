@@ -220,7 +220,6 @@ export function BookCallModal({
 
   useEffect(() => {
     getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
-    getDashAvailable().then((r) => setDashAvailable(r.available === true)).catch(() => {});
     getWalletBalance().then((r) => { if (r.success) setTokenBalance(r.balance); }).catch(() => {});
   }, []);
 
