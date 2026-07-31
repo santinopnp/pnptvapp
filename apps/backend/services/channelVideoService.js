@@ -1243,9 +1243,9 @@ function shapeForApi(row, channel, extra = {}) {
 
 // ── Mux: direct upload URL ────────────────────────────────────────────────────
 
-async function createMuxUpload(userId, channelId) {
+async function createMuxUpload(userId, channelId, isAdmin = false) {
   const muxService = require('./muxService');
-  await loadOwnedChannel(String(channelId), String(userId), false);
+  await loadOwnedChannel(String(channelId), String(userId), isAdmin);
   const { uploadId, uploadUrl } = await muxService.createDirectUpload();
   const { rows: [video] } = await query(
     `INSERT INTO channel_videos

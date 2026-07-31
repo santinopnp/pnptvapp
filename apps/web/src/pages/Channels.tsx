@@ -458,7 +458,7 @@ function ChannelDetailView({
       await createSocialPost(hypeText.trim(), undefined, false, true, {
         metadata: promoMetadata,
         videoThumbnailUrl: v?.thumbnail_url ?? undefined,
-        channelId: channel?.isOwner ? channel.id : undefined,
+        channelId: (channel?.isOwner || channel?.isCollaborator) ? channel.id : undefined,
       });
       setHypePosted((prev) => new Set(prev).add(videoId));
       setHypingVideoId(null);
@@ -709,7 +709,7 @@ function ChannelDetailView({
               <span className="text-sm text-pnp-textSecondary">
                 {(channel.videoCount ?? videos.length)} video{(channel.videoCount ?? videos.length) !== 1 ? "s" : ""}
               </span>
-              {channel.isOwner && (
+              {(channel.isOwner || channel.isCollaborator) && (
                 <>
                   {/* New universal upload flow with AI assist + smart promo
                        — recommended for all channels going forward. */}
@@ -722,6 +722,10 @@ function ChannelDetailView({
                     pricePerMonth={channel.priceUsd ?? null}
                     creatorUsername={channel.creatorUsername ?? null}
                   />
+                </>
+              )}
+              {channel.isOwner && (
+                <>
                   <button
                     onClick={openEdit}
                     className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors"
@@ -746,7 +750,7 @@ function ChannelDetailView({
           </div>
 
           {/* Creator nudge: encourage uploading more content */}
-          {channel.isOwner && channel.videoCount != null && channel.videoCount < 5 && (
+          {(channel.isOwner || channel.isCollaborator) && channel.videoCount != null && channel.videoCount < 5 && (
             <div
               className="mx-4 mb-3 rounded-xl p-3 flex items-start gap-3 border border-yellow-500/20"
               style={{ background: "rgba(234,179,8,0.07)" }}
@@ -1160,7 +1164,7 @@ function ChannelDetailView({
                         </svg>
                       </button>
                     )}
-                    {channel.isOwner && (
+                    {(channel.isOwner || channel.isCollaborator) && (
                       <>
                         <button
                           onClick={() => openVideoEdit(v)}

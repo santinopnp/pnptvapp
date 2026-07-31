@@ -15078,7 +15078,7 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
         }
       }
       try {
-        const result = await channelVideoService.createMuxUpload(userId, channelId);
+        const result = await channelVideoService.createMuxUpload(userId, channelId, isAdmin);
         res.json({ success: true, ...result });
       } catch (err) { handleSvcError(res, err); }
     })
