@@ -45,7 +45,7 @@ const ALIAS_TEMPLATES = {
 };
 
 if (!INBOX_USER || !INBOX_PASS) {
-  logger.warn('[autoReplyService] HELLO_EMAIL_USER/HELLO_EMAIL_PASS not set — auto-reply disabled');
+  logger.info('[autoReplyService] HELLO_EMAIL_USER/HELLO_EMAIL_PASS not set — auto-reply disabled');
 }
 
 const TRANSPORTER = nodemailer.createTransport({
