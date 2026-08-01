@@ -33,7 +33,7 @@ const DASHBOARD_CACHE_TTL = 300; // 5 minutes
 const AMOUNT_USD = `CASE WHEN amount::text = 'NaN' THEN 0 WHEN currency = 'COP' THEN amount / 4250.0 ELSE amount END`;
 
 // Resolve the real payment provider from payment_method + metadata fallback chain.
-// payment_method is NULL for NowPayments, BTCPay, ePayco, Stripe, and Daimo rows
+// payment_method is NULL for NowPayments, BTCPay, ePayco, and Daimo rows
 // that were recorded before the field was standardized.
 const PROVIDER_COALESCE = `COALESCE(
   CASE WHEN payment_method = 'usdc' THEN 'nowpayments' END,
@@ -41,7 +41,6 @@ const PROVIDER_COALESCE = `COALESCE(
   NULLIF(metadata->>'provider', ''),
   CASE WHEN metadata->>'epayco_ref'       IS NOT NULL THEN 'epayco'      END,
   CASE WHEN metadata->>'btcpay_invoice_id' IS NOT NULL THEN 'btcpay'     END,
-  CASE WHEN metadata->>'stripe_session_id' IS NOT NULL THEN 'stripe'     END,
   CASE WHEN metadata->>'daimo_event_id'    IS NOT NULL THEN 'daimo'      END,
   'unknown'
 )`;
@@ -305,7 +304,6 @@ class AdminDashboardService {
                  NULLIF(ph.metadata->>'provider', ''),
                  CASE WHEN ph.metadata->>'epayco_ref'        IS NOT NULL THEN 'epayco' END,
                  CASE WHEN ph.metadata->>'btcpay_invoice_id' IS NOT NULL THEN 'btcpay' END,
-                 CASE WHEN ph.metadata->>'stripe_session_id' IS NOT NULL THEN 'stripe' END,
                  CASE WHEN ph.metadata->>'daimo_event_id'    IS NOT NULL THEN 'daimo'  END,
                  'unknown'
                ) as payment_method,

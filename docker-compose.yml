@@ -617,6 +617,10 @@ services:
       # Without this, Telegram, Stripe, and other external APIs ETIMEDOUT
       # because Node20 picks the v6 record first.
       NODE_OPTIONS: "--dns-result-order=ipv4first"
+      # /app is root:root:755, so pnptv user can't write $HOME/.cache.
+      # Point fontconfig/xdg cache to /tmp to silence "No writable cache directories".
+      XDG_CACHE_HOME: /tmp
+      FONTCONFIG_PATH: /etc/fonts
       POSTGRES_HOST: pg-pnptv
       REDIS_HOST: redis-pnptv
       PG_AUTH_HOST: pg-authentik

@@ -1,19 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * Script: revokeUnusedTrials.js
- * Revokes PRIME free trials for users who haven't used the platform:
- *   - plan_id = 'prime-trial-3d'
- *   - 0 posts made
- *   - Profile incomplete (no bio or no photo)
- *   - No PWA install tracked
- *
- * Then sends each revoked user a DM from Cristina explaining what happened
- * and what they need to do to get it back.
- *
- * Usage: node scripts/revokeUnusedTrials.js [--dry-run]
- */
+// OBSOLETE 2026-07-31 — do not run.
+// Writes to users.tier/plan_id/plan_expiry which no longer drive access
+// (moved to user_entitlements table). Also DMs from dead 'pnptv-official' ID
+// (system sender is now id=8552451957). Manual SQL against user_entitlements
+// is the current path; rewrite this against the new model if you need it back.
+console.error('[revokeUnusedTrials] OBSOLETE — see comment at top of file. Aborting.');
+process.exit(2);
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 

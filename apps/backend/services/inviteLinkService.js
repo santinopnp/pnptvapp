@@ -196,8 +196,8 @@ async function checkColombiaRequirements(userId) {
 
 // ─── Shared helper for colombia_socios PRIME upsert ───────────────────────────
 // Grants PRIME tagged as 'colombia_socios'. The grant_source field is preserved
-// if a paid entitlement (source_payment_id / stripe_subscription_id / source_plan_id)
-// already exists for this user, so BTCPay/Stripe PRIME is never mis-tagged.
+// if a paid entitlement (source_payment_id / source_plan_id) already exists for
+// this user, so real paid PRIME is never mis-tagged.
 async function _grantColombiaSOCIOSPrime(client, userId, primeHours) {
   await client.query(
     `INSERT INTO user_entitlements (user_id, add_on_id, is_lifetime, expires_at, auto_renew, grant_source)
@@ -214,7 +214,6 @@ async function _grantColombiaSOCIOSPrime(client, userId, primeHours) {
        updated_at = NOW(),
        grant_source = CASE
          WHEN user_entitlements.source_payment_id IS NOT NULL
-           OR user_entitlements.stripe_subscription_id IS NOT NULL
            OR user_entitlements.source_plan_id IS NOT NULL
          THEN user_entitlements.grant_source
          ELSE 'colombia_socios'
