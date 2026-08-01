@@ -473,8 +473,9 @@ const createPost = async (req, res) => {
       SocialPostService.mirrorToMastodon(content.trim(), post.id);
     }
 
-    // Notify parent post author on reply
-    if (replyToId) {
+    // Notify parent post author on reply. Suppress for super-god actors so
+    // QA browsing doesn't leak a push to the target creator.
+    if (replyToId && !EntitlementAccessService.isSuperGod(user.id)) {
       const parentRow = await dbQuery('SELECT user_id FROM social_posts WHERE id = $1', [replyToId]);
       const parentAuthorId = parentRow.rows[0]?.user_id;
       if (parentAuthorId) {
@@ -1062,9 +1063,10 @@ const createPostWithMedia = async (req, res) => {
         const objectStorage = require('../../../services/objectStorageService');
         if (objectStorage.isConfigured()) {
           const vidKey = 'posts/' + path.basename(finalFilePath);
-          const vidMime = detectedMime === 'video/webm' ? 'video/webm'
-            : detectedMime === 'video/quicktime' ? 'video/quicktime'
-            : detectedMime === 'video/3gpp' ? 'video/3gpp'
+          const vidExt = path.extname(finalFilePath).slice(1).toLowerCase();
+          const vidMime = vidExt === 'webm' ? 'video/webm'
+            : vidExt === 'mov' ? 'video/quicktime'
+            : vidExt === '3gp' ? 'video/3gpp'
             : 'video/mp4';
           await objectStorage.uploadFile(finalFilePath, vidKey, vidMime);
           logger.info('Video uploaded to object storage', { userId: user.id, key: vidKey });
@@ -1106,8 +1108,8 @@ const createPostWithMedia = async (req, res) => {
       SocialPostService.mirrorToMastodon(content.toString().trim(), post.id);
     }
 
-    // Notify parent post author on reply
-    if (replyToId) {
+    // Notify parent post author on reply. Suppress for super-god actors.
+    if (replyToId && !EntitlementAccessService.isSuperGod(user.id)) {
       const parentRow = await dbQuery('SELECT user_id FROM social_posts WHERE id = $1', [replyToId]);
       const parentAuthorId = parentRow.rows[0]?.user_id;
       if (parentAuthorId) {
@@ -1495,15 +1497,10 @@ const createPostWithMultiMedia = async (req, res) => {
       post.video_thumbnail_url = firstVideoThumb;
     }
 
-    // Super-god actor: skip target counter bumps so their QA replies/reposts
-    // don't inflate creator engagement metrics.
+    // Super-god actor: reply/repost counter bumps are now gated inside
+    // SocialPostService.createPost (single choke point). We only need the
+    // flag here to suppress the reply notification below.
     const actorIsSuperGod = EntitlementAccessService.isSuperGod(user.id);
-    if (replyToId && !actorIsSuperGod) {
-      await dbQuery('UPDATE social_posts SET replies_count = replies_count + 1 WHERE id = $1 AND is_deleted = false', [replyToId]);
-    }
-    if (repostOfId && !actorIsSuperGod) {
-      await dbQuery('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
-    }
 
     // Update channel post_count after insert
     if (channelId) {
@@ -1514,7 +1511,10 @@ const createPostWithMultiMedia = async (req, res) => {
       SocialPostService.mirrorToMastodon(content.toString().trim(), post.id);
     }
 
-    if (replyToId) {
+    // Suppress the reply notification for super-god actors — the whole point
+    // of god-mode is invisible browsing; a push saying "Carlos replied" leaks
+    // the QA visit to the target creator.
+    if (replyToId && !actorIsSuperGod) {
       const parentRow = await dbQuery('SELECT user_id FROM social_posts WHERE id = $1', [replyToId]);
       const parentAuthorId = parentRow.rows[0]?.user_id;
       if (parentAuthorId) {

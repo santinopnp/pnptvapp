@@ -783,10 +783,18 @@ class SocialPostService {
     );
     const post = rows[0];
 
-    if (replyToId) {
+    // Super-god actors: skip target counter bumps so their QA browsing doesn't
+    // inflate reply/repost engagement metrics on other users' posts. This is
+    // the single choke point — every code path that creates a reply/repost
+    // funnels through here (media posts, text-only replies, tag-friend, Mux
+    // uploads, Cristina, bot commands, routes.js:14850, etc.).
+    const EntitlementAccessService = require('./entitlementAccessService');
+    const actorIsSuperGod = EntitlementAccessService.isSuperGod(userId);
+
+    if (replyToId && !actorIsSuperGod) {
       await query('UPDATE social_posts SET replies_count = replies_count + 1 WHERE id = $1 AND is_deleted = false', [replyToId]);
     }
-    if (repostOfId) {
+    if (repostOfId && !actorIsSuperGod) {
       await query('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
     }
 

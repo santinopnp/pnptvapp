@@ -153,6 +153,8 @@ const requireSessionAuth = async (req, res, next) => {
     }
     // Consent gate — admins bypass; all other authenticated users must have completed
     // the VerificationGate (age self-declaration + terms acceptance).
+    // Note: this bypass does NOT honour the God Mode toggle — a super-god who
+    // toggles off shouldn't get bounced to a re-verification screen mid-session.
     if (userRow && userRow.role !== 'admin' && userRow.role !== 'superadmin') {
       if (!userRow.age_verified) {
         return res.status(403).json({ success: false, error: 'Age verification required.', code: 'AGE_VERIFICATION_REQUIRED' });
@@ -263,8 +265,7 @@ async function colombiaAccessGate(req, res, next) {
   const user = req.session?.user;
   if (!user?.id) return next(); // Downstream auth decides 401s
 
-  const role = (user.role || '').toLowerCase();
-  if (role === 'admin' || role === 'superadmin') return next();
+  if (EntitlementAccessService.isEffectivelyAdmin(user)) return next();
 
   const ip = req.headers['x-real-ip']
     || req.headers['x-forwarded-for']?.split(',')[0]?.trim()
@@ -655,7 +656,7 @@ app.use(async (req, res, next) => {
   if (GEO_BLOCK_BYPASS_PATHS.some(rx => rx.test(req.path))) return next();
   // Admin bypass — once authenticated, admins can travel into blocked regions
   // to debug. Pre-auth requests fall through to the geo check.
-  if (req.session?.user?.role === 'admin' || req.session?.user?.role === 'superadmin') return next();
+  if (EntitlementAccessService.isEffectivelyAdmin(req.session?.user)) return next();
   if (req.session?.user?.id && GEO_BLOCK_USER_WHITELIST.has(String(req.session.user.id))) return next();
 
   // User-acknowledged bypass — session flag set via POST /api/public/geo-bypass.
@@ -1765,8 +1766,7 @@ const attachCreatorStatus = async (req, res, next) => {
       return next();
     }
     // Admins always get creator limits without a DB round-trip
-    const role = req.session.user.role || '';
-    if (role === 'admin' || role === 'superadmin') {
+    if (EntitlementAccessService.isEffectivelyAdmin(req.session.user)) {
       req.resolvedCreatorActive = true;
       return next();
     }
@@ -4722,7 +4722,7 @@ app.get('/api/webapp/live/viewers/:channelRef', requireSessionAuth, asyncHandler
     return res.status(400).json({ success: false, error: 'Invalid channel ref' });
   }
   const sessionUser = req.session.user;
-  const isAdmin = sessionUser.role === 'admin' || sessionUser.role === 'superadmin';
+  const isAdmin = EntitlementAccessService.isEffectivelyAdmin(sessionUser);
 
   // Verify caller owns this channel (or is admin) — read fresh from DB
   const { rows: ownerRows } = await query(
@@ -5037,7 +5037,7 @@ app.get('/api/health/payments', healthLimiter, asyncHandler(async (req, res) => 
 app.get('/metrics', asyncHandler(async (req, res) => {
   const bearer = req.headers.authorization?.replace(/^Bearer\s+/, '');
   const expected = process.env.METRICS_BEARER;
-  const isAdmin = req.session?.user?.role === 'admin' || req.session?.user?.role === 'superadmin';
+  const isAdmin = EntitlementAccessService.isEffectivelyAdmin(req.session?.user);
   if (!isAdmin && (!expected || bearer !== expected)) {
     return res.status(401).json({ success: false, error: 'unauthorized' });
   }

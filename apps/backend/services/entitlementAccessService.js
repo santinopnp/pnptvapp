@@ -106,6 +106,33 @@ class EntitlementAccessService {
   }
 
   /**
+   * Should this user be treated as admin RIGHT NOW?
+   *
+   * True when the user's role is 'admin' or 'superadmin' AND they haven't
+   * toggled God Mode off. A super-god who flips their badge to OFF wants to
+   * see the site as a normal user does — that intent covers admin bypasses
+   * too, not just entitlement/metric bypasses. Non-eligible admins are
+   * unaffected (they can't toggle).
+   *
+   * All role-based admin bypasses should call this instead of raw
+   * `role === 'admin' || role === 'superadmin'` checks.
+   *
+   * @param {{id?: string|number, role?: string}|null|undefined} user
+   * @returns {boolean}
+   */
+  static isEffectivelyAdmin(user) {
+    if (!user) return false;
+    const role = (user.role || '').toLowerCase();
+    if (role !== 'admin' && role !== 'superadmin') return false;
+    // Eligible super-god with God Mode off → downgrade for this request.
+    if (user.id && EntitlementAccessService.isSuperGodEligible(user.id)
+        && EntitlementAccessService.isSuperGodDisabled(user.id)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Toggle GOD MODE for a super-god user. Persists to Redis + updates the
    * in-memory Set atomically. Callers MUST verify eligibility first — this
    * method does not re-check because ineligible IDs would still write junk
@@ -494,9 +521,8 @@ class EntitlementAccessService {
         return res.status(401).json({ success: false, error: 'Authentication required' });
       }
 
-      // Admins bypass all entitlement gates
-      const role = (user.role || '').toLowerCase();
-      if (role === 'admin' || role === 'superadmin') return next();
+      // Admins bypass all entitlement gates (unless they've toggled God Mode off)
+      if (EntitlementAccessService.isEffectivelyAdmin(user)) return next();
       if (EntitlementAccessService.isSuperGod(user.id)) return next();
 
       // Check ban status before anything else
@@ -822,9 +848,8 @@ class EntitlementAccessService {
       if (!user?.id) {
         return res.status(401).json({ success: false, error: 'Authentication required', code: 'AUTH_REQUIRED' });
       }
-      // Admins bypass
-      const role = (user.role || '').toLowerCase();
-      if (role === 'admin' || role === 'superadmin') return next();
+      // Admins bypass (unless they've toggled God Mode off)
+      if (EntitlementAccessService.isEffectivelyAdmin(user)) return next();
       if (EntitlementAccessService.isSuperGod(user.id)) return next();
 
       const resourceId = req.params?.[paramName];
