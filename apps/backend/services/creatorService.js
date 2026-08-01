@@ -1267,6 +1267,24 @@ class CreatorService {
     const exclusivePosts = posts.filter(p => p.is_exclusive);
     if (exclusivePosts.length === 0) return posts;
 
+    if (viewerId) {
+      try {
+        const roleRes = await query(
+          `SELECT role FROM users WHERE id = $1 LIMIT 1`,
+          [viewerId]
+        );
+        const role = roleRes.rows[0]?.role || '';
+        const EntitlementAccessService = require('./entitlementAccessService');
+        if (EntitlementAccessService.isEffectivelyAdmin({ id: viewerId, role })) {
+          return posts.map(p => p.is_exclusive ? { ...p, exclusive_status: 'unlocked' } : p);
+        }
+      } catch (roleErr) {
+        logger.warn('filterFeedExclusivePosts: admin role check failed (non-fatal)', {
+          viewerId, error: roleErr.message,
+        });
+      }
+    }
+
     const isPrime = (viewerTier || '').toLowerCase() === 'prime';
 
     // Batch-check subscriptions unconditionally — subscribers without PRIME must
