@@ -42,6 +42,7 @@ import {
   type MyCallCredit,
 } from "@/lib/api";
 import type { CreatorCardCreator } from "./CreatorCard";
+import { PayInWalletChips } from "@/components/payments/PayInWalletChips";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1610,20 +1611,34 @@ export function BookCallModal({
             </div>
           )}
           {npInvoiceUrl && provider === "nowpayments" && (
-            <button
-              type="button"
-              onClick={() => {
-                const pw = 600, ph = 700;
-                const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-                const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-                const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
-                if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
-              }}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
-              style={{ background: "linear-gradient(90deg, #D4007A, #a8006a)" }}
-            >
-              ⚡ Open Crypto Checkout
-            </button>
+            <div className="space-y-2">
+              <PayInWalletChips
+                invoiceUrl={npInvoiceUrl}
+                payCurrency={npCoinPick}
+                lang={t.lang}
+                onOtherWallets={() => {
+                  const pw = 600, ph = 700;
+                  const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
+                  const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
+                  const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
+                  if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const pw = 600, ph = 700;
+                  const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
+                  const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
+                  const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
+                  if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
+                }}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
+                style={{ background: "linear-gradient(90deg, #D4007A, #a8006a)" }}
+              >
+                ⚡ Open Crypto Checkout
+              </button>
+            </div>
           )}
         </div>
       )}
