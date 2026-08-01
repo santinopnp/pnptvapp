@@ -503,7 +503,7 @@ const telegramConfirmLogin = async (telegramUser, token) => {
     const key = `${TELEGRAM_LOGIN_PREFIX}${token}`;
     const exists = await redis.get(key);
     if (!exists) {
-      logger.warn('Telegram login token not found or expired', { token: String(token).substring(0, 8) + '...' });
+      logger.info('Telegram login token not found or expired', { token: String(token).substring(0, 8) + '...' });
       return false;
     }
     await redis.set(key, JSON.stringify(telegramUser), 'EX', 300); // 5 min to poll — matches webapp deadline so PWA users have time to switch back from Telegram

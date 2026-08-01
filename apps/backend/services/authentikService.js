@@ -231,7 +231,7 @@ class AuthentikService {
 
     try {
       const telegramId = String(telegramUser.id);
-      const username = telegramUser.username || `tg_${telegramId}`;
+      let username = telegramUser.username || `tg_${telegramId}`;
       const email = opts.realEmail || `${telegramId}@telegram.pnptv.app`;
       let dbLinkedPnptvId = null;
       try {
@@ -385,7 +385,10 @@ class AuthentikService {
       };
 
     } catch (error) {
-      logger.error('Error syncing user with Authentik:', error.response?.data || error.message);
+      logger.error('Error syncing user with Authentik', {
+        message: error.message,
+        response: error.response?.data,
+      });
       return null;
     }
   }

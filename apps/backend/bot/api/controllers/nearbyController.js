@@ -16,6 +16,11 @@ const { validateToken } = require('../middleware/auth');
 const logger = require('../../../utils/logger');
 const { query: dbQuery } = require('../../../config/postgres');
 
+// Log rate-limit hits at most once per user per 5 min — stuck client polling
+// loops would otherwise flood logs (a single user can trigger 1000+/hour).
+const RATE_LIMIT_LOG_DEDUP_MS = 5 * 60 * 1000;
+const _rateLimitLoggedAt = new Map();
+
 class NearbyController {
   /**
    * POST /api/nearby/update-location
@@ -66,7 +71,12 @@ class NearbyController {
       // Handle rate limiting
       if (error.code === 'RATE_LIMITED') {
         const uid = req.userId || req.user?.id || 'unknown';
-        logger.warn(`⚠️ Rate limit exceeded for user ${uid}`);
+        const now = Date.now();
+        const lastLogged = _rateLimitLoggedAt.get(uid) || 0;
+        if (now - lastLogged > RATE_LIMIT_LOG_DEDUP_MS) {
+          _rateLimitLoggedAt.set(uid, now);
+          logger.warn(`⚠️ Rate limit exceeded for user ${uid}`);
+        }
         return res.status(429).json({
           error: 'Too many location updates',
           retry_after: error.waitSeconds,

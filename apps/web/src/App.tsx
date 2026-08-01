@@ -160,13 +160,22 @@ function useScreenCaptureGuard() {
     // Also fires on normal tab switches — that is expected and acceptable.
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
-        // Fire-and-forget audit POST — do NOT await, never block UI.
-        fetch("/api/webapp/analytics/visibility-hide", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ts: Date.now() }),
-        }).catch(() => {});
+        const payload = JSON.stringify({ ts: Date.now() });
+        // sendBeacon survives page unload without server-side "request aborted" noise.
+        try {
+          const blob = new Blob([payload], { type: "application/json" });
+          if (!navigator.sendBeacon?.("/api/webapp/analytics/visibility-hide", blob)) {
+            fetch("/api/webapp/analytics/visibility-hide", {
+              method: "POST",
+              credentials: "include",
+              keepalive: true,
+              headers: { "Content-Type": "application/json" },
+              body: payload,
+            }).catch(() => {});
+          }
+        } catch {
+          // No-op — best-effort audit only.
+        }
       }
     };
 

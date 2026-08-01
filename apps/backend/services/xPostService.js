@@ -8,6 +8,10 @@ const FormData = require('form-data');
 const db = require('../utils/db');
 const logger = require('../utils/logger');
 const PaymentSecurityService = require('./paymentSecurityService');
+const { cache } = require('../config/redis');
+
+const X_CREDITS_DEPLETED_KEY = (accountId) => `x:credits_depleted:${accountId}`;
+const X_CREDITS_DEPLETED_TTL_SEC = 24 * 60 * 60;
 
 const X_API_BASE = 'https://api.twitter.com/2';
 const X_MEDIA_UPLOAD_V2_BASE = 'https://api.x.com/2/media/upload';
@@ -342,6 +346,18 @@ class XPostService {
       throw new Error('Cuenta de X inválida o inactiva');
     }
 
+    if (process.env.DISABLE_X_POSTING === 'true') {
+      const skipErr = new Error('X posting disabled via DISABLE_X_POSTING env');
+      skipErr.disabled = true;
+      throw skipErr;
+    }
+
+    if (await cache.exists(X_CREDITS_DEPLETED_KEY(accountId))) {
+      const skipErr = new Error('X credits depleted — skipping post for 24h cooldown');
+      skipErr.creditsDepleted = true;
+      throw skipErr;
+    }
+
     const { text: normalizedText, truncated } = this.normalizeXText(text);
 
     const postId = await this.createPostJob({
@@ -587,14 +603,20 @@ class XPostService {
         timeout: 15000,
       });
     } catch (error) {
-      logger.error('OAuth1 tweet post failed', {
+      const status = error?.response?.status;
+      const is402 = status === 402;
+      const logFn = is402 ? logger.warn.bind(logger) : logger.error.bind(logger);
+      logFn('OAuth1 tweet post failed', {
         handle: account.handle,
-        status: error?.response?.status,
+        status,
         responseData: error?.response?.data,
         consumerKeyRef: ref,
         consumerKeyPrefix: consumerKey?.substring(0, 6),
       });
-      if (error?.response?.status === 403) {
+      if (is402) {
+        await cache.set(X_CREDITS_DEPLETED_KEY(account.account_id), '1', X_CREDITS_DEPLETED_TTL_SEC).catch(() => {});
+      }
+      if (status === 403) {
         throw new Error(`403 Forbidden al publicar tweet OAuth1 con @${account.handle}. Verifica los permisos de la app.`);
       }
       throw error;

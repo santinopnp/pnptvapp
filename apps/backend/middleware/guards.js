@@ -25,7 +25,7 @@ const roleGuard = (requiredRole) => {
       const requiredRank = ROLE_HIERARCHY[requiredRole] || 0;
 
       if (userRank < requiredRank) {
-        logger.warn(`Acceso denegado: Usuario ${userId} (${userRole}) intenta acceder a ${requiredRole}`);
+        logger.info(`Acceso denegado: Usuario ${userId} (${userRole}) intenta acceder a ${requiredRole}`);
         return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Permiso insuficiente' } });
       }
 
