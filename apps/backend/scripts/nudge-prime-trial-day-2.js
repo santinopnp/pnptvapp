@@ -152,7 +152,11 @@ async function main() {
 
     for (const u of targets) {
       const isEs = String(u.lang).toLowerCase().startsWith('es');
-      const text = isEs ? COPY_ES(u.name) : COPY_EN(u.name);
+      // Treat 1-char or punctuation-only names as blank so the copy falls
+      // back to "crack"/"there" instead of shipping "Hey ." to real users.
+      const cleanName = (u.name || '').replace(/[^\p{L}\p{N}]/gu, '').trim();
+      const greetingName = cleanName.length >= 2 ? u.name : null;
+      const text = isEs ? COPY_ES(greetingName) : COPY_EN(greetingName);
 
       if (await alreadySent(client, u.id)) {
         skipped++;
