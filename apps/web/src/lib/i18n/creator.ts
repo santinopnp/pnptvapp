@@ -422,13 +422,18 @@ const strings = {
     // PostCallSurveyModal
     surveyHowWasCall: "How was your call?",
     surveyWith: (name: string) => `with ${name}`,
-    surveyPlaceholder: "Share your experience (optional)",
+    surveyPlaceholder: "Add a comment (optional)",
     surveySubmitting: "Submitting...",
     surveySubmit: "Submit",
     surveySkip: "Skip",
     surveyThankYou: "Thank you!",
     surveyFeedbackHelps: "Your feedback helps improve the experience.",
     surveyFailedToSubmit: "Failed to submit",
+    surveyOverall: "Overall",
+    surveyTech: "Tech quality",
+    surveyPerformance: "Performance",
+    surveyPresentation: "Presentation",
+    surveyPoliteness: "Politeness",
 
     // Pre-live consent gate (wraps /creators/live)
     preLiveTitle: "Before You Go Live",
@@ -1285,15 +1290,20 @@ const strings = {
     pkg60Bullet3: "La experiencia definitiva",
 
     // PostCallSurveyModal
-    surveyHowWasCall: "¿Cómo fue tu llamada?",
+    surveyHowWasCall: "¿Cómo estuvo tu llamada?",
     surveyWith: (name: string) => `con ${name}`,
-    surveyPlaceholder: "Comparte tu experiencia (opcional)",
+    surveyPlaceholder: "Deja un comentario (opcional)",
     surveySubmitting: "Enviando...",
     surveySubmit: "Enviar",
     surveySkip: "Omitir",
     surveyThankYou: "¡Gracias!",
     surveyFeedbackHelps: "Tu opinión ayuda a mejorar la experiencia.",
     surveyFailedToSubmit: "Error al enviar",
+    surveyOverall: "General",
+    surveyTech: "Calidad técnica",
+    surveyPerformance: "Desempeño",
+    surveyPresentation: "Presentación",
+    surveyPoliteness: "Amabilidad",
 
     // Pre-live consent gate (wraps /creators/live)
     preLiveTitle: "Antes de Transmitir",
