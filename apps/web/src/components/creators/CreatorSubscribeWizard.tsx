@@ -103,7 +103,7 @@ export default function CreatorSubscribeWizard({
     return () => { cancelled = true; };
   }, []);
 
-  const tokenCost = Math.round(priceUsd * 100);
+  const tokenCost = Math.round(priceUsd * 6);
   const displayName = creatorName || (username ? `@${username}` : "creator");
 
   const combinedError = error || npError;

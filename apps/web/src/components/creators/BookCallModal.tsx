@@ -1391,7 +1391,7 @@ export function BookCallModal({
         </div>
         {provider === "tokens" && activePackage && (
           <p className="text-[11px] text-[#FF69B4] mt-1.5">
-            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 100).toLocaleString()} Tokens · Saldo: {tokenBalance?.toLocaleString() ?? "—"} T
+            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 6).toLocaleString()} Tokens · Saldo: {tokenBalance?.toLocaleString() ?? "—"} T
           </p>
         )}
 

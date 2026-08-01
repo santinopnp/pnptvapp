@@ -503,7 +503,7 @@ export default function Subscribe() {
 
   async function handleTokensSubscribe(planId: string, planPrice: number) {
     if (submitting) return;
-    const tokenCost = Math.round(planPrice * 100);
+    const tokenCost = Math.round(planPrice * 6);
     if (tokenBalance !== null && tokenBalance < tokenCost) {
       setError(t.lang === "es" ? `Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.` : `Not enough Tokens. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
       return;
@@ -1014,7 +1014,7 @@ export default function Subscribe() {
                       <span>🎫</span>
                       <span>Tokens</span>
                     </span>
-                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 100).toLocaleString()} F</span>
+                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
                 <button
@@ -1312,7 +1312,7 @@ export default function Subscribe() {
                       <span>🎫</span>
                       <span>Tokens</span>
                     </span>
-                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 100).toLocaleString()} F</span>
+                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
                 <button
