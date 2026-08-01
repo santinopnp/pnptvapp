@@ -434,6 +434,15 @@ const strings = {
     surveyPerformance: "Performance",
     surveyPresentation: "Presentation",
     surveyPoliteness: "Politeness",
+    tipPrompt: (name: string) => `Send ${name} a tip?`,
+    tipCustom: "Custom",
+    tipSend: "Send tip",
+    tipSendAmount: (n: number) => `Send $${n} tip`,
+    tipStarting: "Preparing…",
+    tipAmountConfirm: (n: number, name: string) => `Tipping ${name} $${n}`,
+    tipNoThanks: "No thanks, done",
+    tipCloseAfterPay: "Close — I'll pay in my wallet",
+    tipFailedToStart: "Could not start tip. Try again.",
 
     // Pre-live consent gate (wraps /creators/live)
     preLiveTitle: "Before You Go Live",
@@ -1304,6 +1313,15 @@ const strings = {
     surveyPerformance: "Desempeño",
     surveyPresentation: "Presentación",
     surveyPoliteness: "Amabilidad",
+    tipPrompt: (name: string) => `¿Le dejas una propina a ${name}?`,
+    tipCustom: "Otro",
+    tipSend: "Enviar propina",
+    tipSendAmount: (n: number) => `Enviar propina de $${n}`,
+    tipStarting: "Preparando…",
+    tipAmountConfirm: (n: number, name: string) => `Propina de $${n} para ${name}`,
+    tipNoThanks: "No, gracias — listo",
+    tipCloseAfterPay: "Cerrar — pagaré desde mi wallet",
+    tipFailedToStart: "No se pudo iniciar la propina. Intenta de nuevo.",
 
     // Pre-live consent gate (wraps /creators/live)
     preLiveTitle: "Antes de Transmitir",

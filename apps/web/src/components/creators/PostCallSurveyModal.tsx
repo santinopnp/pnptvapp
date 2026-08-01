@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { submitCallSurvey, CallSurveyPayload } from "@/lib/api";
+import { submitCallSurvey, CallSurveyPayload, createCreatorTip } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { PayInWalletChips } from "@/components/payments/PayInWalletChips";
 
 interface PostCallSurveyModalProps {
   open: boolean;
   bookingId: string | number;
   creatorName: string;
+  /** Username (no @) or user-id passed straight to POST /api/webapp/creators/:handle/tip */
+  creatorHandle?: string;
   onClose: () => void;
 }
 
-// 1..4 flame rating. Filled flames are orange; unfilled are outline grey.
-// The rating scale used to be 1..5 stars; we intentionally cap at 4 flames so
-// members give a decisive rating (no lukewarm "3 out of 5" default).
+// 1..4 flame rating. Filled flames use an orange-yellow gradient; unfilled are
+// outline grey. Capping at 4 (not 5) removes the lukewarm-middle default and
+// forces a decisive rating.
 const FLAME_LEVELS = [1, 2, 3, 4] as const;
+const TIP_QUICK_PICKS = [5, 10, 20] as const;
 
 function FlameIcon({ filled, size = 28 }: { filled: boolean; size?: number }) {
   return (
@@ -53,11 +57,7 @@ function FlameRow({
   return (
     <div className="flex items-center justify-between gap-3 py-2">
       <span className="text-sm text-white/90 flex-1">{label}</span>
-      <div
-        className="flex gap-1"
-        role="radiogroup"
-        aria-label={label}
-      >
+      <div className="flex gap-1" role="radiogroup" aria-label={label}>
         {FLAME_LEVELS.map((n) => (
           <button
             key={n}
@@ -81,6 +81,7 @@ export function PostCallSurveyModal({
   open,
   bookingId,
   creatorName,
+  creatorHandle,
   onClose,
 }: PostCallSurveyModalProps) {
   const t = useI18n();
@@ -94,6 +95,13 @@ export function PostCallSurveyModal({
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Tip flow state — kicks in on the post-submit screen.
+  const [tipAmount, setTipAmount] = useState<number | null>(null);
+  const [customTip, setCustomTip] = useState<string>("");
+  const [tipStarting, setTipStarting] = useState(false);
+  const [tipInvoiceUrl, setTipInvoiceUrl] = useState<string | null>(null);
+  const [tipError, setTipError] = useState<string | null>(null);
+
   useEffect(() => {
     if (open) {
       setRating(0);
@@ -104,6 +112,11 @@ export function PostCallSurveyModal({
       setComment("");
       setSubmitted(false);
       setError(null);
+      setTipAmount(null);
+      setCustomTip("");
+      setTipStarting(false);
+      setTipInvoiceUrl(null);
+      setTipError(null);
     }
   }, [open]);
 
@@ -139,13 +152,17 @@ export function PostCallSurveyModal({
 
   const allRated = rating > 0 && techQuality > 0 && performanceQuality > 0 && presentation > 0 && politeness > 0;
 
+  const effectiveTip = (() => {
+    if (tipAmount !== null) return tipAmount;
+    const n = parseFloat(customTip);
+    return Number.isFinite(n) && n >= 1 && n <= 500 ? n : null;
+  })();
+
   const handleSubmit = async () => {
     if (!allRated) return;
     setSubmitting(true);
     setError(null);
     try {
-      // rating is 1..4 (capped by FLAME_LEVELS). Backend accepts 1..5 for
-      // backwards compat with historical 5-star surveys; we just never send 5.
       const payload: CallSurveyPayload = {
         rating: rating as 1 | 2 | 3 | 4,
         tech_quality: techQuality as 1 | 2 | 3 | 4,
@@ -157,11 +174,28 @@ export function PostCallSurveyModal({
       };
       await submitCallSurvey(bookingId, payload);
       setSubmitted(true);
-      setTimeout(onClose, 2200);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.creator.surveyFailedToSubmit);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleStartTip = async () => {
+    if (!creatorHandle || !effectiveTip) return;
+    setTipStarting(true);
+    setTipError(null);
+    try {
+      const res = await createCreatorTip(creatorHandle, {
+        amount: effectiveTip,
+        message: comment.trim() ? comment.trim().slice(0, 200) : undefined,
+      });
+      if (!res.invoiceUrl) throw new Error("No invoice URL returned");
+      setTipInvoiceUrl(res.invoiceUrl);
+    } catch (err) {
+      setTipError(err instanceof Error ? err.message : t.creator.tipFailedToStart);
+    } finally {
+      setTipStarting(false);
     }
   };
 
@@ -187,7 +221,7 @@ export function PostCallSurveyModal({
       >
         <div className="p-6">
           {submitted ? (
-            <div className="flex flex-col items-center gap-3 py-6" aria-live="assertive" aria-atomic="true">
+            <div className="flex flex-col items-center gap-3" aria-live="assertive" aria-atomic="true">
               <div
                 className="w-14 h-14 rounded-full flex items-center justify-center"
                 style={{ background: "rgba(255,159,10,0.15)" }}
@@ -195,9 +229,112 @@ export function PostCallSurveyModal({
                 <FlameIcon filled size={32} />
               </div>
               <span className="text-white font-semibold text-lg">{t.creator.surveyThankYou}</span>
-              <span className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              <span className="text-sm text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 {t.creator.surveyFeedbackHelps}
               </span>
+
+              {creatorHandle && (
+                <>
+                  <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", width: "100%", margin: "16px 0 8px" }} />
+
+                  {tipInvoiceUrl ? (
+                    // Payment step — swap in the shared wallet chips widget.
+                    <div className="w-full flex flex-col gap-2">
+                      <p className="text-sm text-white text-center">
+                        {t.creator.tipAmountConfirm(effectiveTip ?? 0, creatorName)}
+                      </p>
+                      <PayInWalletChips
+                        invoiceUrl={tipInvoiceUrl}
+                        lang={t.lang}
+                        onOtherWallets={() => window.open(tipInvoiceUrl, "_blank", "noopener,noreferrer")}
+                      />
+                      <button
+                        onClick={onClose}
+                        className="w-full py-2 mt-2 text-sm text-center"
+                        style={{ color: "var(--pnp-text-secondary, #8E8E93)", background: "none", border: "none", cursor: "pointer" }}
+                      >
+                        {t.creator.tipCloseAfterPay}
+                      </button>
+                    </div>
+                  ) : (
+                    // Amount picker step.
+                    <div className="w-full">
+                      <p className="text-sm text-white text-center mb-3">
+                        {t.creator.tipPrompt(creatorName)}
+                      </p>
+                      <div className="grid grid-cols-4 gap-2 mb-3">
+                        {TIP_QUICK_PICKS.map((amt) => {
+                          const active = tipAmount === amt;
+                          return (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => { setTipAmount(amt); setCustomTip(""); }}
+                              className={`min-h-[44px] rounded-xl text-sm font-semibold transition-colors ${active ? "text-white" : "text-white/80 hover:text-white"}`}
+                              style={
+                                active
+                                  ? { background: "rgba(255,106,0,0.15)", border: "1.5px solid #FF6A00" }
+                                  : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)" }
+                              }
+                            >
+                              ${amt}
+                            </button>
+                          );
+                        })}
+                        <div className="min-h-[44px] flex items-center rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                          <span className="pl-2 text-sm text-white/60">$</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min={1}
+                            max={500}
+                            value={customTip}
+                            onChange={(e) => { setCustomTip(e.target.value); setTipAmount(null); }}
+                            placeholder={t.creator.tipCustom}
+                            className="w-full bg-transparent px-1 py-1 text-sm text-white outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {tipError && (
+                        <p className="text-xs text-center mb-2" style={{ color: "#FF6B6B" }}>{tipError}</p>
+                      )}
+
+                      <button
+                        onClick={handleStartTip}
+                        disabled={!effectiveTip || tipStarting}
+                        className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-opacity disabled:opacity-40"
+                        style={{ background: "linear-gradient(135deg, #FF6A00, #FFD60A)" }}
+                      >
+                        {tipStarting
+                          ? t.creator.tipStarting
+                          : effectiveTip
+                            ? t.creator.tipSendAmount(effectiveTip)
+                            : t.creator.tipSend}
+                      </button>
+
+                      <button
+                        onClick={onClose}
+                        className="w-full py-2 mt-2 text-sm text-center"
+                        style={{ color: "var(--pnp-text-secondary, #8E8E93)", background: "none", border: "none", cursor: "pointer" }}
+                      >
+                        {t.creator.tipNoThanks}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {!creatorHandle && (
+                // No creator handle → skip tip UI, just auto-close.
+                <button
+                  onClick={onClose}
+                  className="w-full py-2 mt-3 text-sm text-center"
+                  style={{ color: "var(--pnp-text-secondary, #8E8E93)", background: "none", border: "none", cursor: "pointer" }}
+                >
+                  {t.creator.surveySkip}
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -208,11 +345,11 @@ export function PostCallSurveyModal({
                 {t.creator.surveyWith(creatorName)}
               </p>
 
-              <FlameRow label={t.creator.surveyOverall}     value={rating}             onChange={setRating} />
-              <FlameRow label={t.creator.surveyTech}        value={techQuality}        onChange={setTechQuality} />
-              <FlameRow label={t.creator.surveyPerformance} value={performanceQuality} onChange={setPerformanceQuality} />
-              <FlameRow label={t.creator.surveyPresentation} value={presentation}      onChange={setPresentation} />
-              <FlameRow label={t.creator.surveyPoliteness}  value={politeness}         onChange={setPoliteness} />
+              <FlameRow label={t.creator.surveyOverall}      value={rating}             onChange={setRating} />
+              <FlameRow label={t.creator.surveyTech}         value={techQuality}        onChange={setTechQuality} />
+              <FlameRow label={t.creator.surveyPerformance}  value={performanceQuality} onChange={setPerformanceQuality} />
+              <FlameRow label={t.creator.surveyPresentation} value={presentation}       onChange={setPresentation} />
+              <FlameRow label={t.creator.surveyPoliteness}   value={politeness}         onChange={setPoliteness} />
 
               <textarea
                 value={comment}
@@ -230,9 +367,7 @@ export function PostCallSurveyModal({
               />
 
               {error && (
-                <p className="text-xs text-center mt-3" style={{ color: "#FF6B6B" }}>
-                  {error}
-                </p>
+                <p className="text-xs text-center mt-3" style={{ color: "#FF6B6B" }}>{error}</p>
               )}
 
               <button
