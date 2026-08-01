@@ -918,6 +918,9 @@ const startCronJobs = async (bot = null) => {
           return;
         }
 
+        const sendSystemDM = require(path.join(backendPath, 'services/sendSystemDM'));
+        const SYSTEM_SENDER_ID = process.env.SYSTEM_DM_SENDER_ID || '8552451957';
+
         for (const creator of rows) {
           try {
             await pgQuery(
@@ -932,6 +935,17 @@ const startCronJobs = async (bot = null) => {
               userId: creator.id,
               username: creator.username,
             });
+
+            // DM the creator so they know why their account changed
+            const dmText = `Tu cuenta de creator fue pausada / Your creator account was paused\n\n`
+              + `Tu verificación 2257 no llegó antes del deadline — es requisito legal (18 U.S.C. § 2257) para publicar contenido en PNPtv.\n\n`
+              + `Your 2257 identity verification wasn't submitted before the deadline — it's a legal requirement (18 U.S.C. § 2257) to publish content on PNPtv.\n\n`
+              + `Para reactivar: sube tu ID + selfie en https://pnptv.app/creators/setup — aprobamos en 24-48h.\n`
+              + `To reactivate: upload your ID + selfie at https://pnptv.app/creators/setup — we approve within 24-48h.\n\n`
+              + `— PNPtv! Support`;
+            await sendSystemDM(SYSTEM_SENDER_ID, String(creator.id), dmText, pgQuery).catch((dmErr) =>
+              logger.warn('[2257] Failed to DM suspended creator', { userId: creator.id, error: dmErr.message })
+            );
           } catch (innerErr) {
             logger.error('[2257] Enforcement error for creator', {
               userId: creator.id,
@@ -940,7 +954,23 @@ const startCronJobs = async (bot = null) => {
           }
         }
 
-        // Notify operator
+        // Persistent admin alert (survives bot restart, unlike TG DM)
+        try {
+          await pgQuery(
+            `INSERT INTO admin_alerts (alert_type, severity, title, message, details) VALUES ($1,$2,$3,$4,$5)`,
+            [
+              '2257_enforcement',
+              'high',
+              '2257 grace period enforcement fired',
+              `${rows.length} creator(s) auto-suspended for expired 2257 grace period`,
+              JSON.stringify({ count: rows.length, users: rows.map((r) => ({ id: r.id, username: r.username })) }),
+            ]
+          );
+        } catch (alertErr) {
+          logger.warn('[2257] Failed to insert admin_alert', { error: alertErr.message });
+        }
+
+        // Notify operator via Telegram (best-effort)
         const adminId = process.env.ADMIN_ID;
         if (adminId && bot) {
           const names = rows.map((r) => r.username || r.first_name || r.id).join(', ');
