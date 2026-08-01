@@ -938,18 +938,44 @@ class PaymentRecoveryService {
                   try {
                     const authResp = await axios.post(`${npEnv}/auth`, { email: npEmail, password: npPass }, { timeout: 10000 });
                     results._jwtToken = authResp.data?.token || null;
-                    if (results._jwtToken) logger.info('NOWPayments reconciler: JWT token obtained');
+                    if (results._jwtToken) {
+                      logger.info('NOWPayments reconciler: JWT token obtained');
+                      // Reset the consecutive-failure counter + clear any open alert
+                      await cache.del('nowpayments:reconciler:jwt_fail_count').catch(() => {});
+                      await cache.del('nowpayments:reconciler:jwt_alert_open').catch(() => {});
+                    }
                   } catch (authErr) {
                     // Throttle this warning to once per hour — wrong credentials spam every 15 min otherwise
                     const jwtWarnKey = 'nowpayments:reconciler:jwt_warn_throttle';
                     const alreadyWarned = await cache.get(jwtWarnKey).catch(() => null);
                     if (!alreadyWarned) {
-                      logger.warn('NOWPayments reconciler: JWT auth failed — check NOWPAYMENTS_EMAIL/PASSWORD and whitelist server IP in NowPayments dashboard', { error: authErr.response?.data || authErr.message });
+                      logger.warn('NOWPayments reconciler: JWT AUTH FAILED (silent revenue leak risk) — check NOWPAYMENTS_EMAIL/PASSWORD and whitelist server IP', { error: authErr.response?.data || authErr.message });
                       await cache.set(jwtWarnKey, '1', 3600).catch(() => {});
                     } else {
                       logger.debug('NOWPayments reconciler: JWT auth still failing (throttled)', { error: authErr.response?.status });
                     }
                     results._jwtFailed = true;
+                    // Track consecutive JWT failures; open admin_alert on 3+ (avoids one-off blips paging)
+                    try {
+                      const failCounter = await cache.incr('nowpayments:reconciler:jwt_fail_count', 24 * 3600).catch(() => 1);
+                      if (failCounter >= 3) {
+                        const alertOpenKey = 'nowpayments:reconciler:jwt_alert_open';
+                        const alertAlreadyOpen = await cache.get(alertOpenKey).catch(() => null);
+                        if (!alertAlreadyOpen) {
+                          await query(
+                            `INSERT INTO admin_alerts (alert_type, severity, title, message, details) VALUES ($1,$2,$3,$4,$5)`,
+                            [
+                              'nowpayments_jwt_auth',
+                              'high',
+                              'NowPayments JWT auth failing',
+                              `NP /v1/auth returned ${authErr.response?.status || 'error'} on ${failCounter} consecutive reconciler runs. Payment reconciliation is broken until credentials are fixed. See postmortem 2026-07-31.`,
+                              JSON.stringify({ consecutiveFailures: failCounter, lastError: authErr.response?.data || authErr.message }),
+                            ]
+                          ).catch((e) => logger.error('Failed to insert NP JWT admin_alert', { error: e.message }));
+                          await cache.set(alertOpenKey, '1', 6 * 3600).catch(() => {}); // one alert per 6h max
+                        }
+                      }
+                    } catch (counterErr) { /* silent */ }
                   }
                 }
               }
