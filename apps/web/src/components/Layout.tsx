@@ -1110,26 +1110,6 @@ export function Layout() {
         <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
           <div className="flex items-center gap-2">
             <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
-            {isSuperGodEligible && (
-              <button
-                type="button"
-                onClick={handleToggleGod}
-                disabled={godToggling}
-                className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white transition-opacity ${
-                  isSuperGod ? "shadow-[0_0_8px_rgba(212,0,122,0.6)] animate-pulse" : "opacity-70"
-                } ${godToggling ? "opacity-50" : "hover:opacity-100"}`}
-                style={{
-                  background: isSuperGod
-                    ? "linear-gradient(135deg,#D4007A,#E69138)"
-                    : "#4B5563",
-                }}
-                title={isSuperGod
-                  ? "GOD MODE ON — click to disable and behave as a normal user"
-                  : "GOD MODE OFF — click to re-enable bypass"}
-              >
-                {isSuperGod ? "GOD MODE" : "GOD OFF"}
-              </button>
-            )}
           </div>
           <div className="flex items-center gap-1">
             {/* Search */}
@@ -1175,6 +1155,34 @@ export function Layout() {
               )}
             </button>
             <NotificationBell />
+            {/* GOD MODE toggle — icon-only when OFF, animated badge when ON */}
+            {isSuperGodEligible && (
+              isSuperGod ? (
+                <button
+                  type="button"
+                  onClick={handleToggleGod}
+                  disabled={godToggling}
+                  className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider text-white transition-opacity shadow-[0_0_8px_rgba(212,0,122,0.6)] animate-pulse ${godToggling ? "opacity-50" : "hover:opacity-100"}`}
+                  style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                  title="GOD MODE ON — click to disable and behave as a normal user"
+                >
+                  GOD MODE
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleToggleGod}
+                  disabled={godToggling}
+                  className={`p-2 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface transition-colors ${godToggling ? "opacity-50" : ""}`}
+                  aria-label="Enable god mode"
+                  title="GOD MODE OFF — click to re-enable bypass"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </button>
+              )
+            )}
             {/* Logout */}
             <button
               onClick={handleLogout}
