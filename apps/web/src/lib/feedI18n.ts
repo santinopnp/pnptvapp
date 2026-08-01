@@ -148,7 +148,7 @@ export function formatBio(text: string | null | undefined): React.ReactNode {
 
 function renderInline(input: string, lineIdx: number): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const re = /(\*\*([^*\n]+)\*\*)|(~~([^~\n]+)~~)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|((?:https?:\/\/)[^\s<>"]+)/g;
+  const re = /(\*\*([^*\n]+)\*\*)|(~~([^~\n]+)~~)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|((?:https?:\/\/)[^\s<>"]*[^\s<>".,;:!?)\]}])/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
