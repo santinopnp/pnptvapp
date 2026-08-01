@@ -54,6 +54,7 @@ import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard
 import PostCard from "@/components/profile/PostCard";
 import { SuggestedCreatorRow, useForYou } from "@/components/Layout";
 import { useI18n } from "@/lib/i18n";
+import { formatBio } from "@/lib/feedI18n";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -787,7 +788,7 @@ export default function CreatorProfilePage() {
 
           {/* Bio */}
           {creator.bio && (
-            <p className="text-[13px] leading-relaxed text-white mb-4">{creator.bio}</p>
+            <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
           )}
 
           {/* Inline CreatorSubscribeWizard opens above the subscribe CTA when

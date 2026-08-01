@@ -4,6 +4,7 @@ import { Helmet } from "react-helmet-async";
 import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
+import { formatBio } from "@/lib/feedI18n";
 import { useTutorial, resetAllTutorials } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useParams, useNavigate, useSearchParams, Navigate } from "react-router-dom";
@@ -1463,7 +1464,7 @@ export default function Profile() {
               <NearbyBadge distanceKm={profileDistanceKm} variant="detailed" />
             )}
             {profile.bio && (
-              <p className="text-sm text-white/80 mt-2 leading-relaxed">{profile.bio}</p>
+              <p className="text-sm text-white/80 mt-2 leading-relaxed whitespace-pre-wrap break-words">{formatBio(profile.bio)}</p>
             )}
 
             {/* Stats row — compact counter pills */}

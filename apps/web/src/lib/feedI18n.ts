@@ -1,3 +1,5 @@
+import React from "react";
+
 /**
  * Feed UI translations (EN / ES).
  * Keyed to the user's `language` profile field set via the Profile toggle.
@@ -126,4 +128,59 @@ export async function translateText(
     }
   } catch { /* network error */ }
   return null;
+}
+
+// Lightweight markdown renderer for user bio / about-me text.
+// Supports **bold**, *italic*, _italic_, ~~strike~~, autolinked http(s) URLs, and line breaks.
+// React elements only — no dangerouslySetInnerHTML, so text is auto-escaped.
+export function formatBio(text: string | null | undefined): React.ReactNode {
+  if (!text) return null;
+  const lines = text.split(/\r?\n/);
+  return lines.map((line, li) =>
+    React.createElement(
+      React.Fragment,
+      { key: li },
+      li > 0 ? React.createElement("br") : null,
+      ...renderInline(line, li)
+    )
+  );
+}
+
+function renderInline(input: string, lineIdx: number): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const re = /(\*\*([^*\n]+)\*\*)|(~~([^~\n]+)~~)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|((?:https?:\/\/)[^\s<>"]+)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  const mkKey = () => `${lineIdx}-${key++}`;
+  while ((match = re.exec(input)) !== null) {
+    if (match.index > lastIndex) nodes.push(input.slice(lastIndex, match.index));
+    if (match[2] !== undefined) {
+      nodes.push(React.createElement("strong", { key: mkKey() }, match[2]));
+    } else if (match[4] !== undefined) {
+      nodes.push(React.createElement("s", { key: mkKey() }, match[4]));
+    } else if (match[6] !== undefined) {
+      nodes.push(React.createElement("em", { key: mkKey() }, match[6]));
+    } else if (match[8] !== undefined) {
+      nodes.push(React.createElement("em", { key: mkKey() }, match[8]));
+    } else if (match[9] !== undefined) {
+      const url = match[9];
+      nodes.push(
+        React.createElement(
+          "a",
+          {
+            key: mkKey(),
+            href: url,
+            target: "_blank",
+            rel: "noopener noreferrer nofollow",
+            className: "text-pnp-accent underline hover:opacity-80",
+          },
+          url
+        )
+      );
+    }
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < input.length) nodes.push(input.slice(lastIndex));
+  return nodes;
 }
