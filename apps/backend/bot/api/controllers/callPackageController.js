@@ -591,7 +591,8 @@ async function getPackagesByChannelRef(req, res) {
         id: p.id,
         durationMinutes: p.duration_minutes,
         priceUsd: parseFloat(p.price_usd),
-        tokenCost: Math.round(parseFloat(p.price_usd)),
+        // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
+        tokenCost: Math.round(parseFloat(p.price_usd) * 6),
         quantity: p.quantity,
         title: p.title,
         sku: p.sku,

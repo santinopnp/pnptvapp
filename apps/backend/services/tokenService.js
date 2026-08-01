@@ -361,7 +361,7 @@ async function processStreamHeartbeat(viewerId, channelRef) {
     // Gifted / creator_gifts tokens credit the streamer's wallet for UX but do not
     // generate payout obligations.
     // Stream heartbeat split: 4/6 creator, 2/6 platform (different from tip 70/30).
-    const TOKENS_PER_USD = 100;
+    const TOKENS_PER_USD = 6;
     const HEARTBEAT_CREATOR_RATE = 4 / 6;
     const HEARTBEAT_PLATFORM_RATE = 2 / 6;
     if (balanceTokensSpent > 0) {

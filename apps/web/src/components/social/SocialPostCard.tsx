@@ -6,6 +6,7 @@ import { NearbyBadge } from "@/components/NearbyBadge";
 import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
+import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import {
   getReplies,
@@ -28,6 +29,109 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 
 declare const window: Window & { twttr?: any };
+
+function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: string[]; showWatermark: boolean; onImageClick?: (url: string) => void }) {
+  const [active, setActive] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    if (idx !== active && idx >= 0 && idx < urls.length) setActive(idx);
+  }, [active, urls.length]);
+  const goTo = useCallback((idx: number) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const clamped = Math.max(0, Math.min(urls.length - 1, idx));
+    el.scrollTo({ left: clamped * el.clientWidth, behavior: "smooth" });
+  }, [urls.length]);
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="flex overflow-x-auto snap-x snap-mandatory rounded-lg no-scrollbar"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        {urls.map((url, i) => (
+          <div key={i} className="w-full flex-shrink-0 snap-center">
+            <img
+              src={url}
+              alt={`Slide ${i + 1} of ${urls.length}`}
+              className="w-full object-cover"
+              loading={i === 0 ? undefined : "lazy"}
+              onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
+              onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
+              style={onImageClick ? { cursor: "zoom-in" } : undefined}
+            />
+          </div>
+        ))}
+      </div>
+      <div
+        className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[11px] font-semibold text-white"
+        style={{ background: "rgba(0,0,0,0.65)", pointerEvents: "none" }}
+      >
+        {active + 1}/{urls.length}
+      </div>
+      {/* Prev/next buttons — desktop-only fallback for trackpad users without
+          horizontal scroll. Hidden on touch screens (mobile swipe handles nav). */}
+      {active > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active - 1); }}
+          className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Previous slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+      {active < urls.length - 1 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active + 1); }}
+          className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Next slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
+      <div className="mt-2 flex items-center justify-center gap-1.5">
+        {urls.map((_, i) => (
+          <span
+            key={i}
+            className="rounded-full transition-all"
+            style={{
+              width: i === active ? 18 : 6,
+              height: 6,
+              background: i === active ? "#D4007A" : "rgba(255,255,255,0.35)",
+            }}
+          />
+        ))}
+      </div>
+      {showWatermark && (
+        <img
+          src="/logo-nav.png"
+          alt=""
+          aria-hidden="true"
+          style={{ position: "absolute", bottom: 30, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+        />
+      )}
+    </div>
+  );
+}
+
+function extractCarouselUrls(mediaUrls: unknown): string[] {
+  if (!Array.isArray(mediaUrls)) return [];
+  return mediaUrls
+    .map((u) => (typeof u === "string" ? u : (u && typeof u === "object" && "url" in u ? String((u as { url: unknown }).url) : "")))
+    .filter((u) => u.length > 0);
+}
 
 function XEmbedCard({ url }: { url: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -221,6 +325,7 @@ export default function SocialPostCard({
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   // Open the replies drawer when the parent explicitly requests it, or when
   // arriving via a highlight deep-link (mention on a comment) so the reply
   // can be scrolled to on load.
@@ -963,8 +1068,11 @@ export default function SocialPostCard({
             </div>
           ) : (
             <>
-              {/* Promoted thumbnail banner */}
-              {post.is_promoted && post.promoted_thumbnail && (
+              {/* Promoted thumbnail banner — suppressed when the post has
+                  its own media (media_url / media_urls carousel) so the
+                  actual media block below is the primary visual and we
+                  don't render slide 1 twice. */}
+              {post.is_promoted && post.promoted_thumbnail && !post.media_url && (
                 <div className="mt-2 -mx-4">
                   <img
                     src={post.promoted_thumbnail}
@@ -1396,8 +1504,11 @@ export default function SocialPostCard({
               {/* Media — suppressed for channel_promo posts whose thumbnail is
                    already rendered inside the channelPromoCta block above.
                    Also suppressed for community_hype posts which use the block above.
-                   Rendering it again would show the media twice. */}
-              {!post.is_promoted && post.media_url && !channelPromoCta && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype' && (
+                   Rendering it again would show the media twice.
+                   Promoted posts DO render their media here so a promoted post
+                   with a carousel (media_urls) shows all slides, not just the
+                   promoted_thumbnail (which is suppressed above when media exists). */}
+              {post.media_url && !channelPromoCta && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype' && (
                 <div className="mt-3">
                   {post.media_type === "video" ? (
                     <>
@@ -1450,28 +1561,36 @@ export default function SocialPostCard({
                         </div>
                       )}
                     </>
-                  ) : (
-                    <div style={{ position: "relative" }}>
-                      <img
-                        src={post.media_url}
-                        alt="Post image"
-                        className="w-full rounded-lg object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).parentElement!.style.display =
-                            "none";
-                        }}
-                      />
-                      {post.author_username && post.author_creator_status === "active" && (
+                  ) : (() => {
+                    const carouselUrls = extractCarouselUrls(post.media_urls);
+                    const showWatermark = !!(post.author_username && post.author_creator_status === "active");
+                    if (carouselUrls.length > 1) {
+                      return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => setLightboxSrc(url)} />;
+                    }
+                    return (
+                      <div style={{ position: "relative" }}>
                         <img
-                          src="/logo-nav.png"
-                          alt=""
-                          aria-hidden="true"
-                          style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                          src={post.media_url}
+                          alt="Post image"
+                          className="w-full rounded-lg object-cover"
+                          loading="lazy"
+                          onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
+                          style={{ cursor: "zoom-in" }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).parentElement!.style.display = "none";
+                          }}
                         />
-                      )}
-                    </div>
-                  )}
+                        {showWatermark && (
+                          <img
+                            src="/logo-nav.png"
+                            alt=""
+                            aria-hidden="true"
+                            style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -2075,6 +2194,20 @@ export default function SocialPostCard({
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
       />
+      {lightboxSrc && (() => {
+        const carouselList = extractCarouselUrls(post.media_urls);
+        const list = carouselList.length > 1 ? carouselList : (post.media_url ? [post.media_url] : []);
+        if (list.length === 0) return null;
+        return (
+          <MediaLightbox
+            src={lightboxSrc}
+            mediaType="image"
+            mediaList={list}
+            onClose={() => setLightboxSrc(null)}
+            onNavigate={(url) => setLightboxSrc(url)}
+          />
+        );
+      })()}
     </div>
   );
 }

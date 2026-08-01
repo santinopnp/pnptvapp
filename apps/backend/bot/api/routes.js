@@ -11157,8 +11157,8 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
   if (!Number.isFinite(basePrice) || basePrice <= 0) {
     return res.status(400).json({ success: false, error: 'Plan has no payable price' });
   }
-  // 100 Tokens = $1 USD
-  const tokenCost = Math.round(basePrice * 100);
+  // 6 Tokens = $1 USD (see /root/.claude memory feedback_token_rate.md)
+  const tokenCost = Math.round(basePrice * 6);
   // Atomic debit — fails if balance insufficient
   const debitResult = await dbQuery(
     `UPDATE user_token_wallets
@@ -11220,7 +11220,8 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
   if (creator.creator_subscription_paused) return res.status(423).json({ success: false, error: 'Este creador pausó sus membresías.', code: 'SUBSCRIPTIONS_PAUSED' });
   const priceUsd = parseFloat(creator.creator_price_usd);
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) return res.status(400).json({ success: false, error: 'Creator has no subscription price' });
-  const tokenCost = Math.round(priceUsd * 100);
+  // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
+  const tokenCost = Math.round(priceUsd * 6);
   // Atomic debit
   const debitResult = await dbQuery(
     `UPDATE user_token_wallets
@@ -11271,7 +11272,8 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
   const pkg = pkgResult.rows[0];
   if (!pkg) return res.status(404).json({ success: false, error: 'Call package not found or inactive' });
   const priceUsd = parseFloat(pkg.price_usd);
-  const tokenCost = Math.round(priceUsd * 100);
+  // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
+  const tokenCost = Math.round(priceUsd * 6);
   // Atomic debit
   const debitResult = await dbQuery(
     `UPDATE user_token_wallets
