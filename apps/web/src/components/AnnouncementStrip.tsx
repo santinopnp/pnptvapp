@@ -337,8 +337,10 @@ export function AnnouncementStrip() {
     return () => clearTimeout(id);
   }, [entry?.text, reducedMotion]);
 
-  // Hide on /main-stage and payment pages — no distractions during checkout.
+  // Hide on /main-stage, payment pages, and inside a DM chat — no distractions
+  // during checkout, and the fixed bottom strip would overlap the chat composer.
   if (location.pathname === "/main-stage" || location.pathname === "/subscribe" || location.pathname === "/lifetime100") return null;
+  if (/^\/dm\/[^/]+/.test(location.pathname)) return null;
   if (!entry) return null;
 
   const style = CATEGORY_STYLES[entry.category];

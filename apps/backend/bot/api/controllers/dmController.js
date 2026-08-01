@@ -570,6 +570,84 @@ const editDmMessage = async (req, res) => {
   }
 };
 
+// Translate a DM into a target language, on-demand.
+// Cached per-message in direct_messages.meta.translations[lang] so repeated views
+// of the same translation don't re-hit Grok.
+const DM_TRANSLATE_DAILY_LIMIT = 100;
+const DM_TRANSLATE_MAX_LEN = 2000;
+
+const translateDmMessage = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const msgId = req.params.msgId;
+  const rawLang = req.body?.targetLang;
+
+  if (!rawLang || typeof rawLang !== 'string' || !/^[a-zA-Z]{2,5}$/.test(rawLang)) {
+    return res.status(400).json({ error: 'Invalid targetLang' });
+  }
+  const targetLang = rawLang.trim();
+
+  try {
+    // Per-user daily rate limit — Grok isn't free.
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const rateKey = `dm:translate:daily:${user.id}`;
+        const count = await redis.incr(rateKey);
+        if (count === 1) await redis.expire(rateKey, 86400);
+        if (count > DM_TRANSLATE_DAILY_LIMIT) {
+          return res.status(429).json({ error: 'Daily translation limit reached' });
+        }
+      }
+    } catch (rateErr) {
+      logger.warn('translateDmMessage rate limit check failed (allowing)', { error: rateErr.message });
+    }
+
+    const { rows } = await query(
+      `SELECT id, sender_id, recipient_id, content, is_deleted, meta
+       FROM direct_messages WHERE id = $1`,
+      [msgId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+    const msg = rows[0];
+
+    if (String(msg.sender_id) !== String(user.id) && String(msg.recipient_id) !== String(user.id)) {
+      return res.status(403).json({ error: 'Not authorized to translate this message' });
+    }
+    if (msg.is_deleted) return res.status(410).json({ error: 'Message deleted' });
+    if (!msg.content || !msg.content.trim()) {
+      return res.status(400).json({ error: 'No text to translate' });
+    }
+    if (msg.content.length > DM_TRANSLATE_MAX_LEN) {
+      return res.status(413).json({ error: 'Message too long to translate' });
+    }
+
+    const cached = msg.meta?.translations?.[targetLang];
+    if (cached && typeof cached === 'string') {
+      return res.json({ success: true, translated: cached, cached: true, targetLang });
+    }
+
+    const grokService = require('../../../services/grokService');
+    const translated = await grokService.translateText(msg.content, targetLang);
+
+    await query(
+      `UPDATE direct_messages
+       SET meta = jsonb_set(
+         COALESCE(meta, '{}'::jsonb),
+         ARRAY['translations', $1],
+         to_jsonb($2::text),
+         true
+       )
+       WHERE id = $3`,
+      [targetLang, translated, msgId]
+    );
+
+    return res.json({ success: true, translated, cached: false, targetLang });
+  } catch (err) {
+    logger.error('translateDmMessage error', { error: err.message, msgId, targetLang });
+    return res.status(500).json({ error: 'Failed to translate message' });
+  }
+};
+
 // Delete a sent DM (soft-delete; sender only)
 const deleteDmMessage = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
@@ -890,6 +968,7 @@ module.exports = {
   joinDmVideoCall,
   sendMessage,
   editDmMessage,
+  translateDmMessage,
   deleteDmMessage,
   searchDmMessages,
   pinThread,

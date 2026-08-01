@@ -807,7 +807,7 @@ export function MainStageProvider({ children }: { children: React.ReactNode }) {
   const [miniPathname, setMiniPathname] = useState(() =>
     typeof window !== "undefined" ? window.location.pathname : "/"
   );
-  const isOnMainStage = miniPathname.startsWith("/main-stage") || miniPathname === "/subscribe" || miniPathname === "/lifetime100";
+  const isOnMainStage = miniPathname.startsWith("/main-stage") || miniPathname === "/subscribe" || miniPathname === "/lifetime100" || /^\/dm\/[^/]+/.test(miniPathname);
   const hasActiveMiniMedia =
     state?.media?.kind === "video" && Boolean(state?.media?.playing) && Boolean(state?.media?.src);
 

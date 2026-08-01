@@ -1722,10 +1722,14 @@ export function Layout() {
         </div>
       )}
 
-      {/* Bottom nav — always hidden on desktop; cruise/classic applies to mobile only */}
-      <div className="flex-shrink-0 lg:hidden">
-        <BottomNav />
-      </div>
+      {/* Bottom nav — always hidden on desktop; cruise/classic applies to mobile only.
+          Also hidden inside a full-page DM chat so the composer sits flush with the
+          bottom of the viewport (matches WhatsApp/Telegram behavior). */}
+      {!/^\/dm\/[^/]+/.test(location.pathname) && (
+        <div className="flex-shrink-0 lg:hidden">
+          <BottomNav />
+        </div>
+      )}
 
       {/* Unified Cristina widget — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (() => {

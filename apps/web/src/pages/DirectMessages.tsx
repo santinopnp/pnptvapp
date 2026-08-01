@@ -14,6 +14,7 @@ import {
   markThreadAsRead,
   toggleDmMessageReaction,
   editDmMessage,
+  translateDmMessage,
   pinDmThread,
   muteDmThread,
   archiveDmThread,
@@ -81,6 +82,7 @@ interface DmMessage {
       mediaType?: string | null;
       note?: string | null;
     };
+    translations?: Record<string, string>;
   } | null;
 }
 
@@ -306,6 +308,14 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
   const [newMessagesWhileScrolledUp, setNewMessagesWhileScrolledUp] = useState(0);
   const [partnerReadAt, setPartnerReadAt] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
+
+  // On-demand AI translation state, keyed by message id.
+  // translationView: which text the user currently wants to see for a given message.
+  // translationBusy: shows a spinner on the chip while Grok is working.
+  const [translationView, setTranslationView] = useState<Map<number, "translated" | "original">>(new Map());
+  const [translationBusy, setTranslationBusy] = useState<Set<number>>(new Set());
+  const [translationError, setTranslationError] = useState<Map<number, string>>(new Map());
+  const { lang: uiLang, dm: tDm } = useI18n();
   const swipeState = useRef<{ id: number | null; startX: number; startY: number; dx: number }>({ id: null, startX: 0, startY: 0, dx: 0 });
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1116,7 +1126,73 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
 
   const isValidPhoto = (p: string | null | undefined) => p && (p.startsWith("/") || p.startsWith("http"));
 
-  const renderMessageContent = (content: string | null) => {
+  const handleTranslate = async (msg: DmMessage) => {
+    if (!msg.content || !msg.content.trim()) return;
+    // Toggle back to original if we're already showing translated text.
+    if (translationView.get(msg.id) === "translated") {
+      setTranslationView((prev) => {
+        const next = new Map(prev);
+        next.set(msg.id, "original");
+        return next;
+      });
+      return;
+    }
+    // If we already have a cached translation for this lang, just flip the view.
+    const cached = msg.meta?.translations?.[uiLang];
+    if (cached) {
+      setTranslationView((prev) => {
+        const next = new Map(prev);
+        next.set(msg.id, "translated");
+        return next;
+      });
+      return;
+    }
+    // Otherwise hit the API. Optimistic busy state; clear any prior error.
+    setTranslationBusy((prev) => new Set(prev).add(msg.id));
+    setTranslationError((prev) => {
+      const next = new Map(prev);
+      next.delete(msg.id);
+      return next;
+    });
+    try {
+      const res = await translateDmMessage(msg.id, uiLang);
+      // Mutate the message's meta in-place so the cache survives re-renders
+      // and future socket updates preserve it.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id
+            ? {
+                ...m,
+                meta: {
+                  ...(m.meta || {}),
+                  translations: { ...(m.meta?.translations || {}), [uiLang]: res.translated },
+                },
+              }
+            : m
+        )
+      );
+      setTranslationView((prev) => {
+        const next = new Map(prev);
+        next.set(msg.id, "translated");
+        return next;
+      });
+    } catch (err) {
+      setTranslationError((prev) => {
+        const next = new Map(prev);
+        next.set(msg.id, (err as Error).message || tDm.translateFailed);
+        return next;
+      });
+    } finally {
+      setTranslationBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(msg.id);
+        return next;
+      });
+    }
+  };
+
+  const renderMessageContent = (msg: DmMessage) => {
+    const content = msg.content;
     if (!content) return null;
 
     const callInvite = parseDmCallInvite(content);
@@ -1155,16 +1231,55 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       );
     }
 
-    return <p>{renderTextWithLinks(content)}</p>;
+    const cachedTranslation = msg.meta?.translations?.[uiLang];
+    const view = translationView.get(msg.id) ?? "original";
+    const displayText = view === "translated" && cachedTranslation ? cachedTranslation : content;
+    const isBusy = translationBusy.has(msg.id);
+    const errMsg = translationError.get(msg.id);
+    // Hide the chip on trivially short / no-value strings.
+    const showChip = content.trim().length >= 10;
+
+    return (
+      <>
+        <p>{renderTextWithLinks(displayText)}</p>
+        {showChip && (
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleTranslate(msg)}
+              disabled={isBusy}
+              className="text-[11px] text-white/60 hover:text-white/90 underline underline-offset-2 disabled:opacity-50"
+            >
+              {isBusy
+                ? tDm.translating
+                : view === "translated"
+                ? tDm.translatedShowOriginal
+                : tDm.translate}
+            </button>
+            {errMsg && <span className="text-[11px] text-red-300">{tDm.translateFailed}</span>}
+          </div>
+        )}
+      </>
+    );
   };
 
   return (
-    <div className={panelMode ? "absolute inset-0 flex flex-col overflow-hidden" : "flex flex-col"} style={panelMode ? undefined : { height: "calc(100dvh - 3.5rem - 4rem)" }}>
-      {/* Header — sticky-pinned so the video-call button is always reachable
-          even when iOS PWA chrome shifts or the on-screen keyboard reflows
-          the chat. The flex-column layout already keeps it from shrinking;
-          sticky+top-0+z-10 is belt-and-suspenders for mobile edge cases. */}
-      <div className={`${panelMode ? "" : "sticky top-0 "}z-10 flex items-center gap-2 px-3 py-2.5 border-b border-pnp-border flex-shrink-0 bg-pnp-background/95 backdrop-blur-sm`}>
+    // Full-page chat pins to the visible viewport instead of relying on
+    // `calc(100dvh - ...)` inside <main>. The old approach double-counted
+    // Layout's bottom padding + safe-area, hiding the composer behind the
+    // BottomNav on iOS Safari. Fixed + top-14 (mobile top bar) + lg:left-72
+    // (desktop sidebar) gives the chat its own clean viewport and the input
+    // bar always sits at the true bottom. `pb-safe` on the input handles the
+    // iPhone home indicator; BottomNav is hidden on this route (Layout.tsx).
+    <div
+      className={
+        panelMode
+          ? "absolute inset-0 flex flex-col overflow-hidden"
+          : "fixed inset-x-0 top-14 bottom-0 lg:left-72 z-30 flex flex-col overflow-hidden bg-pnp-background"
+      }
+    >
+      {/* Header — always at top of the fixed panel; no need for sticky. */}
+      <div className="z-10 flex items-center gap-2 px-3 py-2.5 border-b border-pnp-border flex-shrink-0 bg-pnp-background/95 backdrop-blur-sm">
         <button onClick={() => onBack ? onBack() : navigate("/dm")} className={`w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all flex-shrink-0${panelMode ? " hidden" : ""}`} aria-label="Back">
           <svg className="w-5 h-5 text-pnp-textPrimary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -1615,7 +1730,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
                           );
                         })() : msg.message_type === "post_card" && msg.meta?.postId ? (
                           <SharedPostCard postId={msg.meta.postId} snapshot={msg.meta.snapshot || {}} isMe={isMe} />
-                        ) : renderMessageContent(msg.content)}
+                        ) : renderMessageContent(msg)}
                         <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
                           {msg.id === pinnedMessageId && (
                             <svg className={`w-2.5 h-2.5 ${isMe ? "text-white/50" : "text-pnp-textSecondary/60"}`} fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v3.586l1.707 1.707a1 1 0 01.293.707V13a1 1 0 01-1 1h-2v4a1 1 0 11-2 0v-4H6a1 1 0 01-1-1V9a1 1 0 01.293-.707L7 6.586V3a1 1 0 011-1h2z" /></svg>

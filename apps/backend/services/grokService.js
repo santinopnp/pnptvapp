@@ -744,6 +744,60 @@ async function generateImprovedVideoDescription({ title, currentDescription, tag
   return content;
 }
 
+const TRANSLATE_LANG_NAMES = {
+  en: 'English', es: 'Spanish', pt: 'Portuguese', fr: 'French', de: 'German',
+  it: 'Italian', tr: 'Turkish', ru: 'Russian', nl: 'Dutch', vi: 'Vietnamese',
+  ja: 'Japanese', id: 'Indonesian', ar: 'Arabic', th: 'Thai',
+  zh: 'Simplified Chinese', zhTW: 'Traditional Chinese',
+};
+
+async function translateText(text, targetLang) {
+  const cfg = getGrokConfig();
+  if (!cfg.apiKey) throw new Error('GROK_API_KEY not configured');
+  if (typeof text !== 'string' || !text.trim()) return '';
+
+  const targetName = TRANSLATE_LANG_NAMES[targetLang] || TRANSLATE_LANG_NAMES.en;
+
+  const systemPrompt = `You are a translation engine. Translate the user's message to ${targetName}. Rules:
+- Preserve URLs (http/https), @handles, #hashtags, emojis, and line breaks EXACTLY.
+- Do NOT add commentary, quotes, notes, prefixes, or any wrapping text.
+- If the message is already in ${targetName}, return it unchanged.
+- Translate slang and idioms naturally; do not translate proper nouns or usernames.
+- Output the translated message and nothing else.`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        model: cfg.model,
+        temperature: 0.2,
+        max_tokens: Math.min(2000, Math.max(200, Math.ceil(text.length * 1.5))),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Grok translate error ${res.status}: ${txt || res.statusText}`);
+    }
+    const data = await res.json();
+    const out = data?.choices?.[0]?.message?.content;
+    if (!out) throw new Error('Grok returned empty translation');
+    return String(out).trim();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Grok translate request timed out');
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 module.exports = {
   chat,
   generateSharePost,
@@ -754,6 +808,7 @@ module.exports = {
   suggestSafeTags,
   generateSalesPost,
   generateImprovedVideoDescription,
+  translateText,
 };
 
 /**

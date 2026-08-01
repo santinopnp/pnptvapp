@@ -29,6 +29,12 @@ const strings = {
 
     // Timestamps
     timeNow: "now",
+
+    // Translation
+    translate: "Translate",
+    translating: "Translating…",
+    translatedShowOriginal: "Translated · Show original",
+    translateFailed: "Translation failed",
   },
   es: {
     pageTitle: "Mensajes — PNPtv!",
@@ -53,6 +59,11 @@ const strings = {
     noConversations: "Sin conversaciones aún",
 
     timeNow: "ahora",
+
+    translate: "Traducir",
+    translating: "Traduciendo…",
+    translatedShowOriginal: "Traducido · Ver original",
+    translateFailed: "No se pudo traducir",
   },
 } as const;
 

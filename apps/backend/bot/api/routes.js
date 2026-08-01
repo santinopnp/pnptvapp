@@ -7788,6 +7788,7 @@ app.post('/api/webapp/dm/send/:recipientId', requireSessionAuth, asyncHandler(dm
 // DM message management (edit / delete)
 app.patch('/api/webapp/dm/messages/:msgId', requireSessionAuth, asyncHandler(dmController.editDmMessage));
 app.delete('/api/webapp/dm/messages/:msgId', requireSessionAuth, asyncHandler(dmController.deleteDmMessage));
+app.post('/api/webapp/dm/messages/:msgId/translate', requireSessionAuth, asyncHandler(dmController.translateDmMessage));
 
 // Social feed, wall, posts
 // Public home-feed — no auth required, returns latest posts for the home page preview

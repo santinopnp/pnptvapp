@@ -3010,6 +3010,16 @@ export function deleteDmMessage(messageId: number): Promise<{ success: boolean }
   return request(`/api/webapp/dm/messages/${messageId}`, { method: "DELETE" });
 }
 
+export function translateDmMessage(
+  messageId: number,
+  targetLang: string
+): Promise<{ success: boolean; translated: string; cached: boolean; targetLang: string }> {
+  return request(`/api/webapp/dm/messages/${messageId}/translate`, {
+    method: "POST",
+    body: { targetLang },
+  });
+}
+
 
 
 export interface DmVideoCallInvite {
