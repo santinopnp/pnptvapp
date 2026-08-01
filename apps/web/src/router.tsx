@@ -1,7 +1,8 @@
 import React, { lazy, useEffect, useState } from "react";
 import { createBrowserRouter, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
-import { joinHangoutByInvite, ApiError } from "@/lib/api";
+import { joinHangoutByInvite, ApiError, getEvent, type EventItem } from "@/lib/api";
+import { EventDetailModal } from "@/components/events/EventDetailModal";
 
 // ── Pre-live consent gate — shown every time a creator navigates to /creators/live ──
 function PreLiveConsentGate({ children }: { children: React.ReactNode }) {
@@ -133,6 +134,40 @@ function UsernameProfileGate({ children }: { children: React.ReactNode }) {
 function MessagesToDmRedirect() {
   const { userId } = useParams();
   return <Navigate to={`/dm/${userId}`} replace />;
+}
+
+// Shareable event page — `/events/:eventId` renders the existing EventDetailModal
+// as the page content so any event has a canonical URL that can be pasted anywhere.
+// Uses the public `/api/proxy/events/:id` endpoint (no session required).
+function EventShareGate() {
+  const { eventId } = useParams<{ eventId: string }>();
+  const navigate = useNavigate();
+  const [event, setEvent] = useState<EventItem | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!eventId) { setError("Missing event id"); return; }
+    getEvent(eventId)
+      .then((r) => { if (!cancelled) setEvent(r.event); })
+      .catch(() => { if (!cancelled) setError("Event not found"); });
+    return () => { cancelled = true; };
+  }, [eventId]);
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center">
+        <div>
+          <div className="text-lg font-semibold mb-2" style={{ color: "var(--pnp-text-primary, #FFF)" }}>{error}</div>
+          <button onClick={() => navigate("/")} className="text-sm underline" style={{ color: "#D4007A" }}>Back to feed</button>
+        </div>
+      </div>
+    );
+  }
+  if (!event) {
+    return <div className="min-h-screen flex items-center justify-center" style={{ color: "var(--pnp-text-secondary, #A1A1A3)" }}>Loading event…</div>;
+  }
+  return <EventDetailModal event={event} onClose={() => navigate("/")} />;
 }
 
 function HangoutInviteRedirect() {
@@ -745,6 +780,7 @@ export const router = createBrowserRouter([
       { path: "messages/:userId", element: <MessagesToDmRedirect /> },
       { path: "hangouts", element: <Navigate to="/?view=hangouts" replace /> },
       { path: "hangouts/invite/:code", element: <HangoutInviteRedirect /> },
+      { path: "events/:eventId", element: <EventShareGate /> },
       { path: "hangouts/:groupId", element: <HangoutToChatRedirect /> },
       // Short shareable alias: pnptv.app/h/123 → chat room
       { path: "h/:groupId", element: <HangoutToChatRedirect /> },

@@ -871,6 +871,19 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       if (promoPostId) {
         await query(`UPDATE channel_videos SET promo_post_id = $2 WHERE id = $1`, [videoId, promoPostId]);
         final = { ...final, promo_post_id: promoPostId };
+        // Creator's own X auto-post (opt-in via users.x_auto_post_video)
+        setImmediate(() => {
+          const XPS = require('./xPostService');
+          const vidTitle = (final.title || '').toString().trim();
+          const vidHook = vidTitle ? `New drop: ${vidTitle.slice(0, 120)}` : 'New drop';
+          XPS.postCreatorEvent({
+            userId: ch.creator_id,
+            eventType: 'video',
+            text: `${vidHook} → https://pnptv.app/v/${promoPostId}`,
+            dedupKey: `xautopost:video:${videoId}`,
+            dedupTtl: 86400,
+          }).catch(() => {});
+        });
         // Sync post_count on the channel
         await query(
           `UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1`,

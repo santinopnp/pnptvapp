@@ -14,6 +14,7 @@ const { generateRegistrationOptions, verifyRegistrationResponse, generateAuthent
 // ── Enforced follows (shared service) ────────────────────────────────────────
 const { enforceDefaultFollows } = require('../../../services/followService');
 const AuthentikService = require('../../../services/authentikService');
+const XOAuthService = require('../../../services/xOAuthService');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2101,6 +2102,17 @@ const xLoginCallback = async (req, res) => {
          WHERE id = $7`,
         [xHandle, xId, encAccessLink, encRefreshLink, expiresAtLink, scopesLink, existingId]
       );
+      // Mirror into x_accounts so xPostService/xAutoCampaignService can post from this creator
+      XOAuthService.upsertAccount({
+        adminId: existingId,
+        adminUsername: xHandle,
+        accessToken: tokenRes.data.access_token,
+        refreshToken: tokenRes.data.refresh_token || null,
+        expiresIn: tokenRes.data.expires_in || null,
+        tokenScope: tokenRes.data.scope || null,
+        tokenType: tokenRes.data.token_type || 'bearer',
+        profile: { id: xId, username: xHandle, name: xName },
+      }).catch(err => logger.warn('[XLogin] x_accounts mirror failed (link branch)', { userId: existingId, error: err.message }));
       // Persist Authentik UUID if available
       if (pnptvId) {
         query('UPDATE users SET pnptv_id = COALESCE(pnptv_id, $1), updated_at = NOW() WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM users WHERE pnptv_id = $1 AND id != $2)', [pnptvId, existingId]).catch(() => {});
@@ -2169,6 +2181,17 @@ const xLoginCallback = async (req, res) => {
        WHERE id = $7`,
       [xHandle, xId, encAccessLogin, encRefreshLogin, expiresAtLogin, scopesLogin, user.id]
     ).catch(err => logger.error('[XLogin] Failed to save X tokens:', err.message));
+    // Mirror into x_accounts so xPostService/xAutoCampaignService can post from this creator
+    XOAuthService.upsertAccount({
+      adminId: user.id,
+      adminUsername: xHandle,
+      accessToken: tokenRes.data.access_token,
+      refreshToken: tokenRes.data.refresh_token || null,
+      expiresIn: tokenRes.data.expires_in || null,
+      tokenScope: tokenRes.data.scope || null,
+      tokenType: tokenRes.data.token_type || 'bearer',
+      profile: { id: xId, username: xHandle, name: xName },
+    }).catch(err => logger.warn('[XLogin] x_accounts mirror failed (login branch)', { userId: user.id, error: err.message }));
     const xLoginSessionData = buildSession(user, { xHandle, last_login_method: 'x' });
     await new Promise((resolve, reject) =>
       req.session.regenerate(err => (err ? reject(err) : resolve()))
@@ -3250,6 +3273,67 @@ const telegramWidgetAuth = async (req, res) => {
   }
 };
 
+const getXAutoPostSettings = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  try {
+    const { rows } = await query(
+      `SELECT u.x_auto_post_live, u.x_auto_post_video, u.x_auto_post_availability,
+              EXISTS (SELECT 1 FROM x_accounts WHERE created_by = u.id AND is_active = TRUE) AS x_linked
+         FROM users u WHERE u.id = $1 LIMIT 1`,
+      [sessionUser.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found' });
+    return res.json({
+      live: !!rows[0].x_auto_post_live,
+      video: !!rows[0].x_auto_post_video,
+      availability: !!rows[0].x_auto_post_availability,
+      xLinked: !!rows[0].x_linked,
+    });
+  } catch (err) {
+    logger.error('[getXAutoPostSettings]', { userId: sessionUser.id, error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to load settings' });
+  }
+};
+
+const updateXAutoPostSettings = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+  const body = req.body || {};
+  const live = body.live === undefined ? null : !!body.live;
+  const video = body.video === undefined ? null : !!body.video;
+  const availability = body.availability === undefined ? null : !!body.availability;
+  if (live === null && video === null && availability === null) {
+    return res.status(400).json({ success: false, error: 'Provide at least one of: live, video, availability' });
+  }
+  try {
+    await query(
+      `UPDATE users SET
+         x_auto_post_live         = COALESCE($1, x_auto_post_live),
+         x_auto_post_video        = COALESCE($2, x_auto_post_video),
+         x_auto_post_availability = COALESCE($3, x_auto_post_availability),
+         updated_at = NOW()
+       WHERE id = $4`,
+      [live, video, availability, sessionUser.id]
+    );
+    const { rows } = await query(
+      `SELECT u.x_auto_post_live, u.x_auto_post_video, u.x_auto_post_availability,
+              EXISTS (SELECT 1 FROM x_accounts WHERE created_by = u.id AND is_active = TRUE) AS x_linked
+         FROM users u WHERE u.id = $1 LIMIT 1`,
+      [sessionUser.id]
+    );
+    return res.json({
+      live: !!rows[0].x_auto_post_live,
+      video: !!rows[0].x_auto_post_video,
+      availability: !!rows[0].x_auto_post_availability,
+      xLinked: !!rows[0].x_linked,
+    });
+  } catch (err) {
+    logger.error('[updateXAutoPostSettings]', { userId: sessionUser.id, error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to update settings' });
+  }
+};
+
 module.exports = {
   telegramStart,
   telegramCallback,
@@ -3288,6 +3372,8 @@ module.exports = {
   uploadCover,
   deleteCover,
   uploadEventCover,
+  getXAutoPostSettings,
+  updateXAutoPostSettings,
 };
 
 // placed after exports object — hoisted by module eval order is fine

@@ -2069,9 +2069,58 @@ async function lookupCreatorXHandle(userId) {
   }
 }
 
+// Auto-post a per-creator event (live-start / video-publish / availability-on)
+// from the creator's own linked X account. Gated by opt-in flag on `users`.
+// Always fire-and-forget from callers — never throws.
+const CREATOR_EVENT_FLAG_COL = {
+  live: 'x_auto_post_live',
+  video: 'x_auto_post_video',
+  availability: 'x_auto_post_availability',
+};
+
+async function postCreatorEvent({ userId, eventType, text, imageUrl = null, dedupKey = null, dedupTtl = 21600 }) {
+  if (!userId || !eventType || !text) return;
+  const flagCol = CREATOR_EVENT_FLAG_COL[eventType];
+  if (!flagCol) {
+    logger.warn('[xPostService] postCreatorEvent: unknown eventType', { eventType });
+    return;
+  }
+  try {
+    const userRes = await db.query(
+      `SELECT ${flagCol} AS opted_in FROM users WHERE id = $1 LIMIT 1`,
+      [userId]
+    );
+    if (!userRes.rows[0]?.opted_in) return;
+
+    if (dedupKey) {
+      const first = await cache.setNX(dedupKey, '1', dedupTtl);
+      if (!first) return;
+    }
+
+    const acctRes = await db.query(
+      `SELECT account_id, handle, display_name, encrypted_access_token, encrypted_refresh_token,
+              token_expires_at, is_active, oauth_version, encrypted_access_token_secret,
+              consumer_key_ref, x_user_id
+         FROM x_accounts
+        WHERE created_by = $1 AND is_active = TRUE
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    const account = acctRes.rows[0];
+    if (!account) return;
+
+    await XPostService.postToX(account, text, imageUrl);
+    logger.info('[xPostService] postCreatorEvent sent', { userId, eventType, handle: account.handle });
+  } catch (err) {
+    logger.warn('[xPostService] postCreatorEvent failed', { userId, eventType, error: err.message });
+  }
+}
+
 module.exports = XPostService;
 module.exports.refreshAccountTokens = refreshAccountTokens;
 module.exports.slugify = slugify;
+module.exports.postCreatorEvent = postCreatorEvent;
 module.exports.buildShareUrl = buildShareUrl;
 module.exports.buildUserShareText = buildUserShareText;
 module.exports.deriveHashtags = deriveHashtags;

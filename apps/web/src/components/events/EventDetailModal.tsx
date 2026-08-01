@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { type EventItem, rsvpEvent, unrsvpEvent, updateEvent, getHangoutGroups, cancelEvent, type HangoutGroup } from "@/lib/api";
+import { type EventItem, rsvpEvent, unrsvpEvent, updateEvent, getHangoutGroups, cancelEvent, getHangoutInviteLink, type HangoutGroup } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 
 interface EventDetailModalProps {
@@ -298,9 +298,9 @@ export function EventDetailModal({ event: initialEvent, onClose, onRsvp, onUpdat
     }
   };
 
-  const handleCta = () => {
-    onClose();
+  const handleCta = async () => {
     if (isLive) {
+      onClose();
       // Navigate to the creator's profile / live channel
       if (event.creatorUsername) {
         navigate(`/profile/${event.creatorUsername}`);
@@ -309,13 +309,23 @@ export function EventDetailModal({ event: initialEvent, onClose, onRsvp, onUpdat
       } else {
         navigate("/live");
       }
-    } else if (isHangout) {
-      // Navigate to hangout group chat
+      return;
+    }
+    if (isHangout) {
+      // Prefer the invite URL so non-members auto-join on tap. Existing members
+      // are no-op'd by the invite endpoint and still land in chat.
       if (event.hangoutGroupId) {
-        navigate(`/chat?group=${event.hangoutGroupId}`);
-      } else {
-        navigate("/chat");
+        try {
+          const inv = await getHangoutInviteLink(event.hangoutGroupId);
+          onClose();
+          navigate(inv.inviteUrl.replace(/^https?:\/\/[^/]+/, "") || `/chat?group=${event.hangoutGroupId}`);
+          return;
+        } catch {
+          // fall through to direct chat nav
+        }
       }
+      onClose();
+      navigate(event.hangoutGroupId ? `/chat?group=${event.hangoutGroupId}` : "/chat");
     }
   };
 

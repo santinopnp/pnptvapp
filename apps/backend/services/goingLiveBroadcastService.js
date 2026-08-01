@@ -416,6 +416,18 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
       });
     });
 
+    // 4. Creator's own X auto-post (opt-in via users.x_auto_post_live)
+    setImmediate(() => {
+      const XPostService = require('./xPostService');
+      XPostService.postCreatorEvent({
+        userId: creatorId,
+        eventType: 'live',
+        text: `🔴 I'm live on PNPtv! Come hang → https://pnptv.app/live/${channelRef}`,
+        dedupKey: `xautopost:live:${creatorId}`,
+        dedupTtl: 21600,
+      }).catch(() => {});
+    });
+
     // ── Follower-targeted channels ────────────────────────────────────────────
 
     if (dmFollowers.length === 0 && pushFollowers.length === 0) {

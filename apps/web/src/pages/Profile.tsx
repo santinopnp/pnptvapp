@@ -64,6 +64,7 @@ import { EventCard } from "@/components/events/EventCard";
 import { CreateEventModal } from "@/components/events/CreateEventModal";
 import { EventDetailModal } from "@/components/events/EventDetailModal";
 import PostCard from "@/components/profile/PostCard";
+import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
 import EditProfileModal from "@/components/profile/EditProfileModal";
 import FollowListModal from "@/components/profile/FollowListModal";
 import CreatorEnrollmentWizard, { TIER_CONFIG, type TierId } from "@/components/profile/CreatorEnrollmentWizard";
@@ -277,6 +278,7 @@ export default function Profile() {
 
   // Creator album
   const [albumItems, setAlbumItems] = useState<CreatorMediaItem[]>([]);
+  const [albumLightbox, setAlbumLightbox] = useState<{ src: string; type: "image" | "video"; list: string[] } | null>(null);
   const [albumLoaded, setAlbumLoaded] = useState(false);
 
   // Overflow menu (own profile More button)
@@ -2328,12 +2330,28 @@ export default function Profile() {
         const videos = albumItems.filter(i => i.type === "video");
         return (
           <div className="mb-4 space-y-4">
-            {photos.length > 0 && (
+            {photos.length > 0 && (() => {
+              const viewablePhotos = photos.filter(p => p.canView && (p.url || p.thumbUrl)).map(p => (p.url || p.thumbUrl) as string);
+              return (
               <div>
                 <p className="text-[10px] font-bold mb-2 px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Fotos</p>
                 <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {photos.slice(0, 10).map((item) => (
-                    <div key={item.id} className="relative flex-none w-24 h-[120px] rounded-lg overflow-hidden bg-white/5">
+                  {photos.slice(0, 10).map((item) => {
+                    const openPhoto = () => {
+                      const src = (item.url || item.thumbUrl) as string | undefined;
+                      if (src) setAlbumLightbox({ src, type: "image", list: viewablePhotos });
+                    };
+                    return (
+                    <div
+                      key={item.id}
+                      className="relative flex-none w-24 h-[120px] rounded-lg overflow-hidden bg-white/5"
+                      role={item.canView ? "button" : undefined}
+                      tabIndex={item.canView ? 0 : undefined}
+                      aria-label={item.canView ? (item.caption || "Open photo") : undefined}
+                      onClick={item.canView ? openPhoto : undefined}
+                      onKeyDown={item.canView ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPhoto(); } } : undefined}
+                      style={item.canView ? { cursor: "zoom-in" } : undefined}
+                    >
                       <img
                         src={item.thumbUrl || item.url || ""}
                         alt={item.caption || ""}
@@ -2354,16 +2372,31 @@ export default function Profile() {
                         </button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-            )}
-            {videos.length > 0 && (
+              );
+            })()}
+            {videos.length > 0 && (() => {
+              const viewableVideos = videos.filter(v => v.canView && v.url).map(v => v.url as string);
+              return (
               <div>
                 <p className="text-[10px] font-bold mb-2 px-0.5 uppercase tracking-[.08em]" style={{ color: "#A1A1A3" }}>Videos</p>
                 <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {videos.slice(0, 5).map((item) => (
-                    <div key={item.id} className="relative flex-none w-[140px] h-[88px] rounded-lg overflow-hidden bg-white/5">
+                  {videos.slice(0, 5).map((item) => {
+                    const openVideo = () => { if (item.url) setAlbumLightbox({ src: item.url as string, type: "video", list: viewableVideos }); };
+                    return (
+                    <div
+                      key={item.id}
+                      className="relative flex-none w-[140px] h-[88px] rounded-lg overflow-hidden bg-white/5"
+                      role={item.canView && item.url ? "button" : undefined}
+                      tabIndex={item.canView && item.url ? 0 : undefined}
+                      aria-label={item.canView ? (item.caption || "Play video") : undefined}
+                      onClick={item.canView && item.url ? openVideo : undefined}
+                      onKeyDown={item.canView && item.url ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openVideo(); } } : undefined}
+                      style={item.canView ? { cursor: "zoom-in" } : undefined}
+                    >
                       <img
                         src={item.thumbUrl || ""}
                         alt={item.caption || ""}
@@ -2393,10 +2426,12 @@ export default function Profile() {
                         </button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         );
       })()}
@@ -3167,6 +3202,15 @@ export default function Profile() {
             )}
           </div>
         </div>
+      )}
+      {albumLightbox && albumLightbox.list.length > 0 && (
+        <MediaLightbox
+          src={albumLightbox.src}
+          mediaType={albumLightbox.type}
+          mediaList={albumLightbox.list}
+          onClose={() => setAlbumLightbox(null)}
+          onNavigate={(url) => setAlbumLightbox((prev) => (prev ? { ...prev, src: url } : prev))}
+        />
       )}
     </div>
   );

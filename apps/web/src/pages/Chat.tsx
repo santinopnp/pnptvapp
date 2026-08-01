@@ -1880,6 +1880,39 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Video call / general chat error
   const [chatError, setChatError] = useState<string | null>(null);
 
+  // Share invite link — brief inline status pill on the header share button
+  const [shareStatus, setShareStatus] = useState<null | 'copied' | 'error'>(null);
+  const handleShareHangout = useCallback(async () => {
+    const gid = activeGroup?.id;
+    if (!gid) return;
+    try {
+      const res = await getHangoutInviteLink(gid);
+      const url = res.inviteUrl;
+      const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+      if (typeof nav.share === 'function') {
+        try {
+          await nav.share({ title: activeGroup?.name || 'Hangout', url });
+          setShareStatus('copied');
+        } catch {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(url);
+            setShareStatus('copied');
+          }
+        }
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setShareStatus('copied');
+      } else {
+        window.prompt('Copy this link:', url);
+        setShareStatus('copied');
+      }
+    } catch {
+      setShareStatus('error');
+    } finally {
+      setTimeout(() => setShareStatus(null), 2000);
+    }
+  }, [activeGroup?.id, activeGroup?.name]);
+
   // Create group error
   const [createError, setCreateError] = useState<string | null>(null);
   const [createTermsAccepted, setCreateTermsAccepted] = useState(false);
@@ -3008,6 +3041,24 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 </svg>
               </button>
             )}
+
+            {/* Share hangout — copies invite link so any member can share the group */}
+            <button
+              onClick={handleShareHangout}
+              className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/5 active:scale-95 transition-all relative"
+              aria-label="Share hangout link"
+              title={shareStatus === 'copied' ? 'Link copied' : shareStatus === 'error' ? 'Failed to get link' : 'Share hangout link'}
+            >
+              {shareStatus === 'copied' ? (
+                <svg className="w-5 h-5" style={{ color: '#5ED1C4' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                </svg>
+              )}
+            </button>
 
             {/* Video call button — opens LiveKit call panel.
                 For the official PNPtv hangout (isMain), the in-thread call is

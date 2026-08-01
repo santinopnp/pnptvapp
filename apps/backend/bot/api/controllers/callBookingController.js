@@ -834,6 +834,19 @@ async function setAcceptingCalls(req, res) {
         logger.warn('[callBookingController] setAcceptingCalls socket emit failed (non-fatal)', { userId, error: sockErr.message });
       }
 
+      // Creator's own X auto-post (opt-in via users.x_auto_post_availability)
+      setImmediate(() => {
+        const XPS = require('../../../services/xPostService');
+        const uname = sessionUser.username ? `@${sessionUser.username}` : userId;
+        XPS.postCreatorEvent({
+          userId,
+          eventType: 'availability',
+          text: `Open for private calls right now → https://pnptv.app/u/${uname}`,
+          dedupKey: `xautopost:avail:${userId}`,
+          dedupTtl: 14400,
+        }).catch(() => {});
+      });
+
       const acceptingUntil = new Date(Date.now() + ACCEPTING_CALLS_TTL_SECONDS * 1000).toISOString();
       logger.info('[callBookingController] creator now accepting calls', { userId, acceptingUntil });
       return res.json({ success: true, accepting: true, acceptingUntil });

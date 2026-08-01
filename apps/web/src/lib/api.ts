@@ -7028,6 +7028,10 @@ export interface EventItem {
   tags?: string[];
 }
 
+export function getEvent(id: string): Promise<{ success: boolean; event: EventItem }> {
+  return request(`/api/proxy/events/${encodeURIComponent(id)}`);
+}
+
 export function getUpcomingEvents(params?: {
   type?: "live_stream" | "hangout_event";
   limit?: number;
