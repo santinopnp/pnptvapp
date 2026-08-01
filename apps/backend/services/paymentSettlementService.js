@@ -673,7 +673,7 @@ class PaymentSettlementService {
     // spendable on both Santino and Lex streams (PRIME co-founders).
     const TOKEN_PKGS = dashTokenSvc.TOKEN_PACKAGES || [];
     const matchedPkg = TOKEN_PKGS.find((p) => p.tokens === tokens);
-    const bonusTokens = matchedPkg ? Math.max(0, matchedPkg.tokens - matchedPkg.usd * 100) : 0;
+    const bonusTokens = matchedPkg ? Math.max(0, matchedPkg.tokens - matchedPkg.usd * 6) : 0;
     const baseTokens = tokens - bonusTokens;
 
     const { newBalance, alreadyProcessed } = await dashTokenSvc.creditTokens(

@@ -694,7 +694,7 @@ export function BookCallModal({
 
       // Tokens — instant payment from wallet (no popup, no polling)
       if (provider === "tokens") {
-        const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 100);
+        const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
         if (tokenBalance !== null && tokenBalance < tokenCost) {
           setCheckoutError(`Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} T — tienes ${tokenBalance.toLocaleString()} T.`);
           return;

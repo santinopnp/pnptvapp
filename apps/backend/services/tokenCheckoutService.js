@@ -587,7 +587,7 @@ class TokenCheckoutService {
           flow: 'token_purchase',
           packageId: pkg.id,
           tokens: pkg.tokens,
-          bonusTokens: Math.max(0, pkg.tokens - pkg.usd * 100),
+          bonusTokens: Math.max(0, pkg.tokens - pkg.usd * 6),
           invoiceUrl,
           ...(npPayInfo?.nowpaymentsInvoiceId ? { nowpaymentsInvoiceId: npPayInfo.nowpaymentsInvoiceId } : {}),
           ...(payCurrency ? { payCurrency } : {}),
