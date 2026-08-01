@@ -521,7 +521,8 @@ export default function CreatorProfilePage() {
   function handleMessage() {
     if (!data) return;
     if (!isAuthenticated) { navigate("/login"); return; }
-    if (!viewerUnlocked && !isOwnProfile) {
+    const isAdminViewer = user?.role === "admin" || user?.role === "superadmin";
+    if (!viewerUnlocked && !isOwnProfile && !isAdminViewer) {
       if (isPrimeCreator) navigate("/subscribe");
       else handleSubscribeCta();
       return;
