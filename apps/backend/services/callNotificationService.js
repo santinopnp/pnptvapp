@@ -399,17 +399,68 @@ async function sendBookingConfirmationToCreator(creatorId, booking, memberInfo, 
   }
 }
 
+// End-of-call warning schedule (minutes remaining when each DM fires).
+// One push at T-10m is enough; T-5 → T-1 are DM-only to avoid notification spam.
+const END_OF_CALL_WARNINGS_MIN = [10, 5, 4, 3, 2, 1];
+
 /**
- * Schedule 1h and 15min reminders for both parties.
+ * Schedule DM warnings at end-minus-{10,5,4,3,2,1} minutes so both parties know
+ * when the call is about to wrap. Uses in-process setTimeout (same pattern as
+ * scheduleCallReminders); reconcileReminders restores them on container restart.
+ */
+function scheduleEndOfCallWarnings({ bookingId, creatorId, memberId, endMs, creatorHandle, memberHandle }) {
+  const nowMs = Date.now();
+  const memberName = memberHandle || 'the caller';
+  const creatorName = creatorHandle || 'the creator';
+
+  for (const minLeft of END_OF_CALL_WARNINGS_MIN) {
+    const targetMs = endMs - minLeft * 60 * 1000;
+    const delayMs = targetMs - nowMs;
+    if (delayMs <= 0) continue; // past or too close — skip
+
+    const t = setTimeout(() => {
+      const memberBody = `⏰ ${minLeft} minute${minLeft === 1 ? '' : 's'} left in your call with ${creatorName}. Wrap up gracefully — the room will close automatically at the end.`;
+      const creatorBody = `⏰ ${minLeft} minuto${minLeft === 1 ? '' : 's'} restante${minLeft === 1 ? '' : 's'} en tu llamada con ${memberName}. Ve cerrando con calma — la sala se cierra automáticamente al final.`;
+
+      sendSystemDM(SYSTEM_DM_SENDER_ID, String(memberId), memberBody, query)
+        .catch((err) => logger.warn('[callNotificationService] end-of-call member DM failed', { bookingId, minLeft, error: err.message }));
+      sendSystemDM(SYSTEM_DM_SENDER_ID, String(creatorId), creatorBody, query)
+        .catch((err) => logger.warn('[callNotificationService] end-of-call creator DM failed', { bookingId, minLeft, error: err.message }));
+
+      // Single push at T-10m — enough to prompt them; the rest ride on DMs so we
+      // don't spam the notification tray six times per call.
+      if (minLeft === 10) {
+        PushNotificationService.sendToUser(memberId, {
+          title: '⏰ 10 minutes left in your call',
+          body: `Wrap up with ${creatorName} — the room closes automatically.`,
+          url: `/call/${bookingId}`,
+          tag: `call_end_10m_${bookingId}`,
+        }).catch(() => {});
+        PushNotificationService.sendToUser(creatorId, {
+          title: '⏰ 10 minutos para cerrar',
+          body: `Ve cerrando con ${memberName} — la sala se cierra sola.`,
+          url: `/call/${bookingId}`,
+          tag: `call_end_10m_creator_${bookingId}`,
+        }).catch(() => {});
+      }
+    }, delayMs);
+    if (t.unref) t.unref();
+  }
+  logger.info('[callNotificationService] end-of-call warnings scheduled', { bookingId, endMs, warningCount: END_OF_CALL_WARNINGS_MIN.length });
+}
+
+/**
+ * Schedule 1h and 15min pre-call reminders + end-of-call countdown warnings.
  * Uses setTimeout for simplicity. In production, replace with a job queue (BullMQ / pg-boss).
  *
- * @param {number}  bookingId   - call_credits.id (used as an identifier in logs)
+ * @param {number|string} bookingId - call_credits.id OR bookings.id (used as an identifier in logs)
  * @param {string}  creatorId
  * @param {string}  memberId
- * @param {string}  startAt     - ISO timestamp of call start
+ * @param {string}  startAt         - ISO timestamp of call start
  * @param {{ token?: string, roomName?: string, meetingUrl?: string }|null} callInfo
+ * @param {number}  [durationMinutes] - when provided, also schedules end-of-call countdown warnings
  */
-function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo) {
+function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo, durationMinutes) {
   const startMs = new Date(startAt).getTime();
   const nowMs = Date.now();
 
@@ -507,6 +558,24 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
   } else {
     logger.info('[callNotificationService] 15min reminder skipped — call is less than 15min away', { bookingId });
   }
+
+  // End-of-call countdown warnings (T-10, T-5, T-4, T-3, T-2, T-1 minutes)
+  if (durationMinutes && Number(durationMinutes) > 0) {
+    const endMs = startMs + Number(durationMinutes) * 60 * 1000;
+    // Resolve display names once per booking so each warning DM addresses the other party by handle.
+    Promise.all([fetchUserInfo(memberId), fetchUserInfo(creatorId)])
+      .then(([memberInfo, creatorInfo]) => {
+        const memberHandle = memberInfo?.username ? `@${memberInfo.username}` : (memberInfo?.first_name || 'your caller');
+        const creatorHandle = creatorInfo?.username ? `@${creatorInfo.username}` : (creatorInfo?.first_name || 'the creator');
+        scheduleEndOfCallWarnings({ bookingId, creatorId, memberId, endMs, creatorHandle, memberHandle });
+      })
+      .catch((err) => {
+        logger.warn('[callNotificationService] end-of-call handle lookup failed — scheduling anyway with defaults', { bookingId, error: err.message });
+        scheduleEndOfCallWarnings({ bookingId, creatorId, memberId, endMs });
+      });
+  } else {
+    logger.info('[callNotificationService] end-of-call warnings skipped — no durationMinutes', { bookingId });
+  }
 }
 
 /**
@@ -521,18 +590,20 @@ async function reconcileReminders() {
               b.user_id    AS member_id,
               p.user_id    AS creator_id,
               b.start_time_utc AS start_at,
+              b.end_time_utc   AS end_at,
+              b.duration_minutes,
               b.credit_id
        FROM bookings b
        JOIN performers p ON p.id = b.performer_id
        WHERE b.status = 'confirmed'
-         AND b.start_time_utc > NOW()`
+         AND b.end_time_utc > NOW()`
     );
 
     let count = 0;
     for (const row of rows) {
       try {
         const callInfo = { joinUrl: `${APP_URL}/call/${row.credit_id || row.booking_id}` };
-        scheduleCallReminders(row.booking_id, row.creator_id, row.member_id, row.start_at, callInfo);
+        scheduleCallReminders(row.booking_id, row.creator_id, row.member_id, row.start_at, callInfo, row.duration_minutes);
         count++;
       } catch (schedErr) {
         logger.warn('[callNotificationService] reconcileReminders: failed to schedule reminder', {

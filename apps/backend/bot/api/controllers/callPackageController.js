@@ -356,10 +356,33 @@ async function bookCall(req, res) {
           ),
         ]);
 
-        // Schedule 1h and 15min reminders
+        // Schedule 1h + 15min pre-call reminders + end-of-call countdown warnings
         callNotificationService.scheduleCallReminders(
-          Number(creditId), creatorId, memberId, startAt, null
+          Number(creditId), creatorId, memberId, startAt, null, parsedDuration
         );
+
+        // Create the call_sessions row so joinBooking can flip it to 'live'
+        // and checkNoShows has a real "did anyone join?" signal. Without this
+        // row the no-show sweep mislabels every credit-spend booking.
+        try {
+          const CallSessionModel = require('../../../models/callSessionModel');
+          const safeCreatorName = (creator.display_name || creator.username || 'creator')
+            .toString().replace(/[^\w\s-]/g, '').slice(0, 60) || 'creator';
+          await CallSessionModel.create({
+            bookingId: booking.id,
+            roomProvider: 'jitsi',
+            roomId: `booking-${booking.id}`,
+            roomName: `Private Call - ${safeCreatorName}`,
+            maxParticipants: 2,
+            recordingDisabled: true,
+          });
+        } catch (sessionErr) {
+          if (sessionErr.code !== '23505') {
+            logger.warn('bookCall: call_sessions row creation failed (non-fatal)', {
+              bookingId: booking.id, error: sessionErr.message,
+            });
+          }
+        }
       } catch (postErr) {
         logger.warn('bookCall: post-booking orchestration error (non-fatal)', {
           creditId, memberId, creatorId, error: postErr.message,

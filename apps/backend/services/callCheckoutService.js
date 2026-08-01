@@ -504,7 +504,8 @@ async function onCallPaymentSuccess(paymentId) {
               creator_id,
               payment.user_id,
               meta.startTimeUtc,
-              { meetingUrl: callJoinUrl }
+              { meetingUrl: callJoinUrl },
+              bookingSummary?.duration_minutes || meta.durationMinutes
             );
           } catch (reminderErr) {
             logger.warn('[callCheckoutService] failed to schedule call reminders (non-critical)', {

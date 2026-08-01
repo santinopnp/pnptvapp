@@ -923,13 +923,16 @@ You can visit the link 15 minutes before the call. You will see a waiting room a
     try {
       const { query } = require('../config/postgres');
 
-      // Find confirmed bookings where start time + grace period has passed and no session started
+      // Find confirmed bookings where the SCHEDULED CALL WINDOW has fully
+      // elapsed (end_time_utc + grace) with no session ever going live.
+      // Anchoring to end_time_utc (not start_time_utc) prevents flagging
+      // calls that are still in progress within their booked window.
       const sql = `
         SELECT b.id as booking_id, s.id as session_id
         FROM bookings b
         LEFT JOIN call_sessions s ON b.id = s.booking_id
         WHERE b.status = 'confirmed'
-          AND b.start_time_utc + ($1 || ' minutes')::INTERVAL < NOW()
+          AND b.end_time_utc + ($1 || ' minutes')::INTERVAL < NOW()
           AND (s.id IS NULL OR s.status = 'scheduled')
       `;
 
