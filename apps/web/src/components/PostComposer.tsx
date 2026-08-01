@@ -40,6 +40,7 @@ const POST_CATEGORIES = [
 
 type PostCategory = (typeof POST_CATEGORIES)[number]["value"];
 const MAX_IMAGES = 4;
+const MAX_VIDEOS = 4;
 const MAX_FILE_SIZE_REGULAR = 512 * 1024 * 1024;    // 512 MB
 const MAX_FILE_SIZE_CREATOR = 50 * 1024 * 1024 * 1024; // 50 GB (Mux direct upload)
 const MAX_CHARS = 5000;
@@ -406,21 +407,35 @@ export function PostComposer({
       }
 
       if (hasVideo) {
-        // Only 1 video allowed per post
-        const video = incoming.find((f) => isVideoType(f))!;
-        if (video.size > MAX_FILE_SIZE_BYTES) {
-          setError(isActiveCreator ? "Video too large (max 50 GB)" : tProfile.fileTooLarge);
+        // Up to MAX_VIDEOS per post — no mixing with images
+        const currentVideoCount = files.filter((f) => isVideoType(f.file)).length;
+        const currentHasImage = files.some((f) => isImageType(f.file));
+        if (currentHasImage) {
+          // Replacing images with videos — clear existing
+          files.forEach((f) => URL.revokeObjectURL(f.previewUrl));
+          setFiles([]);
+        }
+        const availableVideoSlots = MAX_VIDEOS - (currentHasImage ? 0 : currentVideoCount);
+        const videoBatch = incoming.filter((f) => isVideoType(f)).slice(0, availableVideoSlots);
+        const skippedVideos = incoming.filter((f) => isVideoType(f)).length - videoBatch.length;
+
+        const oversizedVideo = videoBatch.find((v) => v.size > MAX_FILE_SIZE_BYTES);
+        if (oversizedVideo) {
+          setError(isActiveCreator ? `${oversizedVideo.name}: Video too large (max 50 GB)` : tProfile.fileTooLarge);
           return;
         }
-        // Replace any existing selection with this single video
-        files.forEach((f) => URL.revokeObjectURL(f.previewUrl));
-        setFiles([
-          {
-            id: `${video.name}-${Date.now()}`,
-            file: video,
-            previewUrl: URL.createObjectURL(video),
-          },
-        ]);
+
+        if (skippedVideos > 0) {
+          setError(`Maximum ${MAX_VIDEOS} videos per post. ${skippedVideos} file(s) were skipped.`);
+        }
+
+        const newVideoEntries: SelectedFile[] = videoBatch.map((f) => ({
+          id: `${f.name}-${Date.now()}-${Math.random()}`,
+          file: f,
+          previewUrl: URL.createObjectURL(f),
+        }));
+
+        setFiles((prev) => (currentHasImage ? newVideoEntries : [...prev, ...newVideoEntries]));
         return;
       }
 
@@ -770,7 +785,10 @@ export function PostComposer({
   const hasVideo = files.some((f) => isVideoType(f.file));
   const imageCount = files.filter((f) => isImageType(f.file)).length;
   const canAddMoreImages = !hasVideo && imageCount < MAX_IMAGES;
-  const canAddVideo = files.length === 0;
+  const videoCount = files.filter((f) => isVideoType(f.file)).length;
+  const canAddMoreVideos = !files.some((f) => isImageType(f.file)) && videoCount < MAX_VIDEOS;
+  // Kept for backward-compat with existing UI conditionals; matches new limit.
+  const canAddVideo = canAddMoreVideos;
   const isOverCharLimit = text.length > MAX_CHARS;
   const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit;
   const resolvedPlaceholder = placeholder ?? tFeed.whatOnYourMind;
@@ -863,6 +881,7 @@ export function PostComposer({
             ref={videoInputRef}
             type="file"
             accept={ACCEPTED_VIDEO_TYPES.join(",")}
+            multiple
             className="hidden"
             onChange={handleVideoInputChange}
             aria-hidden="true"
@@ -1189,8 +1208,8 @@ export function PostComposer({
                 disabled={isPosting || !canAddVideo}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/5 hover:border-white/20 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 style={{ color: "#E69138", minHeight: "36px" }}
-                aria-label={`Attach video${hasVideo ? " (1 attached)" : ""}`}
-                title={hasVideo ? "Video attached" : "Attach video"}
+                aria-label={`Attach video${videoCount > 0 ? ` (${videoCount}/${MAX_VIDEOS})` : ""}`}
+                title={`Video (${videoCount}/${MAX_VIDEOS})`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />

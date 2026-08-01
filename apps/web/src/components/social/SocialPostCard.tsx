@@ -30,6 +30,9 @@ import { useTier } from "@/hooks/useTier";
 
 declare const window: Window & { twttr?: any };
 
+const CAROUSEL_VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+function isCarouselVideo(url: string) { return CAROUSEL_VIDEO_RE.test(url); }
+
 function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: string[]; showWatermark: boolean; onImageClick?: (url: string) => void }) {
   const [active, setActive] = useState(0);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -55,15 +58,29 @@ function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: stri
       >
         {urls.map((url, i) => (
           <div key={i} className="w-full flex-shrink-0 snap-center">
-            <img
-              src={url}
-              alt={`Slide ${i + 1} of ${urls.length}`}
-              className="w-full object-cover"
-              loading={i === 0 ? undefined : "lazy"}
-              onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
-              onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
-              style={onImageClick ? { cursor: "zoom-in" } : undefined}
-            />
+            {isCarouselVideo(url) ? (
+              <video
+                src={url}
+                controls
+                controlsList="nodownload"
+                disablePictureInPicture
+                playsInline
+                preload="metadata"
+                onContextMenu={(e) => e.preventDefault()}
+                className="w-full bg-black"
+                style={{ maxHeight: 480 }}
+              />
+            ) : (
+              <img
+                src={url}
+                alt={`Slide ${i + 1} of ${urls.length}`}
+                className="w-full object-cover"
+                loading={i === 0 ? undefined : "lazy"}
+                onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
+                onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
+                style={onImageClick ? { cursor: "zoom-in" } : undefined}
+              />
+            )}
           </div>
         ))}
       </div>
