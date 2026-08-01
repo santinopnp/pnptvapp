@@ -21,7 +21,7 @@ const { createHash } = require('crypto');
 const logger = require('../utils/logger');
 
 // Derive a stable UUID from a BTCPay invoiceId so subscribeToCreator's
-// deduplication ON CONFLICT (source_payment_id) works correctly on retries.
+// deduplication ON CONFLICT (source_payment_id, creator_id) works correctly on retries.
 function invoiceToUUID(invoiceId) {
   const h = createHash('sha256').update(`btcpay:${invoiceId}`).digest('hex');
   return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-${['8','9','a','b'][parseInt(h[16],16)%4]}${h.slice(17,20)}-${h.slice(20,32)}`;

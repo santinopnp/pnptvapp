@@ -67,7 +67,7 @@ async function main() {
         const { rowCount } = await query(
           `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
            VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
-           ON CONFLICT (source_payment_id) DO NOTHING`,
+           ON CONFLICT (source_payment_id, creator_id) DO NOTHING`,
           [order.creatorId, order.existingSubscriptionId, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), order.orderId]
         );
         console.log(`  earnings ${rowCount > 0 ? 'inserted' : 'already existed (no-op)'}`);

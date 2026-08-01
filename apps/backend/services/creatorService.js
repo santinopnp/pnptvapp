@@ -677,8 +677,8 @@ class CreatorService {
   }
 
   static async subscribeToCreator(subscriberId, creatorId, paymentId) {
-    // paymentId is required — null would break ON CONFLICT (source_payment_id) deduplication
-    // in creator_earnings, silently losing earnings on duplicate calls.
+    // paymentId is required — null would break ON CONFLICT (source_payment_id, creator_id)
+    // deduplication in creator_earnings, silently losing earnings on duplicate calls.
     if (!paymentId) throw new Error('subscribeToCreator: paymentId is required');
 
     // Validate creator is active (outside transaction — read-only, no locking needed)
@@ -819,7 +819,7 @@ class CreatorService {
         await client.query(
           `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
            VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
-           ON CONFLICT (source_payment_id) DO NOTHING`,
+           ON CONFLICT (source_payment_id, creator_id) DO NOTHING`,
           [creatorId, rows[0].id, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), paymentId || null]
         );
       }

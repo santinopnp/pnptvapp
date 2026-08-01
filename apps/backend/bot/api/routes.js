@@ -3035,6 +3035,8 @@ app.post('/api/webapp/auth/resend-verification', authLimiter, asyncHandler(webAp
 app.get('/api/webapp/auth/x/start', asyncHandler(webAppController.xLoginStart));
 app.get('/api/webapp/auth/x/callback', asyncHandler(webAppController.xLoginCallback));
 app.post('/api/webapp/auth/x/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkX));
+app.get('/api/webapp/settings/x-auto-post', requireSessionAuth, asyncHandler(webAppController.getXAutoPostSettings));
+app.put('/api/webapp/settings/x-auto-post', requireSessionAuth, asyncHandler(webAppController.updateXAutoPostSettings));
 app.get('/api/me', asyncHandler(webAppController.authStatus));
 app.post('/api/webapp/auth/logout', asyncHandler(webAppController.logout));
 app.post('/api/webapp/auth/forgot-password', (_req, res) => res.status(410).json({ error: 'Password login has been removed. Use magic link to access your account.' }));
@@ -13417,22 +13419,25 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       const gross = Number(cashSplit.gross) || 0;
       const perCreator = Math.round(gross * (Number(cashSplit.perCreatorRate) || 0) * 100) / 100;
       const platformCut = Math.round(gross * (Number(cashSplit.platformRate) || 0) * 100) / 100;
+      // Composite UNIQUE (source_payment_id, creator_id) added in migration
+      // 341 — the ON CONFLICT clause dedups per-creator so a promo split
+      // across N co-founders writes N rows without racing on retry.
       for (const creatorId of cashSplit.creatorRecipients) {
         try {
-          const existing = await dbQuery(
-            `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
-            [order_id, String(creatorId)]
+          const ins = await dbQuery(
+            `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+             VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))
+             ON CONFLICT (source_payment_id, creator_id) DO NOTHING
+             RETURNING id`,
+            [String(creatorId), gross, perCreator, platformCut, String(HOLD_HRS), order_id]
           );
-          if (existing.rowCount === 0) {
-            await dbQuery(
-              `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
-               VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
-              [String(creatorId), gross, perCreator, platformCut, String(HOLD_HRS), order_id]
-            );
+          if (ins.rowCount > 0) {
             logger.info('[NOWPayments] promo_token_bundle: cash split recorded', { order_id, creatorId, gross, perCreator, platformCut });
           }
         } catch (splitErr) {
-          logger.warn('[NOWPayments] promo_token_bundle: cash split failed (non-critical)', { order_id, creatorId, error: splitErr.message });
+          // Genuine failures now (constraint dedup is handled by ON CONFLICT).
+          // Log as error, not warn — a split failure means the creator loses money.
+          logger.error('[NOWPayments] promo_token_bundle: cash split failed', { order_id, creatorId, error: splitErr.message });
         }
       }
     }
