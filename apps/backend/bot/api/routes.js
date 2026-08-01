@@ -13320,6 +13320,135 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
+  // promo_token_bundle: bespoke one-off promos (e.g. $40 pay → $50 buyer tokens +
+  // 10% shared bonus to co-founders + 20/40/40 cash split). All parameters live in
+  // DSO metadata — no plan row. Minted by apps/backend/scripts/mint-promo-bundle-*.js.
+  if (order.plan_id === 'promo_token_bundle') {
+    const bundleMeta = order.metadata || {};
+    const buyerTokens = Math.max(0, Math.floor(Number(bundleMeta.tokensForBuyer) || 0));
+    const bonusRecipients = Array.isArray(bundleMeta.bonusRecipients) ? bundleMeta.bonusRecipients : [];
+    const cashSplit = bundleMeta.cashSplit || null;
+    if (buyerTokens <= 0) {
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, 'promo_token_bundle:missing_tokensForBuyer']
+      ).catch(() => {});
+      throw new Error(`promo_token_bundle IPN: missing tokensForBuyer in metadata for order ${order_id}`);
+    }
+    const bundleLockKey = `nowpayments:promo_bundle:${order_id}`;
+    const bundleLockAcquired = await cache.acquireLock(bundleLockKey, 120).catch(() => true);
+    if (!bundleLockAcquired) {
+      logger.warn('[NOWPayments] IPN: promo_token_bundle credit already in flight, skipping', { order_id });
+      return res.json({ received: true });
+    }
+    let bundleNewBalance = null;
+    const bundleClient = await getPool().connect();
+    try {
+      await bundleClient.query('BEGIN');
+      const bundleUpd = await bundleClient.query(
+        `UPDATE dash_subscription_orders
+            SET status = 'completed', completed_at = NOW(), notes = $2
+          WHERE btcpay_invoice_id = $1 AND status IN ('pending','processing')
+         RETURNING id`,
+        [order_id, `nowpayments:promo_bundle:${payment_id}:buyer:${buyerTokens}:bonusRecipients:${bonusRecipients.length}`]
+      );
+      if (bundleUpd.rowCount === 0) {
+        await bundleClient.query('ROLLBACK');
+        logger.info('[NOWPayments] IPN: promo_token_bundle already completed elsewhere', { order_id });
+        cache.releaseLock(bundleLockKey).catch(() => {});
+        return res.json({ received: true });
+      }
+      const buyerBal = await bundleClient.query(
+        `INSERT INTO user_token_wallets (user_id, balance_tokens)
+              VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE
+           SET balance_tokens = user_token_wallets.balance_tokens + $2,
+               updated_at = NOW()
+         RETURNING balance_tokens, gifted_balance`,
+        [String(order.user_id), buyerTokens]
+      );
+      bundleNewBalance = (Number(buyerBal.rows[0].balance_tokens) || 0) + (Number(buyerBal.rows[0].gifted_balance) || 0);
+      for (const recip of bonusRecipients) {
+        const rUserId = recip && recip.userId ? String(recip.userId) : null;
+        const rTokens = Math.max(0, Math.floor(Number(recip?.tokens) || 0));
+        if (!rUserId || rTokens <= 0) continue;
+        await bundleClient.query(
+          `INSERT INTO user_token_wallets (user_id, balance_tokens)
+                VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE
+             SET balance_tokens = user_token_wallets.balance_tokens + $2,
+                 updated_at = NOW()`,
+          [rUserId, rTokens]
+        );
+      }
+      await bundleClient.query('COMMIT');
+      await Promise.all([
+        cache.del(`wallet:${order.user_id}`).catch(() => {}),
+        cache.del(`wallet:obj:${order.user_id}`).catch(() => {}),
+        ...bonusRecipients.map(r => r?.userId
+          ? Promise.all([
+              cache.del(`wallet:${r.userId}`).catch(() => {}),
+              cache.del(`wallet:obj:${r.userId}`).catch(() => {}),
+            ])
+          : Promise.resolve()),
+      ]);
+      try {
+        const io = require('../../services/socketSingleton').get();
+        if (io) {
+          io.to(`user:${order.user_id}`).emit('wallet:updated', { balance: bundleNewBalance, credited: buyerTokens });
+          for (const r of bonusRecipients) {
+            if (r?.userId) io.to(`user:${r.userId}`).emit('wallet:updated', { credited: Number(r.tokens) || 0, reason: 'promo_bundle_bonus' });
+          }
+        }
+      } catch (_) { /* non-fatal */ }
+      logger.info('[NOWPayments] IPN: promo_token_bundle credited', {
+        order_id, buyer: order.user_id, buyerTokens, bonusRecipients, newBalance: bundleNewBalance,
+      });
+    } catch (bundleErr) {
+      try { await bundleClient.query('ROLLBACK'); } catch (_) {}
+      logger.error('[NOWPayments] IPN: promo_token_bundle credit failed', { order_id, error: bundleErr.message });
+      throw bundleErr;
+    } finally {
+      bundleClient.release();
+      cache.releaseLock(bundleLockKey).catch(() => {});
+    }
+    if (cashSplit && cashSplit.gross > 0 && Array.isArray(cashSplit.creatorRecipients) && cashSplit.creatorRecipients.length > 0) {
+      const { EARNINGS_HOLD_HOURS: HOLD_HRS } = require('../../config/monetizationConfig');
+      const gross = Number(cashSplit.gross) || 0;
+      const perCreator = Math.round(gross * (Number(cashSplit.perCreatorRate) || 0) * 100) / 100;
+      const platformCut = Math.round(gross * (Number(cashSplit.platformRate) || 0) * 100) / 100;
+      for (const creatorId of cashSplit.creatorRecipients) {
+        try {
+          const existing = await dbQuery(
+            `SELECT id FROM creator_earnings WHERE source_payment_id = $1 AND creator_id = $2 LIMIT 1`,
+            [order_id, String(creatorId)]
+          );
+          if (existing.rowCount === 0) {
+            await dbQuery(
+              `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+               VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))`,
+              [String(creatorId), gross, perCreator, platformCut, String(HOLD_HRS), order_id]
+            );
+            logger.info('[NOWPayments] promo_token_bundle: cash split recorded', { order_id, creatorId, gross, perCreator, platformCut });
+          }
+        } catch (splitErr) {
+          logger.warn('[NOWPayments] promo_token_bundle: cash split failed (non-critical)', { order_id, creatorId, error: splitErr.message });
+        }
+      }
+    }
+    try {
+      const PaymentNotifSvcBundle = require('../../services/paymentNotificationService');
+      await PaymentNotifSvcBundle.deliverPurchaseConfirmation(order.user_id, {
+        planId: 'promo_token_bundle',
+        planName: `${buyerTokens} PNP Tokens (promo bundle)`,
+        amount: parseFloat(order.usd_amount) || 0,
+        transactionId: String(payment_id),
+        provider: 'nowpayments',
+      });
+    } catch (_) { /* non-fatal */ }
+    return res.json({ received: true });
+  }
+
   // Scoped resource purchase (channel_access / hangout_access via NowPayments)
   const orderMetaScoped = order.metadata || {};
   if ((order.plan_id === 'channel_access' || order.plan_id === 'hangout_access') &&
