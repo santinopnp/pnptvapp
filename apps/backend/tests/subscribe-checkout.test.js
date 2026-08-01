@@ -243,7 +243,7 @@ describe('POST /api/subscriptions/checkout', () => {
     const app = buildApp(AUTHED_USER);
     const res = await request(app)
       .post('/api/subscriptions/checkout')
-      .send({ planId: 'prime_monthly', provider: 'stripe' });
+      .send({ planId: 'prime_monthly', provider: 'nowpayments' });
 
     expect(res.status).toBe(410);
     expect(res.body.code).toBe('CHECKOUT_RETIRED');

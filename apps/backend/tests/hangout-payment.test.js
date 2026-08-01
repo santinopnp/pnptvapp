@@ -328,7 +328,7 @@ describe('POST /api/webapp/hangouts/groups/:id/purchase — validation', () => {
     const app = buildApp(AUTHED_USER);
     const res = await request(app)
       .post('/api/webapp/hangouts/groups/42/purchase')
-      .send({ provider: 'stripe' });
+      .send({ provider: 'paypal' });
 
     expect(res.status).toBe(400);
   });

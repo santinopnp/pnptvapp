@@ -200,7 +200,7 @@ describe('hasResourceAccess — channel', () => {
   });
 
   it('allows a subscription channel when user has creator-subscription entitlement', async () => {
-    // creator-subscription (from Stripe/ePayco subscription) is checked after channel-access
+    // creator-subscription (from NowPayments subscription) is checked after channel-access
     queueDb(
       [],                                          // isBanned=false
       [{ id: 'c-sub', access_type: 'subscription', creator_id: 'u-creator' }],

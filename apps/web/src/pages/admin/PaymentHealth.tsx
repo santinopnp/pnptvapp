@@ -206,16 +206,6 @@ export default function PaymentHealth() {
         </button>
       </div>
 
-      {/* Stripe py_* gap notice */}
-      <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3">
-        <p className="text-sm text-amber-300 font-medium">Stripe 2026-06-09 bulk refund gap</p>
-        <p className="text-xs text-amber-400/80 mt-1">
-          Stripe's June 9 refund missed all <span className="font-mono">py_*</span> (non-card) charges.
-          16 affected users have been identified and given time-shifted subscription restoration manually.
-          Walk <span className="font-mono">cs → sub → invoice → pi → charge</span> to verify refund status per user before granting additional compensation.
-        </p>
-      </div>
-
       {/* Summary tiles */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <StatusPill count={total} label="Stuck Total" />

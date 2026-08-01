@@ -330,7 +330,7 @@ describe('POST /api/webapp/channels/:channelId/purchase — validation', () => {
     const app = buildApp(AUTHED_USER);
     const res = await request(app)
       .post('/api/webapp/channels/55/purchase')
-      .send({ provider: 'stripe' });
+      .send({ provider: 'paypal' });
 
     expect(res.status).toBe(400);
   });

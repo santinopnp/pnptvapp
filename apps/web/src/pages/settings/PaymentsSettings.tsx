@@ -365,7 +365,6 @@ export default function PaymentsSettings() {
                   providerRaw === "usdt" ? p.txMethodUsdt :
                   providerRaw === "btc" ? p.txMethodBtc :
                   providerRaw === "manual" ? p.txMethodManual :
-                  providerRaw === "stripe" ? "Stripe" :
                   providerRaw || null;
 
                 const providerColor =
@@ -374,7 +373,6 @@ export default function PaymentsSettings() {
                   providerRaw === "epayco" || providerRaw === "card" ? { bg: "rgba(52,199,89,0.15)", fg: "#34C759" } :
                   providerRaw === "usdc" ? { bg: "rgba(39,117,202,0.15)", fg: "#2775CA" } :
                   providerRaw === "usdt" ? { bg: "rgba(38,161,123,0.15)", fg: "#26A17B" } :
-                  providerRaw === "stripe" ? { bg: "rgba(99,91,255,0.15)", fg: "#635BFF" } :
                   { bg: "rgba(255,255,255,0.08)", fg: "var(--pnp-text-secondary)" };
 
                 const statusLower = (pay.status ?? "").toLowerCase();
