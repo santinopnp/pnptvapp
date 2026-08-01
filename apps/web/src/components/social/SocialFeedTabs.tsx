@@ -384,13 +384,9 @@ export default function SocialFeedTabs({
 
   return (
     <div>
-      {/* Section header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Feed</h1>
-          <p className="text-sm mt-1 text-pnp-textSecondary">Share posts, reactions & updates with the community</p>
-        </div>
-      </div>
+      {/* Section header removed — the tabs + composer are self-explanatory and
+          the redundant "PNP Feed" title was eating ~64px of prime mobile
+          real-estate before any content appeared. */}
 
       {/* Spotlight — 132×176 cards: live streams first, then online performers.
           Live cards autoplay the muted HLS preview; online cards show a static
@@ -492,11 +488,13 @@ export default function SocialFeedTabs({
       )}
 
       {/* Feed selector (2026-07-24). Default = Latest. Users can reorder tabs
-          via the "Edit order" button; the order persists in localStorage. */}
+          via the pen-icon button; the order persists in localStorage.
+          Restyled 2026-08-01: active tab uses a filled pill instead of the
+          bottom-border underline for a cleaner, more modern look. */}
       {canShowTabs && (
-        <div className="flex items-center border-b border-pnp-border mb-4 gap-1">
+        <div className="flex items-center gap-1 mb-3">
           <div
-            className="flex flex-1 overflow-x-auto no-scrollbar"
+            className="flex flex-1 items-center gap-1 overflow-x-auto no-scrollbar py-1"
             role="tablist"
             aria-label="Feed filters"
           >
@@ -543,7 +541,12 @@ export default function SocialFeedTabs({
                     setNextCursor(null);
                     setIsLoading(true);
                   }}
-                  className={`flex-shrink-0 px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors ${isActive ? "text-white border-b-2 border-pnp-accent" : "text-pnp-textSecondary"} ${isEditingTabs ? "cursor-grab active:cursor-grabbing bg-white/[0.04] rounded-md mx-0.5 my-1" : ""}`}
+                  className={`flex-shrink-0 px-3.5 py-1.5 text-sm font-semibold whitespace-nowrap rounded-full transition-all ${
+                    isActive
+                      ? "text-white bg-white/10 shadow-sm"
+                      : "text-pnp-textSecondary hover:text-white hover:bg-white/[0.04]"
+                  } ${isEditingTabs ? "cursor-grab active:cursor-grabbing ring-1 ring-white/15" : ""}`}
+                  style={isActive ? { boxShadow: "inset 0 0 0 1px rgba(212,0,122,0.35)" } : undefined}
                   title={isEditingTabs ? t.dragToReorder : undefined}
                 >
                   {isEditingTabs && (
@@ -554,12 +557,12 @@ export default function SocialFeedTabs({
               );
             })}
           </div>
-          <div className="flex items-center gap-1 pl-1 pr-1 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
             {isEditingTabs && (
               <button
                 type="button"
                 onClick={resetTabOrder}
-                className="text-[11px] font-medium text-pnp-textSecondary hover:text-white px-2 py-1"
+                className="text-[11px] font-medium text-pnp-textSecondary hover:text-white px-2 py-1 rounded-md"
               >
                 {t.resetTabOrder}
               </button>
@@ -567,10 +570,22 @@ export default function SocialFeedTabs({
             <button
               type="button"
               onClick={() => setIsEditingTabs((v) => !v)}
-              className={`text-[11px] font-semibold px-2 py-1 rounded-md transition-colors ${isEditingTabs ? "text-white bg-pnp-accent" : "text-pnp-textSecondary hover:text-white"}`}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
+                isEditingTabs ? "text-white bg-pnp-accent" : "text-pnp-textSecondary hover:text-white hover:bg-white/5"
+              }`}
               aria-pressed={isEditingTabs}
+              aria-label={isEditingTabs ? t.doneEditingOrder : t.editTabOrder}
+              title={isEditingTabs ? t.doneEditingOrder : t.editTabOrder}
             >
-              {isEditingTabs ? t.doneEditingOrder : t.editTabOrder}
+              {isEditingTabs ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
@@ -614,7 +629,7 @@ export default function SocialFeedTabs({
 
       {/* Post Composer */}
       {showComposer && isAuthenticated && (
-        <div className="mb-6">
+        <div className="mb-4">
           <PostComposer
             compact
             onPostCreated={(newPost) => {
@@ -673,22 +688,33 @@ export default function SocialFeedTabs({
           </button>
         </div>
       ) : posts.length === 0 ? (
-        <div className="glass-card-sm p-8 text-center">
-          <svg
-            className="w-12 h-12 mx-auto mb-3"
-            style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+        <div
+          className="rounded-2xl p-10 text-center"
+          style={{
+            background: "linear-gradient(135deg, rgba(212,0,122,0.06), rgba(230,145,56,0.04))",
+            border: "1px solid rgba(255,255,255,0.06)",
+          }}
+        >
+          <div
+            className="w-14 h-14 mx-auto mb-3 rounded-2xl flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.15), rgba(230,145,56,0.10))" }}
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-            />
-          </svg>
-          <p className="text-white font-medium mb-1">{t.noPostsYet}</p>
+            <svg
+              className="w-7 h-7"
+              style={{ color: "#D4007A" }}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+              />
+            </svg>
+          </div>
+          <p className="text-white font-semibold mb-1">{t.noPostsYet}</p>
           <p className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             {t.beTheFirst}
           </p>
