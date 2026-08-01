@@ -514,25 +514,9 @@ function YouSheet({ onClose, onSwitchMode }: { onClose: () => void; onSwitchMode
   );
 }
 
-// ── Cruise switch FAB — shown in Classic mode for santinofurioso ─────────────
-function CruiseSwitchFAB({ onSwitch }: { onSwitch: () => void }) {
-  const { nav } = useI18n();
-  return (
-    <button
-      onClick={onSwitch}
-      className="fixed left-2 bottom-24 z-[99] lg:hidden flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-semibold opacity-70 hover:opacity-100 transition-opacity"
-      style={{
-        background: "rgba(22,22,30,.85)",
-        border: "1px solid rgba(212,0,122,.25)",
-        color: "#D4007A",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
-      }}
-    >
-      {nav.cruiseModeFab || "🚢 Cruise Mode"}
-    </button>
-  );
-}
+// Cruise switch is now surfaced in Settings → Preferences (2026-08-01).
+// The old floating FAB was noisy and confused users who tapped it by accident;
+// the toggle lives with other display/nav preferences instead.
 
 // ── Floating Island Nav ──────────────────────────────────────────────────────
 function FloatingIslandNav({ onSwitchMode }: { onSwitchMode: (mode: NavMode) => void }) {
@@ -657,11 +641,17 @@ export function BottomNav() {
     setNavMode(mode);
   }, []);
 
+  // Settings → Preferences pushes mode changes into the app without a full
+  // reload — listen for the CustomEvent it dispatches.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<NavMode>).detail;
+      if (next === "classic" || next === "island") setNavMode(next);
+    };
+    window.addEventListener("pnp-nav-mode-change", handler);
+    return () => window.removeEventListener("pnp-nav-mode-change", handler);
+  }, []);
+
   if (navMode === "island") return <FloatingIslandNav onSwitchMode={switchMode} />;
-  return (
-    <>
-      <ClassicNav />
-      <CruiseSwitchFAB onSwitch={() => switchMode("island")} />
-    </>
-  );
+  return <ClassicNav />;
 }

@@ -54,9 +54,9 @@ const UPDATE_MESSAGES: RawMessage[] = [
   },
   {
     category: "UPDATE",
-    en: "🚢 Cruise Mode is here — a sleek floating nav for a cleaner browsing experience. Tap the ship to try it!",
-    es: "🚢 Cruise Mode ya está disponible — una navegación flotante para una experiencia más limpia. ¡Toca el barco!",
-    href: "/",
+    en: "🚢 Cruise Mode & 📍 Share Location now live under Settings → Preferences. Tap here →",
+    es: "🚢 Cruise Mode y 📍 Compartir ubicación ahora están en Ajustes → Preferencias. Toca aquí →",
+    href: "/settings/preferences",
   },
   {
     category: "UPDATE",
