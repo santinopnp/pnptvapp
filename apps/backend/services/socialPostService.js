@@ -1257,10 +1257,12 @@ class SocialPostService {
         AND (u.creator_status IS NULL OR u.creator_status != 'active')`;
     } else if (f === 'nearby') {
       // Posts from users within ~50km using bounding-box haversine approx.
-      // Viewer must have a location on record; else return empty set.
+      // Source: user_locations (the table nearbyService writes to on location share).
+      // users.location_lat/lng is legacy — never populated by the current share flow.
       const viewerLocRes = await query(
-        `SELECT location_lat::float AS lat, location_lng::float AS lng
-           FROM users WHERE id = $1`,
+        `SELECT latitude::float AS lat, longitude::float AS lng
+           FROM user_locations
+          WHERE user_id = $1 AND last_seen > NOW() - INTERVAL '365 days'`,
         [userId]
       );
       const vLat = viewerLocRes.rows[0]?.lat;
@@ -1276,9 +1278,10 @@ class SocialPostService {
       const iLatMax = params.length - 2;
       const iLngMin = params.length - 1;
       const iLngMax = params.length;
-      extraWhere = `AND u.location_lat IS NOT NULL AND u.location_lng IS NOT NULL
-        AND u.location_lat::float BETWEEN $${iLatMin} AND $${iLatMax}
-        AND u.location_lng::float BETWEEN $${iLngMin} AND $${iLngMax}`;
+      extraJoin = `JOIN user_locations ul_near ON ul_near.user_id = u.id
+        AND ul_near.latitude::float  BETWEEN $${iLatMin} AND $${iLatMax}
+        AND ul_near.longitude::float BETWEEN $${iLngMin} AND $${iLngMax}
+        AND ul_near.last_seen > NOW() - INTERVAL '365 days'`;
     } else if (f === 'hot') {
       // Last 48h; ordered by engagement score (server-side). Ignore cursor —
       // 'hot' is a bounded window of ~30 posts, no infinite scroll.
