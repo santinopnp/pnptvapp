@@ -70,13 +70,26 @@ function extractChannelRef(streamId: string): string | null {
 // Portals children into document.fullscreenElement while the browser is in
 // native fullscreen, so modals / bottom sheets stay visible over the video.
 // Falls back to document.body outside fullscreen. Re-mounts on FS change.
+// Safari (iOS/macOS) still fires the webkit-prefixed event + exposes the FS
+// element on document.webkitFullscreenElement — listen on both.
 function FullscreenPortal({ children }: { children: React.ReactNode }) {
-  const [host, setHost] = useState<HTMLElement | null>(null);
+  const [host, setHost] = useState<HTMLElement | null>(() => {
+    if (typeof document === "undefined") return null;
+    const d = document as Document & { webkitFullscreenElement?: Element };
+    return ((d.fullscreenElement ?? d.webkitFullscreenElement) as HTMLElement) ?? document.body;
+  });
   useEffect(() => {
-    const pick = () => setHost((document.fullscreenElement as HTMLElement) ?? document.body);
+    const pick = () => {
+      const d = document as Document & { webkitFullscreenElement?: Element };
+      setHost(((d.fullscreenElement ?? d.webkitFullscreenElement) as HTMLElement) ?? document.body);
+    };
     pick();
     document.addEventListener("fullscreenchange", pick);
-    return () => document.removeEventListener("fullscreenchange", pick);
+    document.addEventListener("webkitfullscreenchange", pick);
+    return () => {
+      document.removeEventListener("fullscreenchange", pick);
+      document.removeEventListener("webkitfullscreenchange", pick);
+    };
   }, []);
   if (!host) return null;
   return createPortal(children, host);

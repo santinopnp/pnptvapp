@@ -128,29 +128,21 @@ class HypeBotScheduler {
 
     if (eligibleStreamIds.length === 0) return;
 
-    // Look up creator hype_bot_enabled + language for all eligible streams.
-    // streamId in the socket room / redis viewers key is whatever the client
-    // sent to live:join — this can be either:
-    //   (a) a live_streams.id UUID (DB-tracked ticketed/scheduled show), or
-    //   (b) a Restreamer channel slug matched against users.live_channel
-    //       (e.g. "pnptv-lex" — the common case for regular creator streams).
-    // Query both mappings and dedupe.
+    // Look up creator hype_bot_enabled + language for eligible streams.
+    // The room / redis viewers key is whatever the client sent to live:join.
+    // In practice that is a Restreamer channel slug matched against
+    // users.live_channel (e.g. "pnptv-lex"). live_streams is legacy scheduling
+    // metadata — its `status` column only ever holds 'ended', so a UUID-branch
+    // join there would never match a live show. Rely on Redis viewer presence
+    // (≥2 viewers) as the liveness signal; the scan above already filtered by it.
     let dbRows = [];
     try {
       const { rows } = await query(
-        `SELECT stream_id, hype_bot_enabled, language FROM (
-           SELECT ls.id::text AS stream_id, u.hype_bot_enabled,
-                  COALESCE(u.language, 'en') AS language
-             FROM live_streams ls
-             JOIN users u ON u.id = ls.creator_id
-            WHERE ls.id::text = ANY($1::text[])
-              AND ls.is_live = true
-           UNION
-           SELECT u.live_channel AS stream_id, u.hype_bot_enabled,
-                  COALESCE(u.language, 'en') AS language
-             FROM users u
-            WHERE u.live_channel = ANY($1::text[])
-         ) rows`,
+        `SELECT u.live_channel AS stream_id,
+                u.hype_bot_enabled,
+                COALESCE(u.language, 'en') AS language
+           FROM users u
+          WHERE u.live_channel = ANY($1::text[])`,
         [eligibleStreamIds]
       );
       dbRows = rows;
