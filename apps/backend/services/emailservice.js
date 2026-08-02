@@ -395,30 +395,10 @@ class EmailService {
         return { success: false, messageId: null, mode: 'suppressed' };
       }
 
-      // Primary path: Hostinger Mail HTTP API (more reliable than SMTP, no auth rotation issues)
-      if (HOSTINGER_API_KEY) {
-        try {
-          const result = await this.sendViaHostingerApi({ to, subject, html, text });
-          const messageId = `hostinger-${Date.now()}`;
-          await this._trackSent(messageId, { to, subject, from: 'noreply@pnptv.app', transporter: 'hostinger-api' });
-          logger.info('Email sent via Hostinger API:', { to, subject });
-          return { success: true, messageId, mode: 'hostinger-api' };
-        } catch (apiErr) {
-          // Rate-limit responses (4.7.1 / hostinger_out_ratelimit) are per-account,
-          // and SMTP hits the same account — falling back just piles on and
-          // triggers auth-blocking (535) as Hostinger flags the source. Fail
-          // fast for this case so the caller can retry later at their own cadence.
-          const msg = apiErr.message || '';
-          const rateLimited = /4\.7\.1|ratelimit|rate.?limit|too many|429/i.test(msg);
-          if (rateLimited) {
-            logger.warn('[email] Hostinger API rate-limited — SKIPPING SMTP fallback (same account):', { error: msg, to });
-            return { success: false, messageId: null, mode: 'rate-limited', error: msg };
-          }
-          logger.warn('[email] Hostinger API failed, falling back to SMTP:', { error: msg, to });
-        }
-      }
-
-      // Fallback: SMTP transporter
+      // SMTP transporter (Hostinger API primary path removed 2026-08-02 —
+      // api.mail.hostinger.com/v1/mailboxes returns 404 for any endpoint,
+      // every send was silently falling through to SMTP anyway. The
+      // sendViaHostingerApi helper is kept for legacy broadcast scripts.)
       if (!this.transporters.pnptv) {
         logger.info('Email would be sent (no transporter configured):', {
           to,
