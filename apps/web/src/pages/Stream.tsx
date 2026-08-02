@@ -1645,6 +1645,10 @@ function StreamInner() {
         />
       )}
 
+      {/* Entry gate, raid overlays and raid toasts — all wrapped so they stay
+           visible when the browser is in native fullscreen (they'd otherwise
+           be siblings of videoContainerRef and clipped by the FS element). */}
+      <FullscreenPortal>
       {/* Entry gate — runs after rules ack; spinner while checking, wall if denied */}
       {rulesAcknowledged && !isStreamOwner && !entryChecked && (
         <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-pnp-background/90 backdrop-blur-sm">
@@ -1794,6 +1798,7 @@ function StreamInner() {
           </button>
         </div>
       )}
+      </FullscreenPortal>
 
       {/* ── Header bar — desktop only (mobile uses the full-bleed video overlay below),
            with the streamer identity block from the design pass ── */}
@@ -3875,9 +3880,11 @@ function StreamInner() {
           onSuccess={(newBalance) => { setTokenBalance(newBalance); setOutOfTokens(false); }}
         />
       </FullscreenPortal>
+      <FullscreenPortal>
       {showTutorial && !rulesLoading && rulesAcknowledged && !(typeof window !== "undefined" && window.innerWidth < 768) && (
         <TutorialOverlay section="stream" onDismiss={dismissTutorial} onDismissForever={dismissForever} />
       )}
+      </FullscreenPortal>
     </div>
   );
 }
