@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Card, Skeleton, Badge } from "@pnptv/ui-kit";
@@ -64,6 +65,21 @@ function extractChannelRef(streamId: string): string | null {
   // or could be a legacy full process ID (e.g. "restreamer-ui:ingest:pnptv-santino")
   const match = streamId.match(/restreamer-ui:ingest:([\w-]+)/);
   return match ? match[1] : streamId;
+}
+
+// Portals children into document.fullscreenElement while the browser is in
+// native fullscreen, so modals / bottom sheets stay visible over the video.
+// Falls back to document.body outside fullscreen. Re-mounts on FS change.
+function FullscreenPortal({ children }: { children: React.ReactNode }) {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const pick = () => setHost((document.fullscreenElement as HTMLElement) ?? document.body);
+    pick();
+    document.addEventListener("fullscreenchange", pick);
+    return () => document.removeEventListener("fullscreenchange", pick);
+  }, []);
+  if (!host) return null;
+  return createPortal(children, host);
 }
 
 // ── Virtualized chat message list (react-window v2) ───────────────────────
@@ -2492,9 +2508,12 @@ function StreamInner() {
           )}
         </div>
 
-        {/* Tip Leaderboard overlay — desktop only, toggled by trophy button */}
+        {/* Tip Leaderboard overlay — desktop only, toggled by trophy button.
+             Portaled + fixed so it stays visible when the browser is in native
+             fullscreen (the sheet would otherwise fall outside videoContainerRef). */}
+        <FullscreenPortal>
         {showLeaderboard && (
-          <div className="hidden md:block absolute top-3 right-3 z-40 w-52 rounded-xl bg-black/80 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
+          <div className="hidden md:block fixed top-3 right-3 z-[80] w-52 rounded-xl bg-black/80 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <span className="text-[11px] font-bold text-white">Tip Leaderboard</span>
               <button onClick={() => setShowLeaderboard(false)} className="text-white/50 hover:text-white text-xs" aria-label="Close leaderboard">✕</button>
@@ -2530,6 +2549,7 @@ function StreamInner() {
             </div>
           </div>
         )}
+        </FullscreenPortal>
       </div>
 
           {/* ── Billing status banner — desktop; mobile shows a compact pill in the video overlay ── */}
@@ -2706,9 +2726,13 @@ function StreamInner() {
                 </div>
               )}
 
-              {/* ── MOBILE-ONLY: tip/wallet/book-call sheet, opened by the Tip button in the video overlay ── */}
+              {/* ── Tip/wallet/book-call sheet, opened by the Tip button in the video overlay.
+                     Wrapped in FullscreenPortal so it stays visible while the browser
+                     is in native fullscreen (the sheet would otherwise be outside
+                     videoContainerRef and hidden by the FS element). ── */}
+              <FullscreenPortal>
               {showTipSheet && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
-                <div className="md:hidden fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Tip and support this creator">
+                <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Tip and support this creator">
                   <div className="absolute inset-0 bg-black/60" onClick={() => setShowTipSheet(false)} />
                   <div className="absolute left-0 right-0 bottom-0 max-h-[80dvh] overflow-y-auto rounded-t-2xl bg-pnp-surface border-t border-pnp-border px-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] pt-1">
                     <div className="sticky -mt-1 top-0 bg-pnp-surface flex items-center justify-center py-2" aria-hidden="true">
@@ -3039,7 +3063,8 @@ function StreamInner() {
                   {/* end sheet panel */}
                 </div>
               )}
-              {/* end mobile tip sheet */}
+              </FullscreenPortal>
+              {/* end tip sheet */}
 
             </div>
             {/* end scrollable left area */}
@@ -3830,11 +3855,13 @@ function StreamInner() {
       </div>
       {/* end main content */}
 
-      <BuyTokensModal
-        isOpen={showTopUp || outOfTokens}
-        onClose={() => { setShowTopUp(false); setOutOfTokens(false); }}
-        onSuccess={(newBalance) => { setTokenBalance(newBalance); setOutOfTokens(false); }}
-      />
+      <FullscreenPortal>
+        <BuyTokensModal
+          isOpen={showTopUp || outOfTokens}
+          onClose={() => { setShowTopUp(false); setOutOfTokens(false); }}
+          onSuccess={(newBalance) => { setTokenBalance(newBalance); setOutOfTokens(false); }}
+        />
+      </FullscreenPortal>
       {showTutorial && !rulesLoading && rulesAcknowledged && !(typeof window !== "undefined" && window.innerWidth < 768) && (
         <TutorialOverlay section="stream" onDismiss={dismissTutorial} onDismissForever={dismissForever} />
       )}
