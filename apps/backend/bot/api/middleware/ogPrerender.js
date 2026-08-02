@@ -39,7 +39,12 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function renderOgHtml({ title, description, image, url, type = 'website', imageWidth, imageHeight, twitterCard }) {
+function renderOgHtml({
+  title, description, image, url, type = 'website', imageWidth, imageHeight, twitterCard,
+  // Video / player extensions (optional): og:video + twitter:player tags
+  video, videoType, videoWidth, videoHeight,
+  playerUrl, playerWidth, playerHeight, playerStream, playerStreamType,
+}) {
   const safeTitle = escapeHtml(title || DEFAULT_TITLE);
   const safeDesc = escapeHtml(description || DEFAULT_DESC);
   const safeImage = escapeHtml(image || DEFAULT_IMAGE);
@@ -48,6 +53,25 @@ function renderOgHtml({ title, description, image, url, type = 'website', imageW
   const w = imageWidth || 1200;
   const h = imageHeight || 630;
   const card = twitterCard || 'summary_large_image';
+
+  // og:video block — rendered when a video URL is provided. Facebook, WhatsApp,
+  // Telegram, iMessage and Slack all inline-preview using these tags.
+  const videoBlock = video ? `
+  <meta property="og:video" content="${escapeHtml(video)}" />
+  <meta property="og:video:secure_url" content="${escapeHtml(video)}" />
+  <meta property="og:video:type" content="${escapeHtml(videoType || 'video/mp4')}" />
+  <meta property="og:video:width" content="${videoWidth || w}" />
+  <meta property="og:video:height" content="${videoHeight || h}" />` : '';
+
+  // twitter:player block — only when the card is "player" and we have an
+  // https iframe URL. X requires HTTPS + no framing restrictions on the
+  // player page. See apps/web/public/live-embed.html.
+  const playerBlock = (card === 'player' && playerUrl) ? `
+  <meta name="twitter:player" content="${escapeHtml(playerUrl)}" />
+  <meta name="twitter:player:width" content="${playerWidth || 1280}" />
+  <meta name="twitter:player:height" content="${playerHeight || 720}" />${playerStream ? `
+  <meta name="twitter:player:stream" content="${escapeHtml(playerStream)}" />
+  <meta name="twitter:player:stream:content_type" content="${escapeHtml(playerStreamType || 'video/mp4')}" />` : ''}` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -64,12 +88,12 @@ function renderOgHtml({ title, description, image, url, type = 'website', imageW
   <meta property="og:image:secure_url" content="${safeImage}" />
   <meta property="og:image:width" content="${w}" />
   <meta property="og:image:height" content="${h}" />
-  <meta property="og:image:alt" content="${safeImageAlt}" />
+  <meta property="og:image:alt" content="${safeImageAlt}" />${videoBlock}
   <meta name="twitter:card" content="${card}" />
   <meta name="twitter:site" content="@pnptv" />
   <meta name="twitter:title" content="${safeTitle}" />
   <meta name="twitter:description" content="${safeDesc}" />
-  <meta name="twitter:image" content="${safeImage}" />
+  <meta name="twitter:image" content="${safeImage}" />${playerBlock}
   <meta http-equiv="refresh" content="0;url=${safeUrl}" />
 </head>
 <body><p>Redirecting to <a href="${safeUrl}">${safeTitle}</a>...</p></body>
@@ -177,6 +201,15 @@ async function getLiveOg(streamId) {
     // so crawlers never get a 401/404 and the card always renders something.
     const snapshotUrl = `${BASE_URL}/api/og/snapshot/${channelRef}.jpg`;
 
+    // Live HLS manifest — Restreamer memfs. Facebook / WhatsApp / Telegram /
+    // iMessage / Slack use og:video to inline-preview the live feed.
+    const hlsUrl = `${process.env.LIVE_HLS_BASE_URL || 'https://live.pnptv.app'}/memfs/${channelRef}.m3u8`;
+
+    // Iframe player page (static — apps/web/public/live-embed.html) for
+    // twitter:card=player. X shows an inline video preview when the tweet is
+    // expanded. The player reads ?ref=<channelRef> and loads HLS via hls.js.
+    const playerUrl = `${BASE_URL}/live-embed.html?ref=${encodeURIComponent(channelRef)}`;
+
     return {
       title: title || `🔴 ${streamer} is LIVE — Real Models. Real Clouds.`,
       description: description || `Watch ${streamer} stream live on PNPtv! Real models, real clouds. Join now 🌫️🔞 — pnptv.app`,
@@ -185,7 +218,14 @@ async function getLiveOg(streamId) {
       imageHeight: 720,
       url: `${BASE_URL}/live/${streamId}`,
       type: 'video.other',
-      twitterCard: 'summary_large_image',
+      twitterCard: 'player',
+      video: hlsUrl,
+      videoType: 'application/vnd.apple.mpegurl',
+      videoWidth: 1280,
+      videoHeight: 720,
+      playerUrl,
+      playerWidth: 1280,
+      playerHeight: 720,
     };
   } catch (err) {
     logger.warn('OG prerender: stream lookup failed', { streamId, error: err.message });
@@ -287,6 +327,18 @@ function ogServiceToRenderOg(og, fallbackUrl) {
     imageWidth: og.imageWidth || null,
     imageHeight: og.imageHeight || null,
     twitterCard: og.twitterCard || null,
+    // Forward video / player fields so getVideoPreviewOG and getLiveOg both
+    // get inline previews on Facebook / WhatsApp / iMessage / Slack (og:video)
+    // and X (twitter:player).
+    video: og.video || null,
+    videoType: og.videoType || null,
+    videoWidth: og.videoWidth || null,
+    videoHeight: og.videoHeight || null,
+    playerUrl: og.playerUrl || null,
+    playerWidth: og.playerWidth || null,
+    playerHeight: og.playerHeight || null,
+    playerStream: og.playerStream || null,
+    playerStreamType: og.playerStreamType || null,
   };
 }
 
