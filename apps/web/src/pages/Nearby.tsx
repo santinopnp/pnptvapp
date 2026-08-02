@@ -891,6 +891,7 @@ export default function Nearby() {
   const watchIdRef = useRef<number | null>(null);
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSentRef = useRef<{ lat: number; lng: number; at: number } | null>(null);
+  const lastFetchedRef = useRef<{ lat: number; lng: number; rad: number; at: number } | null>(null);
 
   // ── Derived data ───────────────────────────────────────────────────────────
   const filteredPlaces = placeCategory
@@ -919,7 +920,17 @@ export default function Nearby() {
   }, [selectedPlace]);
 
   // ── Fetch nearby (Real World) ─────────────────────────────────────────────
-  const fetchNearby = useCallback(async (lat: number, lng: number, rad: number) => {
+  const fetchNearby = useCallback(async (lat: number, lng: number, rad: number, force = false) => {
+    const now = Date.now();
+    const last = lastFetchedRef.current;
+    if (!force && last) {
+      const elapsed = now - last.at;
+      const dlat = (lat - last.lat) * 111_000;
+      const dlng = (lng - last.lng) * 111_000 * Math.cos(lat * Math.PI / 180);
+      const movedMeters = Math.sqrt(dlat * dlat + dlng * dlng);
+      if (elapsed < 10_000 && movedMeters < 50 && rad === last.rad) return;
+    }
+    lastFetchedRef.current = { lat, lng, rad, at: now };
     try {
       setIsSearching(true);
       const [usersData, placesData] = await Promise.allSettled([

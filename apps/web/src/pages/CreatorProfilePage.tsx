@@ -29,6 +29,7 @@ import {
   ChevronUp,
   Diamond,
   X,
+  Video,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
@@ -52,6 +53,7 @@ import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import PostCard from "@/components/profile/PostCard";
+import { PostComposer } from "@/components/PostComposer";
 import { SuggestedCreatorRow, useForYou } from "@/components/Layout";
 import { useI18n } from "@/lib/i18n";
 import { formatBio } from "@/lib/feedI18n";
@@ -422,6 +424,8 @@ export default function CreatorProfilePage() {
     setBookCallDuration(dur);
     setShowBookCall(true);
   }, [data?.creator?.id, isAuthenticated, searchParams]);
+
+  const [showVideoUploadModal, setShowVideoUploadModal] = useState(false);
 
   // Load manual lazily when the collapsible card is first expanded
   useEffect(() => {
@@ -857,13 +861,22 @@ export default function CreatorProfilePage() {
             </div>
           )}
           {isOwnProfile && (
-            <button
-              onClick={() => navigate("/creator?tab=settings")}
-              className="w-full lg:max-w-md py-3 rounded-xl text-sm font-bold text-white mb-2.5 border transition-opacity hover:opacity-90"
-              style={{ borderColor: "rgba(255,255,255,0.15)", background: "transparent" }}
-            >
-              <Pencil size={14} className="inline mr-2" /> Edit profile & settings
-            </button>
+            <div className="w-full lg:max-w-md flex gap-2 mb-2.5">
+              <button
+                onClick={() => navigate("/creator?tab=settings")}
+                className="flex-1 py-3 rounded-xl text-sm font-bold text-white border transition-opacity hover:opacity-90 flex items-center justify-center gap-1.5"
+                style={{ borderColor: "rgba(255,255,255,0.15)", background: "transparent" }}
+              >
+                <Pencil size={14} /> Edit profile
+              </button>
+              <button
+                onClick={() => setShowVideoUploadModal(true)}
+                className="flex-1 py-3 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 flex items-center justify-center gap-1.5 shadow-lg"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                <Video size={14} /> Upload Video
+              </button>
+            </div>
           )}
 
           {(unusedCredit30 || unusedCredit60) && (
@@ -993,11 +1006,56 @@ export default function CreatorProfilePage() {
           </div>
 
           {/* Tabs */}
-          {/* Wall — single chronological list of every post. Exclusive posts
-              are locked for non-subscribers (with Subscribe CTA); unlocked
-              exclusives get a small 💎 PAID badge so viewers know it's
-              premium content they've unlocked. */}
+          {/* Wall — single chronological list of every post. */}
           <div className="space-y-3">
+            {/* Creator Video Upload Entry Card above the post wall */}
+            {isOwnProfile && (
+              <div className="mb-4 p-4 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Video className="w-5 h-5 text-pink-500" />
+                    <h3 className="text-sm font-bold text-white">Upload Video & Create Post</h3>
+                  </div>
+                  <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-semibold border border-pink-500/30">
+                    ✨ AI Generator Enabled
+                  </span>
+                </div>
+                <PostComposer
+                  onPostCreated={(newPost) => {
+                    setPosts((prev) => [newPost, ...prev]);
+                  }}
+                  placeholder="What's happening? Attach a video or photo with AI title, description & tags..."
+                />
+              </div>
+            )}
+
+            {/* Video Upload Modal */}
+            {showVideoUploadModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" onClick={() => setShowVideoUploadModal(false)}>
+                <div className="relative w-full max-w-lg bg-[#1C1C1E] border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                    <div className="flex items-center gap-2 text-white font-bold text-base">
+                      <Video className="w-5 h-5 text-pink-500" />
+                      <span>Upload Video</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowVideoUploadModal(false)}
+                      className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <PostComposer
+                    onPostCreated={(newPost) => {
+                      setPosts((prev) => [newPost, ...prev]);
+                      setShowVideoUploadModal(false);
+                    }}
+                    placeholder="Upload video, set title, description & generate AI tags..."
+                  />
+                </div>
+              </div>
+            )}
             {postsLoading && posts.length === 0 && (
               <div className="text-center py-8 text-white/40 text-sm">Cargando…</div>
             )}

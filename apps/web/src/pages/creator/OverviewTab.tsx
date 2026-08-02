@@ -26,6 +26,8 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
   const tGlobal = useI18n();
+  const [promoCode, setPromoCode] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
   const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
@@ -224,6 +226,55 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
           </div>
         </div>
       )}
+
+      {/* 🎟️ Promo Code & Growth Tools */}
+      <div className="glass-card-sm mb-4 p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            🎟️ {tGlobal.lang === "es" ? "Códigos Promocionales y Crecimiento" : "Promo Codes & Growth Tools"}
+          </p>
+          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+            {tGlobal.lang === "es" ? "Activo" : "Active"}
+          </span>
+        </div>
+        <p className="text-xs text-white/80 mb-3 leading-relaxed">
+          {tGlobal.lang === "es"
+            ? "Crea cupones de descuento personalizados para compartir en Telegram o X/Twitter y atraer nuevos suscriptores."
+            : "Create custom discount codes to share on Telegram or X/Twitter to attract new subscribers."}
+        </p>
+
+        {promoCode ? (
+          <div className="p-3 rounded-xl bg-white/5 border border-emerald-500/30 flex items-center justify-between gap-2 mb-2 animate-in fade-in">
+            <div>
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
+                {tGlobal.lang === "es" ? "Tu Código de Descuento" : "Your Discount Code"}
+              </span>
+              <code className="text-base font-mono font-bold text-white tracking-widest">{promoCode}</code>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(promoCode);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors"
+            >
+              {copied ? (tGlobal.lang === "es" ? "¡Copiado!" : "Copied!") : (tGlobal.lang === "es" ? "Copiar" : "Copy")}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              const code = `PNP-${(user?.username || "CREATOR").toUpperCase().slice(0, 6)}-${Math.floor(1000 + Math.random() * 9000)}`;
+              setPromoCode(code);
+            }}
+            className="w-full py-2.5 rounded-xl font-bold text-xs text-white transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+            style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
+          >
+            <span>✨ {tGlobal.lang === "es" ? "Generar Código de Descuento (20% OFF)" : "Generate Discount Code (20% OFF)"}</span>
+          </button>
+        )}
+      </div>
 
       {/* Revenue streams */}
       <div className="glass-card-sm mb-4 p-4">

@@ -3,12 +3,13 @@ import { connectSocket } from "@/lib/socket";
 import type { TipGoal } from "@/lib/api";
 
 export interface LiveChatMessage {
-  id: number;
+  id: number | string;
   streamId: string;
   userId?: string;
   username: string;
   content: string;
   createdAt: string;
+  isHype?: boolean;
 }
 
 export interface LiveTip {
@@ -266,6 +267,24 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       });
     };
 
+    // Cristina hype-bot: ephemeral engagement message — synthesise as a chat message
+    const onHype = (payload: { id: string; username: string; text: string; ts: number; isHype: boolean }) => {
+      const hypeMsg: LiveChatMessage = {
+        id: payload.id,
+        streamId: streamId!,
+        userId: '8552451957',
+        username: payload.username,
+        content: payload.text,
+        createdAt: new Date(payload.ts).toISOString(),
+        isHype: true,
+      };
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === hypeMsg.id)) return prev;
+        const next = [...prev, hypeMsg];
+        return next.length > MAX_MESSAGES ? next.slice(next.length - MAX_MESSAGES) : next;
+      });
+    };
+
     const onViewerCount = (data: { streamId: string; count: number }) => {
       if (data.streamId !== streamId) return;
       setViewerCount(data.count);
@@ -294,6 +313,7 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
     socket.on("connect", onConnectForStream);
     socket.on("live:history", onHistory);
     socket.on("live:message", onMessage);
+    socket.on("stream:hype", onHype);
     socket.on("live:viewer_count", onViewerCount);
     socket.on("live:tip", onTip);
     socket.on("live:raid", onRaid);
@@ -315,6 +335,7 @@ export function useLiveSocket(streamId: string | null): UseLiveSocketResult {
       socket.off("connect", onConnectForStream);
       socket.off("live:history", onHistory);
       socket.off("live:message", onMessage);
+      socket.off("stream:hype", onHype);
       socket.off("live:viewer_count", onViewerCount);
       socket.off("live:tip", onTip);
       socket.off("live:raid", onRaid);

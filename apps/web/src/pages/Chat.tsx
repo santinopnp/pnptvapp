@@ -60,6 +60,7 @@ import {
   getOwnChannels,
   purchaseChannelAccess,
   purchaseHangoutAccess,
+  assertPaymentUrl,
   getDashSubscriptionStatus,
   getUsdcSubscriptionStatus,
   fetchOgPreview,
@@ -2550,9 +2551,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         ? await purchaseChannelAccess(channelId, provider)
         : await purchaseHangoutAccess(groupId!, provider);
       if (res.checkoutUrl) {
+        const safeUrl = assertPaymentUrl(res.checkoutUrl);
         const w = window.screen.width, h = window.screen.height;
         const pw = 560, ph = 780;
-        window.open(res.checkoutUrl, 'pnptv_payment', `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
+        window.open(safeUrl, 'pnptv_payment', `width=${pw},height=${ph},left=${Math.round((w - pw) / 2)},top=${Math.round((h - ph) / 2)},resizable=yes,scrollbars=yes,noopener,noreferrer`);
       }
       setPgPolling(true);
       const invoiceId = res.invoiceId;

@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
+import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
 
 export interface CreatorSubscribeWizardProps {
   creatorId: string;
@@ -376,11 +377,17 @@ export default function CreatorSubscribeWizard({
             </button>
           ))}
         </div>
-        <p className="text-[9px] mt-2 text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-          {lang === "es"
-            ? "Compatible con MetaMask, Trust Wallet, Binance y más."
-            : "Works with MetaMask, Trust Wallet, Binance and more."}
-        </p>
+        <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
+          <span className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {lang === "es" ? "Abre en:" : "Open in:"}
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
+            <MetaMaskIcon size={14} /> MetaMask
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
+            <TrustWalletIcon size={14} /> Trust Wallet
+          </span>
+        </div>
       </div>
 
       <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>

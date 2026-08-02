@@ -23,7 +23,7 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
+import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, generateAiVideoMetadata, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -296,6 +296,42 @@ export function PostComposer({
   const [xEmbedUrl, setXEmbedUrl] = useState("");
   const [xEmbedPosting, setXEmbedPosting] = useState(false);
   const [xEmbedError, setXEmbedError] = useState<string | null>(null);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showAiBox, setShowAiBox] = useState(false);
+
+  const handleGenerateAiMetadata = useCallback(async () => {
+    const promptText = aiPrompt.trim();
+    if (!promptText || isGeneratingAi) return;
+    setIsGeneratingAi(true);
+    setAiError(null);
+    try {
+      const res = await generateAiVideoMetadata(promptText, user?.language || "en");
+      if (res.success) {
+        if (res.title) setVideoTitle(res.title);
+        if (res.description) setVideoDescription(res.description);
+        if (res.tags && res.tags.length > 0) {
+          const hashtags = res.tags.join(" ");
+          setText((prev) => (prev ? `${prev}\n\n${hashtags}` : hashtags));
+        }
+        setAiPrompt("");
+        setShowAiBox(false);
+      } else {
+        setAiError("Could not generate metadata");
+      }
+    } catch {
+      const clean = promptText.charAt(0).toUpperCase() + promptText.slice(1);
+      setVideoTitle(`🔥 ${clean}`);
+      setVideoDescription(`${promptText}\n\nExclusive content on PNPtv! Subscribe to PRIME to access full videos, exclusive channels, and 2 private hangouts: https://pnptv.app/subscribe`);
+      const fallbackTags = "#PNPtv #Exclusive #VIP #PRIME #Hangouts";
+      setText((prev) => (prev ? `${prev}\n\n${fallbackTags}` : fallbackTags));
+      setAiPrompt("");
+      setShowAiBox(false);
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  }, [aiPrompt, isGeneratingAi, user?.language]);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -920,6 +956,61 @@ export function PostComposer({
 
           {/* Media preview grid */}
           <MediaPreviewGrid files={files} onRemove={removeFile} disabled={isPosting} />
+
+          {/* AI Title, Description & Tags Generator */}
+          <div className="mb-3">
+            {!showAiBox ? (
+              <button
+                type="button"
+                onClick={() => setShowAiBox(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-pink-600/80 to-amber-600/80 hover:from-pink-600 hover:to-amber-600 transition-all shadow-sm"
+              >
+                <span>✨</span> AI Title, Description & Tags Generator
+              </button>
+            ) : (
+              <div className="p-3 rounded-xl bg-gradient-to-r from-pink-500/15 via-purple-500/10 to-amber-500/15 border border-pink-500/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-pink-400">
+                    <span>✨</span> AI Title, Description & Tags Generator
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAiBox(false)}
+                    className="text-white/40 hover:text-white text-xs px-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-[11px] text-white/60">
+                  Type a short description, and AI will auto-generate your Title, Description, and Tags!
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleGenerateAiMetadata();
+                      }
+                    }}
+                    placeholder="e.g. Hot session in Miami beach with Lex and Santino..."
+                    className="flex-1 bg-black/50 text-white text-xs rounded-lg px-3 py-2 border border-white/15 outline-none focus:border-pink-500 placeholder:text-white/35"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleGenerateAiMetadata}
+                    disabled={isGeneratingAi || !aiPrompt.trim()}
+                    className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-pink-600 to-amber-600 hover:opacity-90 disabled:opacity-40 transition-all flex items-center gap-1.5 whitespace-nowrap shadow"
+                  >
+                    {isGeneratingAi ? "Generating..." : "✨ Generate"}
+                  </button>
+                </div>
+                {aiError && <p className="text-[11px] text-red-400">{aiError}</p>}
+              </div>
+            )}
+          </div>
 
           {/* Video title & description — shown when a video is attached */}
           {hasVideo && (

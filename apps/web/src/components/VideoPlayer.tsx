@@ -3,14 +3,12 @@
  * (`.m3u8`) via hls.js on browsers without native HLS support (Chrome/Firefox).
  * Safari plays HLS natively so we skip hls.js there.
  *
- * All standard <video> props pass through; `src` may point to an .m3u8 or an
- * mp4/webm. Used across social feed cards so posts uploaded via the browser→Mux
- * pipeline (mux_playback_id → stream.mux.com/*.m3u8) play everywhere.
+ * Enhanced with dynamic aspect ratio orientation detection (portrait vs landscape),
+ * ambient blurred poster backdrop for letterbox elimination, and modern responsive
+ * scaling for vertical/portrait videos (Reels/TikTok/Shorts format).
  *
  * When `creatorDisclaimer` is true (creator-authored content), a bilingual
  * compliance overlay appears when playback ends, linking to /self-care.
- * Layout note: opting into the overlay wraps the <video> in a positioned
- * container that inherits `className` and `style`.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -21,6 +19,8 @@ import { useI18n } from "@/lib/i18n";
 type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
   /** When true, render an end-of-video compliance overlay for creator content. */
   creatorDisclaimer?: boolean;
+  /** When true (default), render an ambient blurred backdrop behind portrait/letterboxed videos. */
+  ambientBlur?: boolean;
 };
 
 function isHlsSource(src: string | undefined | null): boolean {
@@ -29,10 +29,25 @@ function isHlsSource(src: string | undefined | null): boolean {
 }
 
 export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
-  ({ src, creatorDisclaimer = false, onEnded, onPlay, className, style, ...rest }, ref) => {
+  (
+    {
+      src,
+      poster,
+      creatorDisclaimer = false,
+      ambientBlur = true,
+      onEnded,
+      onPlay,
+      onLoadedMetadata,
+      className = "",
+      style,
+      ...rest
+    },
+    ref
+  ) => {
     const localRef = useRef<HTMLVideoElement | null>(null);
     const hlsRef = useRef<Hls | null>(null);
     const [showDisclaimer, setShowDisclaimer] = useState(false);
+    const [isPortrait, setIsPortrait] = useState(false);
 
     const setRefs = (el: HTMLVideoElement | null) => {
       localRef.current = el;
@@ -44,16 +59,13 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       const video = localRef.current;
       if (!video || !src) return;
 
-      // Clean up any previous hls.js instance
       hlsRef.current?.destroy();
       hlsRef.current = null;
 
       if (!isHlsSource(src)) {
-        // Regular file (mp4/webm) — let the <video src> attribute handle it
         return;
       }
 
-      // Safari + iOS play HLS natively — no hls.js needed
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = src;
         return;
@@ -64,15 +76,22 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         hls.loadSource(src);
         hls.attachMedia(video);
         hlsRef.current = hls;
-        return () => { hls.destroy(); hlsRef.current = null; };
+        return () => {
+          hls.destroy();
+          hlsRef.current = null;
+        };
       }
     }, [src]);
 
-    // For non-HLS sources, use the standard src attribute so the browser
-    // handles range requests, poster fallback, etc. For HLS on Safari we set
-    // video.src imperatively above, so we must omit the attribute here to
-    // avoid a double-load.
     const passThroughSrc = isHlsSource(src) ? undefined : (src ?? undefined);
+
+    const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const video = e.currentTarget;
+      if (video.videoWidth && video.videoHeight) {
+        setIsPortrait(video.videoHeight > video.videoWidth * 1.05);
+      }
+      onLoadedMetadata?.(e);
+    };
 
     const handleEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
       if (creatorDisclaimer) setShowDisclaimer(true);
@@ -84,31 +103,46 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       onPlay?.(e);
     };
 
-    // Fast path: existing callers (no disclaimer) get exactly the previous behavior.
-    if (!creatorDisclaimer) {
-      return (
-        <video
-          ref={setRefs}
-          src={passThroughSrc}
-          className={className}
-          style={style}
-          onEnded={handleEnded}
-          onPlay={handlePlay}
-          {...rest}
-        />
-      );
-    }
+    const containerClasses = [
+      "relative overflow-hidden bg-black/90 rounded-xl transition-all duration-300 flex items-center justify-center",
+      isPortrait ? "max-h-[72vh] md:max-h-[680px]" : "max-h-[520px] lg:max-h-[640px]",
+      className,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     return (
-      <div className={className} style={{ position: "relative", ...(style || {}) }}>
+      <div className={containerClasses} style={style}>
+        {/* Ambient Blur Background — eliminates harsh black bars on portrait/letterboxed videos */}
+        {ambientBlur && poster && (
+          <div
+            className="absolute inset-0 pointer-events-none overflow-hidden z-0"
+            aria-hidden="true"
+          >
+            <img
+              src={poster}
+              alt=""
+              className="w-full h-full object-cover filter blur-3xl opacity-40 scale-125 saturate-150 transition-opacity duration-500"
+            />
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-md" />
+          </div>
+        )}
+
+        {/* Primary Video Element */}
         <video
           ref={setRefs}
           src={passThroughSrc}
-          className="w-full h-full object-contain bg-black"
+          poster={poster}
+          className={`relative z-10 w-full h-full object-contain mx-auto transition-all duration-300 ${
+            isPortrait ? "max-h-[72vh] md:max-h-[680px]" : "max-h-[520px] lg:max-h-[640px]"
+          }`}
+          onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onPlay={handlePlay}
           {...rest}
         />
+
+        {/* End-of-video Creator Compliance Overlay */}
         {showDisclaimer && (
           <VideoDisclaimerOverlay
             onReplay={() => {
@@ -128,7 +162,7 @@ function VideoDisclaimerOverlay({ onReplay, onDismiss }: { onReplay: () => void;
   const t = useI18n();
   return (
     <div
-      className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center"
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 p-6 text-center"
       style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(4px)" }}
       onClick={(e) => e.stopPropagation()}
     >

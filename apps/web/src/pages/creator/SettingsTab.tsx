@@ -33,6 +33,8 @@ import {
   type CreatorLiveEligibility,
 } from "@/lib/api";
 import { type CreatorStrings } from "@/lib/i18n/creator";
+import { formatBio } from "@/lib/feedI18n";
+import { useI18n } from "@/lib/i18n";
 
 function fmtDuration(seconds: number | null): string {
   if (!seconds) return "--";
@@ -62,6 +64,7 @@ const DASH_ADDRESS_RE = /^[X7][1-9A-HJ-NP-Za-km-z]{33}$/;
 
 export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const { user: authUser } = useAuth();
+  const { lang } = useI18n();
   const navigate = useNavigate();
   const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
 
@@ -168,6 +171,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   // User manual state — public "how to book / what to expect" markdown
   const MANUAL_MAX = 5000;
   const [manualMarkdown, setManualMarkdown] = useState<string>("");
+  const [aboutTab, setAboutTab] = useState<"write" | "preview">("write");
   const [manualLoading, setManualLoading] = useState<boolean>(true);
   const [manualSaving, setManualSaving] = useState<boolean>(false);
   const [manualAiLoading, setManualAiLoading] = useState<boolean>(false);
@@ -453,6 +457,28 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       setSubToggleError(err instanceof Error ? err.message : "Failed to update setting.");
     } finally {
       setSubToggling(false);
+    }
+  };
+
+  // Hype-bot toggle state
+  const [hypeBotEnabled, setHypeBotEnabled] = useState<boolean>(
+    dashboard.hypeBotEnabled !== false
+  );
+  const [hypeBotSaving, setHypeBotSaving] = useState(false);
+  const [hypeBotError, setHypeBotError] = useState<string | null>(null);
+
+  const handleToggleHypeBot = async () => {
+    setHypeBotError(null);
+    setHypeBotSaving(true);
+    const next = !hypeBotEnabled;
+    setHypeBotEnabled(next);
+    try {
+      await updateProfile({ hypeBotEnabled: next });
+    } catch (err) {
+      setHypeBotEnabled(!next);
+      setHypeBotError(err instanceof Error ? err.message : "Failed to update setting.");
+    } finally {
+      setHypeBotSaving(false);
     }
   };
 
@@ -1026,6 +1052,36 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       </div>
       )}
 
+      {/* Hype-bot toggle — performer/both only */}
+      {(creatorRole === "performer" || creatorRole === "both") && (
+      <div className="glass-card-sm p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-white">Hype-bot in my stream chat</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              PNPtv sends automated tip &amp; engagement messages every ~2 min while you stream. You can turn it off anytime.
+            </p>
+            {hypeBotError && (
+              <p className="text-xs mt-1 text-red-400">{hypeBotError}</p>
+            )}
+          </div>
+          <button
+            onClick={handleToggleHypeBot}
+            disabled={hypeBotSaving}
+            className="flex-shrink-0 relative w-11 h-6 rounded-full transition-colors duration-200 disabled:opacity-40 focus:outline-none"
+            style={{ background: hypeBotEnabled ? "linear-gradient(135deg, #8b5cf6, #D4007A)" : "rgba(255,255,255,0.15)" }}
+            aria-pressed={hypeBotEnabled}
+            aria-label="Toggle hype-bot"
+          >
+            <span
+              className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200"
+              style={{ transform: hypeBotEnabled ? "translateX(20px)" : "translateX(0)" }}
+            />
+          </button>
+        </div>
+      </div>
+      )}
+
       {/* ─── MI CONTENIDO ─────────────────────────────────────────────────────── */}
       <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>{t.settingsSectionMyContent}</p>
 
@@ -1384,29 +1440,64 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           border: "1px solid var(--pnp-border, #2a2a2a)",
         }}
       >
-        <div className="flex items-baseline justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
           <h2 className="text-lg font-semibold text-white">{t.settingsAboutMeTitle}</h2>
-          <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {manualMarkdown.length} / {MANUAL_MAX}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAboutTab("write")}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                aboutTab === "write" ? "bg-white/15 text-white" : "text-white/50 hover:text-white"
+              }`}
+            >
+              ✏️ {lang === "es" ? "Escribir" : "Write"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAboutTab("preview")}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                aboutTab === "preview" ? "bg-pink-500/20 text-pink-300 border border-pink-500/30" : "text-white/50 hover:text-white"
+              }`}
+            >
+              👁️ {lang === "es" ? "Vista Previa Markdown" : "Preview Markdown"}
+            </button>
+            <span className="text-xs ml-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {manualMarkdown.length} / {MANUAL_MAX}
+            </span>
+          </div>
         </div>
         <p className="text-sm mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
           {t.settingsAboutMeDesc}
         </p>
 
-        <textarea
-          value={manualMarkdown}
-          onChange={(e) => setManualMarkdown(e.target.value.slice(0, MANUAL_MAX))}
-          disabled={manualLoading || manualAiLoading}
-          rows={14}
-          placeholder={manualLoading ? t.settingsAboutMePlaceholderLoading : t.settingsAboutMePlaceholder}
-          className="w-full rounded-lg p-3 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none disabled:opacity-50"
-          style={{
-            background: "var(--pnp-bg, #121212)",
-            border: "1px solid var(--pnp-border, #2a2a2a)",
-            resize: "vertical",
-          }}
-        />
+        {aboutTab === "write" ? (
+          <textarea
+            value={manualMarkdown}
+            onChange={(e) => setManualMarkdown(e.target.value.slice(0, MANUAL_MAX))}
+            disabled={manualLoading || manualAiLoading}
+            rows={14}
+            placeholder={manualLoading ? t.settingsAboutMePlaceholderLoading : t.settingsAboutMePlaceholder}
+            className="w-full rounded-lg p-3 text-sm font-mono text-white placeholder:text-white/30 focus:outline-none disabled:opacity-50"
+            style={{
+              background: "var(--pnp-bg, #121212)",
+              border: "1px solid var(--pnp-border, #2a2a2a)",
+              resize: "vertical",
+            }}
+          />
+        ) : (
+          <div
+            className="w-full rounded-lg p-4 min-h-[300px] max-h-[500px] border border-white/10 overflow-y-auto"
+            style={{ background: "var(--pnp-bg, #121212)" }}
+          >
+            {manualMarkdown.trim() ? (
+              formatBio(manualMarkdown)
+            ) : (
+              <p className="text-xs text-white/30 italic">
+                {lang === "es" ? "Sin contenido para previsualizar aún." : "No content to preview yet."}
+              </p>
+            )}
+          </div>
+        )}
 
         {manualError && (
           <p className="mt-3 text-sm" style={{ color: "#FF453A" }}>{manualError}</p>

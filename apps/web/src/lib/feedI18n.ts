@@ -130,41 +130,170 @@ export async function translateText(
   return null;
 }
 
-// Lightweight markdown renderer for user bio / about-me text.
-// Supports **bold**, *italic*, _italic_, ~~strike~~, autolinked http(s) URLs, and line breaks.
+// Rich markdown renderer for user bio / about-me text.
+// Supports headings (#, ##, ###), lists (- or 1.), blockquotes (>), [links](url), `code`, **bold**, *italic*, ~~strike~~, and line breaks.
 // React elements only — no dangerouslySetInnerHTML, so text is auto-escaped.
 export function formatBio(text: string | null | undefined): React.ReactNode {
   if (!text) return null;
   const lines = text.split(/\r?\n/);
-  return lines.map((line, li) =>
-    React.createElement(
-      React.Fragment,
-      { key: li },
-      li > 0 ? React.createElement("br") : null,
-      ...renderInline(line, li)
-    )
-  );
+  
+  const elements: React.ReactNode[] = [];
+  let inBulletList = false;
+  let bulletItems: React.ReactNode[] = [];
+  let inNumberedList = false;
+  let numberedItems: React.ReactNode[] = [];
+
+  const flushLists = () => {
+    if (inBulletList && bulletItems.length > 0) {
+      elements.push(
+        React.createElement("ul", { key: `ul-${elements.length}`, className: "list-disc list-inside space-y-1 my-1.5 pl-1 text-white/90" }, ...bulletItems)
+      );
+      bulletItems = [];
+      inBulletList = false;
+    }
+    if (inNumberedList && numberedItems.length > 0) {
+      elements.push(
+        React.createElement("ol", { key: `ol-${elements.length}`, className: "list-decimal list-inside space-y-1 my-1.5 pl-1 text-white/90" }, ...numberedItems)
+      );
+      numberedItems = [];
+      inNumberedList = false;
+    }
+  };
+
+  lines.forEach((line, li) => {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushLists();
+      elements.push(React.createElement("div", { key: `blank-${li}`, className: "h-1.5" }));
+      return;
+    }
+
+    if (/^#\s+/.test(trimmed)) {
+      flushLists();
+      const content = trimmed.replace(/^#\s+/, "");
+      elements.push(
+        React.createElement("h1", { key: `h1-${li}`, className: "text-base font-bold text-white mt-3 mb-1 border-b border-white/10 pb-1" }, ...renderInline(content, li))
+      );
+      return;
+    }
+
+    if (/^##\s+/.test(trimmed)) {
+      flushLists();
+      const content = trimmed.replace(/^##\s+/, "");
+      elements.push(
+        React.createElement("h2", { key: `h2-${li}`, className: "text-sm font-bold text-pink-400 mt-3 mb-1" }, ...renderInline(content, li))
+      );
+      return;
+    }
+
+    if (/^###\s+/.test(trimmed)) {
+      flushLists();
+      const content = trimmed.replace(/^###\s+/, "");
+      elements.push(
+        React.createElement("h3", { key: `h3-${li}`, className: "text-xs font-semibold text-amber-300 mt-2 mb-1" }, ...renderInline(content, li))
+      );
+      return;
+    }
+
+    if (/^>\s+/.test(trimmed)) {
+      flushLists();
+      const content = trimmed.replace(/^>\s+/, "");
+      elements.push(
+        React.createElement(
+          "blockquote",
+          { key: `bq-${li}`, className: "border-l-2 border-pink-500/50 pl-3 py-1 my-1 text-white/80 italic bg-white/[0.02] rounded-r text-xs" },
+          ...renderInline(content, li)
+        )
+      );
+      return;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      if (inNumberedList) flushLists();
+      inBulletList = true;
+      const content = trimmed.replace(/^[-*]\s+/, "");
+      bulletItems.push(
+        React.createElement("li", { key: `li-${li}`, className: "text-xs leading-relaxed" }, ...renderInline(content, li))
+      );
+      return;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      if (inBulletList) flushLists();
+      inNumberedList = true;
+      const content = trimmed.replace(/^\d+\.\s+/, "");
+      numberedItems.push(
+        React.createElement("li", { key: `oli-${li}`, className: "text-xs leading-relaxed" }, ...renderInline(content, li))
+      );
+      return;
+    }
+
+    flushLists();
+    elements.push(
+      React.createElement(
+        "p",
+        { key: `p-${li}`, className: "text-xs leading-relaxed text-white/90" },
+        ...renderInline(line, li)
+      )
+    );
+  });
+
+  flushLists();
+
+  return React.createElement("div", { className: "space-y-1 my-1" }, ...elements);
 }
 
 function renderInline(input: string, lineIdx: number): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const re = /(\*\*([^*\n]+)\*\*)|(~~([^~\n]+)~~)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|((?:https?:\/\/)[^\s<>"]*[^\s<>".,;:!?)\]}])/g;
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s<>"'\)]+|\/[^\s<>"'\)]+)\)|`([^`\n]+)`|(\*\*([^*\n]+)\*\*)|(~~([^~\n]+)~~)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|((?:https?:\/\/)[^\s<>"]*[^\s<>".,;:!?)\]}])/g;
+
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
   const mkKey = () => `${lineIdx}-${key++}`;
+
   while ((match = re.exec(input)) !== null) {
     if (match.index > lastIndex) nodes.push(input.slice(lastIndex, match.index));
-    if (match[2] !== undefined) {
-      nodes.push(React.createElement("strong", { key: mkKey() }, match[2]));
-    } else if (match[4] !== undefined) {
-      nodes.push(React.createElement("s", { key: mkKey() }, match[4]));
-    } else if (match[6] !== undefined) {
-      nodes.push(React.createElement("em", { key: mkKey() }, match[6]));
-    } else if (match[8] !== undefined) {
-      nodes.push(React.createElement("em", { key: mkKey() }, match[8]));
+
+    if (match[1] !== undefined && match[2] !== undefined) {
+      const label = match[1];
+      const url = match[2];
+      nodes.push(
+        React.createElement(
+          "a",
+          {
+            key: mkKey(),
+            href: url,
+            target: url.startsWith("/") ? undefined : "_blank",
+            rel: url.startsWith("/") ? undefined : "noopener noreferrer nofollow",
+            className: "text-pink-400 font-semibold underline hover:text-pink-300 transition-colors",
+            onClick: (e: React.MouseEvent) => e.stopPropagation(),
+          },
+          label
+        )
+      );
+    } else if (match[3] !== undefined) {
+      nodes.push(
+        React.createElement(
+          "code",
+          {
+            key: mkKey(),
+            className: "bg-white/10 text-pink-300 font-mono text-[11px] px-1.5 py-0.5 rounded border border-white/10",
+          },
+          match[3]
+        )
+      );
+    } else if (match[5] !== undefined) {
+      nodes.push(React.createElement("strong", { key: mkKey(), className: "font-bold text-white" }, match[5]));
+    } else if (match[7] !== undefined) {
+      nodes.push(React.createElement("s", { key: mkKey(), className: "line-through opacity-70" }, match[7]));
     } else if (match[9] !== undefined) {
-      const url = match[9];
+      nodes.push(React.createElement("em", { key: mkKey(), className: "italic text-white/90" }, match[9]));
+    } else if (match[11] !== undefined) {
+      nodes.push(React.createElement("em", { key: mkKey(), className: "italic text-white/90" }, match[11]));
+    } else if (match[12] !== undefined) {
+      const url = match[12];
       nodes.push(
         React.createElement(
           "a",
@@ -173,14 +302,17 @@ function renderInline(input: string, lineIdx: number): React.ReactNode[] {
             href: url,
             target: "_blank",
             rel: "noopener noreferrer nofollow",
-            className: "text-pnp-accent underline hover:opacity-80",
+            className: "text-pink-400 font-semibold underline hover:text-pink-300 transition-colors",
+            onClick: (e: React.MouseEvent) => e.stopPropagation(),
           },
           url
         )
       );
     }
+
     lastIndex = re.lastIndex;
   }
+
   if (lastIndex < input.length) nodes.push(input.slice(lastIndex));
   return nodes;
 }

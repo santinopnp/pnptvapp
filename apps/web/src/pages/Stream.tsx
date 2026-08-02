@@ -52,6 +52,7 @@ import {
   getStreamReplay,
   sendLiveHeartbeat,
   enterLiveStream,
+  postLiveReact,
   type LiveCallPackage,
   type StreamViewer,
 } from "@/lib/api";
@@ -66,7 +67,7 @@ function extractChannelRef(streamId: string): string | null {
 }
 
 // ── Virtualized chat message list (react-window v2) ───────────────────────
-type ChatMsg = { id: string | number; username: string; content: string; userId?: string };
+type ChatMsg = { id: string | number; username: string; content: string; userId?: string; isHype?: boolean };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function ChatRow(props: any) {
@@ -79,6 +80,25 @@ function ChatRow(props: any) {
   };
   const msg = messages[index];
   if (!msg) return null;
+  if (msg.isHype) {
+    return (
+      <div style={style} className="py-0.5 px-0.5">
+        <div
+          className="text-xs flex items-center gap-1.5 px-2 py-1 rounded-lg"
+          style={{ background: "linear-gradient(90deg, rgba(139,92,246,0.18), rgba(212,0,122,0.12))", border: "1px solid rgba(139,92,246,0.25)" }}
+        >
+          <span className="font-bold flex-shrink-0" style={{ color: "#a78bfa" }}>PNPtv</span>
+          <span
+            className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded"
+            style={{ background: "rgba(139,92,246,0.35)", color: "#c4b5fd" }}
+          >
+            BOT
+          </span>
+          <span className="flex-1" style={{ color: "#e9d5ff" }}>{msg.content}</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={style} className="py-0.5">
       <div className="text-xs flex items-center gap-1">
@@ -405,6 +425,9 @@ function StreamInner() {
       if (dashTipSettleTimerRef.current) clearTimeout(dashTipSettleTimerRef.current);
       if (shareCopiedTimerRef.current) clearTimeout(shareCopiedTimerRef.current);
       if (healthPollRef.current) clearInterval(healthPollRef.current);
+      if (balancePollRef.current) clearInterval(balancePollRef.current);
+      if (reactFlushTimerRef.current) clearTimeout(reactFlushTimerRef.current);
+      if (reactTapWindowRef.current) clearTimeout(reactTapWindowRef.current);
       if (raidCountdownRef.current) {
         clearInterval(raidCountdownRef.current);
         raidCountdownRef.current = null;
@@ -462,6 +485,51 @@ function StreamInner() {
     if (socketBalance !== null) setTokenBalance(socketBalance);
   }, [socketBalance]);
 
+  // ── F1/F2 — Subscribe to socket stream:react events from other viewers ─────
+  useEffect(() => {
+    if (!streamId) return;
+    const socket = connectSocket();
+    const onReact = (data: { userId: string; kind: string; ts: number }) => {
+      const id = data.ts + Math.random();
+      const x = 20 + Math.random() * 60; // random horizontal offset %
+      setFloatingReacts((prev) => [...prev.slice(-8), { id, kind: data.kind, x }]);
+      setTimeout(() => {
+        setFloatingReacts((prev) => prev.filter((r) => r.id !== id));
+      }, 1800);
+    };
+    socket.on("stream:react", onReact);
+    return () => { socket.off("stream:react", onReact); };
+  }, [streamId]);
+
+  // ── F3 — Poll balance every 30s while in stream ────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    balancePollRef.current = setInterval(() => {
+      getWalletBalance().then((d) => {
+        if (!socketBalanceReceived) setTokenBalance(d.balance);
+      }).catch(() => {});
+    }, 30_000);
+    return () => {
+      if (balancePollRef.current) { clearInterval(balancePollRef.current); balancePollRef.current = null; }
+    };
+  }, [isAuthenticated, socketBalanceReceived]);
+
+  // ── F6 — Kebab menu (state must be declared before the outside-click effect) ─
+  const [showKebab, setShowKebab] = useState(false);
+  const kebabRef = useRef<HTMLDivElement>(null);
+
+  // ── F6 — Close kebab on outside click ─────────────────────────────────────
+  useEffect(() => {
+    if (!showKebab) return;
+    const handler = (e: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(e.target as Node)) {
+        setShowKebab(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showKebab]);
+
   // ── Heartbeat state (effect below, after isStreamOwner/channelRef declarations) ──
   const [outOfTokens, setOutOfTokens] = useState(false);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -479,6 +547,27 @@ function StreamInner() {
 
   // Share button state
   const [shareCopied, setShareCopied] = useState(false);
+
+  // ── F1/F2 — Emoji reactions ────────────────────────────────────────────────
+  // floatingReacts: ephemeral float-up animations [{id, kind}]
+  const [floatingReacts, setFloatingReacts] = useState<{ id: number; kind: string; x: number }[]>([]);
+  // local heart counter (F1)
+  const [heartCount, setHeartCount] = useState(0);
+  // batch buffer: pending taps not yet sent
+  const reactBatchRef = useRef<{ kind: string; count: number }[]>([]);
+  const reactFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // rate limit: max 10 taps/sec → 100ms debounce window, flush after 100ms idle
+  const reactTapCountRef = useRef(0);
+  const reactTapWindowRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── F3 — Token balance chip (separate poll) ────────────────────────────────
+  const balancePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── F5 — already uses isFullscreen state (declared below near videoContainerRef) ──
+
+  // ── F6 — Kebab menu state is declared above (before its outside-click effect) ─
+
+  // ── F7 — Fullscreen quick-tip state (already uses isFullscreen + handleTip) ─
 
   // Ref for the polling interval so it can be cancelled on error.
   const streamPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -817,11 +906,12 @@ function StreamInner() {
   // ── Ticket status fetch — runs after stream resolves, for authenticated users ──
   useEffect(() => {
     if (!isAuthenticated || !stream) return;
-    // slotId: Stream.tsx uses the streamId param as the slot/channel reference.
-    // live_streams rows use UUIDs as PK; skip fetch if streamId looks like a channel ref (no dashes pattern of UUID).
-    // We attempt the fetch and silently ignore 404 (non-UUID streamIds will 404).
     const slotId = streamId;
     if (!slotId) return;
+    // live_streams.id is UUID. Channel refs like "pnptv-<handle>" are never slots.
+    // Skip the request entirely to avoid predictable 404s in production logs.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(slotId)) return;
     setTicketLoading(true);
     setTicketError(null);
     getSlotTicketStatus(slotId)
@@ -1404,6 +1494,41 @@ function StreamInner() {
     }
   }, [stream?.name]);
 
+  // ── F1/F2: send a reaction (client-side rate limit 10 taps/sec, batch flush) ─
+  const handleReact = useCallback((kind: string) => {
+    if (!isAuthenticated || !channelRef) return;
+    // Client-side rate guard: max 10 taps per 1-second window
+    reactTapCountRef.current += 1;
+    if (reactTapCountRef.current > 10) return;
+    if (!reactTapWindowRef.current) {
+      reactTapWindowRef.current = setTimeout(() => {
+        reactTapCountRef.current = 0;
+        reactTapWindowRef.current = null;
+      }, 1000);
+    }
+    // Animate locally immediately
+    const id = Date.now() + Math.random();
+    const x = 20 + Math.random() * 60;
+    setFloatingReacts((prev) => [...prev.slice(-8), { id, kind, x }]);
+    setTimeout(() => { setFloatingReacts((prev) => prev.filter((r) => r.id !== id)); }, 1800);
+    if (kind === 'heart') setHeartCount((c) => c + 1);
+    // Add to batch
+    const existing = reactBatchRef.current.find((b) => b.kind === kind);
+    if (existing) { existing.count += 1; }
+    else { reactBatchRef.current.push({ kind, count: 1 }); }
+    // Flush after 100ms idle
+    if (reactFlushTimerRef.current) clearTimeout(reactFlushTimerRef.current);
+    reactFlushTimerRef.current = setTimeout(() => {
+      const batch = reactBatchRef.current.splice(0);
+      reactFlushTimerRef.current = null;
+      if (!channelRef || batch.length === 0) return;
+      // Send one request per unique kind
+      batch.forEach(({ kind: k }) => {
+        postLiveReact(channelRef, k).catch(() => {});
+      });
+    }, 100);
+  }, [isAuthenticated, channelRef]);
+
   const handleFullscreen = useCallback(() => {
     const el = videoContainerRef.current;
     if (!el) return;
@@ -1899,7 +2024,60 @@ function StreamInner() {
         )}
 
         {/* ── MOBILE overlay chrome — full-bleed video UI (mockup: Live Stream Player) ── */}
-        <div className="md:hidden absolute inset-0 z-10 flex flex-col pointer-events-none">
+        {/* F5: shown on mobile always AND in fullscreen on any viewport — z-index 30 in FS so controls float above player */}
+        <div className={`absolute inset-0 flex flex-col pointer-events-none ${isFullscreen ? "z-30" : "md:hidden z-10"}`}>
+          {/* F3 — Add tokens chip (top-right, visible when authenticated) */}
+          {isAuthenticated && (
+            <div className="pointer-events-auto absolute top-3.5 right-12 z-20 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold text-white"
+              style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+            >
+              <span className="tabular-nums">{tokenBalance ?? "—"}</span>
+              <button
+                onClick={() => setShowTopUp(true)}
+                aria-label="Add tokens"
+                className="ml-1 text-pnp-accent font-bold hover:text-white transition-colors"
+              >
+                +Add
+              </button>
+            </div>
+          )}
+
+          {/* F6 — Kebab menu (top-right corner) */}
+          <div ref={kebabRef} className="pointer-events-auto absolute top-3 right-3 z-20">
+            <button
+              onClick={() => setShowKebab((v) => !v)}
+              aria-label="More options"
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-base font-bold"
+              style={{ background: "rgba(0,0,0,0.50)", backdropFilter: "blur(4px)" }}
+            >
+              ⋮
+            </button>
+            {showKebab && (
+              <div className="absolute right-0 top-9 w-44 rounded-xl overflow-hidden shadow-2xl"
+                style={{ background: "rgba(18,18,28,0.95)", border: "1px solid rgba(255,255,255,0.12)", backdropFilter: "blur(12px)" }}
+              >
+                <button
+                  onClick={() => { setShowLeaderboard((v) => !v); setShowKebab(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 text-[12px] text-white/90 hover:bg-white/10 transition-colors text-left"
+                >
+                  <span>🏆</span> Leaderboard
+                </button>
+                <button
+                  onClick={() => { handleShare(); setShowKebab(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 text-[12px] text-white/90 hover:bg-white/10 transition-colors text-left"
+                >
+                  <span>🔗</span> {shareCopied ? "Copied!" : "Share stream"}
+                </button>
+                <button
+                  onClick={() => { alert("Report: coming soon"); setShowKebab(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 text-[12px] text-white/60 hover:bg-white/10 transition-colors text-left"
+                >
+                  <span>🚩</span> Report stream
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Top scrim header: avatar, name, viewer count, LIVE badge, close */}
           <div className="pointer-events-auto flex items-center gap-2.5 px-3.5 pt-3.5 pb-7 bg-gradient-to-b from-black/70 via-black/25 to-transparent">
             <img
@@ -1985,26 +2163,37 @@ function StreamInner() {
           {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (chatMessages.length > 0 || tipAlert) && (
             <div className="px-3 mb-2 flex flex-col gap-1.5 max-w-[78%]">
               {chatMessages.slice(-6).map((msg) => (
-                <div
-                  key={msg.id}
-                  className="pointer-events-auto flex items-center gap-1 text-xs text-white rounded-lg px-2.5 py-1.5 w-fit max-w-full"
-                  style={{ background: "rgba(0,0,0,0.42)" }}
-                >
-                  <span className="min-w-0 break-words">
-                    <span className="font-semibold" style={{ color: "#E69138" }}>@{msg.username}: </span>
-                    {msg.content}
-                  </span>
-                  {isStreamOwner && msg.userId && (
-                    <button
-                      onClick={() => handleBanUser(msg.userId!)}
-                      className="flex-shrink-0 text-white/40 hover:text-red-400 transition-colors"
-                      title="Ban from chat"
-                      aria-label="Ban from chat"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
+                msg.isHype ? (
+                  <div
+                    key={msg.id}
+                    className="pointer-events-auto flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 w-fit max-w-full"
+                    style={{ background: "linear-gradient(90deg, rgba(139,92,246,0.55), rgba(212,0,122,0.35))", border: "1px solid rgba(139,92,246,0.4)" }}
+                  >
+                    <span className="font-bold flex-shrink-0" style={{ color: "#c4b5fd" }}>PNPtv</span>
+                    <span className="min-w-0 break-words" style={{ color: "#f3e8ff" }}>{msg.content}</span>
+                  </div>
+                ) : (
+                  <div
+                    key={msg.id}
+                    className="pointer-events-auto flex items-center gap-1 text-xs text-white rounded-lg px-2.5 py-1.5 w-fit max-w-full"
+                    style={{ background: "rgba(0,0,0,0.42)" }}
+                  >
+                    <span className="min-w-0 break-words">
+                      <span className="font-semibold" style={{ color: "#E69138" }}>@{msg.username}: </span>
+                      {msg.content}
+                    </span>
+                    {isStreamOwner && msg.userId && (
+                      <button
+                        onClick={() => handleBanUser(msg.userId!)}
+                        className="flex-shrink-0 text-white/40 hover:text-red-400 transition-colors"
+                        title="Ban from chat"
+                        aria-label="Ban from chat"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                )
               ))}
               {tipAlert && (
                 <div
@@ -2017,27 +2206,58 @@ function StreamInner() {
             </div>
           )}
 
-          {/* Right-side floating action rail — mirrors mockup's ♥ viewer count + ✨ Tip button */}
+          {/* ── F1+F2: Floating reaction animations ───────────────────────── */}
+          {floatingReacts.map((r) => (
+            <div
+              key={r.id}
+              className="pointer-events-none absolute text-2xl animate-float-react"
+              style={{
+                bottom: "calc(env(safe-area-inset-bottom,0px) + 120px)",
+                right: `${r.x}%`,
+                animation: "floatReact 1.8s ease-out forwards",
+              }}
+            >
+              {r.kind === "heart" ? "❤️" : r.kind}
+            </div>
+          ))}
+
+          {/* Right-side floating action rail — F1 heart (interactive) + F2 emoji rail + ✨ Tip */}
           {!(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
             <div
-              className="pointer-events-auto absolute right-3 flex flex-col items-center gap-3.5"
+              className="pointer-events-auto absolute right-3 flex flex-col items-center gap-3"
               style={{ bottom: "calc(env(safe-area-inset-bottom,0px) + 76px)" }}
             >
+              {/* F1 — Heart tap button */}
               <div className="flex flex-col items-center gap-0.5">
-                <div
-                  className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-white"
+                <button
+                  onClick={() => handleReact("heart")}
+                  aria-label="Send heart reaction"
+                  className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-white active:scale-110 transition-transform"
                   style={{ background: "rgba(255,255,255,0.15)" }}
                 >
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M12 21s-6.7-4.35-9.3-8.28C.86 10.06 1.6 6.66 4.36 5.2 6.6 4 9.3 4.7 12 7.3 14.7 4.7 17.4 4 19.64 5.2c2.76 1.46 3.5 4.86 1.66 7.52C18.7 16.65 12 21 12 21z" />
                   </svg>
-                </div>
-                {viewerCount > 0 && (
-                  <span className="text-[10px] text-white font-medium">
-                    {viewerCount >= 1000 ? `${(viewerCount / 1000).toFixed(1)}k` : viewerCount}
-                  </span>
-                )}
+                </button>
+                <span className="text-[10px] text-white font-medium tabular-nums">
+                  {heartCount > 0 ? (heartCount >= 1000 ? `${(heartCount / 1000).toFixed(1)}k` : heartCount) : (viewerCount >= 1000 ? `${(viewerCount / 1000).toFixed(1)}k` : viewerCount) || ""}
+                </span>
               </div>
+
+              {/* F2 — Emoji reaction rail */}
+              {(["🔥", "💦", "😈", "💨"] as const).map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => handleReact(emoji)}
+                  aria-label={`React with ${emoji}`}
+                  className="w-[38px] h-[38px] rounded-full flex items-center justify-center text-lg active:scale-110 transition-transform"
+                  style={{ background: "rgba(255,255,255,0.12)" }}
+                >
+                  {emoji}
+                </button>
+              ))}
+
+              {/* ✨ Tip button */}
               <button
                 onClick={() => setShowTipSheet(true)}
                 aria-label="Tip and more"
@@ -2046,6 +2266,24 @@ function StreamInner() {
               >
                 ✨
               </button>
+            </div>
+          )}
+
+          {/* F7 — Fullscreen quick-tip bar (authenticated viewers only, fullscreen only) */}
+          {isFullscreen && isAuthenticated && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && stream.isLive && (
+            <div className="pointer-events-auto flex items-center justify-center gap-2 px-3 pb-1">
+              {[10, 50, 100].map((amt) => (
+                <button
+                  key={amt}
+                  onClick={() => handleTip(amt)}
+                  disabled={tipping}
+                  aria-label={`Tip ${amt} tokens`}
+                  className="flex-1 max-w-[80px] py-2 rounded-xl text-xs font-bold text-white active:scale-95 transition-transform disabled:opacity-50"
+                  style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                >
+                  Tip {amt}
+                </button>
+              ))}
             </div>
           )}
 
@@ -2920,22 +3158,35 @@ function StreamInner() {
                     </div>
                   ) : (
                     chatMessages.slice(-100).map((msg) => (
-                      <div key={msg.id} className="py-0.5">
-                        <div className="text-xs flex items-start gap-1">
-                          <span className="font-medium text-gradient flex-shrink-0">@{msg.username}</span>
-                          <span className="text-pnp-textSecondary flex-shrink-0">·</span>
-                          <span className="text-pnp-textPrimary flex-1 break-words">{msg.content}</span>
-                          {isStreamOwner && msg.userId && (
-                            <button
-                              onClick={() => handleBanUser(msg.userId!)}
-                              className="flex-shrink-0 ml-1 text-[9px] text-pnp-textSecondary/40 hover:text-red-400 transition-colors"
-                              title="Ban from chat"
-                            >
-                              ✕
-                            </button>
-                          )}
+                      msg.isHype ? (
+                        <div key={msg.id} className="py-0.5 px-0.5">
+                          <div
+                            className="text-xs flex items-center gap-1.5 px-2 py-1 rounded-lg"
+                            style={{ background: "linear-gradient(90deg, rgba(139,92,246,0.18), rgba(212,0,122,0.12))", border: "1px solid rgba(139,92,246,0.25)" }}
+                          >
+                            <span className="font-bold flex-shrink-0" style={{ color: "#a78bfa" }}>PNPtv</span>
+                            <span className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded" style={{ background: "rgba(139,92,246,0.35)", color: "#c4b5fd" }}>BOT</span>
+                            <span className="flex-1 break-words" style={{ color: "#e9d5ff" }}>{msg.content}</span>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div key={msg.id} className="py-0.5">
+                          <div className="text-xs flex items-start gap-1">
+                            <span className="font-medium text-gradient flex-shrink-0">@{msg.username}</span>
+                            <span className="text-pnp-textSecondary flex-shrink-0">·</span>
+                            <span className="text-pnp-textPrimary flex-1 break-words">{msg.content}</span>
+                            {isStreamOwner && msg.userId && (
+                              <button
+                                onClick={() => handleBanUser(msg.userId!)}
+                                className="flex-shrink-0 ml-1 text-[9px] text-pnp-textSecondary/40 hover:text-red-400 transition-colors"
+                                title="Ban from chat"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
                     ))
                   )}
                   <div ref={chatEndRef} />

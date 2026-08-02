@@ -407,11 +407,12 @@ export default function SocialPostCard({
   const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
 
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
-  // Santino's videos push PRIME; every other active creator pushes their own
-  // subscription page. Non-video posts and own posts stay clean.
-  const isSantinoAuthor = String(post.author_id) === "8599671840";
-  const isVideoPost = post.media_type === "video" && !!post.media_url;
-  const showPrimeUpsell = isSantinoAuthor && !isPrime && isVideoPost && !isOwn;
+  // Santino & Lex's videos push Become PRIME (classic Telegram content + 2 Hangouts);
+  // every other active creator pushes membership for exclusive content, channel & private hangout.
+  const isSantinoOrLex =
+    ["8599671840", "8370209084", "8552451957", "66127d88-817a-445b-a398-81d22d2587c1"].includes(String(post.author_id)) ||
+    ["santinofurioso", "pnplatinoboy", "pnplatinotv"].includes(String(post.author_username || "").toLowerCase());
+  const showPrimeUpsell = isSantinoOrLex && !isPrime && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
@@ -421,19 +422,13 @@ export default function SocialPostCard({
     setPrimeUpsellDismissed(true);
   };
   // Retroactive rule (2026-07-24): every free post from an active creator
-  // gets a Subscribe CTA in the community feed. Applies to all media types
-  // — text, image, video — not just videos as before. Suppressed on the
-  // creator's own profile via the `hideCreatorCta` prop (redundant there).
+  // gets a Subscribe CTA in the community feed. Applies to all media types.
   const showCreatorSubscribeUpsell =
     !hideCreatorCta &&
     !showPrimeUpsell &&
-    !isSantinoAuthor &&
+    !isSantinoOrLex &&
     post.author_creator_status === "active" &&
-    ((post.author_creator_price as number | undefined) ?? 0) > 0 &&
-    ((post.author_exclusive_video_count as number | undefined) ?? 0) > 0 &&
     !post.is_exclusive &&
-    !post.is_promoted &&
-    !post.is_carousel &&
     !isOwn;
   const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
   const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
@@ -447,6 +442,7 @@ export default function SocialPostCard({
   // Feed CTA banner (2026-07-24): opens the shared CreatorSubscribeWizard
   // inline right under the post card — no navigation to the profile.
   const [showFeedSubPanel, setShowFeedSubPanel] = useState(false);
+  const [showLockedSubPanel, setShowLockedSubPanel] = useState(false);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -1029,58 +1025,64 @@ export default function SocialPostCard({
             </FreeTierOverlay>
           ) : (post.is_exclusive && post.exclusive_status === "locked") || (post.content_locked && !post.blurred) ? (
             <div
-              className="mt-2 rounded-lg p-6 text-center"
+              className="mt-2 rounded-xl p-4 text-center space-y-3"
               onClick={(e) => e.stopPropagation()}
               style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.1)",
               }}
             >
-              <svg
-                className="w-8 h-8 mx-auto mb-2 opacity-40"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-                />
-              </svg>
-              {post.locked_reason === "not_prime" ? (
+              {!showLockedSubPanel ? (
                 <>
-                  <p className="text-sm text-white/60 mb-2">
-                    Upgrade to PRIME to unlock creator content
-                  </p>
+                  <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/10 flex items-center justify-center border border-pink-500/20">
+                    <svg
+                      className="w-5 h-5 text-pink-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">
+                      {lang === "es" ? "Suscríbete para Ver" : "Subscribe to Watch"}
+                    </h4>
+                    <p className="text-xs text-white/60 mt-1 max-w-sm mx-auto">
+                      {lang === "es"
+                        ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} por $${post.author_creator_price || 15}/mes para acceder a su contenido exclusivo, canal y hangout privado.`
+                        : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} for $${post.author_creator_price || 15}/mo to access their exclusive content, channel, and private hangout.`}
+                    </p>
+                  </div>
                   <button
-                    onClick={() => onNavigate("/subscribe")}
-                    className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                    onClick={() => setShowLockedSubPanel(true)}
+                    className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95"
                     style={{
                       background: "linear-gradient(135deg, #D4007A, #E69138)",
-                      color: "#fff",
                     }}
                   >
-                    Upgrade to PRIME
+                    🔒 {lang === "es" ? "Suscríbete para Ver" : "Subscribe to Watch"}
                   </button>
                 </>
               ) : (
-                <>
-                  <p className="text-sm text-white/60 mb-2">
-                    Subscribe ${post.author_creator_price || 15}/mo to unlock
-                  </p>
-                  <button
-                    onClick={() => onNavigate(`/profile/${post.author_id}`)}
-                    className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
-                    style={{
-                      background: "linear-gradient(135deg, #D4007A, #E69138)",
-                      color: "#fff",
-                    }}
-                  >
-                    Subscribe to {post.author_first_name || post.author_username}
-                  </button>
-                </>
+                <CreatorSubscribeWizard
+                  creatorId={String(post.author_id)}
+                  creatorName={post.author_first_name || post.author_username || undefined}
+                  username={post.author_username}
+                  priceUsd={Number(post.author_creator_price || 15)}
+                  lang={lang === "es" ? "es" : "en"}
+                  compact
+                  storageKey={`pnp_creator_sub_${post.author_id}`}
+                  onSuccess={() => {
+                    setShowLockedSubPanel(false);
+                  }}
+                  onClose={() => setShowLockedSubPanel(false)}
+                />
               )}
             </div>
           ) : (
@@ -1499,7 +1501,7 @@ export default function SocialPostCard({
                           onContextMenu={(e) => e.preventDefault()}
                           playsInline
                           creatorDisclaimer={post.author_creator_status === "active"}
-                          className="w-full max-h-[360px] lg:max-h-[560px] object-contain bg-black"
+                          className="w-full rounded-xl overflow-hidden shadow-md"
                           preload="metadata"
                           poster={thumbUrl || undefined}
                         />
@@ -1562,7 +1564,7 @@ export default function SocialPostCard({
                             onContextMenu={(e) => e.preventDefault()}
                             playsInline
                             creatorDisclaimer={post.author_creator_status === "active"}
-                            className="w-full max-h-[480px] lg:max-h-[640px] rounded-lg object-contain bg-black"
+                            className="w-full rounded-xl overflow-hidden shadow-md"
                             preload="metadata"
                             poster={post.video_thumbnail_url || undefined}
                             onError={() => setVideoError(true)}
@@ -1621,63 +1623,74 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* PRIME upsell strip — Santino's free videos push PRIME subscription */}
-              {showPrimeUpsell && !primeUpsellDismissed && !videoError && (
-                <a
-                  href="/subscribe"
-                  className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
-                  style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)" }}
+              {/* PRIME upsell micro-banner — Santino & Lex free posts push PRIME */}
+              {showPrimeUpsell && !primeUpsellDismissed && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); onNavigate("/subscribe"); }}
+                  className="mt-2 cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
+                  style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
                 >
-                  <span className="flex-1">
-                    {lang === "es"
-                      ? `Desbloquea todo lo que ${post.author_first_name || post.author_username || "este creador"} publica — hazte PRIME`
-                      : `Unlock everything ${post.author_first_name || post.author_username || "this creator"} makes — go PRIME`}
-                  </span>
-                  <span aria-hidden="true">→</span>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
-                    aria-label="Dismiss"
-                    className="w-5 h-5 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-colors -mr-1"
-                  >
-                    ×
-                  </button>
-                </a>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-xs">🔥</span>
+                    <span className="text-pink-200 truncate">
+                      {lang === "es"
+                        ? "Hazte PRIME — Contenido exclusivo Telegram + Hangouts"
+                        : "Become PRIME — Exclusive Telegram content + Hangouts"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span
+                      className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      {lang === "es" ? "Hazte PRIME" : "Become PRIME"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                      aria-label="Dismiss"
+                      className="text-white/50 hover:text-white text-xs px-1"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {/* Creator subscribe upsell (2026-07-24): shown on every free post
-                  from an active creator in the community feed. Opens an INLINE
-                  checkout under the banner — no navigation to the profile — so
-                  subscribing is 1-tap. Suppressed on creator profile pages
-                  (hideCreatorCta=true) where the pill above the wall does the job. */}
-              {showCreatorSubscribeUpsell && !creatorUpsellDismissed && !videoError && (
+              {/* Creator subscribe upsell micro-banner: shown on every free post from active creators */}
+              {showCreatorSubscribeUpsell && !creatorUpsellDismissed && (
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                   {!showFeedSubPanel ? (
                     <div
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold"
-                      style={{ background: "linear-gradient(90deg, #D4007A 0%, #E69138 100%)", color: "#fff" }}
+                      className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-amber-500/30 transition-all"
+                      style={{ background: "rgba(230, 145, 56, 0.12)", backdropFilter: "blur(4px)" }}
                     >
-                      <span className="flex-1">
-                        {lang === "es"
-                          ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} · $${Number(post.author_creator_price || 0).toFixed(0)}/mes — profile, channel, hangout & DM`
-                          : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} · $${Number(post.author_creator_price || 0).toFixed(0)}/mo — profile, channel, hangout & DM`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowFeedSubPanel(true)}
-                        className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-white/95 hover:bg-white transition-colors"
-                        style={{ color: "#D4007A" }}
-                      >
-                        {lang === "es" ? "Suscribirme" : "Subscribe"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={dismissCreatorUpsell}
-                        aria-label="Dismiss"
-                        className="w-5 h-5 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors -mr-1"
-                      >
-                        ×
-                      </button>
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-xs">⭐</span>
+                        <span className="text-amber-200 truncate">
+                          {lang === "es"
+                            ? `Suscríbete a mi contenido exclusivo y hangout $${post.author_creator_price || 15}/mes`
+                            : `Subscribe to my exclusive content & hangout $${post.author_creator_price || 15}/mo`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setShowFeedSubPanel(true)}
+                          className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm transition-transform active:scale-95"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          {lang === "es" ? `Suscribirme $${post.author_creator_price || 15}` : `Subscribe $${post.author_creator_price || 15}`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={dismissCreatorUpsell}
+                          aria-label="Dismiss"
+                          className="text-white/50 hover:text-white text-xs px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <CreatorSubscribeWizard

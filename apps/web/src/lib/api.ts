@@ -19,6 +19,8 @@ export type NpCoinCode = (typeof NP_COINS)[number]["code"];
 export const NP_COINS_SUBSCRIBE = [
   { code: "usdtbsc",   label: "USDT", network: "BNB Smart Chain", icon: "₮", color: "#26a17b", recommended: true },
   { code: "usdcbsc",   label: "USDC", network: "BNB Smart Chain", icon: "$",  color: "#2775ca" },
+  { code: "usdtmatic", label: "USDT", network: "Polygon",         icon: "₮",  color: "#8247e5" },
+  { code: "usdcsol",   label: "USDC", network: "Solana",          icon: "$",  color: "#14f195" },
   { code: "eth",       label: "ETH",  network: "Ethereum",        icon: "Ξ",  color: "#627eea" },
   { code: "usdttrc20", label: "USDT", network: "TRON",            icon: "₮",  color: "#26a17b" },
 ] as const;
@@ -929,6 +931,10 @@ export function sendLiveHeartbeat(channelRef: string): Promise<{ success: boolea
   return request("/api/webapp/live/heartbeat", { method: "POST", body: { channelRef } });
 }
 
+export function postLiveReact(channelRef: string, kind: string): Promise<{ ok: boolean }> {
+  return request("/api/webapp/live/react", { method: "POST", body: { channelRef, kind } });
+}
+
 export async function enterLiveStream(channelRef: string): Promise<{ success: boolean; freeUntil?: string; freeMinutes?: number; error?: string; required?: number; current?: number }> {
   const res = await fetch("/api/webapp/live/enter", {
     method: "POST",
@@ -1298,6 +1304,21 @@ export function sharePostToX(postId: number): Promise<{
   return request(`/api/webapp/social/posts/${postId}/share-x`, { method: "POST" });
 }
 
+export function generateAiVideoMetadata(
+  shortPrompt: string,
+  lang: string = "en"
+): Promise<{
+  success: boolean;
+  title: string;
+  description: string;
+  tags: string[];
+}> {
+  return request("/api/webapp/creator/ai/generate-video-metadata", {
+    method: "POST",
+    body: { shortPrompt, lang },
+  });
+}
+
 export function sharePostToHangouts(
   postId: number,
   groupIds: number[],
@@ -1342,6 +1363,7 @@ export function updateProfile(
     language: string;
     amazonWishlistUrl: string | null;
     hideFromRegions: string[];
+    hypeBotEnabled: boolean;
   }>
 ): Promise<{ success: boolean }> {
   return request("/api/webapp/profile", { method: "PUT", body: fields });
@@ -3817,6 +3839,7 @@ export interface CreatorDashboard {
   walletAddress?: string | null;
   streamRules?: string | null;
   subscriptionPaused?: boolean;
+  hypeBotEnabled?: boolean;
 }
 
 export interface CreatorSubscriptionStatus {

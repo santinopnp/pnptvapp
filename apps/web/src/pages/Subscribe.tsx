@@ -27,6 +27,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useI18n } from "@/lib/i18n";
+import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
 
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
@@ -1069,7 +1070,17 @@ export default function Subscribe() {
                         </button>
                       ))}
                     </div>
-                    <p className="text-[9px] text-pnp-textSecondary/40 mt-2 text-center">{t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}</p>
+                    <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-pnp-textSecondary">
+                        {t.lang === "es" ? "Abre en:" : "Open in:"}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
+                        <MetaMaskIcon size={14} /> MetaMask
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
+                        <TrustWalletIcon size={14} /> Trust Wallet
+                      </span>
+                    </div>
                   </div>
                 )}
                 {meruPanelPlanId === plan.id && (
@@ -1368,7 +1379,17 @@ export default function Subscribe() {
                         </button>
                       ))}
                     </div>
-                    <p className="text-[9px] text-pnp-textSecondary/40 mt-2 text-center">{t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}</p>
+                    <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-pnp-textSecondary">
+                        {t.lang === "es" ? "Abre en:" : "Open in:"}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
+                        <MetaMaskIcon size={14} /> MetaMask
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
+                        <TrustWalletIcon size={14} /> Trust Wallet
+                      </span>
+                    </div>
                   </div>
                 )}
                 {meruPanelPlanId === plan.id && (

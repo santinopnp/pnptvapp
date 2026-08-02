@@ -894,6 +894,13 @@
   }
 }
 
+/* F1/F2: float-react keyframe for emoji reactions in live stream */
+@keyframes floatReact {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  60%  { opacity: 0.8; transform: translateY(-60px) scale(1.2); }
+  100% { opacity: 0; transform: translateY(-110px) scale(0.8); }
+}
+
 /* Prefers-reduced-motion — disable spin/transform animations */
 @media (prefers-reduced-motion: reduce) {
   .lk-pnptv-call[data-lk-theme="default"] .lk-button,
