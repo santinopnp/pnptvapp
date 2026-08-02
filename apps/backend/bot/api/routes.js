@@ -7574,8 +7574,9 @@ app.get('/api/webapp/me/referral/list', asyncHandler(async (req, res) => {
 
 // ── Crypto guide progress / completion ──────────────────────────────────────
 // Wizard state persisted server-side so users see the same last-step across
-// devices; completion grants a one-time 100-token reward (idempotent via the
-// crypto_guide_reward_granted_at column).
+// devices; completion grants a one-time 30-token Santino-only reward
+// (creator-gift pool — spendable only on Santino streams/tips). Idempotent
+// via the crypto_guide_reward_granted_at column.
 app.get('/api/webapp/me/crypto-guide-status', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const { rows } = await query(
@@ -7604,7 +7605,9 @@ app.post('/api/webapp/me/crypto-guide-progress', requireSessionAuth, asyncHandle
 
 app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
-  // Mark completed if not already. Grant 100 tokens once (guarded by reward_granted_at).
+  // Mark completed if not already. Grant 30 Santino-only gift tokens once
+  // (guarded by reward_granted_at). These land in creator_gifts[SANTINO_USER_ID]
+  // and can only be spent on Santino's streams/tips.
   const { rows } = await query(
     `UPDATE users
         SET crypto_guide_completed_at = COALESCE(crypto_guide_completed_at, NOW()),
@@ -7616,11 +7619,11 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
   );
   const r = rows[0] || {};
   let rewarded = false;
-  let newBalance = null;
   if (!r.crypto_guide_reward_granted_at) {
     try {
       const TokenSvc = require('../../services/tokenService');
-      newBalance = await TokenSvc.creditTokens(user.id, 100, `crypto_guide:reward:${user.id}`);
+      const { SANTINO_USER_ID } = require('../../config/monetizationConfig');
+      await TokenSvc.creditCreatorGiftTokens(user.id, SANTINO_USER_ID, 30);
       await query(
         `UPDATE users SET crypto_guide_reward_granted_at = NOW() WHERE id = $1 AND crypto_guide_reward_granted_at IS NULL`,
         [user.id]
@@ -7635,15 +7638,15 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
           targetUserId: String(user.id),
           entityType: 'crypto_guide',
           entityId: String(user.id),
-          message: 'You completed the crypto guide — 100 tokens added to your wallet 🎁',
-          metadata: { url: '/buy-tokens', pushTitle: '+100 tokens', pushBody: 'Crypto guide complete — enjoy the reward.' },
+          message: 'You completed the crypto guide — 30 tokens added to spend on Santino 🎁',
+          metadata: { url: '/creator/santinofurioso', pushTitle: '+30 Santino tokens', pushBody: 'Crypto guide complete — enjoy the reward on Santino.' },
         }).catch(() => {});
       } catch (_) { /* non-fatal */ }
     } catch (grantErr) {
       logger.warn('crypto-guide-complete: token grant failed (still marked completed)', { userId: user.id, error: grantErr.message });
     }
   }
-  return res.json({ success: true, completedAt: r.crypto_guide_completed_at, rewarded, tokenBalance: newBalance });
+  return res.json({ success: true, completedAt: r.crypto_guide_completed_at, rewarded, tokenBalance: null });
 }));
 
 // Referral: redeem a code (called on register)
@@ -13466,7 +13469,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
           const ins = await dbQuery(
             `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
              VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6, date_trunc('month', CURRENT_DATE))
-             ON CONFLICT (source_payment_id, creator_id) DO NOTHING
+             ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING
              RETURNING id`,
             [String(creatorId), gross, perCreator, platformCut, String(HOLD_HRS), order_id]
           );
