@@ -5,7 +5,7 @@ const sendSystemDM = require('../services/sendSystemDM');
 
 const SENDER_ID = '8552451957'; // @pnptv / PNPtv! News
 const CHASE_ID = '8162853364';
-const ACTIVE_INVOICE_URL = 'https://nowpayments.io/payment?iid=4906018769';
+const ACTIVE_INVOICE_URL = 'https://nowpayments.io/payment/?iid=4906018769';
 const CANCELLED_DSO_ID = 64516; // the older duplicate
 
 const MESSAGE = `Hey Chase — special offer just for you.

@@ -65,7 +65,7 @@ async function main() {
 
   const invoiceId = invoiceResp.data?.id;
   if (!invoiceId) throw new Error(`NowPayments returned no invoice id: ${JSON.stringify(invoiceResp.data)}`);
-  const invoiceUrl = `https://nowpayments.io/payment?iid=${invoiceId}`;
+  const invoiceUrl = invoiceResp.data?.invoice_url || `https://nowpayments.io/payment/?iid=${invoiceId}`;
 
   const metadata = {
     provider: 'nowpayments',
