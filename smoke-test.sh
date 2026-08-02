@@ -6,8 +6,8 @@ QA_DOMAIN="easybots"
 QA_TOKEN="8645eb8b8e532f65025806f315ba604e244d9397e5d27280b94d6a6cc9b9772f"
 PROJECT="Gl5X"
 TEST_RUN="XGw2M"
-BASE="https://app.pnptv.app"
-API="https://app.pnptv.app"
+BASE="https://pnptv.app"
+API="https://pnptv.app"
 
 PASS=0
 FAIL=0

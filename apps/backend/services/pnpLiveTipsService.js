@@ -225,7 +225,7 @@ class PNPLiveTipsService {
          VALUES ($1, NULL, $2, NULL, $3, $4, 'completed', 'tokens', $5, $6, NOW(), NOW())
          ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
          RETURNING *`,
-        [userId, String(performerId), amount, (message || '').slice(0, 200), txId, idempotencyKey || null]
+        [userId, String(perfUserId || performerId), amount, (message || '').slice(0, 200), txId, idempotencyKey || null]
       );
 
       // If ON CONFLICT fired (duplicate key), fetch the existing tip and return it

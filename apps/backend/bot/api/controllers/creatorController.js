@@ -687,7 +687,7 @@ const approveEnrollment = async (req, res) => {
         // Notify admin so this doesn't get buried in logs
         NotificationEmitter.emit({
           type: 'admin_alert',
-          category: 'compliance',
+          category: 'system',
           priority: 'high',
           targetUserId: req.user.id,
           message: `2257 auto-approval failed for creator ${creatorUserId} (enrollment ${req.params.id}). Manual review required. Error: ${idErr.message}`,

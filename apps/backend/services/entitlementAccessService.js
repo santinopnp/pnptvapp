@@ -191,14 +191,23 @@ class EntitlementAccessService {
       const has = rows.length > 0;
       // Pipeline: set the value + register scoped keys in a tracking set so
       // invalidateCache can DEL them even after the DB rows are gone.
-      const pipeline = redis.pipeline();
-      pipeline.set(cacheKey, has ? '1' : '0', 'EX', ENTITLEMENT_CACHE_TTL);
-      if (creatorId) {
-        const scopeTrackerKey = `ent_scopes:${userId}`;
-        pipeline.sadd(scopeTrackerKey, cacheKey);
-        pipeline.expire(scopeTrackerKey, ENTITLEMENT_CACHE_TTL + 60);
+      if (typeof redis.pipeline === 'function') {
+        const pipeline = redis.pipeline();
+        pipeline.set(cacheKey, has ? '1' : '0', 'EX', ENTITLEMENT_CACHE_TTL);
+        if (creatorId) {
+          const scopeTrackerKey = `ent_scopes:${userId}`;
+          pipeline.sadd(scopeTrackerKey, cacheKey);
+          pipeline.expire(scopeTrackerKey, ENTITLEMENT_CACHE_TTL + 60);
+        }
+        await pipeline.exec();
+      } else {
+        if (typeof redis.set === 'function') await redis.set(cacheKey, has ? '1' : '0', 'EX', ENTITLEMENT_CACHE_TTL);
+        if (creatorId) {
+          const scopeTrackerKey = `ent_scopes:${userId}`;
+          if (typeof redis.sadd === 'function') await redis.sadd(scopeTrackerKey, cacheKey);
+          if (typeof redis.expire === 'function') await redis.expire(scopeTrackerKey, ENTITLEMENT_CACHE_TTL + 60);
+        }
       }
-      await pipeline.exec();
       return has;
     } catch (err) {
       logger.error('EntitlementAccessService.hasEntitlement failed', { userId, addOnId, error: err.message });
@@ -343,9 +352,15 @@ class EntitlementAccessService {
         keysToDelete.push(scopeTrackerKey);
       } catch (_sErr) { /* non-fatal */ }
 
-      const pipeline = redis.pipeline();
-      keysToDelete.forEach(k => pipeline.del(k));
-      await pipeline.exec();
+      if (typeof redis.pipeline === 'function') {
+        const pipeline = redis.pipeline();
+        keysToDelete.forEach(k => pipeline.del(k));
+        await pipeline.exec();
+      } else {
+        if (typeof redis.del === 'function') {
+          await Promise.all(keysToDelete.map(k => redis.del(k).catch(() => {})));
+        }
+      }
 
       // postgres.js queryCache caches SELECTs for 120s. Transaction-based mutations
       // (getClient()) bypass the per-table invalidation logic. Flush affected tables

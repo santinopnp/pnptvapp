@@ -2146,6 +2146,17 @@ const startBot = async () => {
       logger.warn(`Channel video stuck scheduler initialization failed: ${error.message}`);
     }
 
+    // Hype-bot scheduler — emits engagement messages in live stream chat (60s interval)
+    try {
+      const HypeBotScheduler = require('./schedulers/hypeBotScheduler');
+      const hypeBotScheduler = new HypeBotScheduler();
+      hypeBotScheduler.start();
+      global.hypeBotScheduler = hypeBotScheduler;
+      logger.info('✓ Hype-bot scheduler initialized and started');
+    } catch (error) {
+      logger.warn(`Hype-bot scheduler initialization failed: ${error.message}`);
+    }
+
     // Auto-expire pending dash_subscription_orders older than 48h (1h interval).
     // BTCPay invoices expire well before 48h; anything still pending is an
     // abandoned checkout. If a late-payment webhook arrives, the settle script

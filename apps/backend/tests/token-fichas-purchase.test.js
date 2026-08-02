@@ -225,7 +225,7 @@ describe('POST /api/wallet/buy-nowpayments — input validation', () => {
   it('strips disallowed payCurrency values (falls back to null)', async () => {
     mockCreateNowPaymentsCheckout.mockResolvedValueOnce({
       invoiceId: 'np-inv-1',
-      checkoutUrl: 'https://nowpayments.io/payment?iid=np-inv-1',
+      checkoutUrl: 'https://nowpayments.io/payment/?iid=np-inv-1',
     });
 
     const app = buildApp(AUTHED_USER);
@@ -244,7 +244,7 @@ describe('POST /api/wallet/buy-nowpayments — input validation', () => {
   it('passes allowed payCurrency=usdttrc20 through unchanged', async () => {
     mockCreateNowPaymentsCheckout.mockResolvedValueOnce({
       invoiceId: 'np-inv-2',
-      checkoutUrl: 'https://nowpayments.io/payment?iid=np-inv-2',
+      checkoutUrl: 'https://nowpayments.io/payment/?iid=np-inv-2',
     });
 
     const app = buildApp(AUTHED_USER);
@@ -268,7 +268,7 @@ describe('POST /api/wallet/buy-nowpayments — happy path', () => {
   it('creates NowPayments invoice with correct token metadata and returns checkout URL', async () => {
     const invoiceResult = {
       invoiceId:   'np-inv-happy',
-      checkoutUrl: 'https://nowpayments.io/payment?iid=np-inv-happy',
+      checkoutUrl: 'https://nowpayments.io/payment/?iid=np-inv-happy',
       tokens:      100,
       usdAmount:   4.99,
     };
@@ -282,7 +282,7 @@ describe('POST /api/wallet/buy-nowpayments — happy path', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.invoiceId).toBe('np-inv-happy');
-    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/payment?iid=np-inv-happy');
+    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/payment/?iid=np-inv-happy');
     expect(res.body.tokens).toBe(100);
 
     expect(mockCreateNowPaymentsCheckout).toHaveBeenCalledWith(

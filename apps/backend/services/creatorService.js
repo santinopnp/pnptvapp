@@ -1178,7 +1178,7 @@ class CreatorService {
   static async getCreatorDashboard(creatorId) {
     const [subscriberRes, earningsRes, exclusiveRes, applicationRes, enrollmentRes] = await Promise.all([
       query(
-        'SELECT creator_subscriber_count, creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_dash_address, stream_rules, creator_subscription_paused FROM users WHERE id = $1',
+        'SELECT creator_subscriber_count, creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_dash_address, stream_rules, creator_subscription_paused, hype_bot_enabled FROM users WHERE id = $1',
         [creatorId]
       ),
       query(
@@ -1218,6 +1218,7 @@ class CreatorService {
       walletAddress: user.creator_dash_address || null,
       streamRules: user.stream_rules || null,
       subscriptionPaused: user.creator_subscription_paused || false,
+      hypeBotEnabled: user.hype_bot_enabled !== false, // default true
     };
   }
 

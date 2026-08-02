@@ -111,6 +111,7 @@ const { requireTier, isMemberOrAbove, isAdmin: isAdminTier } = require('../../se
 
 // Entitlement-based access control — replaces requireTier for all route middleware
 const EntitlementAccessService = require('../../services/entitlementAccessService');
+const TokenCheckoutService = require('../../services/tokenCheckoutService');
 
 /**
  * Thin session auth — returns 401 JSON if user is not authenticated.
@@ -2197,6 +2198,9 @@ const walletSpendLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, keyGene
 // before deciding — all three endpoints share this counter, so 20 gives enough
 // room to shop around without exhausting real BTCPay/NowPayments quota.
 const walletBuyLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Demasiados intentos. Espera 10 minutos antes de intentar de nuevo.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
+// Grok-backed AI generation endpoints: cap at 10/min per user. Every call hits
+// xAI and costs money — no rate-limit means one authenticated user can spam it.
+const aiGenerationLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => req.session?.user?.id || req.ip, handler: (req, res) => res.status(429).json({ success: false, error: 'Too many AI requests. Wait a minute and try again.', code: 'RATE_LIMITED' }), standardHeaders: true, legacyHeaders: false });
 // Status-poll limiter for the checkout modals. BuyTokens modal polls the NP
 // order every 6s for up to 30 min = 300 polls/session. Cap at 200 req / min
 // per user to allow the poll cadence + a bit of jitter.
@@ -2347,6 +2351,18 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/cashout', cashoutRoutes);
 app.post('/api/webhooks/bitrefill', cashoutRoutes.bitrefillWebhook);
 app.post('/api/webhooks/transak', cashoutRoutes.transakWebhook);
+
+// Slack Events API — tester feedback triage bot.
+// Signature verified inside handleEvent via SLACK_SIGNING_SECRET.
+// Grok classifies each message, posts a threaded summary, DMs admin on critical.
+const slackFeedbackService = require('../../services/slackFeedbackService');
+app.post('/api/webhooks/slack/events', webhookLimiter, asyncHandler(slackFeedbackService.handleEvent));
+
+// Tester checklist report submissions from /testing-chase.html.
+// Grok summarises + posts via SLACK_TESTER_INCOMING_WEBHOOK — no bot invite,
+// no Events API scope drama. See services/testerReportService.js.
+const testerReportService = require('../../services/testerReportService');
+app.post('/api/webhooks/tester-report', webhookLimiter, asyncHandler(testerReportService.handleReport));
 
 // Persona identity verification webhook
 // Signature verified inside handlePersonaWebhook — no session auth needed.
@@ -7614,7 +7630,7 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
         const NotificationEmitter = require('../../services/notificationEmitter');
         await NotificationEmitter.emit({
           type: 'crypto_guide_reward',
-          category: 'gamification',
+          category: 'system',
           priority: 'normal',
           targetUserId: String(user.id),
           entityType: 'crypto_guide',
@@ -9339,6 +9355,7 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
       const paymentResp = await axios.post(`${npUrl}/invoice`, {
         price_amount: hangoutPrice,
         price_currency: 'usd',
+        pay_currency: 'usdcsol',
         order_id: orderId,
         order_description: `Hangout access: ${hangout.name}`,
         ipn_callback_url: `${webappUrlHangout}/api/webhooks/nowpayments`,
@@ -9348,9 +9365,9 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
         headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
         timeout: 10000,
       });
-      const { id: npInvoiceId } = paymentResp.data;
+      const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = `https://nowpayments.io/payment?iid=${npInvoiceId}`;
+      const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
            (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -9436,6 +9453,7 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
       const paymentResp = await axios.post(`${npUrl}/invoice`, {
         price_amount: channelPrice,
         price_currency: 'usd',
+        pay_currency: 'usdcsol',
         order_id: orderId,
         order_description: `Channel access: ${channel.name}`,
         ipn_callback_url: `${webappUrlChannel}/api/webhooks/nowpayments`,
@@ -9445,9 +9463,9 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
         headers: { 'x-api-key': npApiKey, 'Content-Type': 'application/json' },
         timeout: 10000,
       });
-      const { id: npInvoiceId } = paymentResp.data;
+      const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = `https://nowpayments.io/payment?iid=${npInvoiceId}`;
+      const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
            (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -10189,6 +10207,26 @@ app.post('/api/webapp/live/heartbeat', requireSessionAuth, rateLimit({ windowMs:
     return res.status(status).json({ success: false, error: result.error });
   }
   res.json({ success: true, newBalance: result.newBalance });
+}));
+
+// POST /api/webapp/live/react — ephemeral emoji reaction broadcast (no DB write).
+// Validates kind, emits socket event stream:react to room live:<channelRef>.
+// Rate-limited to 30 req/min via socialActionLimiter.
+const LIVE_REACT_KINDS = new Set(['heart', '🔥', '❤️', '💦', '😈', '💨']);
+app.post('/api/webapp/live/react', requireSessionAuth, socialActionLimiter, asyncHandler(async (req, res) => {
+  const { channelRef, kind } = req.body;
+  if (!channelRef || typeof channelRef !== 'string') {
+    return res.status(400).json({ ok: false, error: 'channelRef is required' });
+  }
+  if (!kind || !LIVE_REACT_KINDS.has(kind)) {
+    return res.status(400).json({ ok: false, error: 'invalid kind' });
+  }
+  const userId = String(req.session.user.telegram_id || req.session.user.id);
+  const io = require('../../services/socketSingleton').get();
+  if (io) {
+    io.to(`live:${channelRef}`).emit('stream:react', { userId, kind, ts: Date.now() });
+  }
+  res.json({ ok: true });
 }));
 
 // POST /api/webapp/live/enter — entry gate: viewer must hold ≥60 tokens to enter a live stream.
@@ -12111,9 +12149,9 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
       timeout: 10000,
     });
-    const { id: nowpaymentsInvoiceId } = paymentResp.data;
+    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
     npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
   } catch (err) {
     logger.error('[NOWPayments] Subscription payment creation failed', { userId, planId, payCurrency: validPayCurrency, error: err.response?.data || err.message });
@@ -12290,9 +12328,9 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
       timeout: 10000,
     });
-    const { id: nowpaymentsInvoiceId } = paymentResp.data;
+    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
     npPayInfo2 = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
   } catch (err) {
     logger.error('[NOWPayments] Payment creation failed', { userId, planId, orderId, payCurrency: validPayCurrency, error: err.message });
@@ -12467,9 +12505,8 @@ app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLi
   }
 
   const nowpaymentsInvoiceId = invoiceData?.id || invoiceData?.invoice_id || null;
-  const invoiceUrl = nowpaymentsInvoiceId
-    ? `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`
-    : invoiceData?.invoice_url || null;
+  const invoiceUrl = invoiceData?.invoice_url
+    || (nowpaymentsInvoiceId ? `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}` : null);
 
   // Insert into dash_subscription_orders
   await dbQuery(
@@ -13761,6 +13798,12 @@ app.post('/api/webhooks/nowpayments/payout', webhookLimiter, express.json(), asy
 const btcpayWebhookController = require('./controllers/btcpayWebhookController');
 app.post('/api/webhooks/btcpay', webhookLimiter, asyncHandler(btcpayWebhookController.handleBtcpayWebhook));
 
+// POST /api/webhooks/epayco (legacy webhook endpoint stub for health/compatibility checks)
+app.post('/api/webhooks/epayco', webhookLimiter, express.json(), (req, res) => res.json({ status: 'deprecated', provider: 'epayco' }));
+
+// POST /api/webhooks/daimo (legacy webhook endpoint stub for health/compatibility checks)
+app.post('/api/webhooks/daimo', webhookLimiter, express.json(), (req, res) => res.json({ status: 'deprecated', provider: 'daimo' }));
+
 // Mux webhook — signature verification needs the exact raw bytes Mux signed.
 // The global express.json() verify callback (~line 372) already captures
 // those into req.rawBody for every request. This route used to instead
@@ -14622,6 +14665,59 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
         );
         res.json({ success: true, thumbnails });
       } catch (err) { handleSvcError(res, err); }
+    })
+  );
+
+  // POST /api/webapp/creator/ai/generate-video-metadata
+  // AI Title, Description & Tags Generator for creator video uploads
+  app.post(
+    '/api/webapp/creator/ai/generate-video-metadata',
+    requireSessionAuth,
+    aiGenerationLimiter,
+    asyncHandler(async (req, res) => {
+      const { shortPrompt, lang = 'en' } = req.body || {};
+      const promptText = typeof shortPrompt === 'string' ? shortPrompt.trim() : '';
+      if (!promptText) {
+        return res.status(400).json({ success: false, error: 'shortPrompt is required' });
+      }
+
+      const grokService = require('../../services/grokService');
+      let title = '';
+      let description = '';
+      let tags = [];
+
+      try {
+        const titleRes = await grokService.generateSafeVideoTitle({ prompt: promptText });
+        title = typeof titleRes === 'string' ? titleRes : (titleRes?.title || '');
+      } catch { /* fallback below */ }
+
+      try {
+        const descRes = await grokService.generateBilingualSafeVideoDescription({ prompt: promptText });
+        description = descRes?.combined || descRes?.en || descRes?.es || '';
+      } catch { /* fallback below */ }
+
+      if (!title) {
+        const cleanPrompt = promptText.charAt(0).toUpperCase() + promptText.slice(1);
+        title = `🔥 ${cleanPrompt}`;
+      }
+      if (!description) {
+        description = `${promptText}\n\nExclusive content on PNPtv! Subscribe to PRIME to access full sessions, channel drops, and 2 private hangouts: https://pnptv.app/subscribe`;
+      }
+
+      const baseTags = ['PNPtv', 'Exclusive', 'VIP', 'PRIME', 'Hangouts'];
+      const promptWords = promptText
+        .split(/\s+/)
+        .filter(w => w.length > 3)
+        .map(w => w.replace(/[^a-zA-Z0-9]/g, ''));
+      tags = Array.from(new Set([...baseTags, ...promptWords.slice(0, 3)]))
+        .map(t => t.startsWith('#') ? t : `#${t}`);
+
+      res.json({
+        success: true,
+        title,
+        description,
+        tags,
+      });
     })
   );
 
@@ -16607,7 +16703,11 @@ app.delete('/api/webapp/creators/media/:id',
 app.get('/api/public/creator/:username',
   softAuth,
   asyncHandler(async (req, res) => {
-    const { username } = req.params;
+    const raw = req.params.username;
+    // Frontend deep-links pass "@handle" (URL-encoded as %40handle). Strip the
+    // leading @ before validating so both /api/public/creator/foo and
+    // /api/public/creator/@foo work.
+    const username = raw && raw.startsWith('@') ? raw.slice(1) : raw;
     if (!username || !/^[a-zA-Z0-9_.-]{1,64}$/.test(username)) {
       return res.status(400).json({ success: false, error: 'Invalid username' });
     }

@@ -283,8 +283,11 @@ async function reorderMedia(creatorId, items) {
   try {
     await client.query('BEGIN');
 
-    // Build CASE WHEN for a single UPDATE statement
-    const caseClause = items.map((_, i) => `WHEN id = $${i * 2 + 1} THEN $${i * 2 + 2}`).join(' ');
+    // Build CASE WHEN for a single UPDATE statement.
+    // Cast sort_order params to int — otherwise pg infers the CASE expression
+    // as text and rejects the assignment to the integer column with
+    // "column sort_order is of type integer but expression is of type text".
+    const caseClause = items.map((_, i) => `WHEN id = $${i * 2 + 1} THEN $${i * 2 + 2}::int`).join(' ');
     const idList = items.map((_, i) => `$${i * 2 + 1}`).join(', ');
     const params = [];
     for (const item of items) {

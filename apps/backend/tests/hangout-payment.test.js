@@ -226,7 +226,7 @@ function buildApp(sessionUser = null) {
         });
         const { id: npInvoiceId } = paymentResp.data;
         if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-        const invoiceUrl = `https://nowpayments.io/payment?iid=${npInvoiceId}`;
+        const invoiceUrl = `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
         const insertRes = await getPool().query(
           `INSERT INTO dash_subscription_orders
              (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -490,7 +490,7 @@ describe('POST /api/webapp/hangouts/groups/:id/purchase — NowPayments happy pa
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/payment?iid=np-hg-1');
+    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/payment/?iid=np-hg-1');
     expect(res.body.paymentId).toBe('66');
   });
 

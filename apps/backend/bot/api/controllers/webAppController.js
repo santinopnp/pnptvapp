@@ -2562,7 +2562,7 @@ const updateProfile = async (req, res) => {
   }
 
   try {
-    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country', 'amazonWishlistUrl', 'hideFromRegions'];
+    const allowed = ['username', 'firstName', 'lastName', 'bio', 'locationText', 'interests', 'xHandle', 'instagramHandle', 'tiktokHandle', 'youtubeHandle', 'wofPhotoConsent', 'contentDisclaimer', 'language', 'dateOfBirth', 'country', 'amazonWishlistUrl', 'hideFromRegions', 'hypeBotEnabled'];
     const colMap  = {
       username: 'username',
       firstName: 'first_name', lastName: 'last_name', bio: 'bio',
@@ -2575,6 +2575,7 @@ const updateProfile = async (req, res) => {
       country: 'country',
       amazonWishlistUrl: 'amazon_wishlist_url',
       hideFromRegions: 'hide_from_regions',
+      hypeBotEnabled: 'hype_bot_enabled',
     };
 
     const sets = [];

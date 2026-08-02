@@ -47,10 +47,6 @@ Select a method to see the full tutorial:`;
         'pay_tut_plans'
       )],
       [Markup.button.callback(
-        '💳 ePayco (Tarjeta / PSE)',
-        'pay_tut_epayco'
-      )],
-      [Markup.button.callback(
         '🥷 Dash (Crypto Anonimo)',
         'pay_tut_dash'
       )],
@@ -178,128 +174,14 @@ Example: $25.00 USD = ~$99,960 COP`;
 async function handleEpaycoTutorial(ctx) {
   try {
     const lang = getLanguage(ctx);
-    await ctx.answerCbQuery();
-
+    await ctx.answerCbQuery().catch(() => {});
     const text = lang === 'es'
-      ? `💳 *Tutorial: Pagar con ePayco*
-_(Tarjeta de Credito, Debito, PSE, Efecty, Baloto)_
-
-*Que es ePayco?*
-Pasarela de pagos colombiana que acepta tarjetas internacionales, PSE (transferencia bancaria) y pagos en efectivo.
-
-*Paso a Paso:*
-
-*1.* Abre la pagina de suscripcion:
-   pnptv.app/subscribe
-
-*2.* Selecciona tu plan (Member, PRIME, etc.)
-
-*3.* Escribe tu email
-   ⚠️ Usa un email real — ahi recibiras tus credenciales de acceso
-
-*4.* Selecciona el tab "💳 Card / PSE"
-
-*5.* Haz clic en "Subscribe Now"
-   → Se abre una nueva pestaña con el checkout de ePayco
-
-*6.* En la pagina de ePayco:
-   *Para Tarjeta:*
-   ├ Ingresa numero de tarjeta
-   ├ Fecha de expiracion
-   ├ CVV (codigo de seguridad)
-   ├ Nombre del titular
-   └ Haz clic en "Pagar"
-
-   *Para PSE:*
-   ├ Selecciona "PSE" como metodo
-   ├ Elige tu banco
-   ├ Tipo: persona natural o juridica
-   └ Seras redirigido a tu banco
-
-   *Para Efectivo:*
-   ├ Selecciona "Efectivo"
-   ├ Elige Efecty o Baloto
-   └ Recibiras un numero de convenio
-
-*7.* Espera la confirmacion
-   → La pagina muestra "Verificando pago..."
-   → Puede tomar hasta 5 minutos
-   → Si usaste 3D Secure, confirma en tu app bancaria
-
-*8.* Listo! Recibiras un email con:
-   ├ Tu usuario y contraseña
-   ├ Link para iniciar sesion
-   └ Factura del pago
-
-*Tarjetas aceptadas:*
-Visa, Mastercard, American Express
-
-*Monedas:* USD y COP (conversion automatica)`
-      : `💳 *Tutorial: Pay with ePayco*
-_(Credit Card, Debit Card, PSE, Efecty, Baloto)_
-
-*What is ePayco?*
-Colombian payment gateway that accepts international cards, PSE (bank transfers) and cash payments.
-
-*Step by Step:*
-
-*1.* Open the subscription page:
-   pnptv.app/subscribe
-
-*2.* Select your plan (Member, PRIME, etc.)
-
-*3.* Enter your email
-   ⚠️ Use a real email — your login credentials will be sent there
-
-*4.* Select the "💳 Card / PSE" tab
-
-*5.* Click "Subscribe Now"
-   → A new tab opens with ePayco checkout
-
-*6.* On the ePayco page:
-   *For Card:*
-   ├ Enter card number
-   ├ Expiration date
-   ├ CVV (security code)
-   ├ Cardholder name
-   └ Click "Pay"
-
-   *For PSE (Bank Transfer):*
-   ├ Select "PSE" as method
-   ├ Choose your bank
-   ├ Type: personal or business
-   └ You'll be redirected to your bank
-
-   *For Cash:*
-   ├ Select "Cash"
-   ├ Choose Efecty or Baloto
-   └ You'll get a payment reference number
-
-*7.* Wait for confirmation
-   → Page shows "Verifying payment..."
-   → May take up to 5 minutes
-   → If using 3D Secure, confirm in your banking app
-
-*8.* Done! You'll receive an email with:
-   ├ Your username & password
-   ├ Login link
-   └ Payment invoice
-
-*Accepted cards:*
-Visa, Mastercard, American Express
-
-*Currencies:* USD and COP (auto-conversion)`;
-
-    await ctx.editMessageText(text, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.url(
-          lang === 'es' ? '🌐 Pagar con ePayco' : '🌐 Pay with ePayco',
-          'https://pnptv.app/subscribe'
-        )],
-        [Markup.button.callback(lang === 'es' ? '🔙 Volver al Menu' : '🔙 Back to Menu', 'pay_menu')],
-      ]),
-    });
+      ? `💳 *ePayco (Retirado)*\n\n⚠️ _ePayco ya no está activo. Por favor usa Dash (Crypto) o NOWPayments en https://pnptv.app/subscribe._`
+      : `💳 *ePayco (Retired)*\n\n⚠️ _ePayco is no longer active. Please use Dash (Crypto) or NOWPayments at https://pnptv.app/subscribe._`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback(lang === 'es' ? '« Volver al Menu' : '« Back to Menu', 'pay_menu')],
+    ]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup }).catch(() => {});
   } catch (error) {
     logger.error('Error in ePayco tutorial:', error);
   }
@@ -310,132 +192,14 @@ Visa, Mastercard, American Express
 async function handleDaimoTutorial(ctx) {
   try {
     const lang = getLanguage(ctx);
-    await ctx.answerCbQuery();
-
+    await ctx.answerCbQuery().catch(() => {});
     const text = lang === 'es'
-      ? `🪙 *Tutorial: Pagar con Daimo (USDC)*
-_(Crypto Wallets, Coinbase, MetaMask, Apple Pay, Tarjeta)_
-
-*Que es Daimo?*
-Plataforma de pago con USDC (dolar digital) en la red Optimism. Acepta crypto wallets, exchanges Y tarjetas.
-
-*Paso a Paso:*
-
-*1.* Abre la pagina de suscripcion:
-   pnptv.app/subscribe
-
-*2.* Selecciona tu plan
-
-*3.* Escribe tu email
-   ⚠️ Usa un email real — ahi recibiras tus credenciales
-
-*4.* Selecciona el tab "🪙 USDC"
-
-*5.* Haz clic en "Subscribe Now"
-   → Aparece un modal de Daimo dentro de la pagina
-
-*6.* En el modal de Daimo, elige como pagar:
-
-   *Desde Crypto Wallet:*
-   ├ Selecciona tu wallet (MetaMask, Coinbase, Trust)
-   ├ Conecta tu wallet
-   ├ Aprueba la transaccion
-   └ Confirma el envio de USDC
-
-   *Desde Exchange:*
-   ├ Selecciona Coinbase, Binance o Kraken
-   ├ Sigue las instrucciones del exchange
-   └ El pago se procesa automaticamente
-
-   *Con Tarjeta / Apple Pay:*
-   ├ Selecciona "Card" o "Apple Pay"
-   ├ Ingresa los datos de tu tarjeta
-   └ Daimo convierte a USDC automaticamente
-
-*7.* Espera la confirmacion en blockchain
-   → Generalmente toma 10-30 segundos
-   → La pagina muestra el progreso en tiempo real
-
-*8.* Listo! Recibiras un email con:
-   ├ Tu usuario y contraseña
-   ├ Link para iniciar sesion
-   └ Factura del pago
-
-*Wallets compatibles:*
-MetaMask, Coinbase Wallet, Trust Wallet, Daimo, Rainbow, y mas
-
-*Ventajas:*
-├ Rapido (segundos, no minutos)
-├ Bajo costo (red Optimism)
-├ Multiple formas de pago en un solo modal
-└ Sin friccion — no necesitas tener crypto previamente`
-      : `🪙 *Tutorial: Pay with Daimo (USDC)*
-_(Crypto Wallets, Coinbase, MetaMask, Apple Pay, Card)_
-
-*What is Daimo?*
-Payment platform using USDC (digital dollar) on the Optimism network. Accepts crypto wallets, exchanges AND cards.
-
-*Step by Step:*
-
-*1.* Open the subscription page:
-   pnptv.app/subscribe
-
-*2.* Select your plan
-
-*3.* Enter your email
-   ⚠️ Use a real email — your login credentials will be sent there
-
-*4.* Select the "🪙 USDC" tab
-
-*5.* Click "Subscribe Now"
-   → A Daimo modal appears within the page
-
-*6.* In the Daimo modal, choose how to pay:
-
-   *From Crypto Wallet:*
-   ├ Select your wallet (MetaMask, Coinbase, Trust)
-   ├ Connect your wallet
-   ├ Approve the transaction
-   └ Confirm the USDC transfer
-
-   *From Exchange:*
-   ├ Select Coinbase, Binance or Kraken
-   ├ Follow the exchange instructions
-   └ Payment processes automatically
-
-   *With Card / Apple Pay:*
-   ├ Select "Card" or "Apple Pay"
-   ├ Enter your card details
-   └ Daimo converts to USDC automatically
-
-*7.* Wait for blockchain confirmation
-   → Usually takes 10-30 seconds
-   → Page shows real-time progress
-
-*8.* Done! You'll receive an email with:
-   ├ Your username & password
-   ├ Login link
-   └ Payment invoice
-
-*Compatible wallets:*
-MetaMask, Coinbase Wallet, Trust Wallet, Daimo, Rainbow, and more
-
-*Advantages:*
-├ Fast (seconds, not minutes)
-├ Low cost (Optimism network)
-├ Multiple payment methods in one modal
-└ Frictionless — no need to own crypto beforehand`;
-
-    await ctx.editMessageText(text, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.url(
-          lang === 'es' ? '🌐 Pagar con Daimo' : '🌐 Pay with Daimo',
-          'https://pnptv.app/subscribe'
-        )],
-        [Markup.button.callback(lang === 'es' ? '🔙 Volver al Menu' : '🔙 Back to Menu', 'pay_menu')],
-      ]),
-    });
+      ? `🪙 *Daimo Pay (Retirado)*\n\n⚠️ _Daimo Pay ya no está activo. Por favor usa Dash (Crypto) o NOWPayments en https://pnptv.app/subscribe._`
+      : `🪙 *Daimo Pay (Retired)*\n\n⚠️ _Daimo Pay is no longer active. Please use Dash (Crypto) or NOWPayments at https://pnptv.app/subscribe._`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback(lang === 'es' ? '« Volver al Menu' : '« Back to Menu', 'pay_menu')],
+    ]);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup }).catch(() => {});
   } catch (error) {
     logger.error('Error in Daimo tutorial:', error);
   }
