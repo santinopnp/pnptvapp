@@ -16,33 +16,6 @@ interface NowPaymentsWaitingPanelProps {
   productKind?: "subscription" | "tokens" | "call";
 }
 
-// ── NowPayments widget loader ──────────────────────────────────────────────────
-// Opens the NowPayments widget (script-based, not iframe) with the invoice ID.
-// Falls back to a centered popup if the widget script fails to load or doesn't
-// expose the expected API.
-function openWithNowPaymentsWidget(invoiceId: string, fallbackUrl: string) {
-  const w = window as any;
-  const tryOpen = () => {
-    if (w.NOWPayments?.openPaymentWidget) {
-      w.NOWPayments.openPaymentWidget({ iid: invoiceId });
-      return true;
-    }
-    return false;
-  };
-
-  if (tryOpen()) return;
-
-  if (!document.querySelector('script[src*="nowpayments.io/payment-widget"]')) {
-    const s = document.createElement("script");
-    s.src = "https://nowpayments.io/payment-widget/js/widget.js";
-    s.onload = () => { if (!tryOpen()) openPopup(fallbackUrl); };
-    s.onerror = () => openPopup(fallbackUrl);
-    document.head.appendChild(s);
-  } else {
-    openPopup(fallbackUrl);
-  }
-}
-
 function openPopup(url: string) {
   const w = 520, h = 720;
   const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
@@ -78,9 +51,7 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
 
   const handleOtherWallets = useCallback(() => {
     setWalletChosen(true);
-    if (order.nowpaymentsInvoiceId) {
-      openWithNowPaymentsWidget(order.nowpaymentsInvoiceId, order.invoiceUrl);
-    } else if (isTg) {
+    if (isTg) {
       window.Telegram!.WebApp.openLink(order.invoiceUrl);
     } else {
       openPopup(order.invoiceUrl);
@@ -129,12 +100,9 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
         </div>
       )}
 
-      {/* Wallet picker — shown before any wallet is chosen. Now covers every
-          crypto (BTC/LTC/DOGE/SOL/etc.) — MetaMask hides itself for non-EVM. */}
-      {!walletChosen && !isConfirming && (
-        <div className="mb-4" onClickCapture={(e) => {
-          // Any wallet chip click flips walletChosen so the "open again" button
-          // takes over. Using capture so the anchor's own navigation still runs.
+      {/* Wallet picker — direct app deep-linking for Trust Wallet & MetaMask */}
+      {!isConfirming && (
+        <div className="mb-3" onClickCapture={(e) => {
           if ((e.target as HTMLElement).closest("a[href], button")) {
             setWalletChosen(true);
           }
@@ -145,20 +113,21 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
             lang={lang}
             onOtherWallets={handleOtherWallets}
           />
-          <p className="text-[9px] text-pnp-textSecondary/50 mt-2 text-center">
-            {es ? 'No tienes wallet? Usa el botón "Otras" para pagar directamente.' : 'No wallet app? Tap "Other" to pay directly.'}
-          </p>
         </div>
       )}
 
-      {/* After wallet chosen: show "open again" link + status */}
+      {/* NowPayments checkout must be opened in a popup — the widget cannot be
+          iframed (third-party cookie block + HTTP-downgrade redirect break it
+          in Safari/iOS). See feedback_nowpayments_iframe_blocked. */}
+
+      {/* After wallet chosen fallback: link to open checkout directly */}
       {walletChosen && !isConfirming && (
         <button
           type="button"
           onClick={handleOtherWallets}
           className="w-full flex items-center justify-center gap-2 py-3 mb-3 rounded-xl font-bold text-sm text-white bg-pnp-accent hover:bg-pnp-accentHover transition-all active:scale-[0.98]"
         >
-          {es ? "Volver a abrir pago" : "Open payment again"}
+          {es ? "Abrir ventana de pago externa" : "Open external payment window"}
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>

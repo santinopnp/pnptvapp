@@ -26,6 +26,7 @@ import {
   loadPersistedActivation,
   clearPersistedActivation,
 } from "@/components/TokenActivationForm";
+import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
 
 
 interface BuyTokensModalProps {
@@ -513,9 +514,17 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                       );
                     })}
                   </div>
-                  <p className="text-[9px] text-pnp-textSecondary/40 mb-3 text-center">
-                    {es ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}
-                  </p>
+                  <div className="mt-2 mb-3 text-center flex items-center justify-center gap-1.5 flex-wrap">
+                    <span className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {es ? "Abre en:" : "Open in:"}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
+                      <MetaMaskIcon size={14} /> MetaMask
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
+                      <TrustWalletIcon size={14} /> Trust Wallet
+                    </span>
+                  </div>
                   <button
                     onClick={() => { setNpPickerOpen(false); setBuyMethod('np'); }}
                     className="w-full py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"

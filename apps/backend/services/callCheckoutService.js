@@ -625,7 +625,35 @@ async function _getPerformerId(client, creatorUserId) {
     `SELECT id FROM performers WHERE user_id = $1 LIMIT 1`,
     [creatorUserId]
   );
-  return res.rows[0]?.id || null;
+  if (res.rows[0]) return res.rows[0].id;
+
+  // Auto-create a minimal performer row when the creator has active
+  // call_packages but no matching performers row — a real data gap that
+  // was 404-ing checkouts (PERFORMER_NOT_FOUND) even for legit creators
+  // whose packages predate the performers flow.
+  const seed = await client.query(
+    `SELECT COALESCE(u.first_name, u.username, u.id::text) AS display_name,
+            MIN(cp.price_usd) FILTER (WHERE cp.is_active = true AND cp.quantity = 1) AS base_price
+       FROM users u
+       LEFT JOIN call_packages cp ON cp.creator_id = u.id
+      WHERE u.id = $1
+      GROUP BY u.id, u.first_name, u.username`,
+    [creatorUserId]
+  );
+  const row = seed.rows[0];
+  if (!row || row.base_price == null) return null;
+
+  const ins = await client.query(
+    `INSERT INTO performers
+       (user_id, display_name, base_price, base_price_cents, status, is_available, created_by, updated_by)
+     VALUES ($1, $2, $3, ($3 * 100)::int, 'active', true, 'auto-checkout', 'auto-checkout')
+     RETURNING id`,
+    [creatorUserId, row.display_name, row.base_price]
+  );
+  logger.info('[callCheckoutService] auto-created performer profile', {
+    creatorUserId, performerId: ins.rows[0].id, basePrice: row.base_price,
+  });
+  return ins.rows[0].id;
 }
 
 // ---------------------------------------------------------------------------
@@ -735,7 +763,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
   if (reusableDso) {
     const rMeta = typeof reusableDso.metadata === 'object' ? reusableDso.metadata : JSON.parse(reusableDso.metadata || '{}');
     const existingInvoiceId = rMeta.nowpaymentsInvoiceId;
-    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? `https://nowpayments.io/payment?iid=${existingInvoiceId}` : null);
+    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? `https://nowpayments.io/payment/?iid=${existingInvoiceId}` : null);
     if (existingUrl) {
       logger.info('[callCheckoutService] Reusing pending NowPayments call DSO', { userId, packageId, dsoOrderId: reusableDso.btcpay_invoice_id });
       return {
@@ -835,9 +863,9 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
       },
       { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
     );
-    const { id: nowpaymentsInvoiceId } = paymentResp.data;
+    const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('NowPayments returned no invoice id');
-    invoiceUrl = `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
     npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency || 'usdcsol' };
   } catch (invoiceErr) {
     if (booking?.id) {

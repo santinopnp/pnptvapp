@@ -558,9 +558,9 @@ class TokenCheckoutService {
         },
         { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' }, timeout: 10000 }
       );
-      const { id: nowpaymentsInvoiceId } = paymentResp.data;
+      const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-      invoiceUrl = `https://nowpayments.io/payment?iid=${nowpaymentsInvoiceId}`;
+      invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
       npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: payCurrency || 'usdcsol' };
     } catch (invoiceErr) {
       logger.error('TokenCheckoutService.createNowPaymentsCheckout: NowPayments error', {
