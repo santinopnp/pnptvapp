@@ -129,6 +129,20 @@ async function deliverTelegram(userId, { type, message, entityType, entityId }) 
  */
 async function fanoutViewerOnline(viewerId) {
   try {
+    // Concurrency guard — multiple socket connections for the same user can
+    // fire this within milliseconds (all see redis.exists()=0 before any
+    // setOnline write). Without this lock, the per-pair 6h debounce still
+    // catches duplicates on subsequent SEND, but only after both queries
+    // pass canPingPair() — resulting in N concurrent fanouts each pinging
+    // every warm creator N times. First caller wins; others skip. 5-min
+    // TTL means a genuine follow-up transition still fires.
+    const lockKey = `fanout:viewer_online:${viewerId}`;
+    const acquired = await getRedis().set(lockKey, '1', 'NX', 'EX', 300);
+    if (acquired !== 'OK') {
+      logger.debug('[spenderPingService] fanoutViewerOnline lock held — skipping duplicate', { viewerId });
+      return;
+    }
+
     // Is this viewer a spender? If not, skip early.
     const { rows: walletRows } = await query(
       `SELECT balance_tokens FROM user_token_wallets WHERE user_id = $1`,
@@ -240,6 +254,14 @@ async function fanoutViewerOnline(viewerId) {
 async function fanoutCreatorAvailable(creatorUserId) {
   try {
     if (!creatorUserId) return;
+    // Concurrency guard — same rationale as fanoutViewerOnline. Redundant
+    // toggles ("available" spammed on/off) shouldn't multi-fanout.
+    const lockKey = `fanout:creator_available:${creatorUserId}`;
+    const acquired = await getRedis().set(lockKey, '1', 'NX', 'EX', 300);
+    if (acquired !== 'OK') {
+      logger.debug('[spenderPingService] fanoutCreatorAvailable lock held — skipping duplicate', { creatorUserId });
+      return;
+    }
     const { rows: creatorRows } = await query(
       `SELECT id, COALESCE(NULLIF(first_name,''), NULL) AS first_name
          FROM users
