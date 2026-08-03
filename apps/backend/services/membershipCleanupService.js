@@ -41,6 +41,16 @@ class MembershipCleanupService {
     this.syncAllMembershipStatuses().catch((err) => {
       logger.error('MembershipCleanupService: startup sync failed', { error: err.message });
     });
+    // Also run the tier/entitlement reconciliation on startup — the daily
+    // setTimeout at 03:00 UTC is destroyed by every bot restart, so on a
+    // container that restarts before 03:00 UTC it never fires. Running
+    // updateAllSubscriptionStatuses on boot guarantees reverse-drift
+    // (tier=PRIME with no active entitlement) is repaired within one
+    // restart cycle regardless of whether the daily cron fires.
+    // Side-effect free: pure DB reconciliation, no DMs/pushes.
+    this.updateAllSubscriptionStatuses().catch((err) => {
+      logger.error('MembershipCleanupService: startup tier reconciliation failed', { error: err.message });
+    });
 
     const msUntilNextCleanupTime = () => {
       const CLEANUP_HOUR_UTC = 3; // 03:00 UTC daily
@@ -377,14 +387,21 @@ class MembershipCleanupService {
         }
       } catch (_) {}
 
-      // Reverse drift: users with tier=PRIME (or other paid tier) but NO active
-      // entitlement. Happens when a trial expires but the tier downgrade path
-      // didn't fire. Recompute picks up the actual entitlement state and
-      // downgrades to the base tier the user is truly entitled to.
+      // Reverse drift: users with a paid tier but NO active entitlement.
+      // Happens when a trial expires but the tier downgrade path didn't fire.
+      // Recompute picks up the actual entitlement state and downgrades to
+      // the base tier the user is truly entitled to.
+      //
+      // NOTE: the DB constraint chk_tier_status_consistency only permits
+      // tier values of 'PRIME', 'member', 'free', 'banned' — the legacy
+      // 'prime' and 'pnp-member' variants below stay as belt-and-suspenders
+      // in case old rows survive from a pre-constraint era, but 'PRIME'
+      // and 'member' are the values in current use. Skipping 'member'
+      // silently left 3 stale rows through the 07-31 revoke batch.
       try {
         const reverseDriftResult = await query(`
           SELECT DISTINCT u.id FROM users u
-          WHERE u.tier IN ('PRIME','prime','pnp-member')
+          WHERE u.tier IN ('PRIME','prime','member','pnp-member')
             AND NOT EXISTS (
               SELECT 1 FROM user_entitlements ue
               WHERE ue.user_id = u.id::text
