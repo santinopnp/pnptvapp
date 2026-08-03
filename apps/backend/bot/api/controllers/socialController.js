@@ -903,12 +903,18 @@ const createPostWithMedia = async (req, res) => {
         } else {
           filename = `img-${user.id}-${Date.now()}.webp`;
           filePath = path.join(uploadDir, filename);
-          const processedBuf = await sharp(imgBuffer, { failOn: 'none' })
-            .rotate()
-            .withMetadata(false)
-            .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-            .webp({ quality: 70, progressive: true })
-            .toBuffer();
+          let processedBuf;
+          try {
+            processedBuf = await sharp(imgBuffer, { failOn: 'none' })
+              .rotate()
+              .withMetadata(false)
+              .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+              .webp({ quality: 70, progressive: true })
+              .toBuffer();
+          } catch (sharpErr) {
+            if (tempPath) await fs.unlink(tempPath).catch(() => {});
+            return res.status(400).json({ error: 'Unable to process image — file appears corrupt or unsupported' });
+          }
           const finalImgBuf = user.creator_status === 'active'
             ? await require('../../../services/watermarkService').applyImageWatermark(processedBuf, user.username)
             : processedBuf;
@@ -1345,12 +1351,18 @@ const createPostWithMultiMedia = async (req, res) => {
         } else {
           filename = `img-${user.id}-${timestamp}-${i}.webp`;
           destPath = path.join(uploadDir, filename);
-          const processedBuf = await sharp(imgBuffer, { failOn: 'none' })
-            .rotate()
-            .withMetadata(false)
-            .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-            .webp({ quality: 70, progressive: true })
-            .toBuffer();
+          let processedBuf;
+          try {
+            processedBuf = await sharp(imgBuffer, { failOn: 'none' })
+              .rotate()
+              .withMetadata(false)
+              .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+              .webp({ quality: 70, progressive: true })
+              .toBuffer();
+          } catch (sharpErr) {
+            if (fileTempPath) await fs.unlink(fileTempPath).catch(() => {});
+            return res.status(400).json({ error: `Unable to process image (file ${i + 1}) — appears corrupt or unsupported` });
+          }
           const finalImgBuf = user.creator_status === 'active'
             ? await require('../../../services/watermarkService').applyImageWatermark(processedBuf, user.username)
             : processedBuf;
