@@ -1802,7 +1802,7 @@ function StreamInner() {
 
       {/* ── Header bar — desktop only (mobile uses the full-bleed video overlay below),
            with the streamer identity block from the design pass ── */}
-      <div className="stream-header-bar hidden md:flex flex-shrink-0 items-center gap-3 px-4 py-2 border-b border-pnp-border">
+      <div className="stream-header-bar hidden xl:flex flex-shrink-0 items-center gap-3 px-4 py-2 border-b border-pnp-border">
         <button onClick={() => navigate("/live")} aria-label={t.live.backToLive} className="flex-shrink-0 text-pnp-textSecondary hover:text-pnp-accent transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -1873,7 +1873,7 @@ function StreamInner() {
           {/* Theater mode button — only visible on desktop (improvement #7) */}
           <button
             onClick={() => setIsTheaterMode(!isTheaterMode)}
-            className="hidden md:flex items-center justify-center w-8 h-8 rounded-full bg-pnp-surface border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary hover:border-pnp-accent/40 transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
+            className="hidden xl:flex items-center justify-center w-8 h-8 rounded-full bg-pnp-surface border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary hover:border-pnp-accent/40 transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
             aria-label={isTheaterMode ? "Exit theater mode" : "Enter theater mode"}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1932,13 +1932,13 @@ function StreamInner() {
       </div>
 
       {/* ── Main content: left column + right panel ───────────────────────── */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 flex flex-col xl:flex-row overflow-hidden">
 
         {/* ── LEFT COLUMN ──────────────────────────────────────────────────── */}
-        <div className="flex flex-col md:flex-1 overflow-hidden">
+        <div className="flex flex-col xl:flex-1 overflow-hidden">
 
           {/* Video Player — fixed/sticky, never scrolls. Full-bleed on mobile. */}
-          <div ref={videoContainerRef} className="relative flex-1 min-h-0 md:flex-shrink-0 bg-black">
+          <div ref={videoContainerRef} className="relative flex-1 min-h-0 xl:flex-shrink-0 bg-black">
         {/* ── Paywall overlay — shown when slot is ticketed and viewer has no ticket ── */}
         {ticketStatus?.isTicketed && !ticketStatus.hasTicket && !ticketLoading ? (
           <div className="relative aspect-video rounded-xl bg-pnp-surface border border-pnp-border overflow-hidden flex items-center justify-center">
@@ -2052,14 +2052,14 @@ function StreamInner() {
                   ? undefined
                   : (user?.username ?? user?.firstName ?? undefined)
               }
-              className="!h-full !aspect-auto !rounded-none md:!aspect-video md:!h-auto md:!rounded-xl"
+              className="!h-full !aspect-auto !rounded-none xl:!aspect-video xl:!h-auto xl:!rounded-xl"
             />
           </div>
         )}
 
         {/* ── MOBILE overlay chrome — full-bleed video UI (mockup: Live Stream Player) ── */}
         {/* F5: shown on mobile always AND in fullscreen on any viewport — z-index 30 in FS so controls float above player */}
-        <div className={`absolute inset-0 flex flex-col pointer-events-none ${isFullscreen ? "z-30" : "md:hidden z-10"}`}>
+        <div className={`absolute inset-0 flex flex-col pointer-events-none ${isFullscreen ? "z-30" : "xl:hidden z-10"}`}>
           {/* F3 — Add tokens chip (top-right, visible when authenticated) */}
           {isAuthenticated && (
             <div className="pointer-events-auto absolute top-3.5 right-12 z-20 flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold text-white"
@@ -2368,7 +2368,7 @@ function StreamInner() {
 
         {/* ── Stream health HUD — creator-only, desktop, top-left of video ─── */}
         {isStreamOwner && stream.isLive && !(ticketStatus?.isTicketed && !ticketStatus.hasTicket) && (
-          <div className="hidden md:flex absolute top-3 left-3 z-30 flex-col items-start">
+          <div className="hidden xl:flex absolute top-3 left-3 z-30 flex-col items-start">
             <button
               onClick={() => setHudExpanded((v) => !v)}
               className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold border backdrop-blur-sm transition-colors ${
@@ -2481,7 +2481,7 @@ function StreamInner() {
           )}
         </button>
         {/* Overlay — desktop only; mobile shows this info in the top scrim header instead */}
-        <div className="hidden md:block absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pb-3 pt-10">
+        <div className="hidden xl:block absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pb-3 pt-10">
           <div className="flex items-center gap-2 flex-wrap">
             {stream.isLive && (
               <span className="flex items-center gap-1.5">
@@ -2500,7 +2500,7 @@ function StreamInner() {
             {/* Leaderboard toggle — desktop only */}
             <button
               onClick={() => setShowLeaderboard((v) => !v)}
-              className="hidden md:flex items-center justify-center w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-xs"
+              className="hidden xl:flex items-center justify-center w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-xs"
               aria-label="Toggle tip leaderboard"
               title="Tip leaderboard"
             >
@@ -2531,7 +2531,7 @@ function StreamInner() {
              fullscreen (the sheet would otherwise fall outside videoContainerRef). */}
         <FullscreenPortal>
         {showLeaderboard && (
-          <div className="hidden md:block fixed top-3 right-3 z-[80] w-52 rounded-xl bg-black/80 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
+          <div className="hidden xl:block fixed top-3 right-3 z-[80] w-52 rounded-xl bg-black/80 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <span className="text-[11px] font-bold text-white">Tip Leaderboard</span>
               <button onClick={() => setShowLeaderboard(false)} className="text-white/50 hover:text-white text-xs" aria-label="Close leaderboard">✕</button>
@@ -2572,7 +2572,7 @@ function StreamInner() {
 
           {/* ── Billing status banner — desktop; mobile shows a compact pill in the video overlay ── */}
           {!isStreamOwner && entryAllowed && stream?.isLive && (
-            <div className="hidden md:flex flex-shrink-0 px-4 py-1.5 items-center justify-center">
+            <div className="hidden xl:flex flex-shrink-0 px-4 py-1.5 items-center justify-center">
               {freeMinutesLeft !== null && freeMinutesLeft > 0 ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-green-500/15 border border-green-500/30 text-green-400">
                   Gratis: {freeMinutesLeft} min restantes
@@ -2592,7 +2592,7 @@ function StreamInner() {
           {/* ── Tip goal progress bar — desktop (amber label, brand-gradient fill);
                mobile shows it floated over the video ── */}
           {tipGoal && tipGoal.goalAmount && (
-            <div className="hidden md:block flex-shrink-0 px-4 py-2 bg-pnp-surface border-b border-pnp-border">
+            <div className="hidden xl:block flex-shrink-0 px-4 py-2 bg-pnp-surface border-b border-pnp-border">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-bold truncate flex items-center gap-1" style={{ color: "#E69138" }}>
                   <span aria-hidden="true">🎯</span> {tipGoal.goalLabel || "Goal"}
@@ -2621,7 +2621,7 @@ function StreamInner() {
                only flex-1 sibling in this column (full-bleed); this area now
                only holds owner-only panels / offline states and should size to
                its own content, not compete with the video for equal flex space. */}
-          <div className="md:flex-1 overflow-y-auto">
+          <div className="xl:flex-1 overflow-y-auto">
 
             {/* ── VOD replay — shown when stream is offline and a recording exists ── */}
             {!stream.isLive && replayUrl && (
@@ -3092,7 +3092,7 @@ function StreamInner() {
         {/* end LEFT COLUMN */}
 
         {/* ── RIGHT COLUMN (desktop only) — 340px fixed panel ───────────────── */}
-        <div className="hidden md:flex flex-col w-[340px] border-l border-pnp-border overflow-hidden">
+        <div className="hidden xl:flex flex-col w-[340px] border-l border-pnp-border overflow-hidden">
 
           {ticketStatus?.isTicketed && !ticketStatus.hasTicket ? (
             /* Paywall message instead of tabs */
