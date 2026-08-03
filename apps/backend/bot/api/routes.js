@@ -5088,6 +5088,25 @@ app.get('/api/webapp/live/analytics/summary', requireSessionAuth, creatorGuard, 
 // Creator revenue aggregation (tips + tickets + subs + calls)
 app.get('/api/webapp/creator/revenue', requireSessionAuth, roleGuard('model', 'creator', 'admin', 'superadmin'), analyticsLimiter, asyncHandler(webappLiveController.getCreatorRevenue));
 
+// Live count of token-holding viewers online right now (Task A ambient signal).
+// Cached for 15s to smooth traffic when many creators poll simultaneously.
+app.get('/api/webapp/creator/spenders-online',
+  requireSessionAuth,
+  roleGuard('model', 'creator', 'admin', 'superadmin'),
+  asyncHandler(async (req, res) => {
+    const { getRedis } = require('../../config/redis');
+    const CACHE_KEY = 'creator:spenders-online:count';
+    try {
+      const cached = await getRedis().get(CACHE_KEY);
+      if (cached) return res.json({ success: true, ...JSON.parse(cached) });
+    } catch (_) { /* fall through to live query */ }
+    const { countOnlineSpenders } = require('../../services/spenderPingService');
+    const stats = await countOnlineSpenders();
+    try { await getRedis().set(CACHE_KEY, JSON.stringify(stats), 'EX', 15); } catch (_) {}
+    res.json({ success: true, ...stats });
+  })
+);
+
 // CR-SQ-01: 3 broadcasts per hour per user — prevents follower notification spam
 const broadcastLiveLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,

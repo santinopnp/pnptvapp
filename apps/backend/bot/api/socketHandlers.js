@@ -743,6 +743,15 @@ function initSocketIO(io) {
     }
 
     // ── Redis presence: mark online + notify DM partners ─────────────────────
+    // Detect offline→online transition BEFORE setOnline overwrites the key,
+    // so downstream fanout (warm-creator spender ping) only fires on real
+    // session starts, not on refreshes that happen to hit this branch.
+    let _presenceTransitioned = false;
+    try {
+      const { getRedis } = require('../../config/redis');
+      const _existed = await getRedis().exists(`presence:online:${user.id}`);
+      _presenceTransitioned = _existed === 0;
+    } catch (_) { /* fail-open: treat as transition */ _presenceTransitioned = true; }
     try { await DmService.setOnline(user.id); } catch (_) {}
     setImmediate(async () => {
       try {
@@ -761,6 +770,16 @@ function initSocketIO(io) {
         }
       } catch (_) {}
     });
+    // Warm-creator spender ping (Task B). Fire-and-forget — spenderPingService
+    // internally gates on wallet balance, warm-relationship, per-pair debounce,
+    // and per-creator daily cap.
+    if (_presenceTransitioned) {
+      setImmediate(() => {
+        try {
+          require('../../services/spenderPingService').fanoutViewerOnline(user.id);
+        } catch (_) {}
+      });
+    }
 
     // Heartbeat: client sends this every ~30s to keep the Redis TTL alive.
     // WS-HIGH-07: Throttled to at most once per 25s per socket to prevent Redis write floods.
@@ -982,13 +1001,26 @@ function initSocketIO(io) {
             socket.emit('hangout:error', { message: 'You are muted in this group', code: 'MUTED' });
             return;
           }
-          // Mute expired, clear it
-          await query('UPDATE hangout_group_members SET is_muted = false, muted_until = NULL WHERE group_id=$1 AND user_id=$2', [gid, user.id]);
+          // Mute expired — clear across parent + all sibling topics so the cascade stays consistent
+          await query(
+            `UPDATE hangout_group_members SET is_muted = false, muted_until = NULL
+               WHERE user_id = $2
+                 AND group_id IN (
+                   SELECT id FROM hangout_groups
+                    WHERE id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)
+                       OR parent_group_id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)
+                 )`,
+            [gid, user.id]
+          );
         }
 
-        // Read-only mode check
+        // Read-only mode check — topics inherit parent's is_read_only + slow_mode_seconds
         const { rows: groupSettings } = await query(
-          'SELECT is_read_only, slow_mode_seconds FROM hangout_groups WHERE id = $1',
+          `SELECT is_read_only, slow_mode_seconds FROM hangout_groups
+             WHERE id = COALESCE(
+               (SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL),
+               $1
+             )`,
           [gid]
         );
         if (groupSettings[0]?.is_read_only) {
@@ -1053,6 +1085,17 @@ function initSocketIO(io) {
         const room = `hangout:${gid}`;
         const text = content.trim().slice(0, 2000);
 
+        // BUG-I: reply_to_id must reference an existing, non-deleted message in the same room.
+        // Drop it to null otherwise so we don't store dangling / cross-hangout pointers.
+        let safeReplyToId = null;
+        if (parsedReplyToId) {
+          const { rows: parentRows } = await query(
+            'SELECT 1 FROM chat_messages WHERE id = $1 AND room = $2 AND is_deleted = false',
+            [parsedReplyToId, room]
+          );
+          if (parentRows.length) safeReplyToId = parsedReplyToId;
+        }
+
         // ── External link enforcement: mute on 1st strike, kick on 2nd ──────────
         const memberRole = memberInfo[0].role;
         const isMod = memberRole === 'owner' || memberRole === 'moderator';
@@ -1096,15 +1139,15 @@ function initSocketIO(io) {
            RETURNING id, room, user_id, username, first_name, photo_url, content,
                      media_url, media_type, media_mime, media_thumb_url,
                      media_width, media_height, media_metadata, reply_to_id, created_at`,
-          [room, user.id, user.username || null, user.firstName || user.first_name || null, photoUrl, text, parsedReplyToId]
+          [room, user.id, user.username || null, user.firstName || user.first_name || null, photoUrl, text, safeReplyToId]
         );
         const msg = { ...insertedRows[0], photo_url: isValidPhoto(insertedRows[0].photo_url) ? insertedRows[0].photo_url : null };
 
-        // Attach reply_to preview if replying
-        if (parsedReplyToId) {
+        // Attach reply_to preview if replying (BUG-H: skip soft-deleted parents)
+        if (safeReplyToId) {
           const { rows: replyRows } = await query(
-            'SELECT first_name, username, content FROM chat_messages WHERE id = $1 AND room = $2',
-            [parsedReplyToId, `hangout:${groupId}`]
+            'SELECT first_name, username, content FROM chat_messages WHERE id = $1 AND room = $2 AND is_deleted = false',
+            [safeReplyToId, room]
           );
           if (replyRows[0]) {
             msg.reply_to = { name: replyRows[0].first_name || replyRows[0].username || 'User', content: (replyRows[0].content || '[media]').slice(0, 100) };

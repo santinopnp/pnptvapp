@@ -12,6 +12,7 @@ import { Toast } from "@/components/Toast";
 import { ConfirmDialog } from "@/components/creators/ConfirmDialog";
 import {
   getCreatorSetupStatus,
+  getSpendersOnline,
   getCreatorMySubscribers,
   getCreatorChannelSubscribers,
   getCreatorConsents,
@@ -346,18 +347,71 @@ export default function CreatorLayout() {
             {t.brandCreatorStudio}
           </span>
         </div>
-        <div className="w-8" />
+        <SpendersOnlineBadge compact />
       </header>
 
       {/* Main content */}
       <main className="lg:pl-56">
         <div className="max-w-7xl mx-auto px-4 py-6">
+          {/* Desktop-only ambient spender counter — mobile shows it in topbar above. */}
+          <div className="hidden lg:flex justify-end mb-3">
+            <SpendersOnlineBadge />
+          </div>
           {user?.creator_locked && <CreatorOnboardingLockBanner lang={user?.language === "es" ? "es" : "en"} />}
           <Outlet />
         </div>
       </main>
 
       <Toast />
+    </div>
+  );
+}
+
+/**
+ * Ambient "🟢 N token-holders online now" pill — polls every 30s.
+ * Shown in the mobile topbar (compact) and above the desktop content area.
+ * Non-clickable, no notification: it's a subtle signal for creators to
+ * stay online when spenders are around. Silent-fails on API errors.
+ */
+function SpendersOnlineBadge({ compact = false }: { compact?: boolean }) {
+  const [stats, setStats] = useState<{ onlineNow: number; totalPool: number } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const res = await getSpendersOnline();
+        if (alive && res?.success) setStats({ onlineNow: res.onlineNow, totalPool: res.totalPool });
+      } catch { /* ignore; retry next tick */ }
+    };
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, []);
+
+  if (!stats || stats.totalPool === 0) {
+    if (compact) return <div className="w-8" />;
+    return null;
+  }
+
+  const { onlineNow, totalPool } = stats;
+  const isLive = onlineNow > 0;
+  const dotClass = isLive
+    ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)] animate-pulse"
+    : "bg-pnp-textSecondary/60";
+  const label = isLive
+    ? `${onlineNow} token-holder${onlineNow === 1 ? "" : "s"} online`
+    : `${totalPool} spenders`;
+
+  return (
+    <div
+      className={`inline-flex items-center gap-2 rounded-full border border-pnp-border bg-pnp-surface/60 backdrop-blur-sm ${compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1.5 text-xs"}`}
+      title={isLive
+        ? `${onlineNow} of ${totalPool} token-holders online right now`
+        : `${totalPool} members with tokens ready to spend`}
+    >
+      <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+      <span className="text-pnp-textPrimary font-medium whitespace-nowrap">{label}</span>
     </div>
   );
 }

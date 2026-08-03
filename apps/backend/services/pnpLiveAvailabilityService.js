@@ -35,6 +35,15 @@ class PNPLiveAvailabilityService {
     try {
       await client.query('BEGIN');
 
+      // Capture prior state so we can detect a real offline→online transition
+      // and skip the fanout on redundant "already-online" writes.
+      const priorRes = await client.query(
+        `SELECT is_available, user_id FROM performers WHERE id = $1`,
+        [modelId]
+      );
+      const wasOnline = priorRes.rows[0]?.is_available === true;
+      const performerUserId = priorRes.rows[0]?.user_id || null;
+
       // Update model status
       const result = await client.query(
         `UPDATE performers
@@ -66,6 +75,17 @@ class PNPLiveAvailabilityService {
         changedBy,
         source
       });
+
+      // Task C: notify wallet-holding followers when the creator transitions
+      // offline→online. Fire-and-forget — the service internally enforces
+      // per-follower debounce + daily cap.
+      if (isOnline && !wasOnline && performerUserId) {
+        setImmediate(() => {
+          try {
+            require('./spenderPingService').fanoutCreatorAvailable(performerUserId);
+          } catch (_) { /* never let a ping failure break status update */ }
+        });
+      }
 
       return result.rows[0];
     } catch (error) {

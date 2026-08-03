@@ -4189,6 +4189,15 @@ export function getCreatorSetupStatus(): Promise<CreatorSetupStatus> {
   return request("/api/webapp/creator/setup/status");
 }
 
+export interface SpendersOnlineResponse {
+  success: boolean;
+  onlineNow: number;
+  totalPool: number;
+}
+export function getSpendersOnline(): Promise<SpendersOnlineResponse> {
+  return request("/api/webapp/creator/spenders-online");
+}
+
 // ── Persona hosted-flow identity verification ─────────────────────────────────
 
 export function startPersonaInquiry(): Promise<{
