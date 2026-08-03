@@ -23,6 +23,7 @@
  */
 
 const path = require('path');
+const fsSync = require('fs');
 const BACKEND = path.resolve(__dirname, '..');
 
 try { require('dotenv').config({ path: path.join(BACKEND, '../../.env') }); } catch {}
@@ -51,6 +52,48 @@ const TG_VIDEO_URL    = `${APP_URL}/crypto-guide/promocionales/${encodeURICompon
 const FEED_VIDEO_URL  = `${APP_URL}/crypto-guide/promocionales/${encodeURIComponent('Promo Video Cripto - Cuadrado -Feed-.mp4')}`;
 const SYSTEM_USER_ID  = '8552451957'; // synthetic "PNPtv!" official poster account
 const TG_DELAY_MS     = 80;
+
+// Delivery-tracking log files — under /app/logs, which is a host bind mount
+// (see docker-compose.yml), so state survives a container restart/redeploy
+// mid-broadcast. Without this, a re-run after a crash would re-send the
+// Telegram video / email to everyone already reached in the interrupted run.
+const LOG_DIR       = path.join(BACKEND, '../../logs');
+const TG_SENT_FILE   = path.join(LOG_DIR, 'crypto-guide-promo-2026-08-tg-sent.log');
+const EMAIL_SENT_FILE = path.join(LOG_DIR, 'crypto-guide-promo-2026-08-email-sent.log');
+const FEED_DONE_FILE  = path.join(LOG_DIR, 'crypto-guide-promo-2026-08-feed-done.log');
+
+function loadSentSet(file) {
+  try {
+    return new Set(fsSync.readFileSync(file, 'utf8').split('\n').filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+function markSent(file, id) {
+  try { fsSync.appendFileSync(file, `${id}\n`); } catch {}
+}
+
+// The pnptv-bot container has no direct filesystem access to apps/web/public
+// (separate image/build) — download the promo video via plain HTTPS (our own
+// fetch, not Telegram's) so priming has a local file to upload from. Cheap to
+// redo if /tmp got wiped by a restart mid-broadcast.
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const file = fsSync.createWriteStream(destPath);
+    https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`download failed: HTTP ${res.statusCode}`));
+        return;
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
+      fsSync.unlink(destPath, () => {});
+      reject(err);
+    });
+  });
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isEn  = (lang) => typeof lang === 'string' && lang.toLowerCase().startsWith('en');
@@ -238,12 +281,21 @@ async function main() {
   }
   const isNew = (u) => !alreadySent.has(u.id);
 
-  const withTelegram = users.filter(u => u.telegram && isNew(u));
-  const withEmail    = users.filter(u => u.email && !u.email.includes('@telegram.pnptv.app') && isNew(u));
+  // Crash/redeploy-recovery dedup — separate from the in-app "alreadySent"
+  // gate above (which --force bypasses on purpose). These sets are always
+  // honored, --force or not, so a re-run after an interrupted broadcast never
+  // double-sends the Telegram video or the email to someone already reached.
+  const tgAlreadySent    = loadSentSet(TG_SENT_FILE);
+  const emailAlreadySent = loadSentSet(EMAIL_SENT_FILE);
+
+  const withTelegram = users.filter(u => u.telegram && isNew(u) && !tgAlreadySent.has(u.id));
+  const withEmail    = users.filter(u => u.email && !u.email.includes('@telegram.pnptv.app') && isNew(u) && !emailAlreadySent.has(u.id));
 
   console.log(`\n   Total users:      ${users.length}`);
   console.log(`   Already notified: ${alreadySent.size}`);
   console.log(`   New targets:      ${users.length - alreadySent.size}`);
+  console.log(`   TG already sent (this broadcast): ${tgAlreadySent.size}`);
+  console.log(`   Email already sent (this broadcast): ${emailAlreadySent.size}`);
   console.log(`   With Telegram:    ${withTelegram.length}`);
   console.log(`   With real email:  ${withEmail.length}`);
 
@@ -311,6 +363,14 @@ async function main() {
     // for every subsequent send — fast and fully sidesteps the URL path.
     const fs = require('fs');
     const LOCAL_VIDEO_PATH = process.env.TG_PROMO_VIDEO_PATH || '/tmp/tg-promo.mp4';
+    if (!fs.existsSync(LOCAL_VIDEO_PATH)) {
+      try {
+        await downloadFile(TG_VIDEO_URL, LOCAL_VIDEO_PATH);
+        console.log(`     Downloaded promo video to ${LOCAL_VIDEO_PATH}`);
+      } catch (err) {
+        console.warn(`     Could not download video locally (${err.message}), falling back to per-user URL sends`);
+      }
+    }
     let videoRef = TG_VIDEO_URL;
     let primedUserId = null;
     if (fs.existsSync(LOCAL_VIDEO_PATH)) {
@@ -329,6 +389,7 @@ async function main() {
             videoRef = fileId;
             primedUserId = candidate.id;
             stats.telegram++; // this recipient is already done
+            markSent(TG_SENT_FILE, candidate.id);
             console.log(`     Primed file_id via local upload (uid=${candidate.id}): ${fileId}`);
           }
         } catch (err) {
@@ -354,6 +415,7 @@ async function main() {
           supports_streaming: true,
         });
         stats.telegram++;
+        markSent(TG_SENT_FILE, u.id);
       } catch (err) {
         stats.telegramFailed++;
         if (stats.telegramFailed <= 5 || stats.telegramFailed % 100 === 0) {
@@ -391,6 +453,7 @@ async function main() {
           html: buildEmailHtml(lang, name),
         });
         stats.email++;
+        markSent(EMAIL_SENT_FILE, u.id);
       } catch (err) {
         stats.emailFailed++;
         if (stats.emailFailed <= 5 || stats.emailFailed % 50 === 0) {
@@ -411,6 +474,8 @@ async function main() {
   console.log('5/5  In-app feed post...');
   if (SKIP_FEED) {
     console.log('     [SKIPPED] --skip-feed');
+  } else if (fsSync.existsSync(FEED_DONE_FILE)) {
+    console.log('     [SKIPPED] already posted in a previous run of this broadcast');
   } else if (!DRY_RUN) {
     try {
       const post = await SocialPostService.createPost(
@@ -425,6 +490,7 @@ async function main() {
         null, null, 'community'
       );
       stats.feed = true;
+      markSent(FEED_DONE_FILE, post.id);
       console.log(`     ✓ Feed post created, id=${post.id}`);
     } catch (err) { console.error(`     ✗ ${err.message}`); }
   } else {
