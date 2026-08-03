@@ -7668,6 +7668,84 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
   return res.json({ success: true, completedAt: r.crypto_guide_completed_at, rewarded, tokenBalance: null });
 }));
 
+/**
+ * First-hour crypto-purchase bonus: users who make ANY successful NowPayments
+ * purchase within 1 hour of completing the crypto tutorial get +100 Santino-only
+ * tokens (creator_gifts[SANTINO_USER_ID]). Idempotent per user via the
+ * `crypto_guide_bonus_granted_at IS NULL` guard.
+ *
+ * The claim UPDATE and the wallet credit run in a single transaction so a
+ * mid-flight failure rolls the flag back and keeps the bonus retryable — never
+ * a "flag set, tokens missing" ghost.
+ *
+ * Called fire-and-forget from every successful NowPayments IPN settlement path.
+ * Failures are logged, never thrown — the payment itself must not be blocked.
+ */
+async function maybeGrantFirstHourCryptoBonus(userId) {
+  if (!userId) return false;
+  const { SANTINO_USER_ID } = require('../../config/monetizationConfig');
+  const { getClient } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+  const client = await getClient();
+  let claimed = false;
+  try {
+    await client.query('BEGIN');
+    const claim = await client.query(
+      `UPDATE users
+          SET crypto_guide_bonus_granted_at = NOW()
+        WHERE id = $1
+          AND crypto_guide_completed_at IS NOT NULL
+          AND crypto_guide_completed_at > NOW() - INTERVAL '1 hour'
+          AND crypto_guide_bonus_granted_at IS NULL
+       RETURNING id`,
+      [String(userId)]
+    );
+    if (claim.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    claimed = true;
+    await client.query(
+      `INSERT INTO user_token_wallets (user_id, creator_gifts)
+       VALUES ($1, jsonb_build_object($2::text, $3::numeric))
+       ON CONFLICT (user_id) DO UPDATE
+         SET creator_gifts = jsonb_set(
+               COALESCE(user_token_wallets.creator_gifts, '{}'),
+               ARRAY[$2],
+               to_jsonb(COALESCE((user_token_wallets.creator_gifts->>$2)::numeric, 0) + $3)
+             ),
+             updated_at = NOW()`,
+      [String(userId), SANTINO_USER_ID, 100]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.warn('[crypto_guide] maybeGrantFirstHourCryptoBonus failed', { userId, claimed, error: err.message });
+    return false;
+  } finally {
+    client.release();
+  }
+  await Promise.all([
+    cache.del(`wallet:${userId}`).catch(() => {}),
+    cache.del(`wallet:obj:${userId}`).catch(() => {}),
+  ]);
+  try {
+    const NotificationEmitter = require('../../services/notificationEmitter');
+    await NotificationEmitter.emit({
+      type: 'crypto_guide_bonus',
+      category: 'system',
+      priority: 'high',
+      targetUserId: String(userId),
+      entityType: 'crypto_guide',
+      entityId: String(userId),
+      message: '⚡ First-hour bonus unlocked — +100 tokens added to spend on Santino',
+      metadata: { url: '/creator/santinofurioso', pushTitle: '+100 Santino tokens', pushBody: 'First-hour crypto bonus unlocked.' },
+    }).catch(() => {});
+  } catch (_) { /* non-fatal */ }
+  logger.info('[crypto_guide] first-hour bonus granted', { userId, tokens: 100, creatorId: SANTINO_USER_ID });
+  return true;
+}
+
 // Referral: redeem a code (called on register)
 app.post('/api/webapp/referral/redeem', asyncHandler(async (req, res) => {
   const user = req.session?.user;
@@ -10696,7 +10774,7 @@ app.get('/api/proxy/live/tips/leaderboard', asyncHandler(async (req, res) => {
           JOIN performers p ON p.user_id = pu.id
          WHERE t.payment_status = 'completed'
            AND t.created_at >= ${periodStart}
-           AND (t.performer_id = p.id::text OR t.model_id = p.id)
+           AND t.performer_id = p.id::text
          GROUP BY t.user_id, u.username
          ORDER BY total DESC
          LIMIT 10`;
@@ -13236,6 +13314,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       return res.status(500).json({ error: 'tip_settlement_failed' });
     }
 
+    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
     return res.json({ received: true, type: 'creator_tip' });
   }
 
@@ -13276,6 +13355,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         provider: 'nowpayments',
       });
     } catch (_) { /* non-fatal */ }
+    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
     return res.json({ received: true });
   }
 
@@ -13380,6 +13460,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         provider: 'nowpayments',
       });
     } catch (_) { /* non-fatal */ }
+    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
     return res.json({ received: true });
   }
 
@@ -13512,6 +13593,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         provider: 'nowpayments',
       });
     } catch (_) { /* non-fatal */ }
+    maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
     return res.json({ received: true });
   }
 
@@ -13543,6 +13625,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
         order_id, planId: order.plan_id,
         channelId: orderMetaScoped.channelId, hangoutGroupId: orderMetaScoped.hangoutGroupId,
       });
+      maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
       return res.json({ received: true });
     } catch (scopedErr) {
       await dbQuery(
@@ -13799,6 +13882,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   }
 
   logger.info('[NOWPayments] IPN: payment completed', { userId: order.user_id, planId: order.plan_id, order_id });
+  maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
   return res.json({ received: true });
 }));
 

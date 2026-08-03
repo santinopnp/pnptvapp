@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0a0a0a; font-family: 'Roboto Mono', monospace; }
+    a { color: #5ED1C4; }
+    a:hover { color: #2DD4BF; }
+    @keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;background:#0a0a0a;display:flex;justify-content:center;padding:32px 16px 60px;">
+  <div style="width:100%;max-width:520px;">
+
+    <p style="margin:0;font-size:10px;font-weight:700;letter-spacing:.12em;color:#D4007A;">GETTING STARTED</p>
+    <h1 style="margin:4px 0 0;font-size:24px;font-weight:700;color:#fff;line-height:1.25;">Cómo pagar en PnP con criptomonedas</h1>
+    <p style="margin:8px 0 0;font-size:12px;color:#A1A1A3;line-height:1.6;">Cada paso muestra un clip real de la app en movimiento — mira dónde se toca y repítelo en tu teléfono.</p>
+    <p style="margin:10px 0 0;font-size:12px;font-weight:700;color:#fff;">{{ stepLabel }} · {{ stepTitle }}</p>
+
+    <div style="height:5px;border-radius:99px;background:#1E1E1E;margin-top:10px;overflow:hidden;">
+      <div style="height:100%;border-radius:99px;background:linear-gradient(90deg,#D4007A,#7B61FF);transition:width .3s;width:{{ progressWidth }};"></div>
+    </div>
+
+    <div style="display:flex;gap:6px;margin-top:10px;">
+      <sc-for list="{{ dots }}" as="d" hint-placeholder-count="5">
+        <button onClick="{{ d.go }}" style="width:28px;height:28px;border-radius:99px;border:none;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;background:{{ d.bg }};color:{{ d.color }};">{{ d.n }}</button>
+      </sc-for>
+    </div>
+
+    <!-- STEP 1 — elegir wallet -->
+    <sc-if value="{{ isStep1 }}" hint-placeholder-val="{{ true }}">
+      <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:16px;margin-top:22px;">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">Una wallet es tu billetera digital</p>
+        <p style="margin:8px 0 0;font-size:12px;color:#A1A1A3;line-height:1.7;">Es una app gratuita donde guardas tus criptomonedas y desde donde pagas. Sin banco, sin papeleo. Instalarla y comprar tus primeras cripto toma unos 10 minutos.</p>
+      </div>
+
+      <h2 style="margin:24px 0 0;font-size:17px;font-weight:700;color:#fff;">Elige tu wallet</h2>
+      <p style="margin:6px 0 0;font-size:12px;color:#A1A1A3;line-height:1.6;">Las dos funcionan en PnP. El tutorial se adapta a la que elijas.</p>
+
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px;">
+        <sc-for list="{{ wallets }}" as="w" hint-placeholder-count="2">
+          <button onClick="{{ w.pick }}" style="display:flex;align-items:flex-start;gap:12px;text-align:left;border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:16px;cursor:pointer;font-family:inherit;" style-hover="border:1px solid #7B61FF;">
+            <div style="flex-shrink:0;width:44px;height:44px;border-radius:12px;background:{{ w.grad }};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;">{{ w.letter }}</div>
+            <div style="flex:1;">
+              <p style="margin:0;font-size:15px;font-weight:700;color:#fff;">{{ w.name }}</p>
+              <p style="margin:3px 0 0;font-size:10px;font-weight:700;letter-spacing:.06em;color:#5ED1C4;">{{ w.tag }}</p>
+              <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.6;">{{ w.desc }}</p>
+            </div>
+          </button>
+        </sc-for>
+      </div>
+
+      <div style="border-left:3px solid #FFB454;background:rgba(255,180,84,.1);border-radius:8px;padding:12px 14px;margin-top:16px;">
+        <p style="margin:0;font-size:11px;color:#e5e5e7;line-height:1.7;"><b style="color:#FFB454;">TIP:</b> ambas son gratis y puedes tener las dos. En el checkout de PnP verás los iconos de MetaMask y Trust Wallet — tocas el de la que instalaste.</p>
+      </div>
+    </sc-if>
+
+    <!-- STEP 2 — instalar y crear -->
+    <sc-if value="{{ isStep2 }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:12px;border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:14px;margin-top:22px;">
+        <div style="width:42px;height:42px;border-radius:12px;background:{{ pickedGrad }};display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:#fff;">{{ pickedLetter }}</div>
+        <div style="flex:1;">
+          <p style="margin:0;font-size:15px;font-weight:700;color:#fff;">{{ pickedName }}</p>
+          <p style="margin:3px 0 0;font-size:11px;color:#A1A1A3;line-height:1.5;">Descárgala de la App Store o Google Play y sigue estas 4 pantallas.</p>
+        </div>
+      </div>
+
+      <p style="margin:14px 0 0;font-size:11px;color:#6b6b70;line-height:1.6;">Esta parte no se graba en video por seguridad: tu contraseña y tu frase secreta nunca deben aparecer en pantalla de nadie. Abajo va la recreación de cada pantalla.</p>
+
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:14px;">
+        <sc-for list="{{ setupSteps }}" as="st" hint-placeholder-count="4">
+          <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:14px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="flex-shrink:0;width:24px;height:24px;border-radius:99px;background:linear-gradient(135deg,#D4007A,#7B61FF);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;">{{ st.n }}</div>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#fff;line-height:1.4;">{{ st.title }}</p>
+            </div>
+            <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">{{ st.desc }}</p>
+
+            <sc-if value="{{ st.mockCreate }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:12px;border-radius:12px;border:1px solid #2A2A2A;background:#0d0d0d;padding:22px 16px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+                <div style="width:40px;height:40px;border-radius:11px;background:{{ pickedGrad }};display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;">{{ pickedLetter }}</div>
+                <div style="width:100%;max-width:230px;padding:11px;border-radius:8px;background:{{ pickedGrad }};font-size:11px;font-weight:700;color:#fff;text-align:center;">Crear una wallet nueva</div>
+                <div style="width:100%;max-width:230px;padding:11px;border-radius:8px;border:1px solid #2A2A2A;font-size:11px;font-weight:600;color:#A1A1A3;text-align:center;">Ya tengo una wallet</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ st.mockPassword }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:12px;border-radius:12px;border:1px solid #2A2A2A;background:#0d0d0d;padding:16px;display:flex;flex-direction:column;gap:9px;">
+                <p style="margin:0;font-size:10px;color:#6b6b70;">Nueva contraseña</p>
+                <div style="height:32px;border-radius:8px;background:#161616;border:1px solid #2A2A2A;display:flex;align-items:center;padding:0 10px;font-size:13px;letter-spacing:4px;color:#e5e5e7;">••••••••</div>
+                <p style="margin:0;font-size:10px;color:#6b6b70;">Confirmar contraseña</p>
+                <div style="height:32px;border-radius:8px;background:#161616;border:1px solid #2A2A2A;display:flex;align-items:center;padding:0 10px;font-size:13px;letter-spacing:4px;color:#e5e5e7;">••••••••</div>
+                <div style="padding:11px;border-radius:8px;background:{{ pickedGrad }};font-size:11px;font-weight:700;color:#fff;text-align:center;">Continuar</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ st.mockPhrase }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:12px;border-radius:12px;border:1px solid #2A2A2A;background:#0d0d0d;padding:14px;">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+                  <sc-for list="{{ sampleWords }}" as="w" hint-placeholder-count="12">
+                    <div style="background:#161616;border:1px solid #2A2A2A;border-radius:6px;padding:6px;font-size:9px;color:#e5e5e7;display:flex;gap:4px;"><span style="color:#6b6b70;">{{ w.n }}.</span>{{ w.word }}</div>
+                  </sc-for>
+                </div>
+                <p style="margin:10px 0 0;font-size:9px;color:#6b6b70;line-height:1.6;">Palabras de ejemplo. Las tuyas serán distintas — escríbelas en papel, en orden.</p>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ st.mockConfirm }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:12px;border-radius:12px;border:1px solid #2A2A2A;background:#0d0d0d;padding:14px;">
+                <p style="margin:0 0 9px;font-size:10px;color:#A1A1A3;">Toca las palabras en el orden correcto:</p>
+                <div style="display:flex;gap:6px;margin-bottom:10px;">
+                  <sc-for list="{{ confirmSlots }}" as="s" hint-placeholder-count="3">
+                    <div style="width:52px;height:28px;border-radius:6px;border:1px dashed #3a3a3a;display:flex;align-items:center;justify-content:center;font-size:9px;color:#6b6b70;">{{ s.n }}</div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <sc-for list="{{ confirmChips }}" as="c" hint-placeholder-count="4">
+                    <div style="background:#161616;border:1px solid #2A2A2A;border-radius:99px;padding:6px 11px;font-size:9px;color:#e5e5e7;">{{ c.word }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="border-left:3px solid #EF4444;background:rgba(239,68,68,.1);border-radius:8px;padding:12px 14px;margin-top:14px;">
+        <p style="margin:0;font-size:11px;color:#e5e5e7;line-height:1.7;"><b style="color:#EF4444;">IMPORTANTE:</b> nadie de PnP te pedirá jamás tu frase secreta ni tu contraseña. Quien la pida te está robando.</p>
+      </div>
+    </sc-if>
+
+    <!-- STEP 3 — comprar cripto -->
+    <sc-if value="{{ isStep3 }}" hint-placeholder-val="{{ false }}">
+      <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:16px;margin-top:22px;">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">Abre la wallet y compra de una</p>
+        <p style="margin:8px 0 0;font-size:12px;color:#A1A1A3;line-height:1.7;">Al entrar, {{ pickedName }} te recibe con un botón para agregar fondos. No lo dejes para después: sin saldo no puedes pagar nada en PnP. Con <b style="color:#fff;">20–50 US$</b> ya empiezas.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:16px;">
+        <sc-for list="{{ buyClips }}" as="c" hint-placeholder-count="6">
+          <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:14px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="flex-shrink:0;width:24px;height:24px;border-radius:99px;background:linear-gradient(135deg,#D4007A,#7B61FF);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;">{{ c.n }}</div>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#fff;line-height:1.4;">{{ c.title }}</p>
+            </div>
+            <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">{{ c.desc }}</p>
+            <div style="margin:12px auto 0;width:100%;max-width:250px;border:6px solid #1c1c1c;border-radius:24px;overflow:hidden;background:#000;position:relative;">
+              <video ref="{{ c.ref }}" data-clip="1" preload="none" controls style="width:100%;aspect-ratio:412/848;display:block;object-fit:cover;background:#000;"></video>
+              <div data-fallback="1" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;background:#0d0d0d;pointer-events:none;">
+                <div style="width:40px;height:40px;border-radius:99px;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-size:14px;color:#A1A1A3;">▶</div>
+                <p style="margin:0;font-size:10px;color:#A1A1A3;text-align:center;line-height:1.6;">{{ c.caption }}</p>
+                <p style="margin:0;font-size:9px;color:#6b6b70;text-align:center;">Toca play para ver la acción</p>
+              </div>
+              <div style="position:absolute;top:8px;left:8px;display:flex;align-items:center;gap:5px;background:rgba(0,0,0,.65);border-radius:99px;padding:4px 8px;">
+                <span style="width:6px;height:6px;border-radius:99px;background:#EF4444;animation:pulseDot 1.4s infinite;"></span>
+                <span style="font-size:8px;font-weight:700;letter-spacing:.08em;color:#fff;">EN LA APP</span>
+              </div>
+            </div>
+            <p style="margin:8px 0 0;font-size:10px;color:#6b6b70;text-align:center;line-height:1.5;">{{ c.caption }}</p>
+          </div>
+        </sc-for>
+      </div>
+
+      <h2 style="margin:26px 0 0;font-size:16px;font-weight:700;color:#fff;">¿Qué token comprar?</h2>
+      <p style="margin:6px 0 0;font-size:12px;color:#A1A1A3;line-height:1.6;">Estas son las opciones que aparecen por defecto en el checkout de PnP. Compra la misma que vas a elegir al pagar.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
+        <sc-for list="{{ tokens }}" as="t" hint-placeholder-count="4">
+          <div style="border:1px solid #2A2A2A;background:#161616;border-radius:12px;padding:14px;">
+            <div style="display:flex;align-items:center;gap:9px;">
+              <div style="width:26px;height:26px;border-radius:99px;background:{{ t.color }};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#04252b;">{{ t.short }}</div>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">{{ t.name }}</p>
+              <span style="font-size:8px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:99px;background:{{ t.badgeBg }};border:1px solid {{ t.badgeBorder }};color:{{ t.badgeColor }};">{{ t.badge }}</span>
+            </div>
+            <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">{{ t.pros }}</p>
+          </div>
+        </sc-for>
+      </div>
+
+      <h2 style="margin:26px 0 0;font-size:16px;font-weight:700;color:#fff;">Elegir la red correcta</h2>
+      <p style="margin:6px 0 0;font-size:12px;color:#A1A1A3;line-height:1.7;">El mismo token existe en varias redes. La red es el carril por donde viaja el dinero: cambia la comisión y la dirección. <b style="color:#fff;">Regla de oro: la red que compras es la red que eliges en PnP.</b> Compraste USDC en Solana → en el checkout eliges USDC (Solana).</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+        <sc-for list="{{ networks }}" as="n" hint-placeholder-count="4">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #2A2A2A;background:#161616;border-radius:10px;padding:11px 13px;">
+            <div>
+              <p style="margin:0;font-size:12px;font-weight:700;color:#fff;">{{ n.name }}</p>
+              <p style="margin:3px 0 0;font-size:10px;color:#A1A1A3;line-height:1.5;">{{ n.note }}</p>
+            </div>
+            <span style="flex-shrink:0;font-size:10px;font-weight:700;color:{{ n.feeColor }};">{{ n.fee }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border-left:3px solid #EF4444;background:rgba(239,68,68,.1);border-radius:8px;padding:12px 14px;margin-top:12px;">
+        <p style="margin:0;font-size:11px;color:#e5e5e7;line-height:1.7;"><b style="color:#EF4444;">CUIDADO:</b> si envías por una red distinta a la que dice el checkout, el pago no llega. Verifica la red en las dos pantallas antes de confirmar.</p>
+      </div>
+
+      <h2 style="margin:26px 0 0;font-size:16px;font-weight:700;color:#fff;">Medios de pago en {{ pickedName }}</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+        <sc-for list="{{ payMethods }}" as="m" hint-placeholder-count="4">
+          <div style="border:1px solid #2A2A2A;background:#161616;border-radius:99px;padding:8px 13px;font-size:11px;color:#e5e5e7;">{{ m.label }}</div>
+        </sc-for>
+      </div>
+
+      <div style="border:1px solid rgba(94,209,196,.35);background:rgba(94,209,196,.07);border-radius:14px;padding:16px;margin-top:16px;">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#5ED1C4;">Ejemplo real: elige la mejor tasa</p>
+        <p style="margin:8px 0 0;font-size:11px;color:#c9c9cc;line-height:1.7;">Por los mismos <b style="color:#fff;">100 US$</b>, cada proveedor te entrega una cantidad distinta:</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(94,209,196,.5);background:rgba(94,209,196,.1);border-radius:10px;padding:11px 13px;">
+            <div>
+              <p style="margin:0;font-size:12px;font-weight:700;color:#fff;">Banxa</p>
+              <p style="margin:3px 0 0;font-size:9px;font-weight:700;letter-spacing:.06em;color:#5ED1C4;">MEJOR TARIFA</p>
+            </div>
+            <p style="margin:0;font-size:13px;font-weight:700;color:#5ED1C4;">99,78 USDC</p>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid #2A2A2A;background:#161616;border-radius:10px;padding:11px 13px;">
+            <div>
+              <p style="margin:0;font-size:12px;font-weight:700;color:#fff;">Robinhood Connect</p>
+              <p style="margin:3px 0 0;font-size:9px;font-weight:700;letter-spacing:.06em;color:#6b6b70;">MÁS CONFIABLE</p>
+            </div>
+            <p style="margin:0;font-size:13px;font-weight:700;color:#A1A1A3;">98,52 USDC</p>
+          </div>
+        </div>
+        <p style="margin:10px 0 0;font-size:11px;color:#c9c9cc;line-height:1.7;">Son 1,26 USDC de diferencia. Toca el que diga <b style="color:#fff;">mejor tarifa</b>, salvo que necesites un medio de pago que solo tenga el otro.</p>
+      </div>
+
+      <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:16px;margin-top:14px;">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">Desde aquí pagas como siempre</p>
+        <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">Cuando eliges el proveedor, la pantalla pasa a ser suya: te pide tu correo, un código de verificación y luego los datos de tu tarjeta o el acceso a tu banco — igual que cualquier compra online. Ese paso es entre tú y el proveedor; ni PnP ni tu wallet ven tus datos bancarios.</p>
+        <p style="margin:10px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;"><b style="color:#fff;">KYC:</b> compras pequeñas con tarjeta suelen no pedir identificación. Montos altos, transferencias o ciertos proveedores sí piden foto de ID y selfie — es su requisito legal. Si no quieres verificarte, baja el monto o vuelve atrás y prueba otro proveedor.</p>
+        <p style="margin:10px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">Con tarjeta el saldo llega en minutos; por transferencia bancaria puede tardar horas.</p>
+      </div>
+    </sc-if>
+
+    <!-- STEP 4 — pagar en PnP -->
+    <sc-if value="{{ isStep4 }}" hint-placeholder-val="{{ false }}">
+      <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:16px;margin-top:22px;">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">Ya tienes saldo. Ahora paga en PnP</p>
+        <p style="margin:8px 0 0;font-size:12px;color:#A1A1A3;line-height:1.7;">En la pantalla de pago de PnP elige <b style="color:#fff;">Now Payments</b>, luego el <b style="color:#fff;">mismo token y la misma red</b> que compraste, y toca el icono de tu wallet: <b style="color:#fff;">MetaMask</b> o <b style="color:#fff;">Trust Wallet</b>.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:16px;">
+        <sc-for list="{{ payClips }}" as="c" hint-placeholder-count="3">
+          <div style="border:1px solid #2A2A2A;background:#161616;border-radius:14px;padding:14px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="flex-shrink:0;width:24px;height:24px;border-radius:99px;background:linear-gradient(135deg,#D4007A,#7B61FF);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;">{{ c.n }}</div>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#fff;line-height:1.4;">{{ c.title }}</p>
+            </div>
+            <p style="margin:8px 0 0;font-size:11px;color:#A1A1A3;line-height:1.7;">{{ c.desc }}</p>
+            <div style="margin:12px auto 0;width:100%;max-width:250px;border:6px solid #1c1c1c;border-radius:24px;overflow:hidden;background:#000;position:relative;">
+              <video ref="{{ c.ref }}" data-clip="1" preload="none" controls style="width:100%;aspect-ratio:412/848;display:block;object-fit:cover;background:#000;"></video>
+              <div data-fallback="1" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;background:#0d0d0d;pointer-events:none;">
+                <div style="width:40px;height:40px;border-radius:99px;border:1px solid #3a3a3a;display:flex;align-items:center;justify-content:center;font-size:14px;color:#A1A1A3;">▶</div>
+                <p style="margin:0;font-size:10px;color:#A1A1A3;text-align:center;line-height:1.6;">{{ c.caption }}</p>
+                <p style="margin:0;font-size:9px;color:#6b6b70;text-align:center;">Toca play para ver la acción</p>
+              </div>
+              <div style="position:absolute;top:8px;left:8px;display:flex;align-items:center;gap:5px;background:rgba(0,0,0,.65);border-radius:99px;padding:4px 8px;">
+                <span style="width:6px;height:6px;border-radius:99px;background:#EF4444;animation:pulseDot 1.4s infinite;"></span>
+                <span style="font-size:8px;font-weight:700;letter-spacing:.08em;color:#fff;">EN LA APP</span>
+              </div>
+            </div>
+            <p style="margin:8px 0 0;font-size:10px;color:#6b6b70;text-align:center;line-height:1.5;">{{ c.caption }}</p>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="border-left:3px solid #FFB454;background:rgba(255,180,84,.1);border-radius:8px;padding:12px 14px;margin-top:14px;">
+        <p style="margin:0;font-size:11px;color:#e5e5e7;line-height:1.7;"><b style="color:#FFB454;">EJEMPLO:</b> compraste <b style="color:#fff;">USDC en Solana</b> → en PnP eliges <b style="color:#fff;">USDC (Solana)</b> y tocas el icono de la wallet que descargaste. Si eliges otra red, el pago no se cruza.</p>
+      </div>
+    </sc-if>
+
+    <!-- STEP 5 — entrega automática -->
+    <sc-if value="{{ isStep5 }}" hint-placeholder-val="{{ false }}">
+      <div style="border:1px solid rgba(94,209,196,.35);background:rgba(94,209,196,.07);border-radius:14px;padding:18px;margin-top:22px;">
+        <div style="width:42px;height:42px;border-radius:12px;background:rgba(94,209,196,.16);display:flex;align-items:center;justify-content:center;font-size:19px;color:#5ED1C4;">✓</div>
+        <h2 style="margin:14px 0 0;font-size:17px;font-weight:700;color:#fff;">Listo — no hay más pasos</h2>
+        <p style="margin:8px 0 0;font-size:12px;color:#c9c9cc;line-height:1.7;">Cuando la red confirma la transacción y las cripto llegan a la wallet de PnP, el sistema lo detecta solo y te entrega lo que compraste.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px;margin-top:14px;">
+        <sc-for list="{{ deliverables }}" as="d" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:10px;padding:13px;border-radius:10px;background:#161616;border:1px solid #2A2A2A;">
+            <span style="width:6px;height:6px;border-radius:99px;background:#22C55E;"></span>
+            <p style="margin:0;font-size:12px;font-weight:600;color:#e5e5e7;">{{ d.label }}</p>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin:12px 0 0;font-size:11px;color:#6b6b70;line-height:1.7;">Suele tardar unos minutos según la red. Si pasa más de una hora, escribe a soporte con el ID de pago que aparece en la pantalla de NOWPayments.</p>
+    </sc-if>
+
+    <div style="display:flex;gap:8px;margin-top:24px;">
+      <button onClick="{{ back }}" disabled="{{ isStep1 }}" style="flex:1;padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#161616;font-size:13px;font-weight:600;color:#fff;font-family:inherit;cursor:pointer;opacity:{{ backOpacity }};">← Atrás</button>
+      <button onClick="{{ nextOrFinish }}" disabled="{{ isStep1 }}" style="flex:2;padding:14px;border-radius:10px;border:none;background:{{ nextBg }};font-size:13px;font-weight:700;color:{{ nextColor }};font-family:inherit;cursor:pointer;opacity:{{ nextOpacity }};">{{ nextLabel }}</button>
+    </div>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:560,&quot;height&quot;:900}}">
+const MM = './assets/metamask-setup.mp4';
+const TW = './assets/truewallet-setup.mp4';
+
+class Component extends DCLogic {
+  state = { step: 1, wallet: null };
+
+  setupClip(v, clip) {
+    if (!v) return;
+    v.muted = true;
+    v.loop = true;
+    v.controls = true;
+    v.playsInline = true;
+    v.__start = clip.start;
+    v.__end = clip.end;
+    v.__srcWanted = clip.src;
+
+    const hideFallback = () => {
+      const fb = v.parentElement && v.parentElement.querySelector('[data-fallback]');
+      if (fb) fb.style.display = 'none';
+    };
+    const start = () => {
+      hideFallback();
+      if (!v.__primed) {
+        v.__primed = true;
+        try { v.currentTime = v.__start; } catch (_) {}
+      }
+      v.play().catch(() => {});
+    };
+
+    if (!v.__bound) {
+      v.__bound = true;
+      v.addEventListener('timeupdate', () => {
+        if (v.currentTime >= v.__end || v.currentTime < v.__start - 1) {
+          try { v.currentTime = v.__start; } catch (_) {}
+        }
+      });
+      v.addEventListener('loadedmetadata', start);
+      v.addEventListener('playing', hideFallback);
+      v.addEventListener('loadeddata', hideFallback);
+      v.addEventListener('canplay', () => { start(); this.advanceQueue(v); });
+      v.addEventListener('error', () => this.advanceQueue(v));
+      this.enqueue(v);
+    }
+  }
+
+  enqueue(v) {
+    this._queue = this._queue || [];
+    this._queue.push(v);
+    if (!this._loading) this.loadNext();
+  }
+
+  loadNext() {
+    const q = this._queue || [];
+    const v = q.shift();
+    if (!v) { this._loading = null; return; }
+    this._loading = v;
+    v.preload = 'auto';
+    v.src = v.__srcWanted;
+    v.load();
+    clearTimeout(this._qTimer);
+    this._qTimer = setTimeout(() => this.advanceQueue(v), 4000);
+  }
+
+  advanceQueue(v) {
+    if (this._loading !== v) return;
+    clearTimeout(this._qTimer);
+    this._loading = null;
+    this.loadNext();
+  }
+
+  walletData(id) {
+    return id === 'metamask'
+      ? { id: 'metamask', name: 'MetaMask', letter: 'M', grad: 'linear-gradient(135deg,#F6851B,#E2761B)', tag: 'MEJOR PARA WEB Y NAVEGADOR', desc: 'La más usada para conectarse a webs. Compra con tarjeta a través de proveedores como Transak, Banxa o Robinhood Connect.' }
+      : { id: 'true', name: 'True Wallet', letter: 'T', grad: 'linear-gradient(135deg,#3375BB,#5FA9EE)', tag: 'MEJOR PARA MÓVIL', desc: 'Pensada para el teléfono. Acepta Google Pay, tarjeta, transferencia y traer saldo desde Binance o Coinbase.' };
+  }
+
+  setupStepsFor(id) {
+    const mocks = [{ mockCreate: true }, { mockPassword: true }, { mockPhrase: true }, { mockConfirm: true }];
+    const base = id === 'metamask'
+      ? [
+        { title: 'Crea tu wallet', desc: 'Abre la app y toca "Crear una wallet nueva".' },
+        { title: 'Crea una contraseña', desc: 'Solo protege esta app en este teléfono. Escríbela donde la recuerdes.' },
+        { title: 'Guarda tu frase de recuperación', desc: 'Son 12 palabras: la única forma de recuperar tu dinero si pierdes el teléfono. En papel, nunca en fotos ni en chats.' },
+        { title: 'Confirma la frase', desc: 'La app te pide repetir algunas palabras en orden para comprobar que la guardaste.' },
+      ]
+      : [
+        { title: 'Crea tu wallet', desc: 'Abre la app y toca "Crear nueva wallet".' },
+        { title: 'Configura tu código de acceso', desc: 'Un PIN o tu huella para abrir la app.' },
+        { title: 'Respalda tu frase secreta de 12 palabras', desc: 'Es la llave de tu dinero. Escríbela en papel, en orden, y guárdala fuera del teléfono.' },
+        { title: 'Confirma la frase', desc: 'Repite las palabras en orden para comprobar que la copiaste bien.' },
+      ];
+    return base.map((b, i) => ({ n: i + 1, ...b, ...mocks[i] }));
+  }
+
+  buyClipsFor(id) {
+    const clips = id === 'metamask'
+      ? [
+        { title: 'Abre MetaMask: te pide agregar fondos', desc: 'Nada más entrar aparece "Deposita fondos en tu billetera". Toca "Agregar fondos" — ahí empieza la compra.', src: MM, start: 125, end: 132, caption: 'Pantalla de inicio → botón Agregar fondos' },
+        { title: 'Elige el token que vas a comprar', desc: 'Se abre "Selecciona un token" con la lista completa: MetaMask USD, Ethereum, Bitcoin, Solana, Tether USD, USD Coin… Usa el buscador para llegar rápido.', src: MM, start: 137, end: 144, caption: 'Selecciona un token → buscador' },
+        { title: 'Fíjate en la red de cada token', desc: 'Al escribir "usdc" salen varias filas iguales: es el mismo token en distintas redes. Mira el logo pequeño de cada fila y elige la red que vas a usar en PnP.', src: MM, start: 145, end: 150, caption: 'USDC repetido = una fila por red' },
+        { title: 'Escribe el monto', desc: 'Arriba se lee "Comprar USDC en Base": token y red confirmados. Aquí se compran 100 US$; puedes empezar con 20–30 US$.', src: MM, start: 151, end: 158, caption: 'Comprar USDC en Base · 100 US$' },
+        { title: 'Elige el medio de pago', desc: 'El selector "Debit or Credit" abre los medios disponibles en tu país: tarjeta débito o crédito y, según la zona, Apple Pay o Google Pay.', src: MM, start: 158, end: 163, caption: 'Debit or Credit → medios disponibles' },
+        { title: 'Compara proveedores y quédate con la mejor tasa', desc: 'MetaMask no vende: muestra proveedores. Por los mismos 100 US$, Banxa entrega 99,78 USDC ("mejor tarifa") y Robinhood Connect 98,52 USDC. Toca el de mejor tarifa.', src: MM, start: 163, end: 168.5, caption: 'Banxa 99,78 USDC vs Robinhood 98,52 USDC' },
+        { title: 'El proveedor toma el control', desc: 'Al confirmar aparece "Desarrollado por Banxa" y la pantalla pasa a ser del proveedor: correo, código y datos de tarjeta o banco. Cada persona paga con su propio medio, como en cualquier compra online.', src: MM, start: 168.5, end: 178, caption: 'Desarrollado por Banxa → preparando tu pedido' },
+      ]
+      : [
+        { title: 'Abre True Wallet y toca "Fund your wallet"', desc: 'En cuanto la wallet está lista aparece "Brilliant, your wallet is ready!" con el botón verde. Hazlo de una: sin saldo no hay pago.', src: TW, start: 14.5, end: 19, caption: 'Wallet lista → Fund your wallet' },
+        { title: 'Mira todos los medios de pago', desc: 'Google Pay arriba como recomendado, luego traer saldo desde Binance o Coinbase, y "All payment methods" para tarjeta y transferencia.', src: TW, start: 19, end: 25, caption: 'Google Pay · Binance · Coinbase · tarjeta' },
+        { title: 'Escribe el monto', desc: '50 US$ se convierten en ~49,4 USDT. Abajo eliges "Pay with: Card" u otro medio.', src: TW, start: 25, end: 32, caption: '50 USD ≈ 49,4 USDT · Pay with Card' },
+        { title: 'Elige el token', desc: 'En "Select Crypto" usa la pestaña Stables para ver solo stablecoins (USDT, USDC): son las que no cambian de precio.', src: TW, start: 29, end: 37, caption: 'Select Crypto → pestaña Stables' },
+        { title: 'Elige la red correcta', desc: 'Al buscar "usdt" aparece el mismo token repetido: cada fila es una red distinta (mira el logo pequeño sobre el icono). Escoge la misma que vas a elegir en el checkout de PnP.', src: TW, start: 106, end: 114, caption: 'USDT en varias redes — mira el logo pequeño' },
+        { title: 'Así se ve tu portafolio', desc: 'Esta es la pantalla donde aparecerá tu saldo: mientras el pago se procesa los tokens siguen en 0,00. Cuando el proveedor libera la compra (minutos con tarjeta), el monto aparece aquí y ya puedes pagar en PnP.', src: TW, start: 115.5, end: 120, caption: 'Portafolio vacío → aquí aparecerá tu saldo' },
+      ];
+    return clips.map((c, i) => this.withRef({ n: i + 1, ...c }));
+  }
+
+  withRef(clip) {
+    return { ...clip, ref: (el) => this.setupClip(el, clip) };
+  }
+
+  payClipsFor(id) {
+    const clips = id === 'metamask'
+      ? [
+        { title: 'En PnP: elige token, red y tu wallet', desc: 'En la pantalla de pago toca "Pagar con Tokens", elige el mismo token y red que compraste y luego el icono de MetaMask (el zorro naranja).', src: TW, start: 118, end: 127, caption: 'Checkout de PnP: tokens + iconos MetaMask / True Wallet' },
+        { title: 'NOWPayments muestra monto exacto y red', desc: 'Se abre NOWPayments con el monto exacto (15,98 USDT), la dirección, el QR y la red. En "Deposit with" aparece el zorro de MetaMask: tócalo.', src: MM, start: 236, end: 243, caption: 'Send deposit · Deposit with MetaMask' },
+        { title: 'Confirma el envío en MetaMask', desc: 'MetaMask abre la hoja de confirmación con la cuenta de origen, la dirección de destino y la red (BNB Chain). Revisa que la red coincida y toca Confirmar.', src: MM, start: 244, end: 252, caption: 'De / Para / Red: BNB Chain → Confirmar' },
+      ]
+      : [
+        { title: 'En PnP: elige token, red y tu wallet', desc: 'En la pantalla de pago toca "Pagar con Tokens", elige el mismo token y red que compraste y luego el icono de True Wallet (o MetaMask si usas esa).', src: TW, start: 118, end: 127, caption: 'Checkout de PnP: tokens + iconos MetaMask / True Wallet' },
+        { title: 'NOWPayments muestra monto exacto y red', desc: 'Aparece el monto exacto (15,98 USDT), la dirección, el QR y el aviso "Send USDT on the BSC blockchain". Envía ese monto por esa red: si mandas menos o por otra red, el pago no se acredita.', src: TW, start: 146.5, end: 151, caption: 'Send USDT on the BSC blockchain' },
+        { title: 'Conecta la wallet y confirma', desc: 'Se abre "Connect Wallet" con las wallets instaladas — tocas True Wallet (o MetaMask) y apruebas la conexión y el envío en la app.', src: TW, start: 151, end: 157.5, caption: 'Connect Wallet → Continue in Trust Wallet' },
+      ];
+    return clips.map((c, i) => this.withRef({ n: i + 1, ...c }));
+  }
+
+  renderVals() {
+    const step = this.state.step;
+    const wallet = this.state.wallet;
+    const picked = wallet ? this.walletData(wallet) : null;
+    const titles = { 1: 'Elige tu wallet', 2: 'Instala y créala', 3: 'Compra tu cripto', 4: 'Paga en PnP', 5: 'Entrega automática' };
+    const dotState = (n) => n === step ? { bg: 'linear-gradient(135deg,#D4007A,#7B61FF)', color: '#fff' }
+      : n < step ? { bg: 'rgba(212,0,122,.2)', color: '#FF4DA6' }
+      : { bg: '#1E1E1E', color: '#6b6b70' };
+
+    return {
+      stepLabel: `Paso ${step} de 5`,
+      stepTitle: titles[step],
+      progressWidth: `${step * 20}%`,
+      dots: [1, 2, 3, 4, 5].map(n => ({ n, ...dotState(n), go: () => { if (n === 1 || this.state.wallet) this.setState({ step: n }); } })),
+      isStep1: step === 1, isStep2: step === 2, isStep3: step === 3, isStep4: step === 4, isStep5: step === 5,
+      wallets: ['true', 'metamask'].map(id => ({ ...this.walletData(id), pick: () => this.setState({ wallet: id, step: 2 }) })),
+      pickedName: picked ? picked.name : '',
+      pickedGrad: picked ? picked.grad : '#161616',
+      pickedLetter: picked ? picked.letter : '?',
+      setupSteps: this.setupStepsFor(wallet),
+      buyClips: this.buyClipsFor(wallet),
+      payClips: this.payClipsFor(wallet),
+      tokens: [
+        { name: 'USDT (Tether)', short: 'USDT', color: '#26A17B', badge: 'MÁS ACEPTADA', badgeBg: 'rgba(94,209,196,.15)', badgeBorder: 'rgba(94,209,196,.5)', badgeColor: '#5ED1C4', pros: 'La stablecoin con más liquidez y disponible en casi todas las redes. Siempre vale ~1 US$, así que lo que compras es lo que pagas. Es la opción más segura si dudas.' },
+        { name: 'USDC (Circle)', short: 'USDC', color: '#2775CA', badge: 'MÁS REGULADA', badgeBg: 'rgba(123,97,255,.15)', badgeBorder: 'rgba(123,97,255,.5)', badgeColor: '#A78BFA', pros: 'También vale ~1 US$, respaldada 1:1 y auditada. Suele tener mejores tasas de compra con tarjeta y es la favorita en Solana y Base por sus comisiones bajísimas.' },
+        { name: 'ETH (Ethereum)', short: 'ETH', color: '#8C8CF0', badge: 'PRECIO VARIABLE', badgeBg: 'rgba(255,180,84,.15)', badgeBorder: 'rgba(255,180,84,.5)', badgeColor: '#FFB454', pros: 'Útil si ya la tienes. Su precio sube y baja, así que el monto que ves hoy puede no alcanzar mañana. Para pagar en PnP conviene más una stablecoin.' },
+        { name: 'SOL / BNB', short: 'SOL', color: '#5ED1C4', badge: 'RÁPIDAS Y BARATAS', badgeBg: 'rgba(34,197,94,.15)', badgeBorder: 'rgba(34,197,94,.5)', badgeColor: '#22C55E', pros: 'Sus redes cobran centavos por transacción, pero su precio también fluctúa. Buena opción cuando ya las tienes en la wallet.' },
+      ],
+      networks: [
+        { name: 'Solana', note: 'Rapidísima y muy barata. Ideal para USDC.', fee: '~0,01 US$', feeColor: '#22C55E' },
+        { name: 'BNB Smart Chain (BSC)', note: 'Muy usada para USDT. Comisión mínima.', fee: '~0,20 US$', feeColor: '#22C55E' },
+        { name: 'Base / Polygon', note: 'Baratas y confiables, buen punto medio.', fee: '~0,10 US$', feeColor: '#5ED1C4' },
+        { name: 'Ethereum', note: 'La más conocida, pero la más cara. Evítala para montos pequeños.', fee: '2–10 US$', feeColor: '#EF4444' },
+      ],
+      payMethods: (wallet === 'metamask'
+        ? ['Tarjeta débito', 'Tarjeta crédito', 'Apple Pay / Google Pay*', 'Transferencia bancaria*', 'Transak · Banxa · Robinhood']
+        : ['Google Pay', 'Tarjeta débito / crédito', 'Transferencia bancaria', 'Desde Binance', 'Desde Coinbase']
+      ).map(label => ({ label })),
+      deliverables: [
+        { label: 'Tu membresía se activa sola' },
+        { label: 'Tus llamadas quedan acreditadas' },
+        { label: 'Tus tokens aparecen en tu cuenta' },
+      ],
+      sampleWords: ['brisa', 'oceano', 'tigre', 'arce', 'coral', 'plaza', 'brasa', 'cuarzo', 'lunar', 'cedro', 'vivido', 'ambar'].map((word, i) => ({ n: i + 1, word })),
+      confirmSlots: [1, 2, 3].map(n => ({ n })),
+      confirmChips: ['oceano', 'brasa', 'cedro', 'plaza'].map(word => ({ word })),
+      back: () => this.setState(s => s.step === 2 ? { step: 1, wallet: null } : { step: Math.max(1, s.step - 1) }),
+      backOpacity: step === 1 ? 0.35 : 1,
+      nextOrFinish: () => step === 5 ? this.setState({ step: 1, wallet: null }) : this.setState(s => ({ step: Math.min(5, s.step + 1) })),
+      nextLabel: step === 5 ? 'Empezar de nuevo' : (step === 1 ? 'Elige una wallet arriba' : 'Siguiente →'),
+      nextOpacity: step === 1 ? 0.35 : 1,
+      nextBg: step === 5 ? 'linear-gradient(90deg,#2DD4BF,#22D3EE)' : 'linear-gradient(135deg,#D4007A,#7B61FF)',
+      nextColor: step === 5 ? '#04252b' : '#fff',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
