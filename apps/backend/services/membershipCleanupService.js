@@ -48,9 +48,19 @@ class MembershipCleanupService {
     // (tier=PRIME with no active entitlement) is repaired within one
     // restart cycle regardless of whether the daily cron fires.
     // Side-effect free: pure DB reconciliation, no DMs/pushes.
-    this.updateAllSubscriptionStatuses().catch((err) => {
-      logger.error('MembershipCleanupService: startup tier reconciliation failed', { error: err.message });
+    this.runIncrementalReconcile().catch((err) => {
+      logger.error('MembershipCleanupService: startup incremental reconcile failed', { error: err.message });
     });
+    // Periodic incremental reconcile — catches entitlements that expire
+    // between the startup run and the 03:00 UTC full cleanup. Without this
+    // a trial that expires at 19:00 leaves the user with a stale PRIME
+    // badge until the next restart or 03:00, whichever comes first.
+    // 30 min cadence balances freshness vs Redis/DB load.
+    setInterval(() => {
+      this.runIncrementalReconcile().catch((err) => {
+        logger.error('MembershipCleanupService: incremental reconcile failed', { error: err.message });
+      });
+    }, 30 * 60 * 1000);
 
     const msUntilNextCleanupTime = () => {
       const CLEANUP_HOUR_UTC = 3; // 03:00 UTC daily
@@ -77,6 +87,53 @@ class MembershipCleanupService {
     }, delay);
 
     return timeoutRef;
+  }
+
+  /**
+   * Incremental reconcile — safe to run frequently (30 min interval).
+   * Does the two things that need to happen soon after an entitlement
+   * expires:
+   *   (a) mark expired entitlements as is_consumed=true
+   *   (b) recompute users.tier so the badge downgrades
+   *   (c) run updateAllSubscriptionStatuses for churn/active detection
+   *       and reverse-drift catch (tier=PRIME with no active entitlement)
+   *
+   * NO channel kicks, NO Telegram DMs — that's runFullCleanup's job at
+   * 03:00 UTC. This is pure DB reconciliation.
+   */
+  static async runIncrementalReconcile() {
+    const results = { entitlementsConsumed: 0, tierRecomputed: 0, statusUpdates: null };
+    try {
+      // (a) Mark expired entitlements as consumed
+      const consumeResult = await query(`
+        UPDATE user_entitlements
+        SET is_consumed = true, updated_at = NOW()
+        WHERE is_lifetime = false
+          AND is_consumed = false
+          AND expires_at IS NOT NULL
+          AND expires_at <= NOW()
+        RETURNING id, user_id, add_on_id
+      `);
+      results.entitlementsConsumed = consumeResult.rowCount;
+
+      // (b) Recompute tier for each user whose entitlement just consumed
+      if (consumeResult.rowCount > 0) {
+        const EntitlementAccessService = require('./entitlementAccessService');
+        const affectedUserIds = [...new Set(consumeResult.rows.map(r => String(r.user_id)))];
+        for (const uid of affectedUserIds) {
+          try { await EntitlementAccessService.recomputeUserTier(uid); } catch (_) {}
+        }
+        results.tierRecomputed = affectedUserIds.length;
+        logger.info(`Incremental reconcile: consumed ${consumeResult.rowCount} entitlements, recomputed ${affectedUserIds.length} tiers`);
+      }
+
+      // (c) Full status pass — catches reverse-drift for users whose
+      // entitlements consumed on this run OR earlier and got missed.
+      results.statusUpdates = await this.updateAllSubscriptionStatuses();
+    } catch (err) {
+      logger.error('runIncrementalReconcile failed', { error: err.message });
+    }
+    return results;
   }
 
   /**
