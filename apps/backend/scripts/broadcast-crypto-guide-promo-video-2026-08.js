@@ -301,11 +301,32 @@ async function main() {
     console.log('     [SKIPPED] --skip-telegram');
   } else if (!DRY_RUN) {
     const tg = new Telegram(process.env.BOT_TOKEN);
+
+    // Prime a file_id once instead of sending by URL per-user: Telegram fetches
+    // the URL fresh on every sendVideo-by-URL call, and hammering our own
+    // server thousands of times in a row causes intermittent "wrong type of
+    // the web page content" / "failed to get HTTP URL content" errors. Upload
+    // once (to the admin's own DM), then reuse the returned file_id for the
+    // whole broadcast — fast and doesn't touch our server again.
+    let videoRef = TG_VIDEO_URL;
+    try {
+      const primed = await tg.sendVideo(SYSTEM_USER_ID, TG_VIDEO_URL, { supports_streaming: true });
+      const fileId = primed?.video?.file_id;
+      if (fileId) {
+        videoRef = fileId;
+        console.log(`     Primed file_id: ${fileId}`);
+      } else {
+        console.warn('     Priming returned no file_id, falling back to URL sends');
+      }
+    } catch (err) {
+      console.warn(`     Priming failed (${err.message}), falling back to URL sends`);
+    }
+
     for (let i = 0; i < withTelegram.length; i++) {
       const u = withTelegram[i];
       const lang = isEn(u.language) ? 'en' : 'es';
       try {
-        await tg.sendVideo(u.telegram, TG_VIDEO_URL, {
+        await tg.sendVideo(u.telegram, videoRef, {
           caption: TG_CAPTION[lang],
           parse_mode: 'HTML',
           reply_markup: TG_BUTTONS[lang],
