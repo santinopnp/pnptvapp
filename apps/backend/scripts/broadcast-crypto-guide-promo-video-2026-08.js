@@ -306,15 +306,18 @@ async function main() {
     // the URL fresh on every sendVideo-by-URL call, and hammering our own
     // server thousands of times in a row causes intermittent "wrong type of
     // the web page content" / "failed to get HTTP URL content" errors. Upload
-    // once (to the admin's own DM), then reuse the returned file_id for the
-    // whole broadcast — fast and doesn't touch our server again.
+    // once to the internal ops group (guaranteed reachable, unlike an
+    // arbitrary user id that may never have DM'd the bot), delete that priming
+    // message, then reuse the returned file_id for the whole broadcast.
+    const PRIME_CHAT_ID = process.env.MIGRATION_NUDGE_CHAT_ID || '-1003760638625';
     let videoRef = TG_VIDEO_URL;
     try {
-      const primed = await tg.sendVideo(SYSTEM_USER_ID, TG_VIDEO_URL, { supports_streaming: true });
+      const primed = await tg.sendVideo(PRIME_CHAT_ID, TG_VIDEO_URL, { supports_streaming: true });
       const fileId = primed?.video?.file_id;
       if (fileId) {
         videoRef = fileId;
         console.log(`     Primed file_id: ${fileId}`);
+        try { await tg.deleteMessage(PRIME_CHAT_ID, primed.message_id); } catch {}
       } else {
         console.warn('     Priming returned no file_id, falling back to URL sends');
       }
