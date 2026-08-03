@@ -26,6 +26,7 @@ function resolveTopic(kind) {
 
 class BusinessNotificationService {
   static bot = null;
+  static deadThreadIds = new Set();
 
   static initialize(bot) {
     this.bot = bot;
@@ -43,7 +44,9 @@ class BusinessNotificationService {
 
   static async send(message, kind = null) {
     if (!this.bot || !CHANNEL_ID) return;
-    const threadId = kind ? resolveTopic(kind) : TOPIC_FALLBACK;
+    let threadId = kind ? resolveTopic(kind) : TOPIC_FALLBACK;
+    // Skip thread if we already learned it was deleted, to avoid spamming warns.
+    if (threadId && this.deadThreadIds.has(threadId)) threadId = null;
     try {
       const opts = { parse_mode: 'HTML' };
       if (threadId) opts.message_thread_id = threadId;
@@ -51,7 +54,10 @@ class BusinessNotificationService {
     } catch (error) {
       // Forum topic was deleted — retry without thread ID so the message still lands
       if (threadId && error.message && error.message.includes('message thread not found')) {
-        logger.warn('Business notification topic not found, retrying without thread', { kind, threadId });
+        if (!this.deadThreadIds.has(threadId)) {
+          this.deadThreadIds.add(threadId);
+          logger.warn('Business notification topic not found, caching as dead', { kind, threadId });
+        }
         try {
           await this.bot.telegram.sendMessage(CHANNEL_ID, message, { parse_mode: 'HTML' });
         } catch (retryErr) {

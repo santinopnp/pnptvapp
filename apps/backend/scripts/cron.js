@@ -360,6 +360,10 @@ const startCronJobs = async (bot = null) => {
     // from the expected handler path.
     cron.schedule(process.env.BTCPAY_WEBHOOK_PROBE_CRON || '30 6 * * *', async () => {
       try {
+        // BTCPay/Dash retired 2026-07-31. Probe kept only if operator explicitly
+        // opts back in via BTCPAY_PROBE_ENABLED=1 (host DNS no longer resolves the
+        // internal btcpay-server hostname, so probe would just spam EAI_AGAIN).
+        if (process.env.BTCPAY_PROBE_ENABLED !== '1') return;
         const btcpay = require(path.join(backendPath, 'config/btcpay'));
         if (!btcpay.isConfigured) {
           logger.info('BTCPay webhook probe: BTCPay not configured — skipping');
