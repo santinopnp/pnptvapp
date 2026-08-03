@@ -124,12 +124,40 @@ async function createChatMentions(messageId, mentionerId, content, room) {
   const users = await resolveUsernames(usernames);
   if (!users.length) return;
 
+  // Hangout privacy: only notify users who are non-banned members of the hangout
+  // (or its parent group if this is a topic). Prevents leaking private-hangout
+  // context to arbitrary users via @mention notifications.
+  let allowedMemberIds = null;
+  const hangoutMatch = typeof room === 'string' && room.match(/^hangout:(\d+)$/);
+  if (hangoutMatch) {
+    const gid = parseInt(hangoutMatch[1], 10);
+    if (Number.isFinite(gid)) {
+      try {
+        const { rows: memberRows } = await query(
+          `SELECT user_id FROM hangout_group_members
+             WHERE group_id = COALESCE(
+                     (SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL),
+                     $1
+                   )
+               AND user_id = ANY($2::text[])
+               AND (is_banned = false OR is_banned IS NULL)`,
+          [gid, users.map(u => String(u.id))]
+        );
+        allowedMemberIds = new Set(memberRows.map(r => String(r.user_id)));
+      } catch (memberErr) {
+        logger.warn('mentionService: membership lookup failed, dropping notifications', { err: memberErr.message, room });
+        return;
+      }
+    }
+  }
+
   const NotificationEmitter = require('./notificationEmitter');
   const actorRow = await query('SELECT username FROM users WHERE id=$1', [mentionerId]);
   const actorName = actorRow.rows[0]?.username || 'Someone';
 
   for (const user of users) {
     if (String(user.id) === String(mentionerId)) continue;
+    if (allowedMemberIds && !allowedMemberIds.has(String(user.id))) continue;
     try {
       await query(
         'INSERT INTO chat_message_mentions (message_id, mentioned_user_id, mentioner_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',

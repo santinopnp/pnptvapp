@@ -1246,7 +1246,7 @@ const getMessages = async (req, res) => {
               rxn.reactions
        FROM chat_messages cm
        LEFT JOIN users u ON u.id = cm.user_id
-       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id AND r.room = cm.room
+       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id AND r.room = cm.room AND r.is_deleted = false
        LEFT JOIN LATERAL (
          SELECT json_agg(json_build_object(
            'emoji', sub.emoji,
@@ -1326,9 +1326,15 @@ const sendMessage = async (req, res) => {
       return res.status(403).json({ error: 'Not a member of this group' });
     }
 
-    // Enforce read-only, mute, and slow mode
+    // Enforce read-only, mute, and slow mode.
+    // Topics inherit their parent's read_only / slow_mode settings, so resolve to the parent row.
     const { rows: groupSettingsRows } = await query(
-      'SELECT is_read_only, slow_mode_seconds FROM hangout_groups WHERE id = $1', [groupId]
+      `SELECT is_read_only, slow_mode_seconds FROM hangout_groups
+         WHERE id = COALESCE(
+           (SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL),
+           $1
+         )`,
+      [groupId]
     );
     const gs = groupSettingsRows[0];
     if (gs) {
@@ -1351,8 +1357,17 @@ const sendMessage = async (req, res) => {
         if (!memberRows[0].muted_until || new Date(memberRows[0].muted_until) > new Date()) {
           return res.status(403).json({ error: 'You are muted in this group' });
         }
-        // Mute expired — clear it
-        await query('UPDATE hangout_group_members SET is_muted = false, muted_until = NULL WHERE group_id=$1 AND user_id=$2', [groupId, user.id]);
+        // Mute expired — clear across parent + all sibling topics so the cascade stays consistent
+        await query(
+          `UPDATE hangout_group_members SET is_muted = false, muted_until = NULL
+             WHERE user_id = $2
+               AND group_id IN (
+                 SELECT id FROM hangout_groups
+                  WHERE id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)
+                     OR parent_group_id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)
+               )`,
+          [groupId, user.id]
+        );
       }
 
       // Slow mode: enforce for non-mods
@@ -1394,22 +1409,32 @@ const sendMessage = async (req, res) => {
     const rawPhoto = photoResult.rows[0]?.photo_file_id || user.photoUrl || null;
     const photoUrl = isValidPhotoUrl(rawPhoto) ? rawPhoto : null;
 
+    // BUG-I: reply_to_id must reference an existing, non-deleted message in the same room.
+    let safeReplyToId = null;
+    if (parsedReplyToId) {
+      const { rows: parentRows } = await query(
+        'SELECT 1 FROM chat_messages WHERE id = $1 AND room = $2 AND is_deleted = false',
+        [parsedReplyToId, room]
+      );
+      if (parentRows.length) safeReplyToId = parsedReplyToId;
+    }
+
     const { rows } = await query(
       `INSERT INTO chat_messages (room, user_id, username, first_name, photo_url, content, reply_to_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, room, user_id, username, first_name, photo_url, content,
                  media_url, media_type, media_mime, media_thumb_url,
                  media_width, media_height, media_metadata, reply_to_id, created_at`,
-      [room, user.id, user.username || null, user.firstName || user.first_name || null, photoUrl, text, parsedReplyToId]
+      [room, user.id, user.username || null, user.firstName || user.first_name || null, photoUrl, text, safeReplyToId]
     );
 
     const msg = normalizeMessage(rows[0]);
 
-    // Attach reply_to preview if replying
-    if (parsedReplyToId) {
+    // Attach reply_to preview if replying (BUG-H: skip soft-deleted parents)
+    if (safeReplyToId) {
       const { rows: replyRows } = await query(
-        'SELECT first_name, username, content, media_type, message_type, meta, media_thumb_url, media_url FROM chat_messages WHERE id = $1 AND room = $2',
-        [parsedReplyToId, room]
+        'SELECT first_name, username, content, media_type, message_type, meta, media_thumb_url, media_url FROM chat_messages WHERE id = $1 AND room = $2 AND is_deleted = false',
+        [safeReplyToId, room]
       );
       if (replyRows[0]) {
         msg.reply_to = {
@@ -1870,8 +1895,12 @@ const unbanMember = async (req, res) => {
   try {
     if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
     await query(
-      'UPDATE hangout_group_members SET is_banned = false WHERE group_id=$1 AND user_id=$2',
-      [groupId, targetId]
+      `UPDATE hangout_group_members SET is_banned = false
+         WHERE user_id = $1
+           AND group_id IN (
+             SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2
+           )`,
+      [targetId, groupId]
     );
     auditModeration(groupId, user.id, targetId, 'unban', null, null);
     return res.json({ success: true });
@@ -1903,7 +1932,11 @@ const muteMember = async (req, res) => {
 
     const mutedUntil = new Date(Date.now() + durationMinutes * 60000);
     await query(
-      'UPDATE hangout_group_members SET is_muted = true, muted_until = $3 WHERE group_id=$1 AND user_id=$2',
+      `UPDATE hangout_group_members SET is_muted = true, muted_until = $3
+         WHERE user_id = $2
+           AND group_id IN (
+             SELECT id FROM hangout_groups WHERE id = $1 OR parent_group_id = $1
+           )`,
       [groupId, targetId, mutedUntil]
     );
     auditModeration(groupId, user.id, targetId, 'mute', req.body.reason || null, { durationSeconds: Math.min(durationMinutes, 10080) * 60 });
@@ -1924,7 +1957,11 @@ const unmuteMember = async (req, res) => {
   try {
     if (!(await isOwnerOrMod(groupId, user.id))) return res.status(403).json({ error: 'Not authorized' });
     await query(
-      'UPDATE hangout_group_members SET is_muted = false, muted_until = NULL WHERE group_id=$1 AND user_id=$2',
+      `UPDATE hangout_group_members SET is_muted = false, muted_until = NULL
+         WHERE user_id = $2
+           AND group_id IN (
+             SELECT id FROM hangout_groups WHERE id = $1 OR parent_group_id = $1
+           )`,
       [groupId, targetId]
     );
     auditModeration(groupId, user.id, targetId, 'unmute', null, null);
@@ -2601,7 +2638,7 @@ const searchMessages = async (req, res) => {
               cm.created_at, cm.edited_at, cm.edit_count, cm.is_pinned
        FROM chat_messages cm
        LEFT JOIN users u ON u.id = cm.user_id
-       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id
+       LEFT JOIN chat_messages r ON r.id = cm.reply_to_id AND r.room = cm.room AND r.is_deleted = false
        WHERE cm.room = $1
          AND cm.is_deleted = false
          AND to_tsvector('english', COALESCE(cm.content, '')) @@ plainto_tsquery('english', $2)
@@ -3299,11 +3336,12 @@ async function updateTopic(req, res) {
     }
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
-    params.push(topicId);
+    params.push(topicId, parentId);
     const { rows: updated } = await query(
-      `UPDATE hangout_groups SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING id, name, description, position, is_read_only, is_wall_of_fame`,
+      `UPDATE hangout_groups SET ${updates.join(', ')} WHERE id = $${params.length - 1} AND parent_group_id = $${params.length} RETURNING id, name, description, position, is_read_only, is_wall_of_fame`,
       params
     );
+    if (!updated.length) return res.status(404).json({ error: 'Topic not found' });
 
     // Fix CRIT-03: broadcast to all connected members
     const io = req.app.get('io');

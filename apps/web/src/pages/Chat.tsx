@@ -449,6 +449,14 @@ function HangoutChatPanel({
     });
   };
 
+  // Close emoji picker on Escape (mobile keyboards and desktop both benefit)
+  useEffect(() => {
+    if (emojiPickerMsgId == null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setEmojiPickerMsgId(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [emojiPickerMsgId]);
+
   const handleReactionWithAnimation = async (msgId: number, emoji: string, anchor?: { x: number; y: number }) => {
     // Determine if this is an add (not already reacted) before mutating state
     const existingMsg = messages.find(m => m.id === msgId);
@@ -537,12 +545,14 @@ function HangoutChatPanel({
       }
     };
 
+    const typingTimers: number[] = [];
     const onTyping = (data: { userId: string; firstName?: string; name?: string }) => {
       if (String(data.userId) === String(myId)) return;
       // Server emits `firstName`; fall back to `name` for older payloads
       const displayName = data.firstName || data.name || "Someone";
       setTypingNames((prev) => prev.includes(displayName) ? prev : [...prev, displayName]);
-      setTimeout(() => setTypingNames((prev) => prev.filter((n) => n !== displayName)), 3000);
+      const t = window.setTimeout(() => setTypingNames((prev) => prev.filter((n) => n !== displayName)), 3000);
+      typingTimers.push(t);
     };
 
     const onMessageEdited = (data: { messageId: number; content: string; editedAt: string; editCount: number }) => {
@@ -574,6 +584,9 @@ function HangoutChatPanel({
       socket.off("hangout:message:deleted", onMessageDeleted);
       socket.off("hangout:reaction:updated", onReactionUpdated);
       socket.off("hangout:error", onHangoutError);
+      // Clear pending typing timers + reset the list so we don't ghost across group/topic switch
+      typingTimers.forEach((t) => clearTimeout(t));
+      setTypingNames([]);
       // Clear any pending long-press timer to avoid state updates after unmount
       if (longPressTimer.current) {
         clearTimeout(longPressTimer.current);
@@ -1002,7 +1015,7 @@ function HangoutChatPanel({
                           ) : null}
                         </div>
                       )}
-                      <div className={`max-w-[80%] sm:max-w-[75%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
+                      <div className={`max-w-[85%] sm:max-w-[70%] md:max-w-[60%] lg:max-w-[50%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
                         {/* Name — only for first in group, linked to profile */}
                         {!isMe && !grouped && (
                           <p className="text-[10px] text-pnp-textSecondary mb-0.5 px-1 cursor-pointer hover:text-pnp-accent transition-colors" onClick={() => navigate(`/profile/${msg.user_id}`)}>{msg.first_name || msg.username || "User"}</p>
