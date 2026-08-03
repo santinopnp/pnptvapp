@@ -69,15 +69,45 @@ async function invalidateWalletCache(userId) {
  */
 async function credit(opts) {
   const {
-    userId, balanceDelta = 0, giftedDelta = 0,
+    userId, balanceDelta = 0,
     reason, sourceType = null, sourceId = null,
     actorId = 'system', metadata = {}, externalClient,
   } = opts || {};
+  // giftedDelta may be zeroed by the creator/model guard below — needs `let`.
+  let giftedDelta = (opts && Number.isFinite(opts.giftedDelta)) ? opts.giftedDelta : 0;
 
   if (!userId) throw new Error('tokenLedger.credit: userId required');
   if (!reason || !VALID_REASONS.has(reason)) throw new Error(`tokenLedger.credit: invalid reason "${reason}"`);
   if (balanceDelta < 0 || giftedDelta < 0) throw new Error('tokenLedger.credit: deltas must be >= 0 (use debit for negatives)');
   if (balanceDelta === 0 && giftedDelta === 0) throw new Error('tokenLedger.credit: at least one delta must be > 0');
+
+  // Guard: gifted balance is a viewer-only promo pool (spendable only on
+  // Santino + Lex per monetizationConfig). Creators/models must never accrue
+  // gifted tokens — a signup bonus once assigned 4,107 tokens ($684 promo)
+  // to 28 creators (fixed 2026-08-03). Silently drop the gifted portion
+  // when the recipient is a creator; balance portion still credits normally.
+  if (giftedDelta > 0) {
+    try {
+      const { rows: roleRows } = await query(
+        `SELECT role FROM users WHERE id = $1 LIMIT 1`, [String(userId)]
+      );
+      const role = roleRows[0]?.role;
+      if (role === 'creator' || role === 'model') {
+        logger.warn('[tokenLedger] gifted delta dropped — recipient is a creator/model', {
+          userId, role, giftedDelta, reason, sourceType, sourceId, actorId,
+        });
+        giftedDelta = 0;
+        if (balanceDelta === 0) {
+          // Nothing left to credit — bail out cleanly (no ledger row, no wallet write)
+          return { balance_after: 0, gifted_after: 0, ledger_id: null, skipped: 'creator_gifted_guard' };
+        }
+      }
+    } catch (guardErr) {
+      logger.warn('[tokenLedger] gifted-guard role lookup failed — proceeding with grant', {
+        userId, error: guardErr.message,
+      });
+    }
+  }
 
   const client = pickClient(externalClient) || await getClient();
   const owned = !externalClient;

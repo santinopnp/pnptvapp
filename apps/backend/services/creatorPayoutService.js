@@ -33,7 +33,10 @@ const NotificationEmitter = require('./notificationEmitter');
 const MINIMUM_PAYOUT_USD = 1.00;
 
 // Weekly approval workflow — Monday 09:00 Bogota -> proposal; Monday 16:00 -> deadline.
-const WEEKLY_MINIMUM_USD = Number(process.env.CREATOR_WEEKLY_MIN_USD || 10);
+// Threshold: creators with < WEEKLY_MINIMUM_USD accrued available earnings are
+// SKIPPED this week; their balance carries over to the next weekly cycle. Raised
+// from $10 to $100 on 2026-08-03 per operator direction. Override via env var.
+const WEEKLY_MINIMUM_USD = Number(process.env.CREATOR_WEEKLY_MIN_USD || 100);
 const TRM_FALLBACK_COP = Number(process.env.USD_COP_FALLBACK || 4100);
 const DATOSGOV_TRM_URL = 'https://www.datos.gov.co/resource/mcec-87by.json?$order=vigenciadesde%20DESC&$limit=1';
 
