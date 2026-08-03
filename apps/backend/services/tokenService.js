@@ -12,6 +12,7 @@ const logger = require('../utils/logger');
 const userService = require('./userService');
 const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
+const tokenLedger = require('./tokenLedgerService');
 
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIFTED_ALLOWED_PERFORMER_USER_IDS, SANTINO_USER_ID } = require('../config/monetizationConfig');
 
@@ -96,37 +97,29 @@ async function hasSufficientBalance(userId, requiredAmount) {
  * @param {string} [reason] Optional reason for deduction.
  * @returns {Promise<{success: boolean, newBalance: number}>}
  */
-async function deductTokens(userId, amount, reason = 'deduction') {
+async function deductTokens(userId, amount, reason = 'deduction', ledgerOpts = {}) {
   if (amount <= 0) {
     logger.warn('tokenService.deductTokens: Amount must be positive.', { userId, amount });
     return { success: false, newBalance: 0 };
   }
-
+  const ledgerReason = ledgerOpts.ledgerReason || 'content_purchase';
   try {
-    const result = await query(
-      `UPDATE user_token_wallets
-       SET balance_tokens = balance_tokens - $2,
-           updated_at = NOW()
-       WHERE user_id = $1 AND balance_tokens >= $2
-       RETURNING balance_tokens, gifted_balance`,
-      [String(userId), amount]
-    );
-
-    if (result.rows.length === 0) {
-      return { success: false, newBalance: 0, error: 'Insufficient tokens' };
-    }
-
-    const newBalance = (Number(result.rows[0].balance_tokens) || 0) + (Number(result.rows[0].gifted_balance) || 0);
-    
-    // Invalidate cache
-    await Promise.all([
-      cache.del(`wallet:${userId}`).catch(() => {}),
-      cache.del(`wallet:obj:${userId}`).catch(() => {}),
-    ]);
-    
-    logger.info(`Deducted ${amount} tokens from user ${userId} for ${reason}. New balance: ${newBalance}`);
+    const { balance_after, gifted_after } = await tokenLedger.debit({
+      userId,
+      amount,
+      reason: ledgerReason,
+      sourceType: ledgerOpts.sourceType || null,
+      sourceId: ledgerOpts.sourceId || null,
+      actorId: ledgerOpts.actorId || String(userId),
+      metadata: { legacyReason: reason, ...(ledgerOpts.metadata || {}) },
+    });
+    const newBalance = balance_after + gifted_after;
+    logger.info(`Deducted ${amount} Ru$h from user ${userId} for ${reason}. New balance: ${newBalance}`);
     return { success: true, newBalance };
   } catch (error) {
+    if (error.code === 'INSUFFICIENT_FUNDS') {
+      return { success: false, newBalance: error.available || 0, error: 'Insufficient tokens' };
+    }
     logger.error('tokenService.deductTokens error', { userId, amount, error: error.message });
     return { success: false, newBalance: 0, error: 'Database error' };
   }
@@ -140,33 +133,25 @@ async function deductTokens(userId, amount, reason = 'deduction') {
  * @param {string} [reason] Optional reason for credit.
  * @returns {Promise<boolean>} True on success, false on failure.
  */
-async function creditTokens(userId, amount, reason = 'credit') {
+async function creditTokens(userId, amount, reason = 'credit', ledgerOpts = {}) {
   if (amount <= 0) {
     logger.warn('tokenService.creditTokens: Amount must be positive.', { userId, amount });
     return false;
   }
-
+  const ledgerReason = ledgerOpts.ledgerReason || 'admin_grant';
   try {
-    const result = await query(
-      `INSERT INTO user_token_wallets (user_id, balance_tokens)
-       VALUES ($1, $2)
-       ON CONFLICT (user_id) DO UPDATE
-         SET balance_tokens = user_token_wallets.balance_tokens + $2,
-             updated_at = NOW()
-       RETURNING balance_tokens, gifted_balance`,
-      [String(userId), amount]
-    );
-
-    const newBalance = (Number(result.rows[0].balance_tokens) || 0) + (Number(result.rows[0].gifted_balance) || 0);
-
-    // Invalidate cache
-    await Promise.all([
-      cache.del(`wallet:${userId}`).catch(() => {}),
-      cache.del(`wallet:obj:${userId}`).catch(() => {}),
-    ]);
-
-    logger.info(`Credited ${amount} tokens to user ${userId} for ${reason}. New balance: ${newBalance}`);
-    return newBalance; // truthy number — callers checking boolean still work
+    const { balance_after, gifted_after } = await tokenLedger.credit({
+      userId,
+      balanceDelta: amount,
+      reason: ledgerReason,
+      sourceType: ledgerOpts.sourceType || null,
+      sourceId: ledgerOpts.sourceId || null,
+      actorId: ledgerOpts.actorId || 'system',
+      metadata: { legacyReason: reason, ...(ledgerOpts.metadata || {}) },
+    });
+    const newBalance = balance_after + gifted_after;
+    logger.info(`Credited ${amount} Ru$h to user ${userId} for ${reason}. New balance: ${newBalance}`);
+    return newBalance;
   } catch (error) {
     logger.error('tokenService.creditTokens error', { userId, amount, error: error.message });
     return false;
@@ -348,13 +333,33 @@ async function processStreamHeartbeat(viewerId, channelRef) {
     const { creatorAmount, platformAmount, bonusApplied } = await applyCreatorBonus(STREAM_HEARTBEAT_REVENUE, STREAM_HEARTBEAT_COST);
 
     // 3. Credit streamer (with bonus if active) — always use full cost so UX is unchanged
-    await client.query(
+    const { rows: streamerAfterRows } = await client.query(
       `INSERT INTO user_token_wallets (user_id, balance_tokens)
        VALUES ($1, $2)
        ON CONFLICT (user_id) DO UPDATE
          SET balance_tokens = user_token_wallets.balance_tokens + $2,
-             updated_at = NOW()`,
+             updated_at = NOW()
+       RETURNING balance_tokens, gifted_balance`,
       [String(streamer.id), creatorAmount]
+    );
+
+    // 3b. Ledger rows for viewer debit + streamer credit (audit trail)
+    // Viewer: split debit into balance vs gifted using computed spent amounts
+    const viewerTakeBalance = balanceTokensSpent;
+    const viewerTakeGifted = STREAM_HEARTBEAT_COST - balanceTokensSpent;
+    const hbSourceId = `live-hb:${viewerId}:${Date.now()}`;
+    await client.query(
+      `INSERT INTO token_ledger (user_id, delta_balance, delta_gifted, reason, source_type, source_id, actor_id, balance_after, gifted_after, metadata)
+       VALUES ($1, $2, $3, 'live_tip_send', 'live_heartbeat', $4, $1, $5, $6, $7::jsonb)`,
+      [String(viewerId), -viewerTakeBalance, -viewerTakeGifted, hbSourceId, Number(reg), Number(gift),
+       JSON.stringify({ streamerId: String(streamer.id), channelRef, cost: STREAM_HEARTBEAT_COST })]
+    );
+    await client.query(
+      `INSERT INTO token_ledger (user_id, delta_balance, delta_gifted, reason, source_type, source_id, actor_id, balance_after, gifted_after, metadata)
+       VALUES ($1, $2, 0, 'live_tip_receive', 'live_heartbeat', $3, $4, $5, $6, $7::jsonb)`,
+      [String(streamer.id), creatorAmount, hbSourceId, String(viewerId),
+       Number(streamerAfterRows[0].balance_tokens), Number(streamerAfterRows[0].gifted_balance),
+       JSON.stringify({ viewerId: String(viewerId), channelRef, bonusApplied })]
     );
 
     // 4. Log the earning record — only for purchased tokens (real cash obligation).
@@ -375,9 +380,10 @@ async function processStreamHeartbeat(viewerId, channelRef) {
         ? earnPlatform
         : Math.round(balanceTokensSpent * HEARTBEAT_PLATFORM_RATE * 1000) / 1000;
       await client.query(
-        `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, period_month)
-         VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, date_trunc('month', CURRENT_DATE))`,
-        [String(streamer.id), balanceTokensSpent / TOKENS_PER_USD, earnCreator / TOKENS_PER_USD, finalEarnPlatform / TOKENS_PER_USD, String(EARNINGS_HOLD_HOURS)]
+        `INSERT INTO creator_earnings (creator_id, amount_gross, amount_creator, amount_platform, status, available_at, period_month, source_payment_id, metadata)
+         VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, date_trunc('month', CURRENT_DATE), $6, $7::jsonb)`,
+        [String(streamer.id), balanceTokensSpent / TOKENS_PER_USD, earnCreator / TOKENS_PER_USD, finalEarnPlatform / TOKENS_PER_USD, String(EARNINGS_HOLD_HOURS),
+         hbSourceId, JSON.stringify({ viewerId: String(viewerId), channelRef, source: 'live_heartbeat' })]
       );
     }
     if (bonusApplied) {
