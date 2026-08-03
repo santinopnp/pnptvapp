@@ -302,31 +302,49 @@ async function main() {
   } else if (!DRY_RUN) {
     const tg = new Telegram(process.env.BOT_TOKEN);
 
-    // Prime a file_id once instead of sending by URL per-user: Telegram fetches
-    // the URL fresh on every sendVideo-by-URL call, and hammering our own
-    // server thousands of times in a row causes intermittent "wrong type of
-    // the web page content" / "failed to get HTTP URL content" errors. Upload
-    // once to the internal ops group (guaranteed reachable, unlike an
-    // arbitrary user id that may never have DM'd the bot), delete that priming
-    // message, then reuse the returned file_id for the whole broadcast.
-    const PRIME_CHAT_ID = process.env.MIGRATION_NUDGE_CHAT_ID || '-1003760638625';
+    // Telegram's sendVideo-by-URL re-fetches the URL fresh on every call, and
+    // for this file it was failing intermittently even on the very first
+    // attempt ("wrong type of the web page content") — not a rate-limit
+    // symptom, something about fetching this URL confuses Telegram's side.
+    // Upload the file directly from local disk instead (multipart, no fetch
+    // involved), grab the file_id from the response, then reuse that file_id
+    // for every subsequent send — fast and fully sidesteps the URL path.
+    const fs = require('fs');
+    const LOCAL_VIDEO_PATH = process.env.TG_PROMO_VIDEO_PATH || '/tmp/tg-promo.mp4';
     let videoRef = TG_VIDEO_URL;
-    try {
-      const primed = await tg.sendVideo(PRIME_CHAT_ID, TG_VIDEO_URL, { supports_streaming: true });
-      const fileId = primed?.video?.file_id;
-      if (fileId) {
-        videoRef = fileId;
-        console.log(`     Primed file_id: ${fileId}`);
-        try { await tg.deleteMessage(PRIME_CHAT_ID, primed.message_id); } catch {}
-      } else {
-        console.warn('     Priming returned no file_id, falling back to URL sends');
+    let primedUserId = null;
+    if (fs.existsSync(LOCAL_VIDEO_PATH)) {
+      for (let p = 0; p < Math.min(5, withTelegram.length) && videoRef === TG_VIDEO_URL; p++) {
+        const candidate = withTelegram[p];
+        const lang = isEn(candidate.language) ? 'en' : 'es';
+        try {
+          const primed = await tg.sendVideo(candidate.telegram, { source: fs.createReadStream(LOCAL_VIDEO_PATH) }, {
+            caption: TG_CAPTION[lang],
+            parse_mode: 'HTML',
+            reply_markup: TG_BUTTONS[lang],
+            supports_streaming: true,
+          });
+          const fileId = primed?.video?.file_id;
+          if (fileId) {
+            videoRef = fileId;
+            primedUserId = candidate.id;
+            stats.telegram++; // this recipient is already done
+            console.log(`     Primed file_id via local upload (uid=${candidate.id}): ${fileId}`);
+          }
+        } catch (err) {
+          console.warn(`     Priming attempt failed (uid=${candidate.id}): ${err.message}`);
+        }
       }
-    } catch (err) {
-      console.warn(`     Priming failed (${err.message}), falling back to URL sends`);
+    } else {
+      console.warn(`     Local video not found at ${LOCAL_VIDEO_PATH}, falling back to per-user URL sends`);
+    }
+    if (videoRef === TG_VIDEO_URL) {
+      console.warn('     Priming exhausted all candidates, falling back to per-user URL sends');
     }
 
     for (let i = 0; i < withTelegram.length; i++) {
       const u = withTelegram[i];
+      if (primedUserId && u.id === primedUserId) continue; // already sent during priming
       const lang = isEn(u.language) ? 'en' : 'es';
       try {
         await tg.sendVideo(u.telegram, videoRef, {
