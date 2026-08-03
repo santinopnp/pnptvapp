@@ -179,7 +179,7 @@ services:
       start_period: 30s
 
   authentik-server:
-    image: ghcr.io/goauthentik/server:2025.2.4
+    image: ghcr.io/goauthentik/server:2026.5.6
     container_name: authentik-server
     restart: unless-stopped
     command: server
@@ -229,7 +229,7 @@ services:
       start_period: 60s
 
   authentik-worker:
-    image: ghcr.io/goauthentik/server:2025.2.4
+    image: ghcr.io/goauthentik/server:2026.5.6
     container_name: authentik-worker
     restart: unless-stopped
     command: worker
@@ -267,7 +267,7 @@ services:
 
   # Authentik proxy outpost (forward auth for NPM admin + Ampache)
   authentik-outpost:
-    image: ghcr.io/goauthentik/proxy:2025.2.4
+    image: ghcr.io/goauthentik/proxy:2026.5.6
     container_name: authentik-outpost
     restart: unless-stopped
     ports:
