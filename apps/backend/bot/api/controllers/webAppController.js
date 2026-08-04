@@ -924,7 +924,7 @@ const passkeyRegisterBegin = async (req, res) => {
     const regKey = `passkey:reg:${sessionUser.id}`;
     await redis.set(regKey, options.challenge, 'EX', 300);
 
-    logger.info('[Passkey] passkeyRegisterBegin: challenge issued for user', sessionUser.id);
+    logger.info('[Passkey] passkeyRegisterBegin: challenge issued for user', { userId: sessionUser.id });
     return res.json({ success: true, options });
   } catch (err) {
     logger.error('[Passkey] passkeyRegisterBegin error:', err);
@@ -1004,7 +1004,7 @@ const passkeyRegisterFinish = async (req, res) => {
       return res.status(409).json({ success: false, error: 'credential_exists' });
     }
 
-    logger.info('[Passkey] passkeyRegisterFinish: passkey registered for user', sessionUser.id);
+    logger.info('[Passkey] passkeyRegisterFinish: passkey registered for user', { userId: sessionUser.id });
     return res.json({ success: true, device: { pk: insertRes.rows[0].id, name: deviceName } });
   } catch (err) {
     logger.error('[Passkey] passkeyRegisterFinish unexpected error:', err);
