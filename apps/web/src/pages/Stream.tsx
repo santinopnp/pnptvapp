@@ -3037,7 +3037,7 @@ function StreamInner() {
                       {showBookCall && (
                         <div className="px-3 pb-3 border-t border-pnp-border">
                           <p className="text-[10px] text-pnp-textSecondary mt-2 mb-2">
-                            Choose a session — paid instantly with tokens
+                            Choose a session — paid instantly with Ru$h
                           </p>
                           <div className="flex gap-2">
                             {callPackages.map((pkg) => (
@@ -3577,7 +3577,7 @@ function StreamInner() {
                         style={{ background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.3)", color: "#6ee7b7" }}
                       >
                         <span>🚀</span>
-                        <span>Grand Launch Weekend — ganas +10% en tokens este fin de semana</span>
+                        <span>Grand Launch Weekend — ganas +10% en Ru$h este fin de semana</span>
                       </div>
                     )}
                     <div className="px-3 py-2 border-b border-pnp-border flex items-center justify-between">
@@ -3650,7 +3650,7 @@ function StreamInner() {
                       </ul>
                     )}
                     <p className="text-[8px] text-pnp-textSecondary text-center py-2 px-3">
-                      Fan score = saldo de tokens + (propinas de por vida × 5). Verde ≥20000, amarillo ≥5000.
+                      Fan score = saldo de Ru$h + (propinas de por vida × 5). Verde ≥20000, amarillo ≥5000.
                     </p>
                   </div>
                 )}
@@ -3762,7 +3762,7 @@ function StreamInner() {
                           type="number"
                           value={goalAmountInput}
                           onChange={(e) => setGoalAmountInput(e.target.value)}
-                          placeholder="Goal amount (tokens)"
+                          placeholder="Goal amount (Ru$h)"
                           className="w-full px-2.5 py-1.5 rounded-lg bg-pnp-surface border border-pnp-border text-[11px] text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60"
                           min={1}
                         />

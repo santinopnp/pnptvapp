@@ -61,7 +61,7 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
     id: "getting-started",
     emoji: "🚀",
     steps: [
-      { title: "Welcome to PNPtv!", description: "PNPtv is your queer PNP community app. Browse the social feed, watch live streams, join Hangouts video rooms, find people nearby, send DMs, buy tokens, and unlock exclusive content with PRIME." },
+      { title: "Welcome to PNPtv!", description: "PNPtv is your queer PNP community app. Browse the social feed, watch live streams, join Hangouts video rooms, find people nearby, send DMs, buy Ru$h, and unlock exclusive content with PRIME." },
       { title: "Complete Your Profile", description: "Tap the person icon in the bottom nav to open your Profile. Tap the camera icon on your avatar to upload a photo. Then fill in your first name, bio, interests, and location. Profiles with photos and bios get much more engagement!", action: "Go to Profile" },
       { title: "Add Your Social Links", description: "In your Profile, scroll to the social links section. You can add your X (Twitter), Instagram, TikTok, and YouTube handles. These appear on your profile card and help others find you.", action: "Go to Profile" },
       { title: "Verify Your Age", description: "Go to Profile → Settings (gear icon). Enter your date of birth to verify you're 18+. Age verification is required to view creator content and access certain features.", action: "Go to Settings" },
@@ -169,11 +169,11 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
     id: "tokens",
     emoji: "🪙",
     steps: [
-      { title: "What are PNP Tokens?", description: "PNP Tokens (T) are the in-app currency at 100 T = $1 USD. You can use tokens to tip creators, make in-app purchases, and unlock special features. Tokens are separate from your PRIME subscription." },
-      { title: "Buy Tokens", description: "Go to the Tokens Checkout page. You'll see available token packages at different price points. Select a package to proceed to payment.", action: "Go to Token Checkout" },
-      { title: "Pay for Tokens", description: "Token purchases support Dash via BTCPay (private crypto), and Bitcoin/Lightning via NowPayments (20% crypto discount). Select your preferred method and complete the payment flow." },
-      { title: "Check Your Balance", description: "Your token balance is shown in your wallet. You can access it from your Profile or the tokens section. The balance updates in real time after purchases." },
-      { title: "View Purchase History", description: "Your token transaction history shows all purchases and spending. Each entry includes the amount, date, and type of transaction." },
+      { title: "What is Ru$h ⚡💲?", description: "Ru$h ⚡💲 is the PNPtv in-app currency. You can use Ru$h to tip creators, make in-app purchases, and unlock special features. Ru$h is separate from your PRIME subscription." },
+      { title: "Buy Ru$h", description: "Go to the Ru$h Checkout page. You'll see available packages at different price points. Select a package to proceed to payment.", action: "Go to Token Checkout" },
+      { title: "Pay for Ru$h", description: "Ru$h purchases support Bitcoin/Lightning and other crypto via NowPayments. Select your preferred method and complete the payment flow." },
+      { title: "Check Your Balance", description: "Your Ru$h balance is shown in your wallet. You can access it from your Profile or the Ru$h section. The balance updates in real time after purchases." },
+      { title: "View Purchase History", description: "Your Ru$h transaction history shows all purchases and spending. Each entry includes the amount, date, and type of transaction." },
     ],
   },
   {
@@ -209,7 +209,7 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
     id: "referrals",
     emoji: "🎁",
     steps: [
-      { title: "What is the Referral Program?", description: "Share your referral link and earn free PRIME every time someone signs up! Both you and the new user get 24 hours of PRIME free — instantly, no payment required. When they buy their first plan, you also earn PNP Live tokens." },
+      { title: "What is the Referral Program?", description: "Share your referral link and earn free PRIME every time someone signs up! Both you and the new user get 24 hours of PRIME free — instantly, no payment required. When they buy their first plan, you also earn Ru$h ⚡💲." },
       { title: "Find Your Referral Link", description: "Go to your Profile page. In the stats or settings section, you'll find your unique referral link and a 'Copy' button. Each user has a unique code that tracks referrals.", action: "Go to Profile" },
       { title: "Share Your Link", description: "Copy your referral link and share it anywhere — on social media, in messages, or with friends directly. When someone signs up using your link, the system tracks it automatically." },
       { title: "Earn Rewards", description: "When a referred friend joins PNPtv, you earn free PRIME days added to your subscription. The more friends you invite, the more free PRIME time you accumulate." },
@@ -308,7 +308,7 @@ const PAGE_CONTEXT: { match: (p: string) => boolean; ctx: PageContext }[] = [
       titleEs: "Suscripción y Planes",
       chips: [
         { icon: "💳", en: "What are the PRIME plan options?", es: "¿Cuáles son las opciones del plan PRIME?" },
-        { icon: "🪙", en: "How do PNP tokens work?", es: "¿Cómo funcionan los tokens PNP?" },
+        { icon: "⚡", en: "How does Ru$h ⚡💲 work?", es: "¿Cómo funciona Ru$h ⚡💲?" },
         { icon: "💰", en: "What payment methods are accepted?", es: "¿Qué métodos de pago se aceptan?" },
         { icon: "🔄", en: "How do I cancel or change my plan?", es: "¿Cómo cancelo o cambio mi plan?" },
       ],

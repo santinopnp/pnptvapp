@@ -408,7 +408,7 @@ function SpendersOnlineBadge({ compact = false }: { compact?: boolean }) {
       className={`inline-flex items-center gap-2 rounded-full border border-pnp-border bg-pnp-surface/60 backdrop-blur-sm ${compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1.5 text-xs"}`}
       title={isLive
         ? `${onlineNow} of ${totalPool} token-holders online right now`
-        : `${totalPool} members with tokens ready to spend`}
+        : `${totalPool} members with Ru$h ready to spend`}
     >
       <span className={`w-2 h-2 rounded-full ${dotClass}`} />
       <span className="text-pnp-textPrimary font-medium whitespace-nowrap">{label}</span>
@@ -1206,7 +1206,7 @@ export function CreatorConsents() {
             : consents.application_status === "under_review" ? "Under review"
             : "Pending review"
           }`
-        : "Required to receive tips, tokens, or subscriptions.",
+        : "Required to receive tips, Ru$h, or subscriptions.",
       date: consents.application_created_at,
       ...(!hasApplication ? { actionLabel: "Start Application", onAction: () => navigate("/creators/apply") } : {}),
     },

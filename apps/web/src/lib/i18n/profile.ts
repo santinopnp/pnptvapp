@@ -634,7 +634,7 @@ const strings = {
     invited: "Invitados",
     joined_noun: "Se unieron",
     daysEarned: "Días ganados",
-    tokensEarned: "Tokens ganados",
+    tokensEarned: "Ru$h ganados",
 
     // ── App preferences ───────────────────────────────────────────────────────
     appPreferences: "Preferencias de la app",

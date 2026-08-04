@@ -169,7 +169,7 @@ export default function Home() {
               {es ? "¿Nuevo en cripto? Setup en 5 min" : "New to crypto? Setup in 5 min"}
             </p>
             <p className="m-0 text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.7)" }}>
-              {es ? "Completa la guía y llévate 100 tokens gratis 🎁" : "Complete the guide and earn 100 free tokens 🎁"}
+              {es ? "Completa la guía y llévate 100 Ru$h gratis 🎁" : "Complete the guide and earn 100 free Ru$h 🎁"}
             </p>
           </div>
           <button

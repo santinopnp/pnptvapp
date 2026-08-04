@@ -130,8 +130,8 @@ export default function CreatorSubscribeWizard({
             : "You need a Basic membership to subscribe to a creator.");
         } else if (result.code === "INSUFFICIENT_TOKENS") {
           setError(lang === "es"
-            ? `Tokens insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.`
-            : `Not enough tokens. Need ${result.required?.toLocaleString()} F — you have ${result.current?.toLocaleString()} F.`);
+            ? `Ru$h insuficiente. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.`
+            : `Not enough Ru$h. Need ${result.required?.toLocaleString()} F — you have ${result.current?.toLocaleString()} F.`);
         } else {
           setError(result.error || (lang === "es" ? "No se pudo activar la suscripción." : "Could not activate subscription."));
         }

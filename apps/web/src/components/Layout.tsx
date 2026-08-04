@@ -2197,8 +2197,8 @@ export function CryptoGuideCallout({
     ? (es ? `Casi lo tienes — paso ${status.progressStep}/7` : `Almost there — step ${status.progressStep}/7`)
     : (es ? "¿Nuevo en cripto? Setup en 5 min" : "New to crypto? 5-min setup");
   const sub = started
-    ? (es ? "Termina y llévate 100 tokens gratis 🎁" : "Finish and grab your 100 free tokens 🎁")
-    : (es ? "Wallet lista + 100 tokens gratis al terminar 🎁" : "Wallet ready + 100 free tokens on completion 🎁");
+    ? (es ? "Termina y llévate 100 Ru$h gratis 🎁" : "Finish and grab your 100 free Ru$h 🎁")
+    : (es ? "Wallet lista + 100 Ru$h gratis al terminar 🎁" : "Wallet ready + 100 free Ru$h on completion 🎁");
   const cta = started
     ? (es ? "Continuar →" : "Continue →")
     : (es ? "Empezar →" : "Start →");
@@ -2342,13 +2342,13 @@ export function CryptoFirstTimeInterstitial({
           <div className="text-5xl mb-3">💰</div>
           <h2 className="text-lg font-bold text-white mb-2">
             {started
-              ? (es ? "Estás cerca — termina y gana 100 tokens" : "Almost there — finish and earn 100 tokens")
+              ? (es ? "Estás cerca — termina y gana 100 Ru$h" : "Almost there — finish and earn 100 Ru$h")
               : (es ? "¿Primera vez con cripto?" : "First time with crypto?")}
           </h2>
           <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.75)", lineHeight: 1.5 }}>
             {es
-              ? "Tenemos una guía visual de 5 minutos que te enseña cómo abrir una wallet y comprar tu primera cripto. Al terminar te regalamos 100 tokens (~$1) para tu primera compra."
-              : "We've got a visual 5-minute guide that walks you through opening a wallet and buying your first crypto. Complete it and we'll gift you 100 tokens (~$1) for your first purchase."}
+              ? "Tenemos una guía visual de 5 minutos que te enseña cómo abrir una wallet y comprar tu primera cripto. Al terminar te regalamos 100 Ru$h (~$1) para tu primera compra."
+              : "We've got a visual 5-minute guide that walks you through opening a wallet and buying your first crypto. Complete it and we'll gift you 100 Ru$h (~$1) for your first purchase."}
           </p>
           <button
             type="button"

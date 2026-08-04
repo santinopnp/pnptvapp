@@ -72,7 +72,7 @@ const MODAL_STRINGS: Record<"en" | "es", ModalStrings> = {
       },
       {
         title: "Todos Somos Iguales",
-        body: "No usamos códigos de colores basados en la cantidad de tokens. Todos los espectadores son tratados por igual.",
+        body: "No usamos códigos de colores basados en la cantidad de Ru$h. Todos los espectadores son tratados por igual.",
       },
       {
         title: "Sin Reembolsos de Tips",

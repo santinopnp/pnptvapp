@@ -69,7 +69,7 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
         <p className="text-base font-semibold text-green-400">{es ? "¡Pago confirmado!" : "Payment confirmed!"}</p>
         <p className="text-xs text-pnp-textSecondary">
           {productKind === "tokens"
-            ? (es ? "Tus tokens ya están en tu cuenta." : "Your tokens are in your account.")
+            ? (es ? "Tu Ru$h ya está en tu cuenta." : "Your Ru$h is in your account.")
             : productKind === "call"
             ? (es ? "Tu llamada está confirmada." : "Your call is booked.")
             : (es ? "Tu suscripción ya está activa." : "Your subscription is now active.")}

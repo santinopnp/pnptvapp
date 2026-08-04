@@ -231,12 +231,12 @@ export default function ReferralCenter() {
               ? [
                   { step: "1", title: "Comparte tu enlace", body: "Envíalo por WhatsApp, Instagram, Telegram — donde quieras." },
                   { step: "2", title: "Ambos obtienen 24h de PRIME gratis", body: "En cuanto se registra con tu enlace, tú y tu amigo reciben 24 horas de PRIME automáticamente — sin pagar nada." },
-                  { step: "3", title: "Paga su primer plan", body: "En cuanto completa su primera compra, tú recibes tokens PNP Live automáticamente." },
+                  { step: "3", title: "Paga su primer plan", body: "En cuanto completa su primera compra, tú recibes Ru$h ⚡💲 automáticamente." },
                 ]
               : [
                   { step: "1", title: "Share your link", body: "Send it via WhatsApp, Instagram, Telegram — wherever." },
                   { step: "2", title: "You both get 24h of PRIME free", body: "As soon as they sign up with your link, both of you get 24 hours of PRIME automatically — no payment needed." },
-                  { step: "3", title: "They buy a plan", body: "Once they complete their first purchase, you get PNP Live tokens automatically." },
+                  { step: "3", title: "They buy a plan", body: "Once they complete their first purchase, you get Ru$h ⚡💲 automatically." },
                 ]
             ).map(({ step, title, body }) => (
               <div key={step} className="flex items-start gap-4">

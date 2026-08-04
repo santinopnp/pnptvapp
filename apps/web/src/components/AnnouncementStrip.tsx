@@ -54,8 +54,8 @@ const UPDATE_MESSAGES: RawMessage[] = [
   },
   {
     category: "UPDATE",
-    en: "💰 New to crypto? Setup a wallet in 5 min + earn 100 free tokens. Tap here →",
-    es: "💰 ¿Nuevo en cripto? Setup en 5 min + gana 100 tokens gratis. Toca aquí →",
+    en: "💰 New to crypto? Setup a wallet in 5 min + earn 100 free Ru$h. Tap here →",
+    es: "💰 ¿Nuevo en cripto? Setup en 5 min + gana 100 Ru$h gratis. Toca aquí →",
     href: "/crypto-guide",
   },
   {

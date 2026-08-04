@@ -596,7 +596,7 @@ export default function Live() {
                 <p className="text-2xl font-black text-pnp-textPrimary leading-tight mt-0.5">
                   {tokenBalance == null ? "—" : tokenBalance.toLocaleString()}
                   <span className="ml-1.5 text-xs font-semibold text-pnp-textSecondary">
-                    {es ? "tokens" : "tokens"}
+                    {"Ru$h ⚡💲"}
                   </span>
                 </p>
               </div>
@@ -604,7 +604,7 @@ export default function Live() {
                 onClick={() => setShowBuyModal(true)}
                 className="flex-shrink-0 px-4 py-2.5 rounded-xl btn-gradient text-white text-sm font-bold shadow-lg transition-transform active:scale-[0.98]"
               >
-                {es ? "Comprar tokens" : "Buy tokens"}
+                {es ? "Comprar Ru$h ⚡💲" : "Buy Ru$h ⚡💲"}
               </button>
             </div>
             <a

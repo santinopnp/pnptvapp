@@ -436,10 +436,10 @@ export const tutorialContent: Record<string, TutorialSection> = {
         illustration: "engage",
       },
       {
-        titleEn: "Tip with Tokens",
-        titleEs: "Propinas con Tokens",
-        descEn: "Tap the tip button to send tokens to the performer. Choose a preset amount or enter a custom one. Tips are instant and appear in the stream as a shout-out. You can top up tokens anytime from the tip panel.",
-        descEs: "Toca el boton de propina para enviar tokens al performer. Elige un monto predefinido o ingresa uno personalizado. Las propinas son instantaneas y aparecen en la transmision como un saludo. Puedes recargar tokens desde el panel de propinas.",
+        titleEn: "Tip with Ru$h",
+        titleEs: "Propinas con Ru$h ⚡💲",
+        descEn: "Tap the tip button to send Ru$h to the performer. Choose a preset amount or enter a custom one. Tips are instant and appear in the stream as a shout-out. You can top up Ru$h anytime from the tip panel.",
+        descEs: "Toca el boton de propina para enviar Ru$h al performer. Elige un monto predefinido o ingresa uno personalizado. Las propinas son instantaneas y aparecen en la transmision como un saludo. Puedes recargar Ru$h desde el panel de propinas.",
         illustration: "tips",
       },
       {
@@ -490,8 +490,8 @@ export const tutorialContent: Record<string, TutorialSection> = {
       {
         titleEn: "Tip & Subscribe",
         titleEs: "Propina y Suscripcion",
-        descEn: "Tap the Tip button to send tokens directly to this creator. To unlock their exclusive content, look for the Subscribe button — it opens the creator's channel subscription.",
-        descEs: "Toca el boton Propina para enviar tokens directamente a este creador. Para desbloquear su contenido exclusivo, busca el boton Suscribirse — abre la suscripcion al canal del creador.",
+        descEn: "Tap the Tip button to send Ru$h directly to this creator. To unlock their exclusive content, look for the Subscribe button — it opens the creator's channel subscription.",
+        descEs: "Toca el boton Propina para enviar Ru$h directamente a este creador. Para desbloquear su contenido exclusivo, busca el boton Suscribirse — abre la suscripcion al canal del creador.",
         illustration: "tips",
       },
       {
