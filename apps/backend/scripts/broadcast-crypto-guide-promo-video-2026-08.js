@@ -447,7 +447,7 @@ async function main() {
       const lang = isEn(u.language) ? 'en' : 'es';
       const name = u.first_name || u.username || (lang === 'en' ? 'Member' : 'Miembro');
       try {
-        await emailService.sendViaHostingerApi({
+        await emailService.send({
           to: u.email,
           subject: EMAIL_SUBJECT[lang],
           html: buildEmailHtml(lang, name),
