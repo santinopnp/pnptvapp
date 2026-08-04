@@ -480,6 +480,10 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
   const [meruError, setMeruError] = useState<string | null>(null);
   const [meruSuccess, setMeruSuccess] = useState(false);
 
+  // Human escalation after repeated AI failures
+  const failedAiCount = useRef(0);
+  const [showHumanEscalation, setShowHumanEscalation] = useState(false);
+
   // Removed 2026-04-25: handleRadioModeSelect / loadingMode / modeCacheRef.
   // Radio shortcuts (Take Off / Flying / Landing) didn't belong in the
   // support widget — users have a dedicated Radio feature in /media. The
@@ -773,6 +777,8 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
           ]);
         }
       } catch {
+        failedAiCount.current += 1;
+        if (failedAiCount.current >= 3) setShowHumanEscalation(true);
         setMessages((prev) => [
           ...prev,
           {
@@ -797,6 +803,8 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
     setView("chat");
     setSelectedTutorial(null);
     setTutorialStep(0);
+    failedAiCount.current = 0;
+    setShowHumanEscalation(false);
   }, []);
 
   const handleCreateTicket = async () => {
@@ -1863,6 +1871,32 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
             </div>
           )}
 
+          {showHumanEscalation && (
+            <div
+              className="mx-0 my-2 rounded-xl p-3 flex items-start gap-2.5"
+              style={{ background: "rgba(212,0,122,0.10)", border: "1px solid rgba(212,0,122,0.25)" }}
+            >
+              <span className="text-lg flex-shrink-0">🙋</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white mb-1">
+                  {lang === "es" ? "¿Cristina no puede ayudarte?" : "Cristina not helping?"}
+                </p>
+                <p className="text-[11px] mb-2" style={{ color: "rgba(255,255,255,0.60)" }}>
+                  {lang === "es"
+                    ? "Un agente real revisará tu caso en menos de 24 horas."
+                    : "A real agent will review your case within 24 hours."}
+                </p>
+                <button
+                  onClick={() => setView("ticketForm")}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-opacity hover:opacity-90"
+                  style={{ background: "rgba(212,0,122,0.80)" }}
+                >
+                  {lang === "es" ? "Hablar con soporte humano" : "Talk to a human"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {isLoading && (
             <div className="flex justify-start animate-fade-in-up">
               <div
@@ -2141,6 +2175,26 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
           </button>
         </form>
       )}
+
+      {/* Crisis resources — always visible */}
+      <div
+        className="px-3 py-2 flex items-center justify-center gap-1.5 border-t"
+        style={{ borderColor: "rgba(255,255,255,0.06)" }}
+      >
+        <span className="text-[10px]">🆘</span>
+        <button
+          onClick={() => {
+            const msg = lang === "es"
+              ? "Necesito recursos de crisis o reducción de daños"
+              : "I need crisis or harm reduction resources";
+            sendMessage(msg);
+          }}
+          className="text-[10px] font-medium transition-colors hover:text-white"
+          style={{ color: "rgba(255,255,255,0.40)" }}
+        >
+          {lang === "es" ? "Recursos de crisis y ayuda" : "Crisis & harm reduction resources"}
+        </button>
+      </div>
       </div>{/* end AI Chat Tab wrapper */}
     </div>
   );

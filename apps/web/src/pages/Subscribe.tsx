@@ -123,6 +123,8 @@ export default function Subscribe() {
   // Polling payment ID (legacy fallback)
   const [pollingPaymentId, setPollingPaymentId] = useState<string | null>(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const pollingStartRef = useRef<number | null>(null);
+  const [pollingOverFiveMin, setPollingOverFiveMin] = useState(false);
 
   // Crypto nudge — shown after any payment failure
   const [showCryptoNudge, setShowCryptoNudge] = useState(false);
@@ -134,6 +136,7 @@ export default function Subscribe() {
 
   // USDC / USDT / BTC stablecoin+crypto state (NOWPayments hook)
   const [usdcAvailable, setUsdcAvailable] = useState<boolean | null>(null);
+  const [nowpaymentsWarning, setNowpaymentsWarning] = useState(false);
 
   // BTCPay BTC+Lightning state
   const [btcAvailable, setBtcAvailable] = useState<boolean | null>(null);
@@ -270,6 +273,17 @@ export default function Subscribe() {
 
   }, [searchParams]);
 
+  useEffect(() => {
+    if (nowpaymentsError && (
+      nowpaymentsError.toLowerCase().includes("unavailable") ||
+      nowpaymentsError.toLowerCase().includes("service") ||
+      nowpaymentsError.toLowerCase().includes("network") ||
+      nowpaymentsError.toLowerCase().includes("timeout") ||
+      nowpaymentsError.toLowerCase().includes("down")
+    )) {
+      setNowpaymentsWarning(true);
+    }
+  }, [nowpaymentsError]);
 
   // Validate a promo code server-side. For base-plan promos, we lock the
   // selected plan to the promo's base plan so the displayed price matches.
@@ -374,22 +388,30 @@ export default function Subscribe() {
     const maxAttempts = 120; // 10 minutes at 5s intervals
     const interval = 5000;
     let timerId: ReturnType<typeof setTimeout> | null = null;
+    pollingStartRef.current = Date.now();
+    setPollingOverFiveMin(false);
 
     const poll = async () => {
       if (cancelled || attempts >= maxAttempts) {
         if (attempts >= maxAttempts) {
           setPollingPaymentId(null);
+          setPollingOverFiveMin(false);
           try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
           failWithNudge(s.paymentTimedOut);
         }
         return;
       }
       attempts++;
+      const elapsed = Date.now() - (pollingStartRef.current ?? Date.now());
+      if (elapsed > 5 * 60 * 1000) {
+        setPollingOverFiveMin(true);
+      }
       try {
         const data = await getPaymentStatus(pollingPaymentId);
         if (cancelled) return;
         if (data.status === "completed" || data.status === "paid" || data.status === "success") {
           setPollingPaymentId(null);
+          setPollingOverFiveMin(false);
           try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
           setPaymentSuccess(true);
           trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "polling" });
@@ -398,6 +420,7 @@ export default function Subscribe() {
         }
         if (data.status === "failed" || data.status === "refunded" || data.status === "abandoned") {
           setPollingPaymentId(null);
+          setPollingOverFiveMin(false);
           try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
           failWithNudge(data.message || s.paymentNotSuccessful);
           return;
@@ -1487,19 +1510,62 @@ export default function Subscribe() {
         })}
       </div>
 
+      {nowpaymentsWarning && (
+        <div className="mb-4 p-3 rounded-xl text-sm flex items-start gap-2.5" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+          <span className="text-base flex-shrink-0">⚠️</span>
+          <div>
+            <p className="font-semibold text-red-400 mb-0.5">
+              {t.lang === "es" ? "Pagos crypto temporalmente no disponibles" : "Crypto payments temporarily unavailable"}
+            </p>
+            <p className="text-xs text-pnp-textSecondary">
+              {t.lang === "es"
+                ? "El proveedor de pagos está respondiendo lento. Intenta de nuevo en 5 minutos."
+                : "The payment provider is responding slowly. Please try again in 5 minutes."}
+            </p>
+            <button
+              onClick={() => setNowpaymentsWarning(false)}
+              className="mt-1.5 text-[11px] text-pnp-textSecondary underline"
+            >
+              {t.lang === "es" ? "Cerrar" : "Dismiss"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Payment polling indicator */}
       {pollingPaymentId && (
-        <div className="mb-4 p-3 rounded-xl bg-[#D4007A]/10 border border-[#D4007A]/20 text-sm text-pnp-textPrimary text-center">
+        <div className="mb-4 p-3 rounded-xl text-sm text-center" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.20)" }}>
           <div className="flex items-center justify-center gap-2 mb-1">
             <svg className="animate-spin h-4 w-4 text-[#D4007A]" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="font-medium">{s.waitingForPayment}</span>
+            <span className="font-medium text-pnp-textPrimary">{s.waitingForPayment}</span>
           </div>
-          <p className="text-xs text-pnp-textSecondary">
+          <p className="text-xs text-pnp-textSecondary mb-1">
             {s.completePaymentInWindow}
           </p>
+          {pollingOverFiveMin && (
+            <div className="mt-2 pt-2 border-t" style={{ borderColor: "rgba(212,0,122,0.20)" }}>
+              <p className="text-xs font-semibold text-amber-400 mb-1.5">
+                {t.lang === "es"
+                  ? "⏳ Tomando más tiempo de lo esperado"
+                  : "⏳ Taking longer than expected"}
+              </p>
+              <p className="text-[11px] text-pnp-textSecondary mb-2">
+                {t.lang === "es"
+                  ? "Si ya enviaste el pago, puede tardar hasta 20 min en confirmarse. ¿Necesitas ayuda?"
+                  : "If you've already sent payment, it may take up to 20 min to confirm. Need help?"}
+              </p>
+              <a
+                href="mailto:support@pnptv.app?subject=Payment%20Pending"
+                className="inline-block px-3 py-1.5 rounded-lg text-[11px] font-bold text-white"
+                style={{ background: "rgba(212,0,122,0.60)" }}
+              >
+                {t.lang === "es" ? "Contactar soporte" : "Contact support"}
+              </a>
+            </div>
+          )}
         </div>
       )}
 

@@ -774,6 +774,9 @@ export function Layout() {
   const [profileData, setProfileData] = useState<any>(null);
   const isLandscape = useOrientation();
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < 1024 : false);
+  const [showAgeGate, setShowAgeGate] = useState(() => {
+    try { return !localStorage.getItem("pnptv:age_confirmed"); } catch { return false; }
+  });
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
@@ -786,6 +789,14 @@ export function Layout() {
     window.addEventListener("pnp-cruise-mode", handler);
     return () => window.removeEventListener("pnp-cruise-mode", handler);
   }, []);
+
+  const ADULT_ROUTES = ["/live", "/models", "/stream", "/creators"];
+  useEffect(() => {
+    const isAdultRoute = ADULT_ROUTES.some((r) => location.pathname.startsWith(r));
+    if (isAdultRoute && !localStorage.getItem("pnptv:age_confirmed")) {
+      setShowAgeGate(true);
+    }
+  }, [location.pathname]);
 
   const sidebarSections = [
     {
@@ -2104,6 +2115,40 @@ export function Layout() {
           (e.g. failed hangout-invite redirect). Shown regardless of auth so the
           message survives the redirect to /login. */}
       <FlashBanner />
+
+      {/* 18+ age gate — shown once on first visit to adult content routes */}
+      {showAgeGate && (
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-sm rounded-2xl p-6 text-center" style={{ background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.12)" }}>
+            <div className="text-4xl mb-3">🔞</div>
+            <h2 className="text-lg font-bold text-white mb-2">
+              {t.lang === "es" ? "Contenido para adultos" : "Adult content"}
+            </h2>
+            <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
+              {t.lang === "es"
+                ? "PNPtv! contiene contenido sexual explícito para adultos. Al continuar confirmas que tienes 18 años o más."
+                : "PNPtv! contains explicit adult content. By continuing you confirm you are 18 years of age or older."}
+            </p>
+            <button
+              onClick={() => {
+                try { localStorage.setItem("pnptv:age_confirmed", "1"); } catch {}
+                setShowAgeGate(false);
+              }}
+              className="w-full py-3 rounded-xl font-bold text-white text-sm mb-3 transition-opacity hover:opacity-90"
+              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            >
+              {t.lang === "es" ? "Confirmo que tengo 18+" : "I confirm I am 18+"}
+            </button>
+            <button
+              onClick={() => window.history.back()}
+              className="w-full py-2 rounded-xl text-sm font-medium"
+              style={{ color: "rgba(255,255,255,0.45)" }}
+            >
+              {t.lang === "es" ? "Salir" : "Go back"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

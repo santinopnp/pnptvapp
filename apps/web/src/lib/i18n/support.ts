@@ -106,6 +106,16 @@ const strings = {
     tutTopicProfile: "Your Profile & Privacy",
     tutTopicReferrals: "Referral Program",
     tutTopicSteps: "steps",
+
+    // Crisis resources
+    crisisTitle: "Crisis & Harm Reduction Resources",
+    crisisSubtitle: "Free, confidential, 24/7",
+    crisisSAMHSA: "SAMHSA Helpline (US): 1-800-662-4357",
+    crisisNaloxone: "Find free Naloxone near you",
+    crisisSuicideLine: "Suicide & Crisis Lifeline: 988 (US)",
+    crisisTrevorProject: "Trevor Project (LGBTQ+): 1-866-488-7386",
+    crisisLinea: "Línea de Crisis (ES): 717 003 717",
+    crisisViewAll: "View all resources →",
   },
   es: {
     pageTitle: "Soporte — PNPtv!",
@@ -193,6 +203,16 @@ const strings = {
     tutTopicProfile: "Tu Perfil y Privacidad",
     tutTopicReferrals: "Programa de Referidos",
     tutTopicSteps: "pasos",
+
+    // Crisis resources
+    crisisTitle: "Recursos de Crisis y Reducción de Daños",
+    crisisSubtitle: "Gratuito, confidencial, 24/7",
+    crisisSAMHSA: "Línea SAMHSA (EEUU): 1-800-662-4357",
+    crisisNaloxone: "Encuentra Naloxona gratuita cerca de ti",
+    crisisSuicideLine: "Línea de Crisis: 800 290 024 (MX) / 717 003 717 (ES)",
+    crisisTrevorProject: "Trevor Project (LGBTQ+): 1-866-488-7386",
+    crisisLinea: "Línea PAS (ES): 717 003 717",
+    crisisViewAll: "Ver todos los recursos →",
   },
 } as const;
 

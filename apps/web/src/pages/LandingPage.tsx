@@ -126,7 +126,7 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
         <p className="text-xs font-bold uppercase tracking-widest text-gradient">Like Grindr — but for real PNP stans</p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           See community members and PNP-friendly venues near you on a map.
-          <span className="text-white font-medium"> No bots, no escorts, no judgment.</span>
+          <span className="text-white font-medium"> No bots, no algorithms, no judgment.</span>
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           Way more private than Grindr. You control your location. <span className="text-white font-medium">Nothing is ever sold to data brokers.</span>

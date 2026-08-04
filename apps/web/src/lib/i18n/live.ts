@@ -43,9 +43,9 @@ const strings = {
     tipTo: (name: string) => `to ${name}`,
     selectPerformerError: "Select a performer to tip",
     insufficientTokens: (balance: number) =>
-      `Ru$h insuficiente. Tienes ${balance} Ru$h. Compra más abajo.`,
+      `Not enough Ru$h. You have ${balance} Ru$h. Buy more below.`,
     tokensSentSuccess: (amount: number, name: string) =>
-      `¡${amount} Ru$h enviados a ${name}!`,
+      `${amount} Ru$h sent to ${name}!`,
     paymentWindowOpened: (amount: number) =>
       `Payment window opened for ${amount} Ru$h tip`,
     tipSubmitted: (amount: number) => `${amount} Ru$h tip sent!`,
