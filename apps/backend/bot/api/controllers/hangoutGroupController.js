@@ -548,7 +548,6 @@ const getGroup = async (req, res) => {
         inviteCode: member ? g.invite_code : null,
         feedVisibility: g.feed_visibility || 'public',
         telegramChatId: g.telegram_chat_id || null,
-        telegramInviteLink: g.telegram_invite_link || null,
         isPaid: !!g.is_paid,
         priceUsd: Number(g.price_usd) || 0,
         rules: g.rules || null,
@@ -1516,25 +1515,40 @@ const discoverGroups = async (req, res) => {
     // Subscription/paid hangouts require an active creator sub with that owner.
     // Admins bypass entirely.
     const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const primeHangoutIds = [SANTINO_PRIME_HANGOUT_GROUP_ID, LEX_PRIME_HANGOUT_GROUP_ID];
     const accessFilter = isAdmin ? '' : `
          AND (
            -- system hangouts (no creator) always visible
            g.creator_id IS NULL OR g.creator_id = ''
            -- owner always sees own hangout
            OR g.creator_id = $1
-           -- PRIME co-founder hangouts (Santino=719, Lex=785) → any active PRIME entitlement
-           OR (g.id IN (719, 785) AND EXISTS (
+           -- PRIME co-founder hangouts → qualifying PRIME only (lifetime OR duration_days >= 30)
+           OR (g.id = ANY($2::int[]) AND EXISTS (
              SELECT 1 FROM user_entitlements ue
+             LEFT JOIN plans p ON p.id = ue.source_plan_id
              WHERE ue.user_id = $1 AND ue.add_on_id = 'prime'
-               AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+               AND ue.is_consumed = false
+               AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+               AND (
+                 ue.source_plan_id IS NULL
+                 OR p.is_lifetime = true
+                 OR p.duration_days >= 30
+               )
            ))
            -- channel-linked: gate on channel access
            OR (g.channel_id IS NOT NULL AND (
              cc.access_type = 'free'
              OR (cc.access_type = 'prime' AND EXISTS (
                SELECT 1 FROM user_entitlements ue
+               LEFT JOIN plans p ON p.id = ue.source_plan_id
                WHERE ue.user_id = $1 AND ue.add_on_id = 'prime'
-                 AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+                 AND ue.is_consumed = false
+                 AND (ue.is_lifetime = true OR (ue.expires_at IS NOT NULL AND ue.expires_at > NOW()))
+                 AND (
+                   ue.source_plan_id IS NULL
+                   OR p.is_lifetime = true
+                   OR p.duration_days >= 30
+                 )
              ))
              OR (cc.access_type IN ('subscription','paid') AND EXISTS (
                SELECT 1 FROM creator_subscriptions cs
@@ -1544,9 +1558,9 @@ const discoverGroups = async (req, res) => {
              ))
            ))
            -- no-channel + is_public=true → community room, visible
-           OR (g.channel_id IS NULL AND g.is_public = true)
+           OR (g.channel_id IS NULL AND g.is_public = true AND g.id != ALL($2::int[]))
            -- no-channel + is_public=false → private, require active creator sub
-           OR (g.channel_id IS NULL AND g.is_public = false AND EXISTS (
+           OR (g.channel_id IS NULL AND g.is_public = false AND g.id != ALL($2::int[]) AND EXISTS (
              SELECT 1 FROM creator_subscriptions cs
              WHERE cs.subscriber_id = $1 AND cs.creator_id = g.creator_id
                AND cs.status = 'active'
@@ -1575,7 +1589,7 @@ const discoverGroups = async (req, res) => {
          )${accessFilter}
        ORDER BY g.created_at DESC
        LIMIT 50`,
-      [user.id]
+      [user.id, primeHangoutIds]
     );
 
     const groups = rows.map(r => ({
@@ -1773,6 +1787,18 @@ const handleJoinRequest = async (req, res) => {
             );
             await client.query('COMMIT');
             return res.status(403).json({ error: 'Cannot accept this request' });
+          }
+        }
+
+        // PRIME gate: if this is a co-founder PRIME hangout, the requester must
+        // still hold a qualifying PRIME entitlement at accept time (they may have
+        // lost it since they submitted the request).
+        if (isPrimeCoFounderHangout(groupId, groupRows[0].parent_group_id)) {
+          const EntitlementAccessService = require('../../../services/entitlementAccessService');
+          const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(joinRequest.user_id);
+          if (!qualifies) {
+            await client.query('ROLLBACK');
+            return res.status(402).json({ error: 'User no longer has qualifying PRIME membership' });
           }
         }
 
@@ -2327,6 +2353,30 @@ const getInviteLink = async (req, res) => {
   }
 };
 
+// DELETE /api/webapp/hangouts/groups/:id/invite-link
+const revokeInviteLink = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const groupId = parseInt(req.params.id);
+  if (!Number.isFinite(groupId) || groupId <= 0) return res.status(400).json({ error: 'Invalid group ID' });
+
+  try {
+    const { rows: groupRows } = await query('SELECT creator_id FROM hangout_groups WHERE id=$1', [groupId]);
+    if (groupRows.length === 0) return res.status(404).json({ error: 'Group not found' });
+
+    const isOwnerUser = String(groupRows[0].creator_id) === String(user.id);
+    const isAdminUser = user.role === 'admin' || user.role === 'superadmin';
+    if (!isOwnerUser && !isAdminUser) {
+      return res.status(403).json({ error: 'Only the group owner can revoke the invite link' });
+    }
+
+    await query('UPDATE hangout_groups SET invite_code = NULL WHERE id = $1', [groupId]);
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('revokeInviteLink error', err);
+    return res.status(500).json({ error: 'Failed to revoke invite link' });
+  }
+};
+
 // POST /api/webapp/hangouts/groups/join-by-invite/:code
 const joinByInvite = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
@@ -2383,17 +2433,66 @@ const joinByInvite = async (req, res) => {
           return res.status(402).json({ error: 'This hangout requires purchase', priceUsd: group.price_usd, groupId: group.id });
         }
       }
+
+      // PRIME co-founder hangout gate — invite links do NOT bypass the PRIME requirement
+      if (isPrimeCoFounderHangout(group.id, group.parent_group_id)) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
+        if (!qualifies) {
+          return res.status(402).json({ error: 'Requires qualifying PRIME membership' });
+        }
+      }
     }
 
-    // Capacity check + insert
-    const { rowCount } = await query(
-      `INSERT INTO hangout_group_members (group_id, user_id, role)
-       SELECT $1, $2, 'member'
-       WHERE (SELECT COUNT(*) FROM hangout_group_members WHERE group_id=$1) < $3
-       ON CONFLICT DO NOTHING`,
-      [group.id, user.id, group.max_members]
-    );
-    if (rowCount === 0) return res.status(409).json({ error: 'Group is full' });
+    // Capacity check + insert (transactional to prevent race-condition overshoot)
+    const txClient = await getClient();
+    try {
+      await txClient.query('BEGIN');
+      const { rows: lockedGroup } = await txClient.query(
+        'SELECT id, max_members FROM hangout_groups WHERE id = $1 FOR UPDATE',
+        [group.id]
+      );
+      if (!lockedGroup[0]) {
+        await txClient.query('ROLLBACK');
+        return res.status(404).json({ error: 'Group not found' });
+      }
+      const { rows: [{ count }] } = await txClient.query(
+        'SELECT COUNT(*)::int AS count FROM hangout_group_members WHERE group_id = $1',
+        [group.id]
+      );
+      const { rows: alreadyMember2 } = await txClient.query(
+        'SELECT 1 FROM hangout_group_members WHERE group_id=$1 AND user_id=$2',
+        [group.id, user.id]
+      );
+      if (alreadyMember2.length === 0 && count >= lockedGroup[0].max_members) {
+        await txClient.query('ROLLBACK');
+        return res.status(409).json({ error: 'Group is full' });
+      }
+      const { rowCount } = await txClient.query(
+        `INSERT INTO hangout_group_members (group_id, user_id, role)
+         VALUES ($1, $2, 'member') ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [group.id, user.id]
+      );
+      // Auto-join all topics (child groups) of this group
+      await txClient.query(
+        `INSERT INTO hangout_group_members (group_id, user_id, role)
+         SELECT id, $1, 'member'
+         FROM hangout_groups
+         WHERE parent_group_id = $2
+         ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [String(user.id), group.id]
+      );
+      await txClient.query('COMMIT');
+      if (rowCount === 0 && alreadyMember2.length === 0) {
+        // ON CONFLICT DO NOTHING fired but we verified not already a member — group full race
+        return res.status(409).json({ error: 'Group is full' });
+      }
+    } catch (txErr) {
+      await txClient.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      txClient.release();
+    }
 
     matrixService.inviteToHangoutRoom(group.id, {
       id: user.id, telegram: user.telegram || String(user.id),
@@ -3481,6 +3580,7 @@ module.exports = {
   updateGroupSettings,
   transferOwnership,
   getInviteLink,
+  revokeInviteLink,
   joinByInvite,
   updateNotificationMode,
   adminDeleteMessage,

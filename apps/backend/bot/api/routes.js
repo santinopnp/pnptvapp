@@ -1620,6 +1620,42 @@ const creatorMediaUpload = multer({
   },
 });
 
+const creatorMediaUploadSingle = (req, res, next) => {
+  creatorMediaUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      logger.warn('Creator media photo upload rejected: file too large', {
+        url: req.url,
+        ip: req.ip,
+      });
+      return res.status(413).json({
+        success: false,
+        error: {
+          code: 'FILE_TOO_LARGE',
+          message: 'Image is too large. Maximum size is 10 MB.',
+        },
+      });
+    }
+
+    if (err.message === 'Images only') {
+      logger.warn('Creator media photo upload rejected: invalid file type', {
+        url: req.url,
+        ip: req.ip,
+      });
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_FILE_TYPE',
+          message: 'Images only.',
+        },
+      });
+    }
+
+    return next(err);
+  });
+};
+
 // Creator album videos — 500MB max, disk storage
 const VIDEO_MIMES = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo', 'video/x-matroska']);
 const creatorVideoTmpDir = '/tmp/pnp-creator-videos';
@@ -7928,6 +7964,7 @@ app.put('/api/webapp/hangouts/groups/:id/settings', requireSessionAuth, requireH
 app.post('/api/webapp/hangouts/groups/:id/transfer', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.transferOwnership));
 app.post('/api/webapp/hangouts/groups/:id/notify-online', requireSessionAuth, asyncHandler(hangoutGroupController.notifyOnlineMembers));
 app.get('/api/webapp/hangouts/groups/:id/invite-link', requireSessionAuth, asyncHandler(hangoutGroupController.getInviteLink));
+app.delete('/api/webapp/hangouts/groups/:id/invite-link', requireSessionAuth, asyncHandler(hangoutGroupController.revokeInviteLink));
 app.put('/api/webapp/hangouts/groups/:id/notification', requireSessionAuth, asyncHandler(hangoutGroupController.updateNotificationMode));
 app.post('/api/webapp/hangouts/groups/:id/delete-message', requireSessionAuth, requireHangoutAccess, asyncHandler(hangoutGroupController.adminDeleteMessage));
 // ── Hangout Feed Integration ────────────────────────────────────────────────
@@ -16517,7 +16554,7 @@ app.get('/api/webapp/creators/:creatorId/media',
 app.post('/api/webapp/creators/media/upload',
   requireSessionAuth, creatorGuard,
   uploadLimiter,
-  creatorMediaUpload.single('file'),
+  creatorMediaUploadSingle,
   verifyMagicBytes(IMAGE_MIMES),
   asyncHandler(async (req, res) => {
     const sharp = require('sharp');

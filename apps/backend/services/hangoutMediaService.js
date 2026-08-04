@@ -276,20 +276,20 @@ async function processHangoutMedia(file, hangoutId, userId) {
 
   // Enforce size limits per media type
   if (mediaType === 'image' && file.buffer.length > IMAGE_MAX_BYTES) {
-    const err = new Error('Image exceeds 10 MB limit');
-    err.userMessage = 'Images must be under 10 MB.';
+    const err = new Error('Image exceeds 20 MB limit');
+    err.userMessage = 'Images must be under 20 MB.';
     err.statusCode = 400;
     throw err;
   }
   if (mediaType === 'video' && file.buffer.length > VIDEO_MAX_BYTES) {
-    const err = new Error('Video exceeds 50 MB limit');
-    err.userMessage = 'Videos must be under 50 MB.';
+    const err = new Error('Video exceeds 200 MB limit');
+    err.userMessage = 'Videos must be under 200 MB.';
     err.statusCode = 400;
     throw err;
   }
   if (mediaType === 'audio' && file.buffer.length > AUDIO_MAX_BYTES) {
-    const err = new Error('Audio exceeds 10 MB limit');
-    err.userMessage = 'Voice messages must be under 10 MB.';
+    const err = new Error('Audio exceeds 100 MB limit');
+    err.userMessage = 'Voice messages must be under 100 MB.';
     err.statusCode = 400;
     throw err;
   }

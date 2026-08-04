@@ -218,11 +218,23 @@ export default function SocialFeedTabs({
   // Content disclaimer local mirror
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(contentDisclaimerAccepted);
 
-  // Spotlight — live streams AND online (heartbeat-active) performers at the
-  // top of the "all" feed. Skipped for hashtag/hangout-filtered feeds.
+  // Spotlight — live streams AND online (heartbeat-active) performers, shown
+  // above the feed on every filter tab and even when a hashtag filter is
+  // active. Hidden only for hangout-scoped feeds (their audience is already
+  // in a private room, the community-wide spotlight would be off-topic).
   const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
   const [onlinePerformers, setOnlinePerformers] = useState<FeaturedPerformer[]>([]);
-  const showRails = !hashtagFilter && !hangoutGroupId && feedMode === "hot";
+  const showRails = !hangoutGroupId;
+
+  // Custom hashtag filter input. Types a tag → navigates to /?tag=xxx. When
+  // ?tag= is active the input pre-fills; a clear button drops the filter.
+  const [tagInput, setTagInput] = useState(hashtagFilter || "");
+  useEffect(() => { setTagInput(hashtagFilter || ""); }, [hashtagFilter]);
+  const submitTagFilter = useCallback(() => {
+    const clean = tagInput.trim().replace(/^#+/, "").toLowerCase();
+    if (!clean) { navigate("/"); return; }
+    navigate(`/?tag=${encodeURIComponent(clean)}`);
+  }, [tagInput, navigate]);
   useEffect(() => {
     if (!showRails) return;
     let cancelled = false;
@@ -387,6 +399,45 @@ export default function SocialFeedTabs({
       {/* Section header removed — the tabs + composer are self-explanatory and
           the redundant "PNP Feed" title was eating ~64px of prime mobile
           real-estate before any content appeared. */}
+
+      {/* Persistent hashtag filter input — visible on every tab. Enter to apply. */}
+      {!hangoutGroupId && (
+        <div className="mb-3 flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 flex-1 px-3 py-2 rounded-xl"
+            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            <span className="text-sm font-semibold" style={{ color: "#D4007A" }}>#</span>
+            <input
+              type="text"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value.replace(/^#+/, ""))}
+              onKeyDown={(e) => { if (e.key === "Enter") submitTagFilter(); }}
+              placeholder={hashtagFilter ? hashtagFilter : "filter by hashtag"}
+              className="flex-1 bg-transparent text-sm text-white placeholder-white/40 outline-none"
+              aria-label="Filter feed by hashtag"
+            />
+            {(tagInput || hashtagFilter) && (
+              <button
+                type="button"
+                onClick={() => { setTagInput(""); navigate("/"); }}
+                aria-label="Clear hashtag filter"
+                className="text-white/50 hover:text-white text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={submitTagFilter}
+            className="px-3 py-2 rounded-xl text-xs font-bold text-white"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+          >
+            Filter
+          </button>
+        </div>
+      )}
 
       {/* Spotlight — 132×176 cards: live streams first, then online performers.
           Live cards autoplay the muted HLS preview; online cards show a static
@@ -608,24 +659,8 @@ export default function SocialFeedTabs({
         </div>
       )}
 
-      {/* Hashtag filter banner */}
-      {hashtagFilter && (
-        <div className="flex items-center gap-2 mb-4 px-4 py-2.5 rounded-xl" style={{ background: "rgba(212,0,122,0.1)", border: "1px solid rgba(212,0,122,0.25)" }}>
-          <span className="text-sm font-semibold" style={{ color: "#D4007A" }}>
-            #{hashtagFilter}
-          </span>
-          <span className="text-xs flex-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Showing posts tagged with this hashtag
-          </span>
-          <button
-            onClick={() => navigate("/")}
-            className="text-xs font-medium hover:underline"
-            style={{ color: "#D4007A" }}
-          >
-            Clear
-          </button>
-        </div>
-      )}
+      {/* Hashtag filter banner removed — the persistent input at the top now
+          displays the active tag (as placeholder) and provides the clear ✕. */}
 
       {/* Post Composer */}
       {showComposer && isAuthenticated && (

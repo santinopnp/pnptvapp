@@ -2,6 +2,10 @@ const UserModel = require('../models/userModel');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const BusinessNotificationService = require('./businessNotificationService');
+const {
+  SANTINO_PRIME_HANGOUT_GROUP_ID,
+  LEX_PRIME_HANGOUT_GROUP_ID,
+} = require('../config/monetizationConfig');
 
 /**
  * Membership Cleanup Service
@@ -1116,11 +1120,11 @@ Type /subscribe to view membership plans and reactivate your access!`;
    */
   static async reconcilePrimeHangouts({ dryRun = false, notify = true } = {}) {
     const santino = await this.reconcileOnePrimeHangout(
-      { groupId: 719, ownerId: '8599671840', labelEn: "Santino's Cult",     labelEs: 'El Culto de Santino' },
+      { groupId: SANTINO_PRIME_HANGOUT_GROUP_ID, ownerId: '8599671840', labelEn: "Santino's Cult",     labelEs: 'El Culto de Santino' },
       { dryRun, notify },
     );
     const lex = await this.reconcileOnePrimeHangout(
-      { groupId: 785, ownerId: '7246621722', labelEn: "Lex's Cult",         labelEs: 'El Culto de Lex' },
+      { groupId: LEX_PRIME_HANGOUT_GROUP_ID, ownerId: '7246621722', labelEn: "Lex's Cult",         labelEs: 'El Culto de Lex' },
       { dryRun, notify },
     );
     return { santino, lex };
