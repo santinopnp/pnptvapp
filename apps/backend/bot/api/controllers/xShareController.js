@@ -557,6 +557,26 @@ const shareToX = async (req, res) => {
           : `${PNPTV_APP_URL}${post.video_thumbnail_url}`;
       }
 
+      // Hangout-invite links: pull the group avatar so X gets a rich card
+      // even when the post is text-only (Carlos rule: every pnptv link ships
+      // with media). Ordered last — a real media_url or video thumb wins.
+      if (!mediaSourceUrl && post.content) {
+        const inviteMatch = post.content.match(/pnptv\.app\/hangouts\/invite\/([A-Za-z0-9_-]{6,64})/i);
+        if (inviteMatch) {
+          try {
+            const { rows: groupRows } = await query(
+              `SELECT avatar_url FROM hangout_groups WHERE invite_code = $1`,
+              [inviteMatch[1]],
+              { cache: false }
+            );
+            const avatar = groupRows[0]?.avatar_url;
+            if (avatar) {
+              mediaSourceUrl = avatar.startsWith('http') ? avatar : `${PNPTV_APP_URL}${avatar}`;
+            }
+          } catch (_) { /* best-effort — falls back to text-only tweet */ }
+        }
+      }
+
       if (mediaSourceUrl) {
         let mediaId = null;
         try {

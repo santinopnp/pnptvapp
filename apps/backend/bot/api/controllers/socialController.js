@@ -250,6 +250,19 @@ const createPost = async (req, res) => {
   if (req.body.repostOfId && (!Number.isFinite(repostOfId) || repostOfId <= 0)) {
     return res.status(400).json({ error: 'Invalid repostOfId' });
   }
+  // Self-repost block — X allows it, we don't (Carlos: keeps the feed honest).
+  if (repostOfId) {
+    const origAuthor = await dbQuery(
+      'SELECT user_id FROM social_posts WHERE id = $1 AND is_deleted = false',
+      [repostOfId]
+    );
+    if (!origAuthor.rows.length) {
+      return res.status(404).json({ error: 'Original post not found', code: 'POST_NOT_FOUND' });
+    }
+    if (String(origAuthor.rows[0].user_id) === String(user.id)) {
+      return res.status(400).json({ error: "You can't repost your own post", code: 'SELF_REPOST' });
+    }
+  }
   const maxLen = isHypePost ? 280 : (replyToId ? 500 : 5000);
   if (content.length > maxLen) return res.status(400).json({ error: `Content too long (max ${maxLen} chars)` });
 
@@ -351,47 +364,24 @@ const createPost = async (req, res) => {
       if (!isOwner && !isCollaborator) return res.status(403).json({ error: 'Channel not found or not yours' });
     }
 
-    // Community hype pre-flight — validate, dedup, exclusivity check BEFORE the INSERT
-    // so we never create an orphan post that gets immediately rejected.
-    let communityHypeOrig = null;
+    // Legacy community_hype metadata (pre-migration-347 clients): redirect to
+    // the vote endpoint. Never creates a wrapper post any more.
     if (rawMeta && typeof rawMeta === 'object' && rawMeta.kind === 'community_hype') {
       const origPostId = parseInt(rawMeta.original_post_id, 10);
       if (!Number.isFinite(origPostId) || origPostId <= 0) {
         return res.status(400).json({ error: 'Invalid original_post_id' });
       }
-
-      const dupCheck = await dbQuery(
-        `SELECT 1 FROM social_posts
-          WHERE user_id = $1
-            AND (metadata->>'kind') = 'community_hype'
-            AND (metadata->>'original_post_id')::int = $2
-            AND is_deleted = false
-          LIMIT 1`,
-        [user.id, origPostId]
-      );
-      if (dupCheck.rows.length) {
-        return res.status(409).json({ error: 'You already hyped this post', code: 'ALREADY_HYPED' });
+      try {
+        const result = await SocialPostService.toggleHype(origPostId, user.id);
+        return res.status(201).json({ ...result, legacy: true });
+      } catch (err) {
+        if (err.status && err.code) {
+          return res.status(err.status).json({ error: err.message, code: err.code });
+        }
+        throw err;
       }
-
-      const origRes = await dbQuery(
-        `SELECT id, user_id, media_url, media_type, video_thumbnail_url,
-                is_exclusive, is_shareable, COALESCE(content_tier, 'free') AS content_tier
-           FROM social_posts WHERE id = $1 AND is_deleted = false`,
-        [origPostId]
-      );
-      if (!origRes.rows.length) {
-        return res.status(404).json({ error: 'Original post not found', code: 'POST_NOT_FOUND' });
-      }
-      const orig = origRes.rows[0];
-      if (orig.is_exclusive || orig.content_tier?.toLowerCase() === 'prime') {
-        return res.status(403).json({ error: 'Cannot hype exclusive content' });
-      }
-      // Author opted their post out of hype/repost.
-      if (orig.is_shareable === false) {
-        return res.status(403).json({ error: 'Author disabled sharing for this post', code: 'NOT_SHAREABLE' });
-      }
-      communityHypeOrig = orig;
     }
+    let communityHypeOrig = null;
 
     // Auto-mirror to creator's free channel when no explicit channel was given
     if (!channelId && !replyToId && !repostOfId && !hangoutGroupId && user.creator_status === 'active') {
@@ -590,6 +580,70 @@ const toggleLike = async (req, res) => {
   } catch (err) {
     logger.error('toggleLike error', err);
     return res.status(500).json({ error: 'Failed to toggle like' });
+  }
+};
+
+// ── Hype (vote, migration 347) ───────────────────────────────────────────────
+
+const toggleHype = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const postId = parsePostId(req, res); if (!postId) return;
+  try {
+    const { rows: authorRows } = await dbQuery(
+      'SELECT user_id FROM social_posts WHERE id = $1 AND is_deleted = false',
+      [postId]
+    );
+    if (!authorRows.length) return res.status(404).json({ error: 'Post not found' });
+    const authorId = authorRows[0].user_id;
+    const isSelfHype = String(authorId) === String(user.id);
+
+    const result = await SocialPostService.toggleHype(postId, user.id);
+
+    // Notify author on new hype (skip self + super-god actors — the service
+    // returns superGod:true when it short-circuits).
+    if (result.hyped && !result.superGod && !isSelfHype && authorId) {
+      let postPreview = '';
+      try {
+        const { rows: postRows } = await dbQuery('SELECT content FROM social_posts WHERE id = $1', [postId]);
+        if (postRows[0]?.content) {
+          postPreview = postRows[0].content.length > 60 ? postRows[0].content.slice(0, 57) + '...' : postRows[0].content;
+        }
+      } catch (_) {}
+      const actorName = user.firstName || user.first_name || user.username;
+      NotificationEmitter.emit({
+        type: 'hype', category: 'social', priority: 'normal',
+        actorId: user.id, targetUserId: authorId,
+        entityType: 'post', entityId: String(postId),
+        message: postPreview
+          ? `${actorName} hyped your post: "${postPreview}"`
+          : `${actorName} hyped your post`,
+        metadata: {
+          pushTitle: `🔥 ${actorName} hyped you`,
+          pushBody: postPreview ? `"${postPreview}"` : 'Tap to view',
+          url: `/social/post/${postId}`,
+        },
+      });
+    }
+
+    return res.json(result);
+  } catch (err) {
+    if (err.status && err.code) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    logger.error('toggleHype error', err);
+    return res.status(500).json({ error: 'Failed to toggle hype' });
+  }
+};
+
+const getHypers = async (req, res) => {
+  const postId = parsePostId(req, res); if (!postId) return;
+  try {
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 50);
+    const result = await SocialPostService.getHypers(postId, limit);
+    return res.json(result);
+  } catch (err) {
+    logger.error('getHypers error', err);
+    return res.status(500).json({ error: 'Failed to fetch hypers' });
   }
 };
 
@@ -2483,4 +2537,4 @@ const sharePostToHangouts = async (req, res) => {
   return res.json({ success: true, results });
 };
 
-module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts };
+module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, toggleHype, getHypers, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts };

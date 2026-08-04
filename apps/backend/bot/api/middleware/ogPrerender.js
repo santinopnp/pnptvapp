@@ -100,11 +100,22 @@ function renderOgHtml({
 </html>`;
 }
 
+// Extract a hangout invite code from a post's content and, if present, resolve
+// the linked group so the OG card can advertise the hangout instead of the
+// raw text (fixes bare pnptv.app/hangouts/invite/... share previews).
+async function embeddedHangoutFromContent(content) {
+  if (!content) return null;
+  const m = content.match(/pnptv\.app\/hangouts\/invite\/([A-Za-z0-9_-]{6,64})/i);
+  if (!m) return null;
+  try { return await loadHangoutGroup({ inviteCode: m[1] }); } catch { return null; }
+}
+
 async function getPostOg(postId) {
   try {
     const { rows } = await getPool().query(
-      `SELECT sp.content, sp.media_url, sp.media_type,
-              u.first_name, u.username
+      `SELECT sp.content, sp.media_url, sp.media_type, sp.video_thumbnail_url,
+              sp.video_title, sp.video_description,
+              u.first_name, u.username, u.photo_file_id
        FROM social_posts sp
        JOIN users u ON u.id = sp.user_id
        WHERE sp.id = $1 AND sp.is_deleted = false`,
@@ -113,18 +124,47 @@ async function getPostOg(postId) {
     if (!rows[0]) return null;
     const post = rows[0];
     const author = post.first_name || post.username || 'Member';
-    const preview = post.content
-      ? post.content.slice(0, 160) + (post.content.length > 160 ? '...' : '')
-      : 'Check out this post on PNPtv!';
-    const image = post.media_type === 'image' && post.media_url
-      ? `${BASE_URL}${post.media_url}`
-      : DEFAULT_IMAGE;
+
+    // If the post embeds a hangout invite link, prefer the hangout card —
+    // richer visual + explicit CTA. Same rule applies for every pnptv link
+    // shared through the feed.
+    const linkedHangout = await embeddedHangoutFromContent(post.content);
+    if (linkedHangout) {
+      return {
+        ...buildGroupOg(linkedHangout, `${BASE_URL}/social/post/${postId}`),
+        // Keep the article type so downstream analytics still classify it as a post.
+        type: 'article',
+      };
+    }
+
+    const preview = (post.content && post.content.trim())
+      ? post.content.trim().slice(0, 200) + (post.content.length > 200 ? '...' : '')
+      : (post.video_description || `${author} just posted on PNPtv! Real people, real clouds. 🌫️`);
+
+    // Prefer post media in this priority: video thumbnail > image media > author avatar > default.
+    let image = DEFAULT_IMAGE;
+    if (post.media_type === 'video' && post.video_thumbnail_url) {
+      image = post.video_thumbnail_url.startsWith('http')
+        ? post.video_thumbnail_url : `${BASE_URL}${post.video_thumbnail_url}`;
+    } else if (post.media_type === 'image' && post.media_url) {
+      image = post.media_url.startsWith('http') ? post.media_url : `${BASE_URL}${post.media_url}`;
+    } else if (post.photo_file_id && (post.photo_file_id.startsWith('/') || post.photo_file_id.startsWith('http'))) {
+      image = post.photo_file_id.startsWith('http') ? post.photo_file_id : `${BASE_URL}${post.photo_file_id}`;
+    }
+
+    // Video preview support — Facebook/WhatsApp/Telegram/iMessage/Slack all
+    // inline-play from og:video, so ship the raw MP4 when we have it.
+    const video = (post.media_type === 'video' && post.media_url)
+      ? (post.media_url.startsWith('http') ? post.media_url : `${BASE_URL}${post.media_url}`)
+      : null;
+
     return {
-      title: `${author} on PNPtv!`,
+      title: post.video_title || `${author} on PNPtv!`,
       description: preview,
       image,
       url: `${BASE_URL}/social/post/${postId}`,
-      type: 'article',
+      type: video ? 'video.other' : 'article',
+      ...(video ? { video, videoType: 'video/mp4', videoWidth: 1280, videoHeight: 720 } : {}),
     };
   } catch (err) {
     logger.warn('OG prerender: post lookup failed', { postId, error: err.message });
@@ -233,37 +273,71 @@ async function getLiveOg(streamId) {
   }
 }
 
-async function getGroupOg(groupId) {
-  try {
-    const { rows } = await getPool().query(
-      `SELECT name, description, avatar_url, is_public, is_main FROM hangout_groups WHERE id = $1`,
-      [groupId]
-    );
-    if (!rows[0]) return null;
-    const group = rows[0];
-    if (!group.is_public && !group.is_main) {
-      // Private — leak nothing via OG
-      return {
-        title: 'PNPtv! Hangout',
-        description: 'Members-only video hangout on PNPtv!',
-        image: DEFAULT_IMAGE,
-        url: `${BASE_URL}/chat/${groupId}`,
-        type: 'video.other',
-      };
-    }
-    const image = group.avatar_url
-      ? (group.avatar_url.startsWith('http') ? group.avatar_url : `${BASE_URL}${group.avatar_url}`)
-      : DEFAULT_IMAGE;
-    const desc = (group.description || `Join the ${group.name} hangout on PNPtv!`).replace(/\s+/g, ' ').trim().slice(0, 280);
+// Load a hangout group by either numeric id or invite_code (Carlos: every
+// pnptv link — hangouts, invites, posts — must render a rich card).
+async function loadHangoutGroup({ groupId = null, inviteCode = null }) {
+  const q = groupId
+    ? [`SELECT hg.id, hg.name, hg.description, hg.avatar_url, hg.is_public, hg.is_main, hg.invite_code,
+        (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = hg.id AND COALESCE(m.is_banned, false) = false) AS member_count
+        FROM hangout_groups hg WHERE hg.id = $1`, [groupId]]
+    : [`SELECT hg.id, hg.name, hg.description, hg.avatar_url, hg.is_public, hg.is_main, hg.invite_code,
+        (SELECT COUNT(*)::int FROM hangout_group_members m WHERE m.group_id = hg.id AND COALESCE(m.is_banned, false) = false) AS member_count
+        FROM hangout_groups hg WHERE hg.invite_code = $1`, [inviteCode]];
+  const { rows } = await getPool().query(q[0], q[1]);
+  return rows[0] || null;
+}
+
+function catchyHangoutDescription(group) {
+  const rawDesc = (group.description || '').replace(/\s+/g, ' ').trim();
+  if (rawDesc) return `${rawDesc.slice(0, 200)}${rawDesc.length > 200 ? '...' : ''} · Join on PNPtv!`;
+  const members = Number(group.member_count) || 0;
+  const parts = [`Join ${group.name} on PNPtv!`];
+  if (members > 3) parts.push(`${members} members inside.`);
+  parts.push('Real people, real clouds, real hangs. 🌫️');
+  return parts.join(' ');
+}
+
+function buildGroupOg(group, canonicalUrl) {
+  if (!group.is_public && !group.is_main) {
+    // Private — reveal nothing beyond a branded card
     return {
-      title: `🎥 ${group.name} — PNPtv! Hangout`,
-      description: `${desc} Members only — join at pnptv.app/join.`,
-      image,
-      url: `${BASE_URL}/h/${groupId}`,
+      title: '🎥 Private Hangout — PNPtv!',
+      description: 'Members-only video hangout on PNPtv! Get an invite from the host.',
+      image: DEFAULT_IMAGE,
+      url: canonicalUrl,
       type: 'video.other',
     };
+  }
+  const image = group.avatar_url
+    ? (group.avatar_url.startsWith('http') ? group.avatar_url : `${BASE_URL}${group.avatar_url}`)
+    : DEFAULT_IMAGE;
+  return {
+    title: `🎥 ${group.name} — PNPtv! Hangout`,
+    description: catchyHangoutDescription(group),
+    image,
+    url: canonicalUrl,
+    type: 'video.other',
+  };
+}
+
+async function getGroupOg(groupId) {
+  try {
+    const group = await loadHangoutGroup({ groupId });
+    if (!group) return null;
+    return buildGroupOg(group, `${BASE_URL}/h/${groupId}`);
   } catch (err) {
     logger.warn('OG prerender: group lookup failed', { groupId, error: err.message });
+    return null;
+  }
+}
+
+async function getHangoutInviteOg(code) {
+  try {
+    const group = await loadHangoutGroup({ inviteCode: code });
+    if (!group) return null;
+    return buildGroupOg(group, `${BASE_URL}/hangouts/invite/${code}`);
+  } catch (err) {
+    logger.warn('OG prerender: hangout invite lookup failed', { code, error: err.message });
     return null;
   }
 }
@@ -361,6 +435,7 @@ function ogPrerenderMiddleware(req, res, next) {
   const videoMatch = path.match(/^\/v\/(\d+)(?:\/[^/]*)?\/?$/);
   const chatMatch = path.match(/^\/chat\/(\d+)$/);
   const hMatch = path.match(/^\/h\/(\d+)$/);
+  const hangoutInviteMatch = path.match(/^\/hangouts\/invite\/([A-Za-z0-9_-]{6,64})\/?$/);
   const mainStageInviteMatch = path.match(/^\/main-stage\/join\/([A-Za-z0-9_-]{8,32})$/);
   const mainStageMatch = /^\/main-stage\/?$/.test(path);
   const channelsMatch = /^\/channels\/?$/.test(path);
@@ -388,6 +463,8 @@ function ogPrerenderMiddleware(req, res, next) {
     ogPromise = getGroupOg(chatMatch[1]);
   } else if (hMatch) {
     ogPromise = getGroupOg(hMatch[1]);
+  } else if (hangoutInviteMatch) {
+    ogPromise = getHangoutInviteOg(hangoutInviteMatch[1]);
   } else if (mainStageInviteMatch) {
     ogPromise = getMainStageInviteOg(mainStageInviteMatch[1]);
   } else if (mainStageMatch) {

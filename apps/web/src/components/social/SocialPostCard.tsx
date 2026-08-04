@@ -14,16 +14,15 @@ import {
   getReplies,
   createReply,
   togglePostLike,
+  togglePostHype,
   editSocialPost,
   createUserReport,
   searchCreators,
   getOwnChannels,
   assignPostToChannel,
-  createSocialPost,
   type SocialPostItem,
   type MentionUser,
   type CreatorChannel,
-  type CommunityHypeMetadata,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { translateText } from "@/lib/feedI18n";
@@ -386,10 +385,8 @@ export default function SocialPostCard({
   const [channelPickerLoading, setChannelPickerLoading] = useState(false);
   const [assigningChannel, setAssigningChannel] = useState(false);
   const [assignedChannelId, setAssignedChannelId] = useState<number | null>(null);
-  const [hypeOpen, setHypeOpen] = useState(false);
-  const [hypeText, setHypeText] = useState('');
-  const [hypePosting, setHypePosting] = useState(false);
-  const [hypePosted, setHypePosted] = useState(false);
+  const [hypePosted, setHypePosted] = useState<boolean>(Boolean(post.hyped_by_me));
+  const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
   const [hypeError, setHypeError] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -724,6 +721,21 @@ export default function SocialPostCard({
           : undefined
       }
     >
+      {/* 🔁 Reposted-by banner — X-style, shows above the header when this
+          post is a repost. The card's primary author IS the reposter (matches
+          how Twitter/X renders it), so we simply announce the action. */}
+      {post.repost_of_id && (
+        <div className="mb-2 -mt-1 ml-0 flex items-center gap-1.5 text-[11px] text-white/50">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z" />
+          </svg>
+          <span className="truncate">
+            <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
+            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+          </span>
+        </div>
+      )}
+
       {/* Avatar — pinned to upper-left corner */}
       <div className="absolute -top-2 -left-2 z-10 flex-shrink-0">
         {post.is_carousel ? (
@@ -1461,93 +1473,13 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* Community hype — media is hydrated live from the ORIGINAL post
-                  via original_* fields. If the original was deleted or went
-                  exclusive after the hype, we show a placeholder instead of
-                  borrowed media (no more content theft on delete/paywall flip). */}
-              {(() => {
-                const m = post.metadata as Record<string, unknown> | undefined | null;
-                if (!m || m.kind !== 'community_hype') return null;
-                const originalAuthor = post.original_author_username || (m.original_author_username as string) || 'someone';
-                const originalContent = m.original_content as string | undefined;
-                const attribution = (
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-2 bg-white/4 hover:bg-white/8 transition-colors group"
-                    onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
-                  >
-                    <p className="text-[10px] text-orange-400/80 font-medium flex items-center gap-1">
-                      🔥 Shared from @{originalAuthor}
-                      <span className="ml-auto text-white/30 group-hover:text-white/60 transition-colors text-[9px]">View original →</span>
-                    </p>
-                    {originalContent && (
-                      <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{originalContent}</p>
-                    )}
-                  </button>
-                );
+              {/* Hype is a viewer vote (post_hypes, migration 347) — no wrapper
+                  posts in the feed. Attribution renders as a chip on the ORIGINAL
+                  post below (top_hypers). Legacy community_hype rows are
+                  soft-deleted server-side, so no render path is needed here. */}
 
-                if (post.original_deleted) {
-                  return (
-                    <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
-                      <div className="p-4 text-center text-xs text-white/50">
-                        The original post was removed by its author.
-                      </div>
-                      {attribution}
-                    </div>
-                  );
-                }
-                if (post.original_is_exclusive) {
-                  return (
-                    <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
-                      <div className="p-4 text-center text-xs text-white/50">
-                        This content is now exclusive — visit the author's profile to unlock.
-                      </div>
-                      {attribution}
-                    </div>
-                  );
-                }
-
-                const mediaUrl = post.original_media_url || null;
-                const mediaType = post.original_media_type || null;
-                const thumbUrl = post.original_video_thumbnail_url || undefined;
-                return (
-                  <div className="mt-3 rounded-xl overflow-hidden border border-white/8" onClick={(e) => e.stopPropagation()}>
-                    {mediaUrl && (
-                      mediaType === 'video' ? (
-                        <VideoPlayer
-                          src={mediaUrl}
-                          controls
-                          controlsList="nodownload"
-                          disablePictureInPicture
-                          onContextMenu={(e) => e.preventDefault()}
-                          playsInline
-                          creatorDisclaimer
-                          className="w-full rounded-xl overflow-hidden shadow-md"
-                          preload="metadata"
-                          poster={thumbUrl || undefined}
-                        />
-                      ) : (
-                        <img
-                          src={mediaUrl}
-                          alt="Hyped post"
-                          className="w-full object-cover max-h-[360px] lg:max-h-[560px] cursor-pointer"
-                          loading="lazy"
-                          onClick={() => m.original_post_id && onNavigate(`/social/post/${m.original_post_id}`)}
-                        />
-                      )
-                    )}
-                    {attribution}
-                  </div>
-                );
-              })()}
-
-              {/* Media — suppressed for channel_promo posts whose thumbnail is
-                   already rendered inside the channelPromoCta block above.
-                   Also suppressed for community_hype posts which use the block above.
-                   Rendering it again would show the media twice.
-                   Promoted posts DO render their media here so a promoted post
-                   with a carousel (media_urls) shows all slides, not just the
-                   promoted_thumbnail (which is suppressed above when media exists). */}
+              {/* Media — promoted posts show their media here for the carousel;
+                  channel_promo thumbnails are rendered inside channelPromoCta. */}
               {post.media_url && !channelPromoCta && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype' && (
                 <div className="mt-3">
                   {post.media_type === "video" ? (
@@ -1724,7 +1656,7 @@ export default function SocialPostCard({
               {post.is_exclusive && post.exclusive_status === "unlocked" && post.author_username && !isOwn && (
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                   <a
-                    href={`/c/${post.author_username}`}
+                    href={`/c/${encodeURIComponent(post.author_username)}`}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white shadow-sm transition-all hover:scale-[1.02]"
                     style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
                   >
@@ -1736,6 +1668,43 @@ export default function SocialPostCard({
                 </div>
               )}
             </>
+          )}
+
+          {/* 🔥 Hype attribution chip — shows recent hypers + total.
+              Clicking the count opens the full hyper list (deep-link to post). */}
+          {!post.is_carousel && hypeCount > 0 && (
+            <div
+              className="mt-3 flex items-center gap-2 text-[11px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex -space-x-1.5">
+                {(post.top_hypers || []).slice(0, 3).map((h) => (
+                  <UserAvatar
+                    key={h.id}
+                    userId={h.id}
+                    photoUrl={h.photo_file_id}
+                    displayName={h.first_name || h.username}
+                    size="xs"
+                    className="ring-2 ring-black/60"
+                    showOnline={false}
+                    linkToProfile={false}
+                  />
+                ))}
+              </div>
+              <span className="text-white/70">
+                <span className="text-orange-400 font-semibold">🔥</span>{' '}
+                {(post.top_hypers && post.top_hypers.length > 0)
+                  ? (
+                    <>
+                      {(post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone')}
+                      {hypeCount > 1 && <> and <span className="text-white font-medium">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
+                      {' '}hyped this
+                    </>
+                  )
+                  : <><span className="text-white font-medium">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
+                }
+              </span>
+            </div>
           )}
 
           {/* Actions bar — hidden on synthetic carousel posts (no real post to like) */}
@@ -1844,93 +1813,53 @@ export default function SocialPostCard({
               </button>
             )}
 
-            {/* Hype — visible on media posts that are not already hype/promo posts */}
-            {user && post.media_url && !post.is_promoted && (post.media_type === 'video' || post.media_type === 'image')
-              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype'
+            {/* Hype — viewer-cast boost vote (post_hypes, migration 347).
+                Toggles a 7-day vote that shows as attribution on the ORIGINAL
+                post and feeds into _applyDiscoveryBoost. Not shown on hyper's
+                own posts (self-hype allowed but pointless in feed context). */}
+            {user && !post.is_promoted
               && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  if (!hypeOpen) {
-                    const name = post.author_first_name ?? post.author_username ?? null;
-                    setHypeText(name ? `🔥 ${name} just dropped something 🔥 — you need to see this!` : '🔥 You need to see this!');
+                  if (hypeInFlight.current) return;
+                  hypeInFlight.current = true;
+                  const nextHyped = !hypePosted;
+                  setHypePosted(nextHyped);
+                  setHypeCount(c => Math.max(0, c + (nextHyped ? 1 : -1)));
+                  try {
+                    const res = await togglePostHype(post.id);
+                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
+                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                  } catch (err) {
+                    setHypePosted(!nextHyped);
+                    setHypeCount(c => Math.max(0, c + (nextHyped ? -1 : 1)));
+                    const msg = err instanceof Error ? err.message : '';
+                    setHypeError(msg || 'Failed');
+                    setTimeout(() => setHypeError(null), 2500);
+                  } finally {
+                    hypeInFlight.current = false;
                   }
-                  setHypeOpen(p => !p);
                 }}
                 className="flex items-center gap-1 text-xs transition-colors"
-                style={hypePosted || hypeOpen ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
-                title={hypePosted ? 'Hyped!' : 'Hype this post'}
-                aria-label={hypePosted ? 'Hyped!' : 'Hype this post'}
+                style={hypePosted ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypePosted ? 'Un-hype' : 'Hype this post'}
+                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
+                aria-pressed={hypePosted}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <svg className="w-4 h-4" fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
                 </svg>
+                <span className="tabular-nums">{hypeCount > 0 ? hypeCount : ''}</span>
               </button>
             )}
 
           </div>
           )}
 
-          {/* Hype compose panel */}
-          {hypeOpen && (
-            <div className="mt-3 p-3 rounded-xl border border-orange-500/20 bg-orange-500/5" onClick={(e) => e.stopPropagation()}>
-              <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase mb-2">Hype Post</p>
-              <textarea
-                value={hypeText}
-                onChange={(e) => setHypeText(e.target.value)}
-                maxLength={280}
-                rows={2}
-                className="w-full bg-white/5 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/40"
-                placeholder="Write your hype post…"
-              />
-              {hypeError && <p className="text-xs text-red-400 mt-1">{hypeError}</p>}
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-[10px] text-white/30">{hypeText.length}/280</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setHypeOpen(false); setHypeError(null); }}
-                    className="px-3 py-1 text-xs text-white/40 hover:text-white/70 transition-colors"
-                  >Cancel</button>
-                  <button
-                    onClick={async () => {
-                      if (!hypeText.trim() || hypePosting || hypeInFlight.current) return;
-                      hypeInFlight.current = true;
-                      setHypePosting(true);
-                      setHypeError(null);
-                      try {
-                        const meta: CommunityHypeMetadata = {
-                          kind: 'community_hype',
-                          original_post_id: post.id,
-                          original_author_id: String(post.author_id ?? ''),
-                          original_author_username: post.author_username ?? null,
-                          original_media_url: post.media_url!,
-                          original_media_type: post.media_type as 'video' | 'image',
-                          original_video_thumbnail_url: post.video_thumbnail_url ?? null,
-                          original_content: post.content ?? null,
-                        };
-                        await createSocialPost(hypeText.trim(), undefined, false, true, { metadata: meta, videoThumbnailUrl: post.video_thumbnail_url ?? undefined });
-                        setHypePosted(true);
-                        setHypeOpen(false);
-                        setHypeText('');
-                      } catch (err: unknown) {
-                        console.error('Hype post failed', err);
-                        const msg = err instanceof Error ? err.message : '';
-                        setHypeError(msg.toLowerCase().includes('already') ? 'You already hyped this.' : 'Failed to post. Try again.');
-                      } finally {
-                        setHypePosting(false);
-                        hypeInFlight.current = false;
-                      }
-                    }}
-                    disabled={hypePosting || !hypeText.trim()}
-                    className="px-3 py-1 text-xs font-semibold rounded-lg disabled:opacity-40 transition-opacity"
-                    style={{ background: 'linear-gradient(135deg, #FF6B00, #FF9500)', color: '#fff' }}
-                  >
-                    {hypePosting ? 'Posting…' : '🔥 Post Hype'}
-                  </button>
-                </div>
-              </div>
-            </div>
+          {hypeError && (
+            <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
           )}
 
           {/* Replies section */}

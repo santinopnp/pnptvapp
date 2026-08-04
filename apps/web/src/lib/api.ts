@@ -1266,6 +1266,12 @@ export interface SocialPostItem {
   original_author_username?: string | null;
   original_author_first_name?: string | null;
   original_author_photo?: string | null;
+  // Hype vote (post_hypes, migration 347). hype_score = sum of active vote
+  // weights (7d TTL). top_hypers = up to 3 most-recent hypers for the
+  // attribution chip. hyped_by_me = viewer's current vote state.
+  hype_score?: number;
+  hyped_by_me?: boolean;
+  top_hypers?: Array<{ id: string; username: string | null; first_name: string | null; photo_file_id: string | null }>;
 }
 
 export interface PostCardSnapshot {
@@ -1841,6 +1847,17 @@ export function bulkUploadVideos(
 
 export function togglePostLike(postId: number): Promise<{ liked: boolean; likes_count?: number }> {
   return request(`/api/webapp/social/posts/${postId}/like`, { method: "POST" });
+}
+
+export function togglePostHype(postId: number): Promise<{ hyped: boolean; hype_score: number }> {
+  return request(`/api/webapp/social/posts/${postId}/hype`, { method: "POST" });
+}
+
+export function getPostHypers(postId: number, limit = 20): Promise<{
+  hypers: Array<{ id: string; username: string | null; first_name: string | null; photo_file_id: string | null }>;
+  total: number;
+}> {
+  return request(`/api/webapp/social/posts/${postId}/hypers?limit=${limit}`);
 }
 
 export function recordPostView(postId: number): Promise<{ success: boolean; view_count?: number; deduped?: boolean }> {

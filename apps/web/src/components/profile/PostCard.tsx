@@ -9,14 +9,13 @@ import { useI18n } from "@/lib/i18n";
 const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "7246621722"]); // Santino (SantinoFurioso + pnptv alt) & Lex (PNPLatinoBoy) — verified against DB 2026-08-03
 import {
   togglePostLike,
+  togglePostHype,
   getReplies,
   createReply,
   editSocialPost,
   searchCreators,
-  createSocialPost,
   type SocialPostItem,
   type MentionUser,
-  type CommunityHypeMetadata,
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
@@ -362,10 +361,8 @@ export default function PostCard({
 
   const [videoError, setVideoError] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [hypeOpen, setHypeOpen] = useState(false);
-  const [hypeText, setHypeText] = useState('');
-  const [hypePosting, setHypePosting] = useState(false);
-  const [hypePosted, setHypePosted] = useState(false);
+  const [hypePosted, setHypePosted] = useState<boolean>(Boolean(post.hyped_by_me));
+  const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
   const [hypeError, setHypeError] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -618,23 +615,8 @@ export default function PostCard({
     }
   }, [inlineCheckout, post.unlock_target, post.plan_slug]);
 
-  // X-style repost render: when this post is a community_hype, treat the
-  // ORIGINAL author as the card's primary author and show a small "🔥 hyped
-  // by [hyper]" banner above. Falls back gracefully if legacy metadata is
-  // missing any of the enriched fields.
-  const rawHypeMeta = post.metadata as Record<string, unknown> | null | undefined;
-  const isCommunityHype = rawHypeMeta?.kind === 'community_hype';
-  const hypeMeta = isCommunityHype ? {
-    originalAuthorId: (rawHypeMeta?.original_author_id as string) ?? null,
-    originalAuthorFirstName: (rawHypeMeta?.original_author_first_name as string | null) ?? null,
-    originalAuthorUsername: (rawHypeMeta?.original_author_username as string | null) ?? null,
-    originalAuthorPhotoUrl: (rawHypeMeta?.original_author_photo_url as string | null) ?? null,
-    originalPostId: rawHypeMeta?.original_post_id as number | undefined,
-    originalContent: (rawHypeMeta?.original_content as string | null) ?? null,
-    hyperFirstName: post.author_first_name || post.author_username || 'Someone',
-    hyperId: post.author_id,
-    hyperPhotoUrl: photoUrl,
-  } : null;
+  // Hype rendered as an attribution chip on the ORIGINAL post (post_hypes,
+  // migration 347). No wrapper posts to translate authorship for any more.
 
   return (
     <div className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]">
@@ -711,31 +693,21 @@ export default function PostCard({
         )
       )}
 
-      {/* X-style "reposted by" banner — only on community_hype posts. Shows
-          the hyper as the re-sharer while the card header below shows the
-          ORIGINAL author. */}
-      {hypeMeta && (
-        <button
-          onClick={() => hypeMeta.hyperId && onAuthorTap?.(hypeMeta.hyperId)}
-          className="flex items-center gap-1.5 mb-2 -mt-1 text-[11px] font-medium hover:underline"
-          style={{ color: "#FF9500" }}
-          aria-label={`Hyped by ${hypeMeta.hyperFirstName}`}
-        >
-          <span aria-hidden="true">🔥</span>
-          <span className="truncate">{hypeMeta.hyperFirstName} hyped this</span>
-        </button>
+      {/* 🔁 X-style reposted-by banner. Card's primary author IS the reposter. */}
+      {post.repost_of_id && (
+        <div className="flex items-center gap-1.5 mb-2 -mt-1 text-[11px] text-white/50">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z" />
+          </svg>
+          <span className="truncate">
+            <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
+            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+          </span>
+        </div>
       )}
 
       <div className="flex gap-3">
-        {/* Avatar — for community_hype, show the ORIGINAL author (not the hyper) */}
-        {hypeMeta ? (
-          <UserAvatar
-            userId={hypeMeta.originalAuthorId || post.author_id}
-            photoUrl={hypeMeta.originalAuthorPhotoUrl}
-            displayName={hypeMeta.originalAuthorFirstName || hypeMeta.originalAuthorUsername}
-            size="md"
-          />
-        ) : post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
+        {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
           // Channel-promo from system account — show channel initial, not Cristina emoji
           <div
             className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
@@ -762,21 +734,7 @@ export default function PostCard({
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {hypeMeta ? (
-              <>
-                <button
-                  onClick={() => hypeMeta.originalAuthorId && onAuthorTap?.(hypeMeta.originalAuthorId)}
-                  className="font-semibold text-white text-sm truncate hover:underline"
-                >
-                  {hypeMeta.originalAuthorFirstName || hypeMeta.originalAuthorUsername || p.anonymous}
-                </button>
-                {hypeMeta.originalAuthorUsername && (
-                  <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    @{hypeMeta.originalAuthorUsername}
-                  </span>
-                )}
-              </>
-            ) : post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
+            {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
               // Channel-promo from system account: show channel name as author label
               <span className="font-semibold text-white text-sm truncate">
                 {((post.metadata as Record<string, unknown>).channel_name as string | undefined) || "PNP Channels"}
@@ -789,7 +747,7 @@ export default function PostCard({
                 {post.author_first_name || post.author_username || p.anonymous}
               </button>
             )}
-            {!hypeMeta && post.author_username && post.author_id !== "8552451957" && (
+            {post.author_username && post.author_id !== "8552451957" && (
               <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{post.author_username}
               </span>
@@ -1016,7 +974,7 @@ export default function PostCard({
             </div>
           ) : (
             <MentionText
-              text={hypeMeta ? (hypeMeta.originalContent ?? '') : (translatedContent ?? localContent ?? post.content)}
+              text={translatedContent ?? localContent ?? post.content}
               className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
               maxLength={200}
             />
@@ -1194,69 +1152,11 @@ export default function PostCard({
             );
           })()}
 
-          {/* Community hype — media is NEVER stored on the hyper's row; it's
-              hydrated from the ORIGINAL post server-side via original_*.
-              If the original was deleted or went exclusive after the hype,
-              show an inline placeholder instead of borrowed media. */}
-          {(() => {
-            const m = post.metadata as Record<string, unknown> | undefined | null;
-            if (!m || m.kind !== 'community_hype') return null;
-            const originalPostHref = m.original_post_id ? `/social/post/${m.original_post_id}` : undefined;
+          {/* Hype is a viewer vote (post_hypes, migration 347) — no wrapper posts
+              on profile walls. Attribution renders as a chip on the ORIGINAL. */}
 
-            if (post.original_deleted) {
-              return (
-                <div className="mt-3 rounded-xl border border-white/10 bg-white/[.03] p-4 text-center">
-                  <p className="text-xs text-white/60">
-                    The original post was removed by its author.
-                  </p>
-                </div>
-              );
-            }
-            if (post.original_is_exclusive) {
-              return (
-                <div className="mt-3 rounded-xl border border-white/10 bg-white/[.03] p-4 text-center">
-                  <p className="text-xs text-white/60">
-                    This content is now exclusive — visit the author's profile to unlock.
-                  </p>
-                </div>
-              );
-            }
-
-            const mediaUrl = post.original_media_url || null;
-            const mediaType = post.original_media_type || null;
-            const thumbUrl = post.original_video_thumbnail_url || undefined;
-            if (!mediaUrl) return null;
-            return (
-              <div className="mt-3 rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                {mediaType === 'video' ? (
-                  <VideoPlayer
-                    src={mediaUrl}
-                    controls
-                    controlsList="nodownload"
-                    disablePictureInPicture
-                    onContextMenu={(e) => e.preventDefault()}
-                    playsInline
-                    creatorDisclaimer
-                    className="w-full rounded-xl overflow-hidden shadow-md"
-                    preload="metadata"
-                    poster={thumbUrl || undefined}
-                  />
-                ) : (
-                  <a href={originalPostHref} className="block cursor-pointer">
-                    <img
-                      src={mediaUrl}
-                      alt="Hyped post"
-                      className="w-full object-cover max-h-[360px] lg:max-h-[560px]"
-                      loading="lazy"
-                    />
-                  </a>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Media — suppressed for channel_promo and community_hype posts (blocks above handle display) */}
-          {post.media_url && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== "channel_promo" && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== "community_hype" && (
+          {/* Media — suppressed for channel_promo posts (block above handles display) */}
+          {post.media_url && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== "channel_promo" && (
             <div className="mt-3">
               {post.media_type === "video" ? (
                 <>
@@ -1531,92 +1431,79 @@ export default function PostCard({
               </button>
             )}
 
-            {/* Hype — visible on media posts that are not already hype/promo posts */}
-            {user && post.media_url && !post.is_promoted && (post.media_type === 'video' || post.media_type === 'image')
-              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype'
+            {/* Hype vote — viewer-cast boost (post_hypes, migration 347) */}
+            {user && !post.is_promoted
               && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
               <button
-                onClick={() => {
-                  if (!hypeOpen) {
-                    const name = post.author_first_name ?? post.author_username ?? null;
-                    setHypeText(name ? `🔥 ${name} just dropped something 🔥 — you need to see this!` : '🔥 You need to see this!');
+                onClick={async () => {
+                  if (hypeInFlight.current) return;
+                  hypeInFlight.current = true;
+                  const next = !hypePosted;
+                  setHypePosted(next);
+                  setHypeCount(c => Math.max(0, c + (next ? 1 : -1)));
+                  try {
+                    const res = await togglePostHype(post.id);
+                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
+                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                  } catch (err) {
+                    setHypePosted(!next);
+                    setHypeCount(c => Math.max(0, c + (next ? -1 : 1)));
+                    const msg = err instanceof Error ? err.message : '';
+                    setHypeError(msg || 'Failed');
+                    setTimeout(() => setHypeError(null), 2500);
+                  } finally {
+                    hypeInFlight.current = false;
                   }
-                  setHypeOpen(prev => !prev);
                 }}
                 className="flex items-center gap-1 text-xs transition-colors"
-                style={hypePosted || hypeOpen ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
-                title={hypePosted ? 'Hyped!' : 'Hype this post'}
-                aria-label={hypePosted ? 'Hyped!' : 'Hype this post'}
+                style={hypePosted ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypePosted ? 'Un-hype' : 'Hype this post'}
+                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
+                aria-pressed={hypePosted}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <svg className="w-4 h-4" fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
                 </svg>
+                <span className="tabular-nums">{hypeCount > 0 ? hypeCount : ''}</span>
               </button>
             )}
 
           </div>
 
-          {/* Hype compose panel */}
-          {hypeOpen && (
-            <div className="mt-3 p-3 rounded-xl border border-orange-500/20 bg-orange-500/5">
-              <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase mb-2">Hype Post</p>
-              <textarea
-                value={hypeText}
-                onChange={(e) => setHypeText(e.target.value)}
-                maxLength={280}
-                rows={2}
-                className="w-full bg-white/5 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 resize-none focus:outline-none focus:ring-1 focus:ring-orange-500/40"
-                placeholder="Write your hype post…"
-              />
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-[10px] text-white/30">{hypeText.length}/280</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setHypeOpen(false); setHypeError(null); }}
-                    className="px-3 py-1 text-xs text-white/40 hover:text-white/70 transition-colors"
-                  >Cancel</button>
-                  <button
-                    onClick={async () => {
-                      if (!hypeText.trim() || hypePosting || hypeInFlight.current) return;
-                      hypeInFlight.current = true;
-                      setHypePosting(true);
-                      setHypeError(null);
-                      try {
-                        const meta: CommunityHypeMetadata = {
-                          kind: 'community_hype',
-                          original_post_id: post.id,
-                          original_author_id: String(post.author_id ?? ''),
-                          original_author_username: post.author_username ?? null,
-                          original_author_first_name: post.author_first_name ?? null,
-                          original_author_photo_url: photoUrl ?? null,
-                          original_media_url: post.media_url!,
-                          original_media_type: post.media_type as 'video' | 'image',
-                          original_video_thumbnail_url: post.video_thumbnail_url ?? null,
-                          original_content: post.content ?? null,
-                        };
-                        await createSocialPost(hypeText.trim(), undefined, false, true, { metadata: meta, videoThumbnailUrl: post.video_thumbnail_url ?? undefined });
-                        setHypePosted(true);
-                        setHypeOpen(false);
-                        setHypeText('');
-                      } catch (err: unknown) {
-                        console.error('Hype post failed', err);
-                        const msg = err instanceof Error ? err.message : '';
-                        setHypeError(msg.toLowerCase().includes('already') ? 'You already hyped this.' : 'Failed to post. Try again.');
-                      } finally {
-                        setHypePosting(false);
-                        hypeInFlight.current = false;
-                      }
-                    }}
-                    disabled={hypePosting || !hypeText.trim()}
-                    className="px-3 py-1 text-xs font-semibold rounded-lg disabled:opacity-40 transition-opacity"
-                    style={{ background: 'linear-gradient(135deg, #FF6B00, #FF9500)', color: '#fff' }}
-                  >
-                    {hypePosting ? 'Posting…' : '🔥 Post Hype'}
-                  </button>
-                </div>
+          {hypeError && (
+            <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
+          )}
+
+          {/* 🔥 Hype attribution chip — recent hypers + total */}
+          {hypeCount > 0 && (
+            <div className="mt-2 flex items-center gap-2 text-[11px]">
+              <div className="flex -space-x-1.5">
+                {(post.top_hypers || []).slice(0, 3).map((h) => (
+                  <UserAvatar
+                    key={h.id}
+                    userId={h.id}
+                    photoUrl={h.photo_file_id}
+                    displayName={h.first_name || h.username}
+                    size="xs"
+                    className="ring-2 ring-black/60"
+                    showOnline={false}
+                    linkToProfile={false}
+                  />
+                ))}
               </div>
-              {hypeError && <p className="text-xs text-red-400 mt-2">{hypeError}</p>}
+              <span className="text-white/70">
+                <span className="text-orange-400 font-semibold">🔥</span>{' '}
+                {(post.top_hypers && post.top_hypers.length > 0) ? (
+                  <>
+                    {(post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone')}
+                    {hypeCount > 1 && <> and <span className="text-white font-medium">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
+                    {' '}hyped this
+                  </>
+                ) : (
+                  <><span className="text-white font-medium">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
+                )}
+              </span>
             </div>
           )}
 

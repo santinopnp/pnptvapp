@@ -248,6 +248,8 @@ class SocialPostService {
                    AND sp2.media_type = 'video' AND sp2.is_deleted = false)
               ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
@@ -288,6 +290,7 @@ class SocialPostService {
     // Cursor pagination still works because we only re-order within the bounded
     // window (sp.id < cursor); the next page resumes at the lowest id we returned.
     posts = await SocialPostService._applyDiscoveryBoost(posts);
+    posts = await SocialPostService.hydrateTopHypers(posts);
     const page = posts.slice(0, lim);
     const nextCursor = posts.length > lim ? String(page[page.length - 1].id) : null;
 
@@ -327,15 +330,21 @@ class SocialPostService {
         const likes = Number(p.likes_count) || 0;
         const reposts = Number(p.reposts_count) || 0;
         const replies_ct = Number(p.replies_count) || 0;
-        const engage = Math.log1p(likes + reposts * 2 + replies_ct * 3);
+        const hypes = Number(p.hype_score) || 0;
+        // Hype is a viewer-cast "boost this" vote (YouTube-Hype style). Weight
+        // it heavier than likes but capped via log1p so a swarm doesn't
+        // dominate the whole page window.
+        const engage = Math.log1p(likes + reposts * 2 + replies_ct * 3 + hypes * 4);
         const ageHours = p.created_at
           ? Math.max(0, (now - new Date(p.created_at).getTime()) / 3600000)
           : 24;
         const popularity = (engage / Math.pow(ageHours + 2, 0.6)) * 3;
+        const hypeBoost = hypes > 0 ? Math.min(4, Math.log1p(hypes) * 1.5) : 0;
         const score =
           (isCreator ? 3 : 0) +
           (isOnline ? 2 : 0) +
           (isPrime ? 1 : 0) +
+          hypeBoost +
           popularity;
         return { p, idx, score };
       });
@@ -683,6 +692,8 @@ class SocialPostService {
                    AND sp2.media_type = 'video' AND sp2.is_deleted = false)
               ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar
@@ -705,6 +716,7 @@ class SocialPostService {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService.hydrateTopHypers(posts);
     const nextCursor = rows.length === lim ? String(rows[rows.length - 1].id) : null;
     return { posts, nextCursor };
   }
@@ -749,6 +761,8 @@ class SocialPostService {
                    AND sp2.media_type = 'video' AND sp2.is_deleted = false)
               ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name
        FROM social_posts sp
@@ -767,6 +781,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService.hydrateTopHypers(posts);
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
     return { posts, nextCursor };
   }
@@ -805,7 +820,9 @@ class SocialPostService {
                 u.id as author_id, u.username as author_username,
                 u.first_name as author_first_name, u.photo_file_id as author_photo,
                 u.city as author_city, u.country as author_country,
-                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me
+                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
          WHERE sp.is_deleted = false
@@ -829,9 +846,10 @@ class SocialPostService {
     const profile = profileRes.rows[0] || null;
     if (profile) profile.photo_file_id = isValidPhotoUrl(profile.photo_file_id) ? profile.photo_file_id : null;
 
-    // Profile wall keeps hype rows even when the original was deleted — the row
-    // renders an "eliminated by author" placeholder instead of disappearing.
-    let posts = await sanitizePostRows(postsRes.rows);
+    // Hype is now a vote (post_hypes table), not a wrapper post. Any leftover
+    // community_hype rows from the pre-347 model are dropped so the wall is as
+    // clean as the community feed — no more "removed by author" placeholders.
+    let posts = await sanitizePostRows(postsRes.rows, { hideDeletedHypeOriginals: true });
     // Filter exclusive creator posts the viewer hasn't subscribed to (mirrors getFeed behaviour)
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
@@ -840,6 +858,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService.hydrateTopHypers(posts);
 
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
     return { profile, posts, nextCursor };
@@ -1023,6 +1042,141 @@ class SocialPostService {
     return { liked: rows[0].liked ?? false, likes_count: rows[0].likes_count };
   }
 
+  // ── Hype vote (post_hypes, migration 347) ────────────────────────────────
+  //
+  // Hype is a viewer-cast boost, NOT a repost. Each vote lives in post_hypes
+  // with a 7-day TTL; expired votes stop counting toward hype_score and stop
+  // showing in the "Hyped by" attribution. We denormalize hype_score on the
+  // post row for fast read-time boost application; the true source of truth
+  // is `SELECT SUM(weight) FROM post_hypes WHERE post_id=$1 AND expires_at>NOW()`.
+  static async toggleHype(postId, userId) {
+    const EntitlementAccessService = require('./entitlementAccessService');
+    // Super-god actors don't move real numbers (mirrors toggleLike behavior).
+    if (EntitlementAccessService.isSuperGod(userId)) {
+      const { rows } = await query(
+        `SELECT COALESCE(hype_score, 0) AS hype_score FROM social_posts WHERE id=$1 AND is_deleted=false`,
+        [postId]
+      );
+      if (!rows[0]) return { hyped: false, hype_score: 0, superGod: true };
+      return { hyped: true, hype_score: rows[0].hype_score, superGod: true };
+    }
+
+    // Reject hyping deleted posts, exclusive posts (paywall bypass surface),
+    // or posts whose author has disabled sharing.
+    const { rows: chk } = await query(
+      `SELECT user_id, is_deleted, is_exclusive, is_shareable, COALESCE(content_tier,'free') AS content_tier
+         FROM social_posts WHERE id=$1`,
+      [postId]
+    );
+    if (!chk[0] || chk[0].is_deleted) {
+      const err = new Error('Post not found'); err.code = 'POST_NOT_FOUND'; err.status = 404; throw err;
+    }
+    if (chk[0].is_exclusive || String(chk[0].content_tier).toLowerCase() === 'prime') {
+      const err = new Error('Cannot hype exclusive content'); err.code = 'EXCLUSIVE'; err.status = 403; throw err;
+    }
+    if (chk[0].is_shareable === false) {
+      const err = new Error('Author disabled hype for this post'); err.code = 'NOT_SHAREABLE'; err.status = 403; throw err;
+    }
+
+    // Toggle: remove the vote if present + active; otherwise upsert a fresh
+    // 7-day vote. `expires_at` is refreshed on re-hype so repeat engagement
+    // extends the boost window (mirrors YouTube Hype).
+    const { rows: existing } = await query(
+      `SELECT weight, expires_at FROM post_hypes WHERE user_id=$1::text AND post_id=$2`,
+      [String(userId), postId]
+    );
+
+    let hyped;
+    if (existing[0] && new Date(existing[0].expires_at).getTime() > Date.now()) {
+      await query(`DELETE FROM post_hypes WHERE user_id=$1::text AND post_id=$2`, [String(userId), postId]);
+      hyped = false;
+    } else {
+      await query(
+        `INSERT INTO post_hypes (user_id, post_id, weight, created_at, expires_at)
+         VALUES ($1::text, $2, 1, NOW(), NOW() + INTERVAL '7 days')
+         ON CONFLICT (user_id, post_id) DO UPDATE
+           SET weight = 1, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'`,
+        [String(userId), postId]
+      );
+      hyped = true;
+    }
+
+    // Resync denormalized hype_score from the vote table (cheap — indexed).
+    const { rows: scoreRows } = await query(
+      `UPDATE social_posts
+          SET hype_score = COALESCE(
+            (SELECT SUM(weight)::int FROM post_hypes WHERE post_id=$1 AND expires_at > NOW()),
+            0)
+        WHERE id=$1
+        RETURNING COALESCE(hype_score, 0) AS hype_score`,
+      [postId]
+    );
+
+    return { hyped, hype_score: scoreRows[0]?.hype_score ?? 0 };
+  }
+
+  // Top hypers for the "🔥 Hyped by @a, @b and N others" chip. Returns
+  // { hypers: [{id, username, first_name, photo_file_id}], total }.
+  static async getHypers(postId, limit = 10) {
+    const lim = Math.min(Math.max(1, Number(limit) || 10), 50);
+    const [hypersRes, countRes] = await Promise.all([
+      query(
+        `SELECT u.id, u.username, u.first_name, u.photo_file_id
+           FROM post_hypes ph
+           JOIN users u ON u.id = ph.user_id
+          WHERE ph.post_id = $1 AND ph.expires_at > NOW()
+          ORDER BY ph.created_at DESC
+          LIMIT $2`,
+        [postId, lim]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS n FROM post_hypes WHERE post_id=$1 AND expires_at > NOW()`,
+        [postId]
+      ),
+    ]);
+    return {
+      hypers: hypersRes.rows.map(r => ({
+        ...r,
+        photo_file_id: isValidPhotoUrl(r.photo_file_id) ? r.photo_file_id : null,
+      })),
+      total: countRes.rows[0]?.n || 0,
+    };
+  }
+
+  // Batched hydrator: attach `top_hypers` (array of up to 3 handles/avatars)
+  // to each post that has any active votes. One SQL round-trip regardless of
+  // page size. Called by feed queries after sanitizePostRows so the frontend
+  // can render attribution without a per-card fetch.
+  static async hydrateTopHypers(posts, perPost = 3) {
+    if (!Array.isArray(posts) || posts.length === 0) return posts;
+    const ids = posts.filter(p => Number(p?.hype_score) > 0).map(p => p.id);
+    if (ids.length === 0) return posts;
+    const { rows } = await query(
+      `SELECT * FROM (
+         SELECT
+           ph.post_id,
+           u.id AS user_id, u.username, u.first_name, u.photo_file_id,
+           ROW_NUMBER() OVER (PARTITION BY ph.post_id ORDER BY ph.created_at DESC) AS rn
+         FROM post_hypes ph
+         JOIN users u ON u.id = ph.user_id
+         WHERE ph.post_id = ANY($1::int[]) AND ph.expires_at > NOW()
+       ) t
+       WHERE t.rn <= $2`,
+      [ids, perPost]
+    );
+    const byPost = new Map();
+    for (const r of rows) {
+      if (!byPost.has(r.post_id)) byPost.set(r.post_id, []);
+      byPost.get(r.post_id).push({
+        id: r.user_id,
+        username: r.username,
+        first_name: r.first_name,
+        photo_file_id: isValidPhotoUrl(r.photo_file_id) ? r.photo_file_id : null,
+      });
+    }
+    return posts.map(p => byPost.has(p.id) ? { ...p, top_hypers: byPost.get(p.id) } : p);
+  }
+
   // ── Delete Post ───────────────────────────────────────────────────────────
 
   static async deletePost(postId, userId, isAdmin = false) {
@@ -1113,7 +1267,8 @@ class SocialPostService {
 
     if (viewerId) {
       params.push(viewerId);
-      likedSubquery = `, EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$${params.length}) as liked_by_me`;
+      likedSubquery = `, EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$${params.length}) as liked_by_me`
+        + `, EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$${params.length}::text AND ph.expires_at > NOW()) as hyped_by_me`;
     }
     if (cursorId) {
       params.push(cursorId);
@@ -1129,6 +1284,7 @@ class SocialPostService {
                 COALESCE(sp.content_tier, 'free') as content_tier,
                 u.id as author_id, u.username as author_username,
                 u.first_name as author_first_name, u.photo_file_id as author_photo,
+                COALESCE(sp.hype_score, 0) AS hype_score,
                 (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
                 ${likedSubquery}
          FROM social_posts sp
@@ -1199,12 +1355,12 @@ class SocialPostService {
       }
     }
 
-    // Public profile keeps hype rows even when the original was deleted —
-    // the row renders an "eliminated by author" placeholder instead of
-    // disappearing from the wall (Carlos: preserve activity, no media theft).
-    let posts = (await sanitizePostRows(postsRes.rows)).map(p => ({
+    // Hype-as-vote (post_hypes, migration 347) — drop any legacy community_hype
+    // wrapper rows so the profile wall stays as clean as the community feed.
+    let posts = (await sanitizePostRows(postsRes.rows, { hideDeletedHypeOriginals: true })).map(p => ({
       ...p,
       liked_by_me: viewerId ? p.liked_by_me : false,
+      hyped_by_me: viewerId ? Boolean(p.hyped_by_me) : false,
     }));
 
     if (viewerTier) {
@@ -1214,6 +1370,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService.hydrateTopHypers(posts);
 
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
     const postCount = postCountRes.rows[0]?.count || 0;
@@ -1310,6 +1467,8 @@ class SocialPostService {
                    AND sp2.media_type = 'video' AND sp2.is_deleted = false)
               ) AS author_exclusive_video_count,
               EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
               hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
@@ -1410,6 +1569,7 @@ class SocialPostService {
       posts = SocialPostService._diversifyFeed(posts);
       posts = await SocialPostService._applyDiscoveryBoost(posts);
     }
+    posts = await SocialPostService.hydrateTopHypers(posts);
 
     const page = posts.slice(0, lim);
     // 'hot' does not paginate (small bounded window)

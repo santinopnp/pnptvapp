@@ -8593,6 +8593,8 @@ app.post('/api/webapp/social/posts/mux-finalize', requireSessionAuth, require225
 }));
 
 app.post('/api/webapp/social/posts/:postId/like', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.toggleLike));
+app.post('/api/webapp/social/posts/:postId/hype', requireSessionAuth, socialActionLimiter, asyncHandler(socialController.toggleHype));
+app.get('/api/webapp/social/posts/:postId/hypers', asyncHandler(socialController.getHypers));
 
 // ── Helper: extract N evenly-spaced still frames + duration from a video file. ──
 // Runs ffmpeg/ffprobe on the local /directus-uploads volume mount; uploads each
