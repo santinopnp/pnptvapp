@@ -16,7 +16,7 @@ import {
   useParticipants,
 } from "@livekit/components-react";
 import type { TrackReferenceOrPlaceholder } from "@livekit/components-react";
-import { ConnectionState, RoomEvent, Track, VideoQuality } from "livekit-client";
+import { ConnectionState, DisconnectReason, RoomEvent, Track, VideoQuality } from "livekit-client";
 import type { RemoteTrackPublication } from "livekit-client";
 import type { LocalUserChoices } from "@livekit/components-core";
 import { useI18n } from "@/lib/i18n";
@@ -33,6 +33,7 @@ interface LiveKitCallPanelProps {
   durationLabel?: string;
   initialChoices?: LocalUserChoices | null;
   onCallEnded?: () => void;
+  onCallError?: (message: string) => void;
   isModerator?: boolean;
 }
 
@@ -148,6 +149,10 @@ function CallOverlay({
           setPresenceToasts((curr) => curr.filter((x) => x.id !== t.id));
         }, 3000)
       );
+      // Always update the baseline refs so the next render diffs against the
+      // current snapshot — even when toasts were emitted this cycle.
+      prevRemoteIdsRef.current = currentIds;
+      prevRemoteNamesRef.current = currentNames;
       return () => timers.forEach(clearTimeout);
     }
 
@@ -347,6 +352,7 @@ function LiveKitCallPanel({
   startedBy = null,
   initialChoices = null,
   onCallEnded,
+  onCallError,
   isModerator = false,
 }: LiveKitCallPanelProps) {
   const [activeToken, setActiveToken] = useState<string | null>(token);
@@ -423,7 +429,7 @@ function LiveKitCallPanel({
 
   // LiveKit disconnect event also fires /leave so the participant row closes
   // even if the component stays mounted (e.g. remote end-of-call).
-  const handleDisconnected = useCallback(() => {
+  const handleDisconnected = useCallback((reason?: DisconnectReason) => {
     if (!hasLeftRef.current && roomName) {
       hasLeftRef.current = true;
       const groupId = extractGroupId(roomName);
@@ -433,8 +439,17 @@ function LiveKitCallPanel({
         }).catch(() => {});
       }
     }
+    // Surface token / auth related disconnects as a user-visible error rather
+    // than silently closing the dock. STATE_MISMATCH and JOIN_FAILURE are the
+    // closest equivalents to token expiry in this version of the LiveKit protocol.
+    if (
+      reason === DisconnectReason.STATE_MISMATCH ||
+      reason === DisconnectReason.JOIN_FAILURE
+    ) {
+      onCallError?.("Tu sesión expiró. Por favor vuelve a unirte a la llamada.");
+    }
     onCallEnded?.();
-  }, [roomName, onCallEnded]);
+  }, [roomName, onCallEnded, onCallError]);
 
   const handleConnected = useCallback(() => {
     setConnectedAt(Date.now());

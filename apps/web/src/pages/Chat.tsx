@@ -2182,6 +2182,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       setCallRoomName(result.roomName);
       setCallLivekitUrl(result.livekitUrl || "wss://livekit.pnptv.app");
       setShowTelegramDock(true);
+      setCallError(null);
       setCallPanelDismissed(false);
       // Scroll the dock into view — it mounts inline in the chat column, so
       // if the user was scrolled elsewhere the dock can otherwise be off-screen.
@@ -2432,7 +2433,14 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           deepLinkHandled.current = true;
           openChat(data.group as any);
         }
-      } catch { /* silent */ }
+      } catch (err: unknown) {
+        if (err instanceof ApiError && (err.status === 403 || err.status === 402)) {
+          setChatError("No tienes acceso a este hangout.");
+          setTimeout(() => setChatError(null), 6000);
+        }
+        // Other errors (404, network) are silently ignored — the group list
+        // simply won't open the deep-linked group.
+      }
     })();
   }, [urlGroupId, isLoading, groups]);
 
@@ -3413,6 +3421,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           durationLabel={callDuration}
           initialChoices={preJoinChoices}
           isModerator={isOwnerOrMod}
+          onCallError={(msg) => setCallError(msg)}
           onCallEnded={() => { setShowTelegramDock(false); setCallToken(null); setCallRoomName(null); }}
         />
 

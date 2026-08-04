@@ -402,20 +402,20 @@ export function useHangoutMusic({ groupId, isModerator, duckActive }: UseHangout
   // ── Cristina actions ──────────────────────────────────────────────────────
 
   const cristinaAttach = useCallback(() => {
-    if (!groupId) return;
+    if (!groupId || !isModerator) return;
     const socket = connectSocket();
     socket.emit("hangout:cristina:attach", { groupId });
-  }, [groupId]);
+  }, [groupId, isModerator]);
 
   const cristinaAsk = useCallback(
     (prompt: string) => {
-      if (!groupId) return;
+      if (!groupId || !isModerator) return;
       const trimmed = prompt.trim();
       if (trimmed.length < 2) return;
       const socket = connectSocket();
       socket.emit("hangout:cristina:ask", { groupId, prompt: trimmed });
     },
-    [groupId]
+    [groupId, isModerator]
   );
 
   const cristinaPlayVideo = useCallback(
