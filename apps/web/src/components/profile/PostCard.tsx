@@ -619,7 +619,12 @@ export default function PostCard({
   // migration 347). No wrapper posts to translate authorship for any more.
 
   return (
-    <div className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]">
+    <div
+      className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]"
+      style={hypeCount > 0
+        ? { borderLeft: "3px solid transparent", borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1", background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)" }
+        : undefined}
+    >
       {/* ── Exclusive lock overlay (non-owner, non-subscriber) ── */}
       {isExclusiveLocked && (
         showCreatorSubWizard && post.unlock_target !== "prime" ? (
@@ -1455,17 +1460,17 @@ export default function PostCard({
                     hypeInFlight.current = false;
                   }
                 }}
-                className="flex items-center gap-1 text-xs transition-colors"
-                style={hypePosted ? { color: '#FF9500' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                className="flex items-center gap-1.5 text-xs transition-all"
+                style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
                 title={hypePosted ? 'Un-hype' : 'Hype this post'}
                 aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
                 aria-pressed={hypePosted}
               >
-                <svg className="w-4 h-4" fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
+                <svg className={hypePosted ? "w-5 h-5" : "w-4 h-4"} fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
                 </svg>
-                <span className="tabular-nums">{hypeCount > 0 ? hypeCount : ''}</span>
+                <span className={`tabular-nums${hypePosted ? ' font-semibold' : ''}`}>{hypeCount > 0 ? hypeCount : ''}</span>
               </button>
             )}
 
@@ -1475,35 +1480,45 @@ export default function PostCard({
             <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
           )}
 
-          {/* 🔥 Hype attribution chip — recent hypers + total */}
+          {/* 🔥 Hype attribution banner — hyped posts get a warm tinted row */}
           {hypeCount > 0 && (
-            <div className="mt-2 flex items-center gap-2 text-[11px]">
-              <div className="flex -space-x-1.5">
-                {(post.top_hypers || []).slice(0, 3).map((h) => (
-                  <UserAvatar
-                    key={h.id}
-                    userId={h.id}
-                    photoUrl={h.photo_file_id}
-                    displayName={h.first_name || h.username}
-                    size="xs"
-                    className="ring-2 ring-black/60"
-                    showOnline={false}
-                    linkToProfile={false}
-                  />
-                ))}
-              </div>
-              <span className="text-white/70">
-                <span className="text-orange-400 font-semibold">🔥</span>{' '}
+            <div
+              className="mt-2 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px]"
+              style={{ background: "linear-gradient(90deg, rgba(255,149,0,0.10), rgba(255,59,48,0.06))", border: "1px solid rgba(255,149,0,0.22)" }}
+            >
+              <span className="text-base leading-none flex-shrink-0" style={{ filter: "drop-shadow(0 0 6px rgba(255,149,0,0.85))" }}>🔥</span>
+              {(post.top_hypers || []).length > 0 && (
+                <div className="flex -space-x-1.5 flex-shrink-0">
+                  {(post.top_hypers || []).slice(0, 3).map((h) => (
+                    <UserAvatar
+                      key={h.id}
+                      userId={h.id}
+                      photoUrl={h.photo_file_id}
+                      displayName={h.first_name || h.username}
+                      size="xs"
+                      className="ring-2 ring-black/60"
+                      showOnline={false}
+                      linkToProfile={false}
+                    />
+                  ))}
+                </div>
+              )}
+              <span className="text-white/80 flex-1 min-w-0 truncate">
                 {(post.top_hypers && post.top_hypers.length > 0) ? (
                   <>
-                    {(post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone')}
-                    {hypeCount > 1 && <> and <span className="text-white font-medium">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
+                    <span className="text-white font-semibold">{post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone'}</span>
+                    {hypeCount > 1 && <> and <span className="text-orange-400 font-semibold">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
                     {' '}hyped this
                   </>
                 ) : (
-                  <><span className="text-white font-medium">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
+                  <><span className="text-orange-400 font-bold">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
                 )}
               </span>
+              {hypeCount >= 5 && (
+                <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-black" style={{ background: "linear-gradient(135deg, #FF9500, #FF3B30)" }}>
+                  HOT
+                </span>
+              )}
             </div>
           )}
 
