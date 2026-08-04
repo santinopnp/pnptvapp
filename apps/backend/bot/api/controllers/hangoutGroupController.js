@@ -2015,7 +2015,9 @@ const promoteMember = async (req, res) => {
     const callerRole = callerRows[0].role;
 
     // Only owner can promote to admin. Owner or admin can promote to moderator.
-    if (toRole === 'admin' && callerRole !== 'owner' && user.role !== 'admin' && user.role !== 'superadmin') {
+    // System-admins may manage other members but cannot self-promote to group admin.
+    const isSysAdmin = user.role === 'admin' || user.role === 'superadmin';
+    if (toRole === 'admin' && callerRole !== 'owner' && !(isSysAdmin && String(targetId) !== String(user.id))) {
       return res.status(403).json({ error: 'Only the owner can promote to admin' });
     }
     if (toRole === 'moderator' && callerRole !== 'owner' && callerRole !== 'admin' && user.role !== 'admin' && user.role !== 'superadmin') {
