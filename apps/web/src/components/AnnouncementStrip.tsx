@@ -48,6 +48,12 @@ const MARQUEE_END_PAD_PX = 12; // ensure the last character clears the edge
 const UPDATE_MESSAGES: RawMessage[] = [
   {
     category: "UPDATE",
+    en: "💎 Ru$h is here! PNPtv!'s new in-house currency — bulk bonuses up to +25%. Tap to top up →",
+    es: "💎 ¡Llegó Ru$h! La nueva moneda interna de PNPtv! — bonos de hasta +25%. Toca para recargar →",
+    href: "/wallet",
+  },
+  {
+    category: "UPDATE",
     en: "💰 New to crypto? Setup a wallet in 5 min + earn 100 free tokens. Tap here →",
     es: "💰 ¿Nuevo en cripto? Setup en 5 min + gana 100 tokens gratis. Toca aquí →",
     href: "/crypto-guide",
