@@ -1,4 +1,11 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
+
+const PRIME_PLANS = [
+  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
+  { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
+  { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
+] as const;
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { SharePostModal } from "@/components/SharePostModal";
@@ -448,6 +455,8 @@ export default function SocialPostCard({
   // inline — same widget the creator-profile "Subscribe" button opens. This
   // keeps the UX identical across every creator-sub entry point.
   const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);
+  // PRIME plan picker — expands the collapsed banner into an inline plan grid.
+  const [showPrimePlanPicker, setShowPrimePlanPicker] = useState(false);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -1573,38 +1582,118 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* PRIME upsell micro-banner — Santino & Lex free posts push PRIME.
-                  Opens NowPayments popup inline (no /subscribe redirect). */}
+              {/* PRIME plan picker — Santino & Lex free posts. Collapsed pill expands
+                  into a compact plan grid; each plan fires its own NP popup. */}
               {showPrimeUpsell && !primeUpsellDismissed && (
-                <div
-                  onClick={(e) => { e.stopPropagation(); inlineCheckout.start({ planId: "monthly-pass", isSubscription: false, storageKey: "pnp_pending_prime_banner" }); }}
-                  className="mt-2 cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
-                  style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-xs">🔥</span>
-                    <span className="text-pink-200 truncate">
-                      {lang === "es"
-                        ? "Hazte PRIME — Contenido exclusivo Telegram + Hangouts"
-                        : "Become PRIME — Exclusive Telegram content + Hangouts"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span
-                      className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm"
-                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  {showPrimePlanPicker ? (
+                    /* Expanded plan grid */
+                    <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">🔥</span>
+                          <span className="text-xs font-bold text-pink-200">
+                            {lang === "es" ? "Elige tu plan PRIME" : "Choose your PRIME plan"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setShowPrimePlanPicker(false); dismissPrimeUpsell(); }}
+                          aria-label="Close"
+                          className="text-white/40 hover:text-white transition-colors text-base leading-none px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      {/* Plan rows */}
+                      <div className="p-2.5 space-y-2">
+                        {PRIME_PLANS.map((plan) => (
+                          <div
+                            key={plan.id}
+                            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${
+                              plan.recommended
+                                ? "border-pink-500/50 bg-pink-500/10"
+                                : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              {plan.recommended && (
+                                <div className="text-[10px] font-bold text-pink-400 uppercase tracking-wider mb-0.5">
+                                  ★ {lang === "es" ? "Mejor valor" : "Best value"}
+                                </div>
+                              )}
+                              <div className="text-[12px] font-semibold text-white leading-tight">{plan.label}</div>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[10px] text-white/50">{plan.duration}</span>
+                                {plan.isRecurring && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                    {lang === "es" ? "Recurrente" : "Recurring"}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <div className="text-right">
+                                <span className="text-sm font-black text-white">${plan.price}</span>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={inlineCheckout.launching}
+                                onClick={() => inlineCheckout.start({ planId: plan.id, isSubscription: plan.isRecurring, storageKey: "pnp_pending_prime_banner" })}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap"
+                                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                              >
+                                {inlineCheckout.launching ? "…" : (lang === "es" ? "Suscribir" : "Subscribe")}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Footer link */}
+                      <div className="px-3 pb-2.5 text-center">
+                        <a
+                          href="/subscribe"
+                          className="text-[10px] text-white/40 hover:text-white/70 transition-colors underline decoration-dotted"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {lang === "es" ? "Ver todos los detalles en /subscribe" : "Full details at /subscribe"}
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Collapsed pill */
+                    <div
+                      className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
+                      style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
+                      onClick={() => setShowPrimePlanPicker(true)}
                     >
-                      {inlineCheckout.launching ? (lang === "es" ? "…" : "…") : (lang === "es" ? "Hazte PRIME" : "Become PRIME")}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
-                      aria-label="Dismiss"
-                      className="text-white/50 hover:text-white text-xs px-1"
-                    >
-                      ×
-                    </button>
-                  </div>
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-xs">🔥</span>
+                        <span className="text-pink-200 truncate">
+                          {lang === "es"
+                            ? "Hazte PRIME — Contenido exclusivo + Hangouts"
+                            : "Become PRIME — Exclusive content + Hangouts"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span
+                          className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          {lang === "es" ? "Ver planes →" : "See plans →"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }}
+                          aria-label="Dismiss"
+                          className="text-white/50 hover:text-white text-xs px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
