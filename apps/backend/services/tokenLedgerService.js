@@ -89,12 +89,17 @@ async function credit(opts) {
   if (giftedDelta > 0) {
     try {
       const { rows: roleRows } = await query(
-        `SELECT role FROM users WHERE id = $1 LIMIT 1`, [String(userId)]
+        `SELECT role, creator_status FROM users WHERE id = $1 LIMIT 1`, [String(userId)]
       );
       const role = roleRows[0]?.role;
-      if (role === 'creator' || role === 'model') {
+      const creatorStatus = roleRows[0]?.creator_status;
+      // Block on BOTH signals: role bump (creator/model) OR creator_status='active'.
+      // Some users have creator_status='active' while role stays 'user' — that's
+      // still a creator for gifted-guard purposes.
+      const isCreator = role === 'creator' || role === 'model' || creatorStatus === 'active';
+      if (isCreator) {
         logger.warn('[tokenLedger] gifted delta dropped — recipient is a creator/model', {
-          userId, role, giftedDelta, reason, sourceType, sourceId, actorId,
+          userId, role, creatorStatus, giftedDelta, reason, sourceType, sourceId, actorId,
         });
         giftedDelta = 0;
         if (balanceDelta === 0) {

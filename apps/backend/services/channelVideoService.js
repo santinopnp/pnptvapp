@@ -491,7 +491,11 @@ async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUserna
       void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'no-consent' });
       return { skipped: true, reason: 'no-consent' };
     }
-    const creatorXHandle = rows[0]?.x_username ? String(rows[0].x_username).replace(/^@/, '') : null;
+    // Strict validation before interpolating into tweet text — a stored value
+    // containing newlines or URLs would inject rogue content into every post.
+    // X handles are ≤15 chars in practice, but allow up to 50 to be lenient.
+    const rawHandle = rows[0]?.x_username ? String(rows[0].x_username).replace(/^@/, '').trim() : null;
+    const creatorXHandle = rawHandle && /^[A-Za-z0-9_]{1,50}$/.test(rawHandle) ? rawHandle : null;
 
     const redis = getRedis();
     const rlKey = `pnp:auto-announce:x:rl:creator:${creatorId}`;
@@ -505,7 +509,7 @@ async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUserna
     const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
     // Deep-link to the creator's profile so followers grow the creator directly.
     // /c/{username} is the canonical creator profile page (router.tsx:772).
-    const shareUrl = creatorUsername ? `${appUrl}/c/${creatorUsername}` : `${appUrl}/channels`;
+    const shareUrl = creatorUsername ? `${appUrl}/c/${encodeURIComponent(creatorUsername)}` : `${appUrl}/channels`;
     const handle = creatorUsername ? `@${creatorUsername}` : 'a PNPtv! creator';
     // Cross-platform tag: PNPtv @-mention (grows their X presence) + our handle
     const xHandleTag = creatorXHandle ? ` (X: @${creatorXHandle})` : '';
@@ -587,7 +591,7 @@ async function announceVideoToTelegramGroups({ videoId, promoPostId, creatorId, 
 
     const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
     // Deep-link to creator profile so the tap grows the creator, not a single video.
-    const shareUrl = creatorUsername ? `${appUrl}/c/${creatorUsername}` : `${appUrl}/channels`;
+    const shareUrl = creatorUsername ? `${appUrl}/c/${encodeURIComponent(creatorUsername)}` : `${appUrl}/channels`;
     const handle = creatorUsername ? `@${creatorUsername}` : 'un creador';
     const safeTitle = (title || '').toString().trim().slice(0, 160);
     // Bilingual — ES first (LatAm-heavy audience), EN below
@@ -836,7 +840,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       // Deep-link to creator profile /c/{username} (canonical). Falls back to
       // /channels when the creator username is missing (rare — legacy rows).
       const creatorProfileUrl = ch.creator_username
-        ? `${appUrl}/c/${ch.creator_username}`
+        ? `${appUrl}/c/${encodeURIComponent(ch.creator_username)}`
         : `${appUrl}/channels`;
       const promoContent = [
         `🎬 NEW on PNP Channels: ${final.title}`,

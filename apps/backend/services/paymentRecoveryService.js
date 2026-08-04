@@ -1077,7 +1077,9 @@ class PaymentRecoveryService {
                     orderId: row.order_id, httpStatus, planId: row.plan_id,
                   });
                   await query(
-                    `UPDATE dash_subscription_orders SET status = 'expired', notes = COALESCE(notes || ' ', '') || '[reconciler_np_${httpStatus}]', completed_at = NOW()
+                    // completed_at is intentionally NOT set — it means "money settled".
+                    // An expired order is terminated, not completed; the notes tag records why.
+                    `UPDATE dash_subscription_orders SET status = 'expired', notes = COALESCE(notes || ' ', '') || '[reconciler_np_${httpStatus}]'
                      WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','expired')`,
                     [row.order_id]
                   ).catch(() => {});
