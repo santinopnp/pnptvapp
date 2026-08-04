@@ -273,13 +273,14 @@ export default function PostCard({
   const p = t.profile;
   const { feed: ft } = useI18n();
   const { user } = useAuth();
-  const { isPrime } = useTier();
+  const { isPrime, tier: viewerTier } = useTier();
   const navigate = useNavigate();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const isSantinoOrLex =
     PRIME_UPSELL_CREATOR_IDS.has(post.author_id) ||
     ["santinofurioso", "pnplatinoboy", "pnplatinotv"].includes(String(post.author_username || "").toLowerCase());
-  const showPrimeUpsell = isSantinoOrLex && !isPrime && !post.is_exclusive && String(user?.id ?? "") !== String(post.author_id);
+  // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
+  const showPrimeUpsell = isSantinoOrLex && viewerTier !== "prime" && !post.is_exclusive && String(user?.id ?? "") !== String(post.author_id);
   const upsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(upsellKey) === "1"; } catch { return false; }

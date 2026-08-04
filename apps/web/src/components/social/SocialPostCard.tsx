@@ -395,7 +395,7 @@ export default function SocialPostCard({
   const hasRealPostId = Number(post.id) > 0;
   const canDelete = hasRealPostId && (isOwn || isAdmin);
   const { user } = useAuth();
-  const { isPrime } = useTier();
+  const { isPrime, tier: viewerTier } = useTier();
   const channelPromoCta = resolveChannelPromoCta(
     post.metadata as Record<string, unknown> | undefined,
     !!isPrime,
@@ -408,10 +408,11 @@ export default function SocialPostCard({
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
   // Santino & Lex's videos push Become PRIME (classic Telegram content + 2 Hangouts);
   // every other active creator pushes membership for exclusive content, channel & private hangout.
+  // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
   const isSantinoOrLex =
     ["8599671840", "8552451957", "7246621722"].includes(String(post.author_id)) ||
     ["santinofurioso", "pnplatinoboy", "pnptv"].includes(String(post.author_username || "").toLowerCase());
-  const showPrimeUpsell = isSantinoOrLex && !isPrime && !post.is_exclusive && !isOwn;
+  const showPrimeUpsell = isSantinoOrLex && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
