@@ -235,6 +235,7 @@ interface InlineCheckoutArgs {
   creatorId?: string;
   isSubscription?: boolean;
   storageKey?: string;
+  payCurrency?: string;
 }
 
 export function useInlineNpCheckout(opts: { onSuccess?: () => void } = {}) {
@@ -260,7 +261,7 @@ export function useInlineNpCheckout(opts: { onSuccess?: () => void } = {}) {
       undefined,
       args.creatorId,
       args.isSubscription,
-      undefined,
+      args.payCurrency,
       undefined,
       args.storageKey,
     );
