@@ -375,7 +375,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
 
   const es = t.lang === "es";
   const headerTitle = buyMethod === 'select'
-    ? (es ? 'Comprar Tokens' : 'Buy Tokens')
+    ? (es ? 'Comprar Ru$h 💎' : 'Buy Ru$h 💎')
     : (es ? 'Elige tu paquete' : 'Choose your package');
 
   return (
@@ -449,7 +449,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
               </div>
             )}
             <p className="text-xs text-pnp-textSecondary mb-3">
-              Selecciona cómo quieres comprar tus tokens.
+              Selecciona cómo quieres comprar Ru$h 💎.
             </p>
 
             {/* Crypto — NowPayments multi-coin with inline coin picker */}
@@ -631,7 +631,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                   </svg>
                 </div>
                 <p className="text-base font-semibold text-green-400">¡Tokens agregados!</p>
-                <p className="text-xs text-pnp-textSecondary">Tus tokens ya están disponibles.</p>
+                <p className="text-xs text-pnp-textSecondary">Tus Ru$h 💎 ya están disponibles.</p>
               </div>
             ) : dashSecondsLeft === 0 ? (
               <div className="flex flex-col items-center gap-3 py-6">
@@ -761,7 +761,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                   </svg>
                 </div>
                 <p className="text-base font-semibold text-green-400">¡Tokens agregados!</p>
-                <p className="text-xs text-pnp-textSecondary">Tus tokens ya están disponibles.</p>
+                <p className="text-xs text-pnp-textSecondary">Tus Ru$h 💎 ya están disponibles.</p>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-4 py-4">
@@ -854,7 +854,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
               <>
                 <p className="text-xs text-pnp-textSecondary leading-relaxed">
                   {es
-                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tus tokens."
+                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tus Ru$h 💎."
                     : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your tokens."}
                 </p>
 

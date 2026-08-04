@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { 
-  getUsdcSubscriptionStatus, 
-  prepareUsdcSubscription 
+import {
+  getUsdcSubscriptionStatus,
+  prepareUsdcSubscription,
+  assertPaymentUrl,
 } from "@/lib/api";
 import { isTelegramContext } from "@/lib/telegram";
 
@@ -120,12 +121,15 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
     };
   }, [order, isPolling, isSuccess, storageKey, onSuccess, onError]);
 
-  const startPayment = useCallback(async (planId: string, email?: string, creatorId?: string, isSubscription?: boolean, payCurrency?: string, promoCode?: string) => {
+  const startPayment = useCallback(async (planId: string, email?: string, creatorId?: string, isSubscription?: boolean, payCurrency?: string, promoCode?: string, storageKeyOverride?: string) => {
     setError(null);
     setIsSuccess(false);
 
     try {
-      const endpoint = isSubscription ? "/api/webapp/payments/usdc/subscribe" : "/api/webapp/payments/usdc/prepare";
+      // creator_monthly ALWAYS uses /prepare (per feedback_creator_sub_uses_prepare.md).
+      // The /subscribe endpoint only knows PRIME-tier NP subscription plans.
+      const useSubscribe = isSubscription === true && planId !== "creator_monthly";
+      const endpoint = useSubscribe ? "/api/webapp/payments/usdc/subscribe" : "/api/webapp/payments/usdc/prepare";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -160,7 +164,8 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
 
         setOrder(newOrder);
         setIsPolling(true);
-        sessionStorage.setItem(storageKey, JSON.stringify(newOrder));
+        const effectiveKey = storageKeyOverride || storageKey;
+        sessionStorage.setItem(effectiveKey, JSON.stringify(newOrder));
 
         if (isTelegramContext()) {
           window.Telegram!.WebApp.openLink(result.invoiceUrl);
@@ -178,7 +183,7 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
       onError?.(msg);
       return { success: false, error: msg };
     }
-  }, [storageKey, onError]);
+  }, [storageKey, onError, returnUrl]);
 
   const cancelOrder = useCallback(() => {
     setOrder(null);
@@ -197,5 +202,127 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
     startPayment,
     cancelOrder,
     setError,
+  };
+}
+
+// One-shot inline checkout: opens a NowPayments popup for the given plan
+// (optionally scoped to a creator) and shows the crypto onboarding guide
+// modal on the user's first-ever NP checkout. All paywall/upsell CTAs route
+// through this so we never redirect to /subscribe.
+const CRYPTO_GUIDE_SEEN_KEY = "pnp_crypto_guide_completed_v1";
+const NP_POPUP_W = 520;
+const NP_POPUP_H = 720;
+
+function centeredNpPopup(url: string) {
+  const left = Math.round(window.screenX + (window.outerWidth - NP_POPUP_W) / 2);
+  const top = Math.round(window.screenY + (window.outerHeight - NP_POPUP_H) / 2);
+  return window.open(
+    url,
+    "nowpayments_checkout",
+    `width=${NP_POPUP_W},height=${NP_POPUP_H},left=${left},top=${top},noopener,noreferrer`
+  );
+}
+
+export function hasSeenCryptoGuide(): boolean {
+  try { return localStorage.getItem(CRYPTO_GUIDE_SEEN_KEY) === "1"; } catch { return false; }
+}
+export function markCryptoGuideSeen() {
+  try { localStorage.setItem(CRYPTO_GUIDE_SEEN_KEY, "1"); } catch { /* ignore */ }
+}
+
+interface InlineCheckoutArgs {
+  planId: string;
+  creatorId?: string;
+  isSubscription?: boolean;
+  storageKey?: string;
+}
+
+export function useInlineNpCheckout(opts: { onSuccess?: () => void } = {}) {
+  const [showGuide, setShowGuide] = useState(false);
+  const [pending, setPending] = useState<InlineCheckoutArgs | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Underlying useNowPayments is instantiated with a stable fallback key.
+  // Per-call storageKey is forwarded through startPayment's override arg so
+  // concurrent paywalls on different creators don't overwrite each other's
+  // pending orders.
+  const { startPayment, order, isSuccess, isConfirming } = useNowPayments({
+    storageKey: "pnp_pending_inline_np",
+    onSuccess: opts.onSuccess,
+  });
+
+  const kick = useCallback(async (args: InlineCheckoutArgs) => {
+    setLaunching(true);
+    setError(null);
+    const result = await startPayment(
+      args.planId,
+      undefined,
+      args.creatorId,
+      args.isSubscription,
+      undefined,
+      undefined,
+      args.storageKey,
+    );
+    setLaunching(false);
+    if (result.success && result.order?.invoiceUrl) {
+      let safeUrl: string;
+      try {
+        safeUrl = assertPaymentUrl(result.order.invoiceUrl);
+      } catch {
+        setError("Invalid payment URL returned. Please try again.");
+        return;
+      }
+      if (isTelegramContext()) {
+        window.Telegram!.WebApp.openLink(safeUrl);
+      } else {
+        const popup = centeredNpPopup(safeUrl);
+        if (!popup) {
+          setError("Your browser blocked the payment window. Please allow popups for this site and try again.");
+        }
+      }
+    } else if (result.error) {
+      setError(result.error);
+    }
+  }, [startPayment]);
+
+  const start = useCallback((args: InlineCheckoutArgs) => {
+    if (hasSeenCryptoGuide()) {
+      kick(args);
+    } else {
+      setPending(args);
+      setShowGuide(true);
+    }
+  }, [kick]);
+
+  const confirmGuideAndStart = useCallback(() => {
+    markCryptoGuideSeen();
+    setShowGuide(false);
+    if (pending) kick(pending);
+  }, [pending, kick]);
+
+  // Skip: close the guide and fire the payment, but do NOT mark the guide
+  // as seen. The user might want to see it next time.
+  const skipGuideAndStart = useCallback(() => {
+    setShowGuide(false);
+    if (pending) kick(pending);
+  }, [pending, kick]);
+
+  const dismissGuide = useCallback(() => {
+    setShowGuide(false);
+    setPending(null);
+  }, []);
+
+  return {
+    start,
+    showGuide,
+    confirmGuideAndStart,
+    skipGuideAndStart,
+    dismissGuide,
+    order,
+    isSuccess,
+    isConfirming,
+    launching,
+    error,
   };
 }

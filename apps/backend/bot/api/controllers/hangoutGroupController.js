@@ -3508,6 +3508,7 @@ module.exports = {
   updateTopic,
   deleteTopic,
   markFirstVisitDone,
+  ensureMainGroupMembership,
 };
 
 // ── LiveKit video calls ──────────────────────────────────────────────────────

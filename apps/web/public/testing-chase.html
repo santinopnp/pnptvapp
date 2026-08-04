@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>PNPtv! Testing — Chase</title>
+<title>PNPtv! Testing</title>
 <style>
   :root {
     --bg:#0d0d10; --card:#17171c; --card2:#1e1e26; --line:#2a2a34;
@@ -96,8 +96,8 @@
 <body>
 <div class="top">
   <div class="brand">
-    <h1>PNPtv! Testing · v2 co-founder rework</h1>
-    <span class="who" id="who">Chase · <span id="verbadge" style="opacity:.65">v4 · CSP-safe · 2026-08-02</span></span>
+    <h1>PNPtv! Testing</h1>
+    <span class="who" id="who">Lead: —</span>
   </div>
   <div class="bar"><i id="pbar"></i></div>
   <div class="barlabel"><span id="pcount">0 / 0</span><span id="ptext">0%</span></div>
@@ -106,15 +106,14 @@
 <main>
 <section class="intro">
   <button class="tag" data-action="start" type="button">START HERE ▶</button>
-  ~2 hours on your <strong>iPhone in Safari</strong>. Everything below is what a normal user should see.
-  <strong>You already have PRIME</strong> on your account — for the <em>free-user</em> checks, open a
-  <strong>Safari Private tab</strong> and stay logged out.
+  <span id="introTxt">Loading scope…</span>
   <br><br>
   Tap each flow to expand. Mark each sub-item ✅ works / ❌ broken / ⚠️ weird.
   When something isn't ✅, a note box appears — jot what happened (screenshots welcome in Slack after).
   <br><br>
   When done → scroll to the bottom → <strong>🚀 Submit to team</strong> → your report + AI triage
-  auto-post to <span class="mono">#testing-chase-the-clouds</span>.
+  auto-post to <span class="mono">#testing-team</span>. Complete the checklist to auto-earn
+  <strong>$30 (180 Ru$h)</strong> — spend it on Santino + Lex.
   <br><br>
   Your progress <strong>saves in this browser</strong>. Close the tab and come back anytime.
   <button class="startbtn" data-action="start" type="button">▶ Start with Flow 1</button>
@@ -127,7 +126,12 @@
   <h3>Slack report — auto-post or copy-paste</h3>
   <div style="margin-bottom:10px">
     <label style="display:block;font-size:12px;color:var(--dim);margin-bottom:4px">Your name (goes in the Slack post)</label>
-    <input id="tname" type="text" placeholder="Chase" value="Chase"
+    <input id="tname" type="text" placeholder="Your name"
+      style="width:100%;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:14px/1 inherit">
+  </div>
+  <div style="margin-bottom:10px">
+    <label style="display:block;font-size:12px;color:var(--dim);margin-bottom:4px">Your PNPtv username <span style="opacity:.65">(so we credit your $30 reward — check the URL bar in <a href="https://pnptv.app/profile" target="_blank">/profile</a>)</span></label>
+    <input id="pnpuser" type="text" placeholder="e.g. CHASETHECLOUDS"
       style="width:100%;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:14px/1 inherit">
   </div>
   <textarea id="report" readonly placeholder="Your ✅/❌/⚠️ summary will appear here as you tick items…"></textarea>
@@ -136,28 +140,11 @@
     <button class="btn ghost" data-action="copy" type="button">📋 Copy</button>
     <button class="btn ghost" data-action="refresh" type="button">↻ Refresh</button>
   </div>
-  <p style="font-size:11px;color:var(--dim);margin:8px 0 0 0">
-    Submit posts your report to <span class="mono">#testing-chase-the-clouds</span> with an AI-generated triage summary.
-    Safe to submit multiple times — each submission creates a fresh row.
+  <p id="submitHint" style="font-size:11px;color:var(--dim);margin:8px 0 0 0">
+    On submit: your report + Grok triage post to #testing-team. If your PNPtv username matches, $30 (180 Ru$h) auto-credits to your wallet.
   </p>
 </div>
 
-<div class="skip">
-  <h3>SKIP — admin-only, Carlos verifies these himself</h3>
-  <ul>
-    <li>Backend PRIME payment splits (creator_earnings 40/40/20 rows)</li>
-    <li>PRIME $0 trial should NOT generate creator_earnings</li>
-    <li>PRIME earnings idempotency on webhook retry</li>
-    <li>Daily reconciler kicks expired PRIME users from 719 + 785</li>
-    <li>Reconciler never kicks Santino or Lex themselves</li>
-    <li>Non-PRIME API-level 402/403 on hangout join</li>
-    <li>POST /super-god/toggle behavior (Redis flag)</li>
-    <li>Non-eligible user 403 on /super-god/toggle</li>
-    <li>Super-god bypass of entitlements / follow / DM block / like counters / call counts</li>
-    <li>useAuth hook returns isSuperGod / isSuperGodEligible flags</li>
-    <li>useCryptoGuideStatus 5-min cache</li>
-  </ul>
-</div>
 </main>
 
 <div class="toast" id="toast">Copied ✓</div>

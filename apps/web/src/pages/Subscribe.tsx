@@ -506,7 +506,7 @@ export default function Subscribe() {
     if (submitting) return;
     const tokenCost = Math.round(planPrice * 6);
     if (tokenBalance !== null && tokenBalance < tokenCost) {
-      setError(t.lang === "es" ? `Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.` : `Not enough Tokens. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
+      setError(t.lang === "es" ? `Ru$h 💎 insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.` : `Not enough Ru$h 💎. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
       return;
     }
     setSelectedPlan(planId);
@@ -517,7 +517,7 @@ export default function Subscribe() {
       const result = await paySubscriptionWithTokens(planId);
       if (!result.success) {
         if (result.code === "INSUFFICIENT_TOKENS") {
-          setError(t.lang === "es" ? `Tokens insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.` : `Not enough Tokens. Need ${(result.required ?? 0).toLocaleString()} F — you have ${(result.current ?? 0).toLocaleString()} F.`);
+          setError(t.lang === "es" ? `Ru$h 💎 insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.` : `Not enough Ru$h 💎. Need ${(result.required ?? 0).toLocaleString()} F — you have ${(result.current ?? 0).toLocaleString()} F.`);
         } else {
           setError(result.error || (t.lang === "es" ? "No se pudo activar el plan." : "Failed to activate plan."));
         }

@@ -1899,7 +1899,7 @@ const getPost = async (req, res) => {
     const viewerId = req.session?.user?.id || null;
     const { rows } = await dbQuery(
       `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url,
-              sp.video_title, sp.video_description,
+              sp.video_title, sp.video_description, sp.metadata,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count,
               sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.is_promoted, sp.created_at,
@@ -1953,8 +1953,11 @@ const getPost = async (req, res) => {
     let lockedReason = contentLocked ? 'not_prime' : null;
 
     // M-2: For exclusive posts where the viewer IS prime, also verify they have an active
-    // creator subscription for this post's author — prime alone is not enough.
-    if (isExclusivePost && !contentLocked && viewerTier === 'prime' && viewerId && !isAuthor && !viewerIsAdmin) {
+    // creator subscription for this post's author — prime alone is not enough,
+    // EXCEPT for Santino/Lex where PRIME entitlement IS the unlock mechanism.
+    const { isPrimeCoFounder } = require('../../../services/entitlementAccessService');
+    const authorIsPrimeCoFounder = isPrimeCoFounder(row.author_id);
+    if (isExclusivePost && !contentLocked && viewerTier === 'prime' && viewerId && !isAuthor && !viewerIsAdmin && !authorIsPrimeCoFounder) {
       try {
         const postAuthorId = String(row.author_id);
         const { rows: subCheck } = await dbQuery(
@@ -1977,6 +1980,21 @@ const getPost = async (req, res) => {
       }
     }
 
+    // Enrichment for the paywall UI (only when locked). Video posts get the
+    // blurred preview clip + inline NP checkout hints.
+    let previewGifUrl = null;
+    let isVideoExclusive = false;
+    if (contentLocked) {
+      const mediaType = (row.media_type || '').toLowerCase();
+      isVideoExclusive = mediaType.startsWith('video');
+      if (isVideoExclusive) {
+        const meta = typeof row.metadata === 'string'
+          ? (() => { try { return JSON.parse(row.metadata); } catch { return null; } })()
+          : (row.metadata || null);
+        previewGifUrl = meta?.preview_gif_url || null;
+      }
+    }
+
     const post = {
       ...row,
       author_photo: isValidPhotoUrl(photo) ? photo : null,
@@ -1996,6 +2014,12 @@ const getPost = async (req, res) => {
       video_thumbnail_url: contentLocked ? null : row.video_thumbnail_url,
       video_title: contentLocked ? null : (row.video_title || null),
       video_description: contentLocked ? null : (row.video_description || null),
+      // Paywall enrichment (only populated when contentLocked === true)
+      preview_gif_url: contentLocked ? previewGifUrl : undefined,
+      is_video_exclusive: contentLocked ? isVideoExclusive : undefined,
+      unlock_target: contentLocked ? (authorIsPrimeCoFounder ? 'prime' : 'creator_sub') : undefined,
+      plan_slug: contentLocked ? (authorIsPrimeCoFounder ? 'monthly-pass' : null) : undefined,
+      creator_channel_url: contentLocked && row.author_username ? `/c/${row.author_username}` : undefined,
     };
     return res.json({ success: true, post });
   } catch (err) {

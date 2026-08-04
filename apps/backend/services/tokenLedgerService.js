@@ -151,15 +151,19 @@ async function credit(opts) {
  * Positive amounts only (converted to negative deltas in ledger).
  * Balance MUST cover the debit — throws { code: 'INSUFFICIENT_FUNDS' } otherwise.
  *
- * Spend priority: gifted_balance drains first, then balance_tokens.
+ * Spend priority (default): balance_tokens only. gifted_balance is a scoped
+ * promo pool spendable only on Santino/Lex live tips (enforced by pnpLiveTipsService's
+ * own SQL — it does not route through this function). Pass `allowGifted: true`
+ * to opt-in to drain-gifted-first behavior for gifted-eligible spend paths.
+ * Pass `giftedOnly: true` to spend gifted_balance exclusively.
  */
 async function debit(opts) {
   const {
     userId, amount = 0,
     reason, sourceType = null, sourceId = null,
     actorId = 'system', metadata = {}, externalClient,
-    // If true, only spend gifted_balance (used for promo redemptions that must not touch purchased Ru$h)
     giftedOnly = false,
+    allowGifted = false,
   } = opts || {};
 
   if (!userId) throw new Error('tokenLedger.debit: userId required');
@@ -182,22 +186,29 @@ async function debit(opts) {
     }
     const bal = Number(wRows[0].balance_tokens);
     const gifted = Number(wRows[0].gifted_balance);
-    const total = giftedOnly ? gifted : (bal + gifted);
-    if (total < amount) {
+    const spendable = giftedOnly ? gifted : (allowGifted ? bal + gifted : bal);
+    if (spendable < amount) {
       const err = new Error('Insufficient Ru$h balance');
       err.code = 'INSUFFICIENT_FUNDS';
-      err.available = total;
+      err.available = spendable;
       err.required = amount;
       throw err;
     }
 
-    // Drain gifted first, then balance
-    let takeGifted = Math.min(gifted, amount);
-    let takeBalance = giftedOnly ? 0 : (amount - takeGifted);
-    if (giftedOnly && takeGifted < amount) {
-      const err = new Error('Insufficient gifted Ru$h');
-      err.code = 'INSUFFICIENT_FUNDS';
-      throw err;
+    // Spend routing:
+    //  giftedOnly=true → all from gifted (promo redemption)
+    //  allowGifted=true → drain gifted first, then balance (legacy scoped path)
+    //  default → balance only; gifted stays locked for Santino/Lex live tips
+    let takeGifted, takeBalance;
+    if (giftedOnly) {
+      takeGifted = amount;
+      takeBalance = 0;
+    } else if (allowGifted) {
+      takeGifted = Math.min(gifted, amount);
+      takeBalance = amount - takeGifted;
+    } else {
+      takeGifted = 0;
+      takeBalance = amount;
     }
 
     const balanceAfter = bal - takeBalance;

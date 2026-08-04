@@ -168,6 +168,13 @@ const requireSessionAuth = async (req, res, next) => {
     logger.error('requireSessionAuth ban check failed — failing closed', { userId, error: err.message });
     return res.status(503).json({ success: false, error: 'Service temporarily unavailable', code: 'SERVICE_UNAVAILABLE' });
   }
+  // Fire-and-forget: enroll user in main community group. Redis-cached (1h TTL)
+  // so this is a single Redis GET on repeat requests. Was previously lazy on
+  // /api/webapp/hangouts/* only, leaving signup-only users out of PNPtv Community.
+  try {
+    const { ensureMainGroupMembership } = require('./controllers/hangoutGroupController');
+    ensureMainGroupMembership(userId).catch(() => { /* non-fatal */ });
+  } catch (_) { /* non-fatal */ }
   next();
 };
 
@@ -6440,7 +6447,551 @@ app.put('/api/webapp/admin/users/:id', adminGuard, asyncHandler(webappAdminContr
 app.post('/api/webapp/admin/users/:id/ban', adminGuard, asyncHandler(webappAdminController.banUser));
 app.post('/api/webapp/admin/users/:id/creator-lock', adminGuard, asyncHandler(webappAdminController.setCreatorLock));
 app.get('/api/webapp/admin/users/:id/payments', adminGuard, asyncHandler(webappAdminController.getUserPayments));
+
+// GET /api/webapp/admin/users/:id/payments-unified — union of every payment table for a user
+app.get('/api/webapp/admin/users/:id/payments-unified', adminGuard, asyncHandler(async (req, res) => {
+  const userId = String(req.params.id);
+  const [
+    payments, dashOrders, tokenPurch, creatorTipsSent, meruLinks, bookingPays, ledger,
+  ] = await Promise.all([
+    getPool().query(
+      `SELECT id::text, 'payments' AS source, plan_id, plan_name, amount, currency, provider, status, completed_at, created_at, metadata
+       FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 200`, [userId]
+    ),
+    getPool().query(
+      `SELECT id::text, 'dash_orders' AS source, plan_id, NULL AS plan_name, usd_amount AS amount, 'USD' AS currency,
+              CASE WHEN btcpay_invoice_id LIKE 'pnptv-nowp-%' THEN 'nowpayments' ELSE 'btcpay' END AS provider,
+              status, completed_at, created_at, metadata, btcpay_invoice_id AS payment_ref
+       FROM dash_subscription_orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 200`, [userId]
+    ),
+    getPool().query(
+      `SELECT id::text, 'token_purchases' AS source, NULL AS plan_id, tokens_credited::text || ' Ru$h 💎' AS plan_name,
+              usd_amount AS amount, 'USD' AS currency, payment_method AS provider, status, settled_at AS completed_at, created_at, checkout_data AS metadata
+       FROM token_purchases WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, [userId]
+    ),
+    getPool().query(
+      `SELECT id::text, 'creator_tips_sent' AS source, NULL AS plan_id, 'Tip to creator ' || creator_id AS plan_name,
+              amount_usd AS amount, 'USD' AS currency, 'nowpayments' AS provider, status,
+              completed_at, created_at, NULL AS metadata
+       FROM creator_tips WHERE payer_id = $1 ORDER BY created_at DESC LIMIT 100`, [userId]
+    ),
+    getPool().query(
+      `SELECT id::text, 'meru_links' AS source, product AS plan_id, product AS plan_name,
+              NULL::numeric AS amount, 'COP' AS currency, 'meru' AS provider, status,
+              used_at AS completed_at, created_at, NULL AS metadata
+       FROM meru_payment_links WHERE used_by = $1 ORDER BY created_at DESC LIMIT 50`, [userId]
+    ),
+    getPool().query(
+      `SELECT bp.id::text, 'booking_payments' AS source, 'private_call' AS plan_id, 'Private call' AS plan_name,
+              (bp.amount_cents::numeric / 100) AS amount, bp.currency, bp.provider, bp.status,
+              bp.paid_at AS completed_at, bp.created_at, bp.metadata
+       FROM booking_payments bp
+       JOIN bookings b ON b.id = bp.booking_id
+       WHERE b.user_id = $1 ORDER BY bp.created_at DESC LIMIT 50`, [userId]
+    ),
+    getPool().query(
+      `SELECT id::text, 'ledger' AS source, reason AS plan_id,
+              CASE WHEN delta_balance > 0 OR delta_gifted > 0 THEN '+' ELSE '' END ||
+              (delta_balance + delta_gifted)::text || ' Ru$h 💎' AS plan_name,
+              (delta_balance + delta_gifted)::numeric AS amount, 'RUSH' AS currency,
+              source_type AS provider, 'completed' AS status, created_at AS completed_at, created_at, metadata
+       FROM token_ledger WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`, [userId]
+    ),
+  ]);
+
+  const all = [
+    ...payments.rows, ...dashOrders.rows, ...tokenPurch.rows,
+    ...creatorTipsSent.rows, ...meruLinks.rows, ...bookingPays.rows, ...ledger.rows,
+  ];
+  // Sort DESC by created_at
+  all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  // Duplicate-collapse: group failed/expired attempts for same (plan_id, provider) within 48h into a cluster.
+  // Successful (completed/paid) rows always stand alone.
+  const clusters = [];
+  const seen = new Map();
+  for (const r of all) {
+    const isFail = ['expired', 'cancelled', 'failed', 'denied'].includes(String(r.status || ''));
+    const isSuccess = ['completed', 'paid', 'settled'].includes(String(r.status || ''));
+    if (!isFail || isSuccess) { clusters.push({ ...r, cluster_count: 1 }); continue; }
+    const key = `${r.source}:${r.plan_id || ''}:${r.provider || ''}:${r.status}`;
+    const existing = seen.get(key);
+    const rowTime = new Date(r.created_at).getTime();
+    if (existing && (existing.newestTime - rowTime) < 48 * 3600 * 1000) {
+      existing.rows.push(r);
+      existing.newestTime = Math.max(existing.newestTime, rowTime);
+      continue;
+    }
+    const cluster = { key, rows: [r], newestTime: rowTime };
+    seen.set(key, cluster);
+    clusters.push(cluster);
+  }
+  const collapsed = clusters.map(c => {
+    if ('cluster_count' in c) return c;
+    const first = c.rows[0];
+    return { ...first, cluster_count: c.rows.length, cluster_rows: c.rows.length > 1 ? c.rows : undefined };
+  });
+
+  return res.json({ success: true, count: collapsed.length, raw_count: all.length, items: collapsed });
+}));
+
+// POST /api/webapp/admin/users/:id/refund — refund a completed payment + revoke entitlements (best-effort)
+app.post('/api/webapp/admin/users/:id/refund', adminGuard, asyncHandler(async (req, res) => {
+  const userId = String(req.params.id);
+  const paymentId = String(req.body?.paymentId || '');
+  const reason = String(req.body?.reason || '').trim();
+  if (!paymentId) return res.status(400).json({ success: false, error: 'paymentId required' });
+  if (!reason) return res.status(400).json({ success: false, error: 'reason required' });
+
+  const { rows: payRows } = await getPool().query(
+    `SELECT id, plan_id, amount, currency, status, metadata FROM payments WHERE id = $1 AND user_id = $2`,
+    [paymentId, userId]
+  );
+  if (!payRows.length) return res.status(404).json({ success: false, error: 'Payment not found' });
+  const pay = payRows[0];
+  if (pay.status === 'refunded' || pay.status === 'refund_pending') {
+    return res.status(409).json({ success: false, error: `Already ${pay.status}` });
+  }
+
+  const adminId = String(req.session?.user?.id || 'admin');
+  await getPool().query(
+    `UPDATE payments SET status = 'refund_pending',
+       metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+     WHERE id = $1`,
+    [paymentId, JSON.stringify({ refund_reason: reason, refunded_by: adminId, refund_marked_at: new Date().toISOString() })]
+  );
+
+  // If paid with Ru$h, credit it back to the wallet
+  if (pay.currency === 'RUSH' && pay.metadata?.rushCost) {
+    try {
+      const tokenLedger = require('../../services/tokenLedgerService');
+      await tokenLedger.credit({
+        userId, balanceDelta: Number(pay.metadata.rushCost),
+        reason: 'refund_credit', sourceType: 'payments', sourceId: paymentId,
+        actorId: adminId, metadata: { refund_reason: reason, planId: pay.plan_id },
+      });
+    } catch (_) { /* let admin escalate */ }
+  }
+
+  logger.info('[admin/refund] Payment marked for refund', { paymentId, userId, reason, adminId });
+  return res.json({ success: true, paymentId, status: 'refund_pending' });
+}));
+
+// POST /api/webapp/admin/users/:id/credit-rush — admin grants Ru$h to user
+app.post('/api/webapp/admin/users/:id/credit-rush', adminGuard, asyncHandler(async (req, res) => {
+  const userId = String(req.params.id);
+  const amount = parseInt(req.body?.amount, 10);
+  const asGifted = !!req.body?.asGifted;
+  const reason = String(req.body?.reason || '').trim();
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ success: false, error: 'amount must be > 0' });
+  if (!reason) return res.status(400).json({ success: false, error: 'reason required' });
+
+  const adminId = String(req.session?.user?.id || 'admin');
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const { balance_after, gifted_after } = await tokenLedger.credit({
+    userId,
+    balanceDelta: asGifted ? 0 : amount,
+    giftedDelta: asGifted ? amount : 0,
+    reason: 'admin_grant',
+    sourceType: 'admin_grant', sourceId: `admin:${adminId}:${Date.now()}`,
+    actorId: adminId,
+    metadata: { reason, asGifted },
+  });
+  logger.info('[admin/credit-rush] Granted', { userId, amount, asGifted, reason, adminId });
+  return res.json({ success: true, newBalance: balance_after + gifted_after, granted: amount });
+}));
 app.delete('/api/webapp/admin/users/:id', adminGuard, asyncHandler(webappAdminController.deleteUser));
+
+// ─── Creator balance admin (ledger view + manual adjustments + withdraw queue) ──────────
+const adminCreatorBalanceController = require('./controllers/adminCreatorBalanceController');
+app.get('/api/webapp/admin/creators/withdraw-requests', adminGuard, asyncHandler(adminCreatorBalanceController.listWithdrawRequests));
+app.post('/api/webapp/admin/creators/withdraw-requests/:reqId/approve', adminGuard, asyncHandler(adminCreatorBalanceController.approveWithdrawRequest));
+app.post('/api/webapp/admin/creators/withdraw-requests/:reqId/deny', adminGuard, asyncHandler(adminCreatorBalanceController.denyWithdrawRequest));
+app.post('/api/webapp/admin/creators/withdraw-requests/:reqId/mark-paid', adminGuard, asyncHandler(adminCreatorBalanceController.markWithdrawPaid));
+app.get('/api/webapp/admin/creators/:id/balance', adminGuard, asyncHandler(adminCreatorBalanceController.getBalance));
+app.post('/api/webapp/admin/creators/:id/credit', adminGuard, asyncHandler(adminCreatorBalanceController.creditManual));
+app.post('/api/webapp/admin/creators/:id/void/:earningId', adminGuard, asyncHandler(adminCreatorBalanceController.voidEarning));
+app.post('/api/webapp/admin/creators/:id/release-hold/:earningId', adminGuard, asyncHandler(adminCreatorBalanceController.releaseHold));
+app.post('/api/webapp/admin/creators/:id/note', adminGuard, asyncHandler(adminCreatorBalanceController.addNote));
+app.get('/api/webapp/admin/creators/:id/audit', adminGuard, asyncHandler(adminCreatorBalanceController.getAudit));
+
+// ─── Currency Health dashboard (Ru$h ledger overview) ─────────────────────────
+app.get('/api/webapp/admin/currency-health', adminGuard, asyncHandler(async (req, res) => {
+  const { rows: circ } = await getPool().query(
+    `SELECT
+       (SELECT COALESCE(SUM(balance_tokens),0) + COALESCE(SUM(gifted_balance),0) FROM user_token_wallets) AS total_circulating,
+       (SELECT COALESCE(SUM(balance_tokens),0) FROM user_token_wallets) AS total_balance,
+       (SELECT COALESCE(SUM(gifted_balance),0) FROM user_token_wallets) AS total_gifted,
+       (SELECT COUNT(*) FROM user_token_wallets WHERE balance_tokens > 0 OR gifted_balance > 0) AS holders`
+  );
+  const { rows: window } = await getPool().query(
+    `WITH periods AS (
+       SELECT '24h'::text AS label, now() - interval '24 hours' AS since
+       UNION ALL SELECT '7d', now() - interval '7 days'
+       UNION ALL SELECT '30d', now() - interval '30 days'
+     )
+     SELECT p.label,
+            COALESCE(SUM(CASE WHEN tl.reason='purchase' THEN tl.delta_balance+tl.delta_gifted ELSE 0 END),0) AS purchased,
+            COALESCE(SUM(CASE WHEN tl.reason='admin_grant' THEN tl.delta_balance+tl.delta_gifted ELSE 0 END),0) AS granted,
+            COALESCE(SUM(CASE WHEN tl.reason IN ('live_tip_send','content_purchase','membership_purchase','call_book','gift_send') THEN -(tl.delta_balance+tl.delta_gifted) ELSE 0 END),0) AS spent,
+            COUNT(*) FILTER (WHERE tl.reason IS NOT NULL) AS event_count
+     FROM periods p LEFT JOIN token_ledger tl ON tl.created_at >= p.since
+     GROUP BY p.label ORDER BY p.label`
+  );
+  const { rows: topHolders } = await getPool().query(
+    `SELECT w.user_id, u.username, u.first_name, w.balance_tokens, w.gifted_balance,
+            (w.balance_tokens + w.gifted_balance) AS total
+     FROM user_token_wallets w LEFT JOIN users u ON u.id = w.user_id
+     WHERE (w.balance_tokens + w.gifted_balance) > 0
+     ORDER BY total DESC LIMIT 25`
+  );
+  // Integrity drift check
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const drift = await tokenLedger.findDrift().catch(() => []);
+  return res.json({
+    success: true,
+    circulation: circ[0],
+    windows: window,
+    top_holders: topHolders,
+    drift,
+    drift_ok: drift.length === 0,
+  });
+}));
+
+// ─── User's own Ru$h ledger history ──────────────────────────────────────────
+app.get('/api/webapp/rush/ledger', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const rows = await tokenLedger.getLedger(user.id, { limit, offset });
+  return res.json({ success: true, ledger: rows });
+}));
+
+// ─── Pay-with-Ru$h for memberships ──────────────────────────────────────────
+// POST /api/webapp/rush/pay-plan  { planId }
+// Debits user's Ru$h wallet (planPrice * 6 Ru$h), grants entitlements, records ledger row.
+app.post('/api/webapp/rush/pay-plan', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const planId = String(req.body?.planId || '');
+  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+
+  const { rows: planRows } = await getPool().query(
+    'SELECT id, name, display_name, price, active, payment_method FROM plans WHERE id = $1 AND active = true',
+    [planId]
+  );
+  if (!planRows.length) return res.status(404).json({ success: false, error: 'Plan not found or inactive' });
+  const plan = planRows[0];
+  const priceUsd = parseFloat(plan.price);
+  if (!Number.isFinite(priceUsd) || priceUsd <= 0) return res.status(400).json({ success: false, error: 'Plan has no valid price' });
+
+  // Ru$h cost = USD × 6. Wallet must cover it.
+  const rushCost = Math.ceil(priceUsd * 6);
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const balance = await tokenLedger.getBalance(user.id);
+  if (balance.total < rushCost) {
+    return res.status(402).json({
+      success: false,
+      error: 'Insufficient Ru$h balance',
+      code: 'INSUFFICIENT_FUNDS',
+      required: rushCost, available: balance.total,
+      shortBy: rushCost - balance.total,
+    });
+  }
+
+  const { getClient: getPgClient } = require('../../config/postgres');
+  const client = await getPgClient();
+  let paymentId = null;
+  try {
+    await client.query('BEGIN');
+
+    // 1. Insert canonical payments row so admin panel / reconciliation sees it
+    const { rows: payRows } = await client.query(
+      `INSERT INTO payments (user_id, plan_id, plan_name, amount, currency, provider, payment_method, status, completed_at, metadata)
+       VALUES ($1, $2, $3, $4, 'RUSH', 'internal_rush', 'rush_wallet', 'completed', now(), $5::jsonb)
+       RETURNING id`,
+      [String(user.id), plan.id, plan.display_name || plan.name, priceUsd,
+       JSON.stringify({ rushCost, usdEquivalent: priceUsd, walletBalanceBefore: balance.total })]
+    );
+    paymentId = payRows[0].id;
+
+    // 2. Debit wallet inside same transaction via ledger
+    await tokenLedger.debit({
+      userId: user.id,
+      amount: rushCost,
+      reason: 'membership_purchase',
+      sourceType: 'payments',
+      sourceId: paymentId,
+      actorId: String(user.id),
+      metadata: { planId, planName: plan.display_name || plan.name, priceUsd },
+      externalClient: client,
+    });
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ success: false, error: 'Insufficient Ru$h balance', code: 'INSUFFICIENT_FUNDS' });
+    }
+    logger.error('rush/pay-plan failed', { userId: user.id, planId, error: err.message });
+    return res.status(500).json({ success: false, error: 'Payment failed' });
+  } finally { client.release(); }
+
+  // 3. Grant entitlements — same path as any other completed payment
+  try {
+    const PaymentService = require('../../services/paymentService');
+    const grantResult = await PaymentService.grantEntitlementsForPlan(
+      String(user.id), planId, 'rush_wallet',
+      { paymentId, rushCost, priceUsd },
+      paymentId
+    );
+    logger.info('[Ru$h Pay] Membership purchased with Ru$h', {
+      userId: user.id, planId, priceUsd, rushCost, paymentId,
+      granted: grantResult.granted, errors: grantResult.errors,
+    });
+    return res.json({
+      success: true,
+      paymentId,
+      planId,
+      planName: plan.display_name || plan.name,
+      rushCost,
+      usdEquivalent: priceUsd,
+      newBalance: (await tokenLedger.getBalance(user.id)).total,
+      entitlementsGranted: grantResult.granted,
+    });
+  } catch (grantErr) {
+    logger.error('[Ru$h Pay] grantEntitlementsForPlan failed — attempting refund', { userId: user.id, planId, paymentId, error: grantErr.message });
+    // Best-effort refund the Ru$h since entitlements failed
+    try {
+      await tokenLedger.credit({
+        userId: user.id, balanceDelta: rushCost, reason: 'refund_credit',
+        sourceType: 'payments', sourceId: paymentId, actorId: 'system',
+        metadata: { reason: 'grant_failed', planId },
+      });
+    } catch (_) { /* let admin fix */ }
+    return res.status(500).json({ success: false, error: 'Failed to grant membership. Ru$h refunded.' });
+  }
+}));
+
+// ─── Creator withdraw request (creator initiates, admin approves) ───────────
+// POST /api/webapp/creators/withdraw  { amountUsd, destinationAddress, destinationCurrency? }
+app.post('/api/webapp/creators/withdraw', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const amountUsd = parseFloat(req.body?.amountUsd);
+  const destinationAddress = String(req.body?.destinationAddress || '').trim();
+  const destinationCurrency = String(req.body?.destinationCurrency || 'usdttrc20').toLowerCase();
+
+  if (!Number.isFinite(amountUsd) || amountUsd < 50) {
+    return res.status(400).json({ success: false, error: 'Minimum withdrawal is $50' });
+  }
+  if (!destinationAddress || destinationAddress.length < 20) {
+    return res.status(400).json({ success: false, error: 'Valid destination address required' });
+  }
+  const ALLOWED_CURRENCIES = new Set(['usdttrc20', 'usdterc20', 'usdtbsc', 'btc', 'usdc', 'usdcsol', 'dash']);
+  if (!ALLOWED_CURRENCIES.has(destinationCurrency)) {
+    return res.status(400).json({ success: false, error: 'Unsupported destination currency' });
+  }
+
+  // Verify creator
+  const { rows: uRows } = await getPool().query(
+    "SELECT id, creator_status FROM users WHERE id = $1", [String(user.id)]
+  );
+  if (!uRows.length || uRows[0].creator_status !== 'active') {
+    return res.status(403).json({ success: false, error: 'Not an active creator' });
+  }
+
+  // Lock oldest 'available' earnings summing to amountUsd (FIFO fair)
+  const { getClient: getPgClient } = require('../../config/postgres');
+  const client = await getPgClient();
+  try {
+    await client.query('BEGIN');
+
+    // Reject if there is already an in-flight withdraw request
+    const { rows: openReqs } = await client.query(
+      `SELECT id FROM creator_withdraw_requests WHERE creator_id = $1 AND status IN ('pending','approved','processing') LIMIT 1`,
+      [String(user.id)]
+    );
+    if (openReqs.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'You already have a withdrawal request in progress', code: 'WITHDRAW_IN_FLIGHT', requestId: openReqs[0].id });
+    }
+
+    // Pick earnings — oldest first — until sum >= amountUsd. Lock rows so concurrent requests don't reuse.
+    const { rows: available } = await client.query(
+      `SELECT id, amount_creator FROM creator_earnings
+       WHERE creator_id = $1 AND status = 'available'
+       ORDER BY created_at ASC
+       FOR UPDATE`,
+      [String(user.id)]
+    );
+    let running = 0;
+    const chosen = [];
+    for (const r of available) {
+      chosen.push(r.id);
+      running += parseFloat(r.amount_creator);
+      if (running >= amountUsd) break;
+    }
+    if (running < amountUsd) {
+      await client.query('ROLLBACK');
+      return res.status(402).json({ success: false, error: `Insufficient available earnings (have $${running.toFixed(2)})`, code: 'INSUFFICIENT_EARNINGS', available: running });
+    }
+
+    // Create the request row (earnings NOT moved to in_payout until admin approves)
+    const { rows: newReq } = await client.query(
+      `INSERT INTO creator_withdraw_requests
+         (creator_id, amount_usd, destination_currency, destination_address, earning_ids)
+       VALUES ($1, $2, $3, $4, $5::uuid[])
+       RETURNING id, amount_usd, status, requested_at`,
+      [String(user.id), amountUsd, destinationCurrency, destinationAddress, chosen]
+    );
+    await client.query('COMMIT');
+
+    logger.info('[Ru$h Withdraw] Request created', { creatorId: user.id, amountUsd, destinationCurrency, requestId: newReq[0].id, earningsCount: chosen.length });
+    return res.json({
+      success: true,
+      request: newReq[0],
+      earningsCovered: chosen.length,
+      totalSelected: running,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error('[Ru$h Withdraw] request failed', { userId: user.id, error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to create withdrawal request' });
+  } finally { client.release(); }
+}));
+
+// GET /api/webapp/creators/withdraw — list creator's own withdrawal history
+app.get('/api/webapp/creators/withdraw', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const { rows } = await getPool().query(
+    `SELECT id, amount_usd, destination_currency, destination_address, status,
+            requested_at, reviewed_at, completed_at, admin_notes, deny_reason
+     FROM creator_withdraw_requests
+     WHERE creator_id = $1
+     ORDER BY requested_at DESC LIMIT 50`,
+    [String(user.id)]
+  );
+  return res.json({ success: true, requests: rows });
+}));
+
+// POST /api/webapp/creators/withdraw/:id/cancel — creator cancels while still pending
+app.post('/api/webapp/creators/withdraw/:id/cancel', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const reqId = String(req.params.id);
+  const { rows } = await getPool().query(
+    `UPDATE creator_withdraw_requests
+       SET status = 'cancelled', reviewed_at = now()
+     WHERE id = $1 AND creator_id = $2 AND status = 'pending'
+     RETURNING id`,
+    [reqId, String(user.id)]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, error: 'Not found or not cancellable' });
+  return res.json({ success: true });
+}));
+
+// ─── Creator convert earnings → spendable Ru$h wallet (1:1 at $1=6 Ru$h) ────
+// POST /api/webapp/creators/convert-earnings  { amountUsd }
+// Voids the equivalent oldest 'available' earnings + credits Ru$h wallet.
+app.post('/api/webapp/creators/convert-earnings', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const amountUsd = parseFloat(req.body?.amountUsd);
+  if (!Number.isFinite(amountUsd) || amountUsd < 1) {
+    return res.status(400).json({ success: false, error: 'Minimum conversion is $1' });
+  }
+
+  const { rows: uRows } = await getPool().query(
+    "SELECT creator_status FROM users WHERE id = $1", [String(user.id)]
+  );
+  if (!uRows.length || uRows[0].creator_status !== 'active') {
+    return res.status(403).json({ success: false, error: 'Not an active creator' });
+  }
+
+  const rushCredit = Math.floor(amountUsd * 6); // 1 USD = 6 Ru$h
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const { getClient: getPgClient } = require('../../config/postgres');
+  const client = await getPgClient();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: available } = await client.query(
+      `SELECT id, amount_creator FROM creator_earnings
+       WHERE creator_id = $1 AND status = 'available'
+       ORDER BY created_at ASC
+       FOR UPDATE`,
+      [String(user.id)]
+    );
+    let running = 0;
+    const chosen = [];
+    for (const r of available) {
+      chosen.push(r.id);
+      running += parseFloat(r.amount_creator);
+      if (running >= amountUsd) break;
+    }
+    if (running < amountUsd) {
+      await client.query('ROLLBACK');
+      return res.status(402).json({ success: false, error: `Insufficient available earnings (have $${running.toFixed(2)})`, code: 'INSUFFICIENT_EARNINGS' });
+    }
+
+    // Void the picked earnings — they're paid via the internal wallet, not USDT
+    await client.query(
+      `UPDATE creator_earnings
+         SET status = 'void',
+             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+       WHERE id = ANY($1::uuid[])`,
+      [chosen, JSON.stringify({ converted_to_rush: true, converted_at: new Date().toISOString(), rushCredit })]
+    );
+
+    // Credit Ru$h wallet
+    const conversionSourceId = `earnings-conv:${user.id}:${Date.now()}`;
+    await tokenLedger.credit({
+      userId: user.id,
+      balanceDelta: rushCredit,
+      reason: 'earnings_conversion',
+      sourceType: 'creator_earnings',
+      sourceId: conversionSourceId,
+      actorId: String(user.id),
+      metadata: { usdConverted: amountUsd, earningIds: chosen, earningsCount: chosen.length, actualUsdVoided: running },
+      externalClient: client,
+    });
+
+    await client.query('COMMIT');
+
+    const newBalance = await tokenLedger.getBalance(user.id);
+    logger.info('[Ru$h Convert] Earnings → wallet', { creatorId: user.id, amountUsd, rushCredit, earningsVoided: chosen.length });
+    return res.json({
+      success: true,
+      rushCredited: rushCredit,
+      usdConverted: amountUsd,
+      earningsVoided: chosen.length,
+      newBalance: newBalance.total,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error('[Ru$h Convert] failed', { userId: user.id, error: err.message });
+    return res.status(500).json({ success: false, error: 'Conversion failed' });
+  } finally { client.release(); }
+}));
+
+// GET /api/webapp/creators/earnings-summary — creator's own totals for the withdraw/convert UI
+app.get('/api/webapp/creators/earnings-summary', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const { rows } = await getPool().query(
+    `SELECT
+       COALESCE(SUM(amount_creator) FILTER (WHERE status='available'),0) AS available_usd,
+       COALESCE(SUM(amount_creator) FILTER (WHERE status='holding'),0)   AS holding_usd,
+       COALESCE(SUM(amount_creator) FILTER (WHERE status='paid_out'),0)  AS paidout_usd,
+       COALESCE(SUM(amount_creator) FILTER (WHERE status='in_payout'),0) AS inpayout_usd
+     FROM creator_earnings WHERE creator_id = $1`,
+    [String(user.id)]
+  );
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const walletBalance = await tokenLedger.getBalance(user.id);
+  return res.json({
+    success: true,
+    earnings: rows[0],
+    wallet: { balance_tokens: walletBalance.balance_tokens, gifted_balance: walletBalance.gifted_balance, total: walletBalance.total },
+  });
+}));
 app.get('/api/webapp/admin/posts', adminGuard, asyncHandler(webappAdminController.listPosts));
 app.delete('/api/webapp/admin/posts/:id', adminGuard, asyncHandler(webappAdminController.deletePost));
 app.get('/api/webapp/admin/hangouts', adminGuard, asyncHandler(webappAdminController.listHangouts));
@@ -11295,41 +11846,43 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
   if (!Number.isFinite(basePrice) || basePrice <= 0) {
     return res.status(400).json({ success: false, error: 'Plan has no payable price' });
   }
-  // 6 Tokens = $1 USD (see /root/.claude memory feedback_token_rate.md)
+  // 6 Ru$h 💎 = $1 USD (see /root/.claude memory feedback_token_rate.md)
   const tokenCost = Math.round(basePrice * 6);
-  // Atomic debit — fails if balance insufficient
-  const debitResult = await dbQuery(
-    `UPDATE user_token_wallets
-     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
-     WHERE user_id = $1 AND balance_tokens >= $2
-     RETURNING balance_tokens`,
-    [userId, tokenCost]
-  );
-  if (!debitResult.rows.length) {
-    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [userId]);
-    const current = walletRow.rows[0]?.bal ?? 0;
-    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+  // Atomic debit via ledger — writes token_ledger row + updates wallet cache in one tx
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const sourceId = `wallet:sub:${userId}:${plan.id}:${Date.now()}`;
+  let newBalance;
+  try {
+    const dbRes = await tokenLedger.debit({
+      userId,
+      amount: tokenCost,
+      reason: 'membership_purchase',
+      sourceType: 'plan',
+      sourceId,
+      actorId: userId,
+      metadata: { planId, planSku: plan.sku || plan.name, priceUsd: basePrice },
+    });
+    newBalance = dbRes.balance_after + dbRes.gifted_after;
+  } catch (err) {
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ success: false, error: 'Insufficient Ru$h balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current: err.available || 0 });
+    }
+    throw err;
   }
-  const newBalance = Number(debitResult.rows[0].balance_tokens);
   try {
     const PS = require('../../services/paymentService');
-    await PS.grantEntitlementsForPlan(userId, plan.id, 'tokens', { tokenCost, planSku: plan.sku || plan.name }, `tokens:sub:${userId}:${plan.id}:${Date.now()}`);
-    // Invalidate wallet cache
-    const { cache } = require('../../config/redis');
-    await Promise.all([
-      cache.del(`wallet:${userId}`).catch(() => {}),
-      cache.del(`wallet:obj:${userId}`).catch(() => {}),
-    ]);
-    logger.info('[wallet/pay-subscription] Tokens sub granted', { userId, planId, tokenCost, newBalance });
+    await PS.grantEntitlementsForPlan(userId, plan.id, 'rush_wallet', { tokenCost, planSku: plan.sku || plan.name }, sourceId);
+    logger.info('[wallet/pay-subscription] Ru$h sub granted', { userId, planId, tokenCost, newBalance });
     return res.json({ success: true, newBalance, planName: plan.display_name || plan.name });
   } catch (grantErr) {
-    // Refund on failure — direct SQL because there is no token_purchases row for Tokens
-    await dbQuery(
-      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
-      [userId, tokenCost]
-    ).catch(() => {});
-    logger.error('[wallet/pay-subscription] grant failed, Tokens refunded', { userId, planId, err: grantErr.message });
-    return res.status(500).json({ success: false, error: 'No se pudo activar el plan. Tus Tokens han sido reembolsadas.' });
+    // Refund via ledger so audit stays clean
+    await tokenLedger.credit({
+      userId, balanceDelta: tokenCost, reason: 'refund_credit',
+      sourceType: 'plan', sourceId, actorId: 'system',
+      metadata: { reason: 'grant_failed', planId },
+    }).catch(() => {});
+    logger.error('[wallet/pay-subscription] grant failed, Ru$h refunded', { userId, planId, err: grantErr.message });
+    return res.status(500).json({ success: false, error: 'No se pudo activar el plan. Tus Ru$h han sido reembolsadas.' });
   }
 }));
 

@@ -1,8 +1,87 @@
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const axios = require('axios');
+const path = require('path');
+const fs = require('fs/promises');
+const { spawn } = require('child_process');
 const MediaCleanupService = require('./mediaCleanupService');
 const CreatorService = require('./creatorService');
+
+// Blurred preview GIF for the exclusive-video paywall. Fire-and-forget from
+// createPost + reusable by the one-shot backfill script. Source file is either
+// a /uploads/... local path or a remote http(s) URL; ffmpeg accepts both.
+//
+// Concurrency capped at MAX_PREVIEW_GIF_JOBS to protect the bot container
+// from OOM during creator-upload bursts (ffmpeg is memory-heavy per process).
+// Excess requests are skipped and re-runnable via the backfill script.
+const MAX_PREVIEW_GIF_JOBS = 2;
+let activePreviewGifJobs = 0;
+
+async function generateBlurredPreviewGif(postId, mediaUrl) {
+  if (!postId || !mediaUrl) return null;
+  if (activePreviewGifJobs >= MAX_PREVIEW_GIF_JOBS) {
+    logger.warn('generateBlurredPreviewGif skipped (concurrency cap)', { postId, activePreviewGifJobs });
+    return null;
+  }
+  const publicRoot = path.resolve(path.join(__dirname, '../../../public'));
+  const outDir = path.join(publicRoot, 'uploads', 'preview-gifs');
+  const outFile = `preview-${postId}.gif`;
+  const outPath = path.join(outDir, outFile);
+  const publicUrl = `/uploads/preview-gifs/${outFile}`;
+
+  let source;
+  if (mediaUrl.startsWith('/')) {
+    const candidate = path.resolve(path.join(publicRoot, mediaUrl.replace(/^\/+/, '')));
+    // Containment: reject any path that escapes /public via ../ traversal
+    if (!candidate.startsWith(publicRoot + path.sep) && candidate !== publicRoot) {
+      logger.warn('generateBlurredPreviewGif: path traversal blocked', { postId, mediaUrl });
+      return null;
+    }
+    source = candidate;
+  } else if (/^https?:\/\//i.test(mediaUrl)) {
+    source = mediaUrl;
+  } else {
+    logger.warn('generateBlurredPreviewGif: unrecognized media URL', { postId, mediaUrl });
+    return null;
+  }
+
+  activePreviewGifJobs++;
+  try {
+    await fs.mkdir(outDir, { recursive: true });
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-loglevel', 'error',
+        '-y',
+        '-ss', '1',
+        '-i', source,
+        '-t', '5',
+        '-vf', 'fps=12,scale=240:-1:flags=lanczos,gblur=sigma=10',
+        '-loop', '0',
+        outPath,
+      ];
+      const ff = spawn('nice', ['-n', '19', 'ffmpeg', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      ff.stderr.on('data', (d) => { stderr += String(d); });
+      ff.on('error', reject);
+      ff.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(0, 200)}`));
+      });
+    });
+    await query(
+      `UPDATE social_posts
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('preview_gif_url', $1::text)
+       WHERE id = $2`,
+      [publicUrl, postId]
+    );
+    return publicUrl;
+  } catch (err) {
+    logger.warn('generateBlurredPreviewGif failed', { postId, mediaUrl, err: err.message });
+    return null;
+  } finally {
+    activePreviewGifJobs--;
+  }
+}
 
 /**
  * Check if a photo_file_id is a valid web-servable URL (local path or http URL).
@@ -369,6 +448,13 @@ class SocialPostService {
     }
 
     return posts.map(post => {
+      // filterFeedExclusivePosts runs first for exclusive posts and either
+      // unlocks or produces an enriched paywall payload (preview_gif_url,
+      // plan_slug, unlock_target, creator_channel_url). Do NOT reprocess those
+      // rows or we wipe the fields the paywall UI depends on.
+      if (post.exclusive_status === 'locked' || post.exclusive_status === 'unlocked') {
+        return post;
+      }
       const postTier = (post.content_tier || 'free').toLowerCase();
       const isAllowed = allowedTiers.has(post.content_tier) || allowedTiers.has(postTier);
       if (isAllowed) {
@@ -796,6 +882,10 @@ class SocialPostService {
     }
     if (repostOfId && !actorIsSuperGod) {
       await query('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
+    }
+
+    if (isExclusive && mediaUrl && typeof mediaType === 'string' && mediaType.toLowerCase().startsWith('video')) {
+      setImmediate(() => { generateBlurredPreviewGif(post.id, mediaUrl).catch(() => {}); });
     }
 
     return post;
@@ -1331,3 +1421,4 @@ class SocialPostService {
 }
 
 module.exports = SocialPostService;
+module.exports.generateBlurredPreviewGif = generateBlurredPreviewGif;

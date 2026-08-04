@@ -8,14 +8,17 @@ const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 
-// Token packages — 6 tokens = $1 USD base rate
-// Bonus tokens rewarded on larger packs to incentivize bulk purchases.
+// Ru$h packages — 6 Ru$h 💎 = $1 USD base rate
+// Bonus Ru$h rewarded on larger packs to incentivize bulk purchases.
+// Whales get 15%+ bonus at $1000 tier and 25%+ at $5000 tier.
 const TOKEN_PACKAGES = [
-  { id: 'pkg_10',   tokens: 60,   usd: 10,  bonus: 0,   label: '60 tokens' },
-  { id: 'pkg_25',   tokens: 156,  usd: 25,  bonus: 6,   label: '156 tokens (+6 extra)' },
-  { id: 'pkg_50',   tokens: 315,  usd: 50,  bonus: 15,  label: '315 tokens (+15 extra)' },
-  { id: 'pkg_100',  tokens: 660,  usd: 100, bonus: 60,  label: '660 tokens (+60 extra)' },
-  { id: 'pkg_500',  tokens: 3450, usd: 500, bonus: 450, label: '3,450 tokens (+450 extra)' },
+  { id: 'pkg_10',   tokens: 60,    usd: 10,   bonus: 0,    label: '60 Ru$h 💎' },
+  { id: 'pkg_25',   tokens: 156,   usd: 25,   bonus: 6,    label: '156 Ru$h 💎 (+6 bonus)' },
+  { id: 'pkg_50',   tokens: 315,   usd: 50,   bonus: 15,   label: '315 Ru$h 💎 (+15 bonus)' },
+  { id: 'pkg_100',  tokens: 660,   usd: 100,  bonus: 60,   label: '660 Ru$h 💎 (+60 bonus)' },
+  { id: 'pkg_500',  tokens: 3450,  usd: 500,  bonus: 450,  label: '3,450 Ru$h 💎 (+450 bonus)' },
+  { id: 'pkg_1000', tokens: 6900,  usd: 1000, bonus: 900,  label: '6,900 Ru$h 💎 (+900 bonus, 15%)' },
+  { id: 'pkg_5000', tokens: 37500, usd: 5000, bonus: 7500, label: '37,500 Ru$h 💎 (+7,500 bonus, 25%)' },
 ];
 
 class DashTokenService {

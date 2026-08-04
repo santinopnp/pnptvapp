@@ -676,6 +676,9 @@ export default function UserDetail() {
         )}
       </div>
 
+      {/* Unified payment view + Ru$h admin actions */}
+      <UnifiedPaymentPanel userId={user.id} />
+
       {/* Ban / Unban Section */}
       <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-5 space-y-3">
         <h2 className="text-sm font-semibold text-red-400 uppercase tracking-wider">
@@ -758,6 +761,220 @@ export default function UserDetail() {
         onCancel={() => setDeleteConfirmOpen(false)}
         loading={deleteLoading}
       />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UnifiedPaymentPanel — every payment table + collapse duplicate failed attempts
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface UnifiedRow {
+  id: string;
+  source: string;
+  plan_id: string | null;
+  plan_name: string | null;
+  amount: number | string | null;
+  currency: string | null;
+  provider: string | null;
+  status: string;
+  completed_at: string | null;
+  created_at: string;
+  metadata: Record<string, unknown> | null;
+  cluster_count?: number;
+  cluster_rows?: UnifiedRow[];
+}
+
+function UnifiedPaymentPanel({ userId }: { userId: string }) {
+  const [items, setItems] = React.useState<UnifiedRow[]>([]);
+  const [rawCount, setRawCount] = React.useState(0);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [expandedIdx, setExpandedIdx] = React.useState<number | null>(null);
+  const [creditForm, setCreditForm] = React.useState(false);
+  const [creditAmt, setCreditAmt] = React.useState('');
+  const [creditReason, setCreditReason] = React.useState('');
+  const [creditAsGifted, setCreditAsGifted] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/webapp/admin/users/${encodeURIComponent(userId)}/payments-unified`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      setItems(j.items || []);
+      setRawCount(j.raw_count || 0);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Load failed'); }
+    finally { setLoading(false); }
+  }, [userId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const doRefund = async (paymentId: string) => {
+    const reason = window.prompt('Refund reason (required):');
+    if (!reason?.trim()) return;
+    setBusy(true); setMsg(null);
+    try {
+      const res = await fetch(`/api/webapp/admin/users/${encodeURIComponent(userId)}/refund`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentId, reason: reason.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      setMsg(`Payment marked refund_pending. If paid with Ru$h, wallet was auto-credited.`);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Refund failed'); }
+    finally { setBusy(false); setTimeout(() => setMsg(null), 6000); }
+  };
+
+  const doCreditRush = async () => {
+    const amt = parseInt(creditAmt, 10);
+    if (!(amt > 0)) { setErr('Amount must be > 0'); return; }
+    if (!creditReason.trim()) { setErr('Reason required'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch(`/api/webapp/admin/users/${encodeURIComponent(userId)}/credit-rush`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, asGifted: creditAsGifted, reason: creditReason.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      setMsg(`+${amt} 💎 credited. New balance: ${j.newBalance}.`);
+      setCreditForm(false); setCreditAmt(''); setCreditReason('');
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Credit failed'); }
+    finally { setBusy(false); setTimeout(() => setMsg(null), 6000); }
+  };
+
+  return (
+    <div className="rounded-xl bg-cyan-500/5 border border-cyan-500/20 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-cyan-400 uppercase tracking-wider">Unified Payments + Ru$h 💎</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setCreditForm(v => !v); setErr(null); }}
+            className="text-xs px-3 py-1.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 min-h-[36px]"
+          >{creditForm ? 'Cancel' : '+ Credit Ru$h'}</button>
+          <button
+            onClick={load}
+            className="text-xs px-3 py-1.5 rounded-md bg-pnp-surface border border-pnp-border text-pnp-textSecondary min-h-[36px]"
+          >Refresh</button>
+        </div>
+      </div>
+
+      {msg && <div className="px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300">{msg}</div>}
+      {err && <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-xs text-red-400">{err}</div>}
+
+      {creditForm && (
+        <div className="p-3 rounded-lg bg-pnp-surface border border-pnp-border space-y-2">
+          <div className="flex gap-2 items-center">
+            <input
+              type="number" min="1" step="1" placeholder="Ru$h 💎 amount"
+              value={creditAmt} onChange={(e) => setCreditAmt(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
+            />
+            <input
+              type="text" placeholder="Reason (required)"
+              value={creditReason} onChange={(e) => setCreditReason(e.target.value)}
+              className="flex-[2] px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
+            />
+            <label className="flex items-center gap-1 text-xs text-pnp-textSecondary whitespace-nowrap">
+              <input type="checkbox" checked={creditAsGifted} onChange={(e) => setCreditAsGifted(e.target.checked)} />
+              Gifted (promo)
+            </label>
+            <button
+              onClick={doCreditRush} disabled={busy}
+              className="px-4 py-2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 text-sm disabled:opacity-50 min-h-[44px]"
+            >{busy ? '…' : 'Credit'}</button>
+          </div>
+          <p className="text-[10px] text-pnp-textSecondary">
+            {creditAsGifted ? 'Gifted Ru$h is spent first, before purchased balance.' : 'Purchased Ru$h is treated as a real earning.'}
+          </p>
+        </div>
+      )}
+
+      {loading && !items.length && <div className="text-xs text-pnp-textSecondary py-4 text-center">Loading…</div>}
+
+      {items.length > 0 && (
+        <>
+          <div className="text-[10px] text-pnp-textSecondary">
+            Showing {items.length} rows{items.length !== rawCount ? ` (${rawCount} raw, duplicates collapsed)` : ''}
+          </div>
+          <div className="overflow-x-auto -mx-5 px-5">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-pnp-border text-left text-pnp-textSecondary">
+                  <th className="py-2 pr-3">When</th>
+                  <th className="py-2 pr-3">Source</th>
+                  <th className="py-2 pr-3">Plan / Description</th>
+                  <th className="py-2 pr-3 text-right">Amount</th>
+                  <th className="py-2 pr-3">Provider</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-pnp-border/50">
+                {items.map((r, idx) => {
+                  const isCluster = (r.cluster_count || 1) > 1;
+                  const expanded = expandedIdx === idx;
+                  return (
+                    <React.Fragment key={`${r.source}:${r.id}:${idx}`}>
+                      <tr className="hover:bg-pnp-background/50">
+                        <td className="py-2 pr-3 text-pnp-textSecondary whitespace-nowrap">{new Date(r.created_at).toLocaleDateString()}</td>
+                        <td className="py-2 pr-3">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-pnp-surface border border-pnp-border">{r.source}</span>
+                        </td>
+                        <td className="py-2 pr-3 text-pnp-textPrimary max-w-[240px] truncate" title={r.plan_name || r.plan_id || ''}>
+                          {r.plan_name || r.plan_id || '—'}
+                          {isCluster && (
+                            <button
+                              onClick={() => setExpandedIdx(expanded ? null : idx)}
+                              className="ml-2 text-[10px] text-cyan-400 hover:text-cyan-300"
+                            >{expanded ? '▼' : '▶'} ×{r.cluster_count}</button>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right font-mono">
+                          {r.amount != null ? `${r.currency || ''} ${Number(r.amount).toFixed(2)}` : '—'}
+                        </td>
+                        <td className="py-2 pr-3 text-pnp-textSecondary text-[10px]">{r.provider || '—'}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            ['completed','paid','settled'].includes(r.status) ? 'bg-green-500/15 text-green-400' :
+                            ['expired','cancelled','failed','denied','void'].includes(r.status) ? 'bg-red-500/15 text-red-400' :
+                            'bg-yellow-500/15 text-yellow-400'
+                          }`}>{r.status}</span>
+                        </td>
+                        <td className="py-2 text-right whitespace-nowrap">
+                          {r.source === 'payments' && r.status === 'completed' && (
+                            <button
+                              onClick={() => doRefund(r.id)}
+                              disabled={busy}
+                              className="text-[10px] px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 disabled:opacity-40"
+                            >Refund</button>
+                          )}
+                        </td>
+                      </tr>
+                      {expanded && r.cluster_rows && r.cluster_rows.map((cr, ci) => (
+                        <tr key={`cluster-${idx}-${ci}`} className="bg-pnp-background/30 text-[10px] text-pnp-textSecondary">
+                          <td className="py-1 pr-3 pl-4">↳ {new Date(cr.created_at).toLocaleString()}</td>
+                          <td className="py-1 pr-3" colSpan={5}>
+                            {cr.plan_name || cr.plan_id} · {cr.provider} · {cr.status}
+                          </td>
+                          <td />
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

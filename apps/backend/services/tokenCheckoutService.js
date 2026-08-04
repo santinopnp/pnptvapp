@@ -475,8 +475,17 @@ class TokenCheckoutService {
          ON CONFLICT (user_id) DO UPDATE
            SET balance_tokens = user_token_wallets.balance_tokens + EXCLUDED.balance_tokens,
                updated_at = NOW()
-         RETURNING balance_tokens`,
+         RETURNING balance_tokens, gifted_balance`,
         [purchase.user_id, purchase.tokens_credited]
+      );
+
+      // Ledger row: 'purchase' — audit trail for every Ru$h bought with USD
+      await client.query(
+        `INSERT INTO token_ledger (user_id, delta_balance, delta_gifted, reason, source_type, source_id, actor_id, balance_after, gifted_after, metadata)
+         VALUES ($1, $2, 0, 'purchase', 'token_purchase', $3, $1, $4, $5, $6::jsonb)`,
+        [purchase.user_id, purchase.tokens_credited, String(purchase.id),
+         Number(walletResult.rows[0].balance_tokens), Number(walletResult.rows[0].gifted_balance || 0),
+         JSON.stringify({ usd_amount: Number(purchase.usd_amount), provider, ...txData })]
       );
 
       await client.query('COMMIT');

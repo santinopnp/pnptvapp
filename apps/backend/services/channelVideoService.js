@@ -477,22 +477,21 @@ async function logBroadcastEvent(fields) {
   }
 }
 
-async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUsername, title, thumbnailUrl, gifUrl, accessType }) {
+async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUsername, title, thumbnailUrl, gifUrl, accessType, tags }) {
   const eventBase = { creatorId, contentType: 'video', contentRef: videoId, promoPostId, channel: 'x', target: '@PNPTelevision' };
   try {
-    if (accessType && accessType !== 'free') {
-      void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'not-free' });
-      return { skipped: true, reason: 'not-free' };
-    }
-
+    // Consent covers every video the creator publishes (paid, subscription, free
+    // alike). Deep-link goes to the creator's public profile /c/{username}, so
+    // paid content itself is never exposed — just a "come explore" invite.
     const { rows } = await query(
-      `SELECT pnptv_announce_consent FROM users WHERE id = $1`,
+      `SELECT pnptv_announce_consent, x_username FROM users WHERE id = $1`,
       [String(creatorId)]
     );
     if (!rows[0]?.pnptv_announce_consent) {
       void logBroadcastEvent({ ...eventBase, status: 'skipped', reason: 'no-consent' });
       return { skipped: true, reason: 'no-consent' };
     }
+    const creatorXHandle = rows[0]?.x_username ? String(rows[0].x_username).replace(/^@/, '') : null;
 
     const redis = getRedis();
     const rlKey = `pnp:auto-announce:x:rl:creator:${creatorId}`;
@@ -504,14 +503,23 @@ async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUserna
     }
 
     const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
-    const shareUrl = promoPostId ? `${appUrl}/v/${promoPostId}` : `${appUrl}/channels`;
+    // Deep-link to the creator's profile so followers grow the creator directly.
+    // /c/{username} is the canonical creator profile page (router.tsx:772).
+    const shareUrl = creatorUsername ? `${appUrl}/c/${creatorUsername}` : `${appUrl}/channels`;
     const handle = creatorUsername ? `@${creatorUsername}` : 'a PNPtv! creator';
+    // Cross-platform tag: PNPtv @-mention (grows their X presence) + our handle
+    const xHandleTag = creatorXHandle ? ` (X: @${creatorXHandle})` : '';
     const safeTitle = (title || '').toString().trim().slice(0, 140);
+
+    // Smart hashtags from the creator-chosen or AI-tagged tags list. Falls back
+    // to defaults inside deriveHashtags when tags[] is empty.
+    const XPS = require('./xPostService');
+    const smartHashtags = XPS.deriveHashtags(Array.isArray(tags) ? tags : [], 3);
 
     // Bilingual, brand-tight — EN line, ES line, hashtags. OG card carries the visuals.
     const text = safeTitle
-      ? `🎬 New drop — ${handle}: ${safeTitle}\n🎬 Nuevo — ${handle} acaba de subir\n\n${shareUrl}\n\n#PNPtv #PNPLive`
-      : `🎬 ${handle} just dropped new content on PNPtv!\n🎬 ${handle} tiene contenido nuevo en PNPtv!\n\n${shareUrl}\n\n#PNPtv`;
+      ? `🎬 New drop — ${handle}${xHandleTag}: ${safeTitle}\n🎬 Nuevo — ${handle} acaba de subir\n\n${shareUrl}\n\n${smartHashtags} #PNPtv`
+      : `🎬 ${handle}${xHandleTag} just dropped new content on PNPtv!\n🎬 ${handle} tiene contenido nuevo en PNPtv!\n\n${shareUrl}\n\n${smartHashtags} #PNPtv`;
 
     const mediaUrl = gifUrl || thumbnailUrl || null;
 
@@ -541,10 +549,8 @@ async function announceVideoOnX({ videoId, promoPostId, creatorId, creatorUserna
 async function announceVideoToTelegramGroups({ videoId, promoPostId, creatorId, creatorUsername, title, thumbnailUrl, gifUrl, accessType }) {
   const eventBase = { creatorId, contentType: 'video', contentRef: videoId, promoPostId, channel: 'telegram_group' };
   try {
-    if (accessType && accessType !== 'free') {
-      void logBroadcastEvent({ ...eventBase, target: '*', status: 'skipped', reason: 'not-free' });
-      return { skipped: true, reason: 'not-free' };
-    }
+    // Consent covers every video (paid + free). Deep-link is /c/{username} —
+    // paid content itself is never exposed, only an invitation to explore.
     const { rows: consentRows } = await query(
       `SELECT pnptv_announce_consent FROM users WHERE id = $1`,
       [String(creatorId)]
@@ -580,7 +586,8 @@ async function announceVideoToTelegramGroups({ videoId, promoPostId, creatorId, 
     }
 
     const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
-    const shareUrl = promoPostId ? `${appUrl}/v/${promoPostId}` : `${appUrl}/channels`;
+    // Deep-link to creator profile so the tap grows the creator, not a single video.
+    const shareUrl = creatorUsername ? `${appUrl}/c/${creatorUsername}` : `${appUrl}/channels`;
     const handle = creatorUsername ? `@${creatorUsername}` : 'un creador';
     const safeTitle = (title || '').toString().trim().slice(0, 160);
     // Bilingual — ES first (LatAm-heavy audience), EN below
@@ -826,10 +833,15 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       const descSnippet = descDifferent
         ? rawDesc.slice(0, 140) + (rawDesc.length > 140 ? '…' : '')
         : '';
+      // Deep-link to creator profile /c/{username} (canonical). Falls back to
+      // /channels when the creator username is missing (rare — legacy rows).
+      const creatorProfileUrl = ch.creator_username
+        ? `${appUrl}/c/${ch.creator_username}`
+        : `${appUrl}/channels`;
       const promoContent = [
         `🎬 NEW on PNP Channels: ${final.title}`,
         descSnippet,
-        `🔒 Subscribe to watch → ${appUrl}/channels`,
+        `🔒 Subscribe to watch → ${creatorProfileUrl}`,
       ].filter(Boolean).join('\n\n').slice(0, 1000);
       const metadata = {
         kind: 'channel_promo',
@@ -838,7 +850,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
         channel_name: ch.name ?? '',
         creator_id: ch.creator_id ?? '',
         creator_username: ch.creator_username ?? null,
-        access_type: ch.access_type ?? 'prime',
+        access_type: ch.access_type ?? 'subscription',
         price_usd: null,
         video_id: videoId,
         video_directus_id: final.directus_file_id ?? '',
@@ -1022,6 +1034,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
       thumbnailUrl: final.thumbnail_url,
       gifUrl: final.gif_url,
       accessType: ch.access_type || 'free',
+      tags: final.tags || [],
     }).catch((err) => logger.warn('announceVideoOnX: unexpected error', { videoId, error: err.message }));
 
     // Auto-announce to PNPtv Telegram groups the bot admins.

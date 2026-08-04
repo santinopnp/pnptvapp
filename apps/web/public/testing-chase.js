@@ -1,123 +1,240 @@
 'use strict';
 
-const FLOWS = [
-  { n:1, t:"PRIME channel_promo — YOUR view (logged-in PRIME)",
-    desc:`Open Santino: <a href="https://pnptv.app/c/@santinofurioso" target="_blank">/c/@santinofurioso</a> then Lex: <a href="https://pnptv.app/c/@lexbottomstop" target="_blank">/c/@lexbottomstop</a>. Scroll each wall for a <b>channel_promo</b> card (video preview + PRIME badge).`,
-    items:[
-      {c:"1a", p:"CTA reads <b>▶ Watch now</b> (no lock)"},
-      {c:"1b", p:"Tap CTA — video plays <b>inline in the card</b> (does not open a new page)"},
-      {c:"1c", p:"Video streams smoothly, has scrubber + audio"},
-      {c:"1d", p:"Same 3 checks work on Lex's profile too"},
-    ]},
-  { n:2, t:"PRIME channel_promo — FREE view (Safari Private tab)",
-    desc:`Open <b>Safari Private Browsing</b> → Santino URL again. Do NOT log in. Find the same channel_promo.`,
-    items:[
-      {c:"2a", p:"Video preview is <b>blurred / locked</b> — you cannot see the video"},
-      {c:"2b", p:"CTA reads <b>Unlock PRIME</b> or shows a lock icon"},
-      {c:"2c", p:"Tap CTA → routes to PRIME subscribe page (not to the video)"},
-    ]},
-  { n:3, t:"Subscription-tier channel_promo — FREE view",
-    desc:`Still in Private tab. Browse Discover, find any <b>non-PRIME creator</b> with a channel_promo on their wall.`,
-    items:[
-      {c:"3a", p:"CTA reads <b>Subscribe to @{creator} →</b> (not \"Unlock PRIME\")"},
-      {c:"3b", p:"Tap CTA → drops into that creator's subscribe wizard"},
-    ]},
-  { n:4, t:"Home feed — FREE view of PRIME hype",
-    desc:`Still in Private tab. Try <a href="https://pnptv.app/home" target="_blank">/home</a> — if a public feed is visible, scroll for a PRIME promo post.`,
-    items:[
-      {c:"4a", p:"Video area is <b>redacted</b> / no playable video"},
-      {c:"4b", p:"Post still shows the headline + creator + PRIME badge"},
-    ]},
-  { n:5, t:"Home feed — YOUR view of PRIME hype",
-    desc:`Back in your normal (logged-in) tab. <a href="https://pnptv.app/home" target="_blank">/home</a>. Scroll for a PRIME promo post.`,
-    items:[
-      {c:"5a", p:"Video plays inline (no lock, no redaction)"},
-      {c:"5b", p:"Post shows headline + PRIME badge just like the free view"},
-    ]},
-  { n:6, t:"PRIME hangouts auto-joined",
-    desc:`Normal tab. <a href="https://pnptv.app/hangouts" target="_blank">/hangouts</a>.`,
-    items:[
-      {c:"6a", p:"You see <b>Santino's Cult</b> (group 719) listed"},
-      {c:"6b", p:"You see <b>Lex's group</b> (group 785) listed"},
-      {c:"6c", p:"Tap into either — no join button, no paywall, you're already a member"},
-      {c:"6d", p:"Send a test message — it posts"},
-    ]},
-  { n:7, t:"PRIME hangouts hidden from free users",
-    desc:`Safari Private tab. <a href="https://pnptv.app/hangouts" target="_blank">/hangouts</a> discover.`,
-    items:[
-      {c:"7a", p:"<b>Santino's Cult (719) is NOT visible</b>"},
-      {c:"7b", p:"<b>Lex's group (785) is NOT visible</b>"},
-      {c:"7c", p:"Other Free / Community groups still show normally"},
-    ]},
-  { n:8, t:"Mux video playback — free channel",
-    desc:`Normal tab. <a href="https://pnptv.app/channels" target="_blank">/channels</a> → any free channel with videos.`,
-    items:[
-      {c:"8a", p:"Tap a video thumbnail — playback starts within 3 sec"},
-      {c:"8b", p:"Scrubber works, audio works"},
-      {c:"8c", p:"No black screen, no infinite spinner, no \"cannot load video\" error"},
-      {c:"8d", p:"Rotate phone landscape — video fits, controls still work"},
-    ]},
-  { n:9, t:"Mux video playback — PRIME channel",
-    desc:`Normal tab. <a href="https://pnptv.app/channels" target="_blank">/channels</a> → find channel 209 (PNPtv! PRIME).`,
-    items:[
-      {c:"9a", p:"Videos are visible (not blurred)"},
-      {c:"9b", p:"Tap a video — plays inline within 3 sec, scrubber + audio work"},
-      {c:"9c", p:"Landscape orientation — fits, controls work"},
-    ]},
-  { n:10, t:"Crypto onboarding — first-time interstitial",
-    desc:`In Safari Settings, clear <span class="mono">pnptv.app</span> website data (Settings → Safari → Advanced → Website Data → search pnptv → Remove). Log back in. Then <a href="https://pnptv.app/subscribe" target="_blank">/subscribe</a> → any paid plan → <b>Pay with crypto</b>.`,
-    items:[
-      {c:"10a", p:"Full-screen crypto interstitial with <b>Skip</b> and <b>Start Guide</b> buttons"},
-      {c:"10b", p:"Tap <b>Skip</b> → drops into the normal crypto payment flow"},
-      {c:"10c", p:"Tap <b>Pay with crypto</b> again — interstitial does NOT re-appear"},
-    ]},
-  { n:11, t:"Crypto Guide wizard — full walkthrough",
-    desc:`Open <a href="https://pnptv.app/crypto-guide" target="_blank">/crypto-guide</a> directly.`,
-    items:[
-      {c:"11a", p:"Wizard opens on step 1 of <b>7 or 8 total steps</b> — step counter visible"},
-      {c:"11b", p:"Advance every step via <b>Next</b>. All screens render (no blanks, no broken images)"},
-      {c:"11c", p:"<b>Step 5:</b> Trust + MetaMask mockups both highlight the <b>USDT on BSC</b> row (★ USE THIS)"},
-      {c:"11d", p:"<b>Step 6:</b> BSC = <b>USE THIS</b> (green), TRON = <b>ALSO ACCEPTED</b>, ETH = <b>Skip / too expensive</b>"},
-      {c:"11e", p:"Final step → <b>Complete / Finish</b> button → drops back to home or subscribe"},
-    ]},
-  { n:12, t:"Crypto Guide inline callout",
-    desc:`After step 11, the callout should be GONE. Load Home, Subscribe, Wallet.`,
-    items:[
-      {c:"12a", p:"No callout visible on Home"},
-      {c:"12b", p:"No callout visible on Subscribe"},
-      {c:"12c", p:"No callout visible on Wallet"},
-    ]},
-  { n:13, t:"Subscribe — Which network? deep-link",
-    desc:`Normal tab. <a href="https://pnptv.app/subscribe" target="_blank">/subscribe</a> → any plan → <b>Pay with crypto</b> → token picker opens.`,
-    items:[
-      {c:"13a", p:"Small link <b>Which network? →</b> visible near the token list"},
-      {c:"13b", p:"Tap it → opens <span class=\"mono\">/crypto-guide</span> in a <b>new Safari tab</b>"},
-    ]},
-  { n:14, t:"Wallet — MainStage bonus token badge",
-    desc:`<a href="https://pnptv.app/main-stage" target="_blank">/main-stage</a>. Look for the wallet chip / badge.`,
-    items:[
-      {c:"14a", p:"If a bonus/gift-token amount shows, badge says <b>+X gift tokens</b>"},
-      {c:"14b", p:"Long-press or tap — tooltip mentions the pool applies to <b>both co-founder streams</b>"},
-    ]},
-  { n:15, t:"Wallet — token price math (6 tokens per $1)",
-    desc:`Anywhere tokens vs USD appear (creator sub price, call package, buy-tokens page).`,
-    items:[
-      {c:"15a", p:"Token amount = USD × 6. ($10=60, $50=300, $100=600 base)"},
-      {c:"15b", p:"Buy-tokens page bonus tiers may be slightly more (OK) — flag if a base 1-USD line ≠ 6"},
-    ]},
-  { n:16, t:"Layout — logged-out state",
-    desc:`Safari Private tab. <a href="https://pnptv.app" target="_blank">pnptv.app</a>.`,
-    items:[
-      {c:"16a", p:"Landing page loads without crashing"},
-      {c:"16b", p:"<b>No GOD MODE badge</b> anywhere"},
-      {c:"16c", p:"<b>No crypto guide callout</b> anywhere"},
-      {c:"16d", p:"Header shows <b>Login / Register</b> only"},
-    ]},
-];
+// Testing-team checklist runner. Scope + tester come from the URL:
+//   ?scope=live|member|admin&tester=<display>&pnptv=<pnptv_username>
+// If missing, defaults to live/anonymous.
 
-const KEY = "pnptv_chase_test_v1";
-const NAMEKEY = "pnptv_chase_test_name";
-const state = load();
+const SCENARIOS = {
+  live: {
+    label: 'Live Performers',
+    lead: 'Cloud Computa · Chase · Ladzoo · jjtlv',
+    intro: 'Verify the full live-stream lifecycle on production. Golden path + edge cases. Mobile required.',
+    flows: [
+      { n:1, t:'Go-live from browser Studio',
+        desc:'Open <a href="https://pnptv.app/live" target="_blank">/live</a>, hit Start Stream from the browser.',
+        items:[
+          {c:'1a', p:'Stream starts within 15s — no permission errors'},
+          {c:'1b', p:'Within 30s you appear on the Hub with a LIVE dot'},
+        ]},
+      { n:2, t:'Go-live from OBS / RTMP',
+        desc:'Pull your RTMP URL + key from the Studio settings, push from OBS.',
+        items:[
+          {c:'2a', p:'OBS shows green connection, bitrate stable'},
+          {c:'2b', p:'You appear on Hub the same way as browser go-live'},
+        ]},
+      { n:3, t:'RTMP key rotation',
+        desc:'Rotate your stream key in Studio settings.',
+        items:[
+          {c:'3a', p:'Old key is rejected within seconds (OBS drops)'},
+          {c:'3b', p:'New key connects cleanly'},
+        ]},
+      { n:4, t:'Stream card on Hub',
+        desc:'Load Hub in another tab while live.',
+        items:[
+          {c:'4a', p:'Your title + thumbnail + viewer count all update in near real-time'},
+        ]},
+      { n:5, t:'Tips — Ru$h 💎',
+        desc:'Have another account tip you in Ru$h during the stream. (Ru$h shipped 2026-08-03.)',
+        items:[
+          {c:'5a', p:'On-screen toast fires with the tip amount'},
+          {c:'5b', p:'Your balance reflects the tip within 5s'},
+        ]},
+      { n:6, t:'Tips — tokens',
+        desc:'Same setup — have someone send a token tip.',
+        items:[
+          {c:'6a', p:'Ledger entry appears in PayoutsTab (creator dashboard)'},
+        ]},
+      { n:7, t:'Chat moderation',
+        desc:'From your Studio, use moderation controls on a chatter.',
+        items:[
+          {c:'7a', p:'Mute a viewer — their messages disappear + stay muted on refresh'},
+          {c:'7b', p:'Delete a specific message — it disappears for all viewers'},
+        ]},
+      { n:8, t:'End stream + VOD',
+        desc:'End the stream from Studio.',
+        items:[
+          {c:'8a', p:'VOD auto-saves and appears on your PNP Channel within 60s'},
+          {c:'8b', p:'VOD is playable from your profile'},
+        ]},
+      { n:9, t:'Mobile viewer',
+        desc:'Open your stream on a phone (iOS Safari + Android Chrome).',
+        items:[
+          {c:'9a', p:'Playback starts within 3s, controls responsive'},
+          {c:'9b', p:'Tip button works from the mobile viewer'},
+        ]},
+      { n:10, t:'Private-call slot-lock during live',
+        desc:'While live, book a private call slot ~5 min from now (via a second account).',
+        items:[
+          {c:'10a', p:'Slot-lock holds through NowPayments crypto confirmation delay — do NOT expect instant confirm'},
+          {c:'10b', p:'Once confirmed, call room opens on schedule'},
+        ]},
+    ],
+  },
+  member: {
+    label: 'Connect · Hangouts · Profile · Member-facing',
+    lead: 'Jeff',
+    intro: 'Everything a non-creator, non-admin logged-in user touches on pnptv.app. Use a second account (or Safari Private tab) to test social flows.',
+    flows: [
+      { n:1, t:'Nearby users',
+        desc:'Open <a href="https://pnptv.app/connect" target="_blank">/connect</a> → Nearby.',
+        items:[
+          {c:'1a', p:'Distance sort looks sane (closest first)'},
+          {c:'1b', p:'Only <b>online</b> users show — not live/available-for-call sub-states'},
+        ]},
+      { n:2, t:'Presence dots',
+        desc:'Log another account in on a second device, then log out.',
+        items:[
+          {c:'2a', p:'Green online dot appears within ~10s on your view'},
+          {c:'2b', p:'Dot goes away within ~10s of that account logging out'},
+        ]},
+      { n:3, t:'Follow / Unfollow',
+        desc:'Open another user\'s profile.',
+        items:[
+          {c:'3a', p:'Follow — they appear in your Following list immediately'},
+          {c:'3b', p:'Unfollow — they disappear immediately'},
+        ]},
+      { n:4, t:'DMs — sales tone check',
+        desc:'Open DM inbox. Send a test message to a creator.',
+        items:[
+          {c:'4a', p:'Inbox loads + message sends'},
+          {c:'4b', p:'⚠️ FLAG if you see any refund/billing conversations happening in DMs (DMs are sales-only)'},
+        ]},
+      { n:5, t:'Join public hangout',
+        desc:'From <a href="https://pnptv.app/hangouts" target="_blank">/hangouts</a>, join a public hangout.',
+        items:[
+          {c:'5a', p:'You can post + hear/see other participants'},
+        ]},
+      { n:6, t:'Join private hangout — WITH entitlement',
+        desc:'Join a private hangout you have access to.',
+        items:[
+          {c:'6a', p:'Successful join, no paywall'},
+        ]},
+      { n:7, t:'Join private hangout — WITHOUT entitlement',
+        desc:'Try to join a private hangout you do NOT have access to.',
+        items:[
+          {c:'7a', p:'Clean paywall / access-denied UI'},
+          {c:'7b', p:'No crash, no silent failure'},
+        ]},
+      { n:8, t:'PRIME-gated hangouts 719 + 785',
+        desc:'Try Santino\'s Cult (719) and Lex\'s group (785). Both should behave identically since 2026-07-30 co-founder joint.',
+        items:[
+          {c:'8a', p:'WITH active PRIME → auto-join both'},
+          {c:'8b', p:'WITHOUT PRIME → blocked on both, clear upgrade CTA'},
+        ]},
+      { n:9, t:'Edit profile',
+        desc:'Open your own profile → edit.',
+        items:[
+          {c:'9a', p:'Change avatar, bio, location prefs — persist through reload'},
+          {c:'9b', p:'Your new avatar shows on your profile card + in Nearby list'},
+        ]},
+      { n:10, t:'Member profile page',
+        desc:'Open another user\'s public profile.',
+        items:[
+          {c:'10a', p:'Their avatar shows an online dot (UserAvatar component) if they\'re online'},
+          {c:'10b', p:'Stats + follow-button state match reality'},
+        ]},
+      { n:11, t:'Mobile',
+        desc:'Repeat flows 1, 5, and 9 on iOS Safari + Android Chrome.',
+        items:[
+          {c:'11a', p:'All three work cleanly on mobile'},
+        ]},
+    ],
+  },
+  admin: {
+    label: 'Admin + Creator Panels',
+    lead: 'Santino · Lex',
+    intro: 'Operator-side surfaces. High blast radius — please be thorough. You need admin access (Santino) and creator access (Lex).',
+    flows: [
+      { n:1, t:'User detail — tier grants',
+        desc:'<a href="https://pnptv.app/admin/users" target="_blank">/admin/users</a> → pick a user → grant a tier.',
+        items:[
+          {c:'1a', p:'user_entitlements row appears (source of truth — NOT users.tier)'},
+        ]},
+      { n:2, t:'PaymentHealth dashboard',
+        desc:'<a href="https://pnptv.app/admin/payment-health" target="_blank">/admin/payment-health</a>.',
+        items:[
+          {c:'2a', p:'NowPayments status green'},
+          {c:'2b', p:'Recent invoices load + reconciler heartbeat green'},
+        ]},
+      { n:3, t:'2257 verification queue',
+        desc:'59 users currently in grace expiring 2026-08-14. Approve one, reject one with a reason.',
+        items:[
+          {c:'3a', p:'Status updates + grace-expiry date recomputes correctly'},
+        ]},
+      { n:4, t:'Entitlement editor',
+        desc:'Grant/revoke a per-resource entitlement (channel or hangout).',
+        items:[
+          {c:'4a', p:'hasResourceAccess resolves correctly on the user side (My Access page or log in as them)'},
+        ]},
+      { n:5, t:'PNP Channels admin — channel 209',
+        desc:'PNPtv! PRIME (channel 209, is_system=true).',
+        items:[
+          {c:'5a', p:'Demotion is blocked in the UI'},
+          {c:'5b', p:'Admin ops still work (feature toggle, video add/remove)'},
+        ]},
+      { n:6, t:'Duplicate accounts',
+        desc:'<a href="https://pnptv.app/admin/duplicate-accounts" target="_blank">/admin/duplicate-accounts</a> → run merge on a test pair.',
+        items:[
+          {c:'6a', p:'accountMergeService succeeds + no data loss'},
+        ]},
+      { n:7, t:'PayoutsTab thresholds',
+        desc:'Creator dashboard → Payouts.',
+        items:[
+          {c:'7a', p:'Weekly batch min shows $100, cashout min shows $50'},
+          {c:'7b', p:'Gifted tokens do NOT accrue into payout balance (tokenLedgerService guard)'},
+        ]},
+      { n:8, t:'CreatorChannelsHub',
+        desc:'Creator dashboard → Channels.',
+        items:[
+          {c:'8a', p:'Create a Free channel + a Paid channel'},
+          {c:'8b', p:'PRIME lock present (no promote-to-PRIME option)'},
+          {c:'8c', p:'Add a video via the upload wizard end-to-end'},
+        ]},
+      { n:9, t:'UserCreatorSection (admin > user detail)',
+        desc:'Assign creator role to a test member.',
+        items:[
+          {c:'9a', p:'They auto-get lifetime pnp-member entitlement'},
+        ]},
+      { n:10, t:'DM broadcast',
+        desc:'Send a creator broadcast DM.',
+        items:[
+          {c:'10a', p:'Message body is unique per creator (UI should reject reuse/copy)'},
+        ]},
+      { n:11, t:'Cal.com availability',
+        desc:'Set availability in Cal.com.',
+        items:[
+          {c:'11a', p:'Reflects in creator availability endpoint + private-call booking calendar'},
+        ]},
+      { n:12, t:'Channel-video upload wizard',
+        desc:'End-to-end: upload a short clip.',
+        items:[
+          {c:'12a', p:'Grok description generates'},
+          {c:'12b', p:'ffmpeg GIF thumbnail generates'},
+          {c:'12c', p:'Smart promo post drops on your channel'},
+        ]},
+      { n:13, t:'Creator subscription checkout',
+        desc:'As a test member, subscribe to a creator monthly plan.',
+        items:[
+          {c:'13a', p:'Hits <span class="mono">/usdc/prepare</span> (NOT <span class="mono">/usdc/subscribe</span>)'},
+          {c:'13b', p:'Does not 400'},
+        ]},
+    ],
+  },
+};
+
+// ── URL params ──────────────────────────────────────────────────────────────
+const params  = new URLSearchParams(location.search);
+const scopeIn = String(params.get('scope') || 'live').toLowerCase();
+const SCOPE   = SCENARIOS[scopeIn] ? scopeIn : 'live';
+const CFG     = SCENARIOS[SCOPE];
+const FLOWS   = CFG.flows;
+const TESTER_URL = params.get('tester') || '';
+const PNPTV_URL  = params.get('pnptv')  || '';
+
+const KEY     = 'pnptv_test_' + SCOPE;
+const NAMEKEY = 'pnptv_test_name_' + SCOPE;
+const PNPKEY  = 'pnptv_test_pnpuser_' + SCOPE;
+const state   = load();
 
 function load(){
   try { return JSON.parse(localStorage.getItem(KEY)) || {}; }
@@ -126,36 +243,31 @@ function load(){
 function save(){
   localStorage.setItem(KEY, JSON.stringify(state));
 }
-function saveName(v){
-  localStorage.setItem(NAMEKEY, v || '');
-}
+function saveName(v){ localStorage.setItem(NAMEKEY, v || ''); }
+function savePnp(v){  localStorage.setItem(PNPKEY,  v || ''); }
 function wipe(){
-  if (!confirm("Reset all your marks?")) return;
+  if (!confirm('Reset all your marks for this scope?')) return;
   localStorage.removeItem(KEY);
   location.reload();
 }
 
-function totalItems(){
-  return FLOWS.reduce((s,f)=>s+f.items.length,0);
-}
+function totalItems(){ return FLOWS.reduce((s,f)=>s+f.items.length,0); }
 function countDone(){
   let n = 0;
   FLOWS.forEach(f=>f.items.forEach(it=>{ if (state[it.c] && state[it.c].mark) n++; }));
   return n;
 }
-function flowDone(f){
-  return f.items.every(it => state[it.c] && state[it.c].mark);
-}
+function flowDone(f){ return f.items.every(it => state[it.c] && state[it.c].mark); }
 function updateProgress(){
   const t = totalItems(), d = countDone();
   const pct = t ? Math.round(d*100/t) : 0;
-  document.getElementById("pbar").style.width = pct + "%";
-  document.getElementById("pcount").textContent = d + " / " + t;
-  document.getElementById("ptext").textContent = pct + "%";
+  document.getElementById('pbar').style.width = pct + '%';
+  document.getElementById('pcount').textContent = d + ' / ' + t;
+  document.getElementById('ptext').textContent = pct + '%';
 }
 
 function render(){
-  const root = document.getElementById("flows");
+  const root = document.getElementById('flows');
   root.innerHTML = FLOWS.map(f => {
     const done = flowDone(f);
     const doneCount = f.items.filter(it => state[it.c] && state[it.c].mark).length;
@@ -186,13 +298,28 @@ function render(){
       </section>`;
   }).join('');
   FLOWS.forEach(f => {
-    if (state[`open_${f.n}`]) {
+    if (state['open_' + f.n]) {
       const el = root.querySelector('.flow[data-n="' + f.n + '"]');
       if (el) el.classList.add('open');
     }
   });
-  const savedName = localStorage.getItem(NAMEKEY);
-  if (savedName) document.getElementById('tname').value = savedName;
+  const savedName = TESTER_URL || localStorage.getItem(NAMEKEY) || '';
+  const savedPnp  = PNPTV_URL  || localStorage.getItem(PNPKEY)  || '';
+  const nameEl = document.getElementById('tname');
+  const pnpEl  = document.getElementById('pnpuser');
+  if (nameEl && savedName) nameEl.value = savedName;
+  if (pnpEl  && savedPnp)  pnpEl.value  = savedPnp;
+
+  // Header + intro rewrite for scope
+  const brandH1 = document.querySelector('.brand h1');
+  if (brandH1) brandH1.textContent = 'PNPtv! Testing — ' + CFG.label;
+  const whoEl = document.getElementById('who');
+  if (whoEl) whoEl.textContent = 'Lead: ' + CFG.lead;
+  const introTxt = document.getElementById('introTxt');
+  if (introTxt) introTxt.textContent = CFG.intro;
+  const submitHint = document.getElementById('submitHint');
+  if (submitHint) submitHint.textContent = 'On submit: your report + Grok triage post to #testing-team. If your PNPtv username matches, $30 (180 Ru$h) auto-credits to your wallet.';
+
   updateProgress();
   genReport();
 }
@@ -201,7 +328,7 @@ function toggleFlow(n){
   const el = document.querySelector('.flow[data-n="' + n + '"]');
   if (!el) return;
   el.classList.toggle('open');
-  state[`open_${n}`] = el.classList.contains('open');
+  state['open_' + n] = el.classList.contains('open');
   save();
 }
 
@@ -215,7 +342,7 @@ function startFirstFlow(){
   if (!el) { toast('flow not found — reload page'); return; }
   if (!el.classList.contains('open')) {
     el.classList.add('open');
-    state[`open_${target.n}`] = true;
+    state['open_' + target.n] = true;
     save();
   }
   toast('Opened flow ' + target.n + ' ✓');
@@ -262,24 +389,23 @@ function genReport(){
     lines.push('*' + f.n + '. ' + f.t + '*\n' + rows);
   });
   const total = ok+bad+warn+skip;
-  const tester = (document.getElementById('tname')?.value || 'Chase').trim();
-  const header = 'PNPtv test run — ' + tester + '\n✅ ' + ok + '  ❌ ' + bad + '  ⚠️ ' + warn + '  ⬜ ' + skip + '  (of ' + total + ')\n\n';
-  document.getElementById("report").value = header + lines.join('\n\n');
+  const tester = (document.getElementById('tname')?.value || 'anonymous').trim();
+  const header = '[' + CFG.label + '] PNPtv test run — ' + tester +
+                 '\n✅ ' + ok + '  ❌ ' + bad + '  ⚠️ ' + warn + '  ⬜ ' + skip + '  (of ' + total + ')\n\n';
+  document.getElementById('report').value = header + lines.join('\n\n');
 }
 
 async function copyReport(){
   genReport();
-  const txt = document.getElementById("report").value;
-  try {
-    await navigator.clipboard.writeText(txt);
-    toast("Copied ✓");
-  } catch(e) {
-    const ta = document.getElementById("report");
+  const txt = document.getElementById('report').value;
+  try { await navigator.clipboard.writeText(txt); toast('Copied ✓'); }
+  catch(e) {
+    const ta = document.getElementById('report');
     ta.removeAttribute('readonly');
     ta.select();
     document.execCommand('copy');
     ta.setAttribute('readonly','');
-    toast("Copied ✓");
+    toast('Copied ✓');
   }
 }
 
@@ -288,7 +414,8 @@ async function submitReport(){
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Submitting…';
-  const tester = (document.getElementById('tname')?.value || 'Chase').trim() || 'Chase';
+  const tester = (document.getElementById('tname')?.value || 'anonymous').trim() || 'anonymous';
+  const pnpuser = (document.getElementById('pnpuser')?.value || '').trim();
   const results = {}, notes = {};
   FLOWS.forEach(f => f.items.forEach(it => {
     const s = state[it.c] || {};
@@ -300,29 +427,33 @@ async function submitReport(){
     const res = await fetch('/api/webhooks/tester-report', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ tester: tester, results: results, notes: notes, report_text: report_text }),
+      body:JSON.stringify({
+        tester: tester, pnptv_username: pnpuser, scope: SCOPE,
+        results: results, notes: notes, report_text: report_text,
+      }),
     });
     const data = await res.json().catch(function(){ return {}; });
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-    toast("Sent to Slack ✓");
+    toast('Sent to Slack ✓');
     btn.textContent = '✅ Sent — send another';
     setTimeout(function(){ btn.textContent='🚀 Submit to team'; btn.disabled=false; }, 3000);
   } catch(err){
-    toast('Send failed: '+err.message, true);
+    toast('Send failed: ' + err.message, true);
     btn.textContent = '🚀 Retry submit';
     btn.disabled = false;
   }
 }
 
 function toast(msg, err){
-  const t = document.getElementById("toast");
+  const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'toast show' + (err ? ' err' : '');
   setTimeout(function(){ t.className = 'toast'; }, 1800);
 }
 
-// ── delegated event wiring (CSP-safe, no inline onclick) ─────────────────────
+// ── delegated event wiring (CSP-safe) ────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function(){
+  document.title = 'PNPtv! Testing — ' + CFG.label;
   render();
 
   document.addEventListener('click', function(ev){
@@ -348,6 +479,8 @@ document.addEventListener('DOMContentLoaded', function(){
       note(t.dataset.note, t.value);
     } else if (t.id === 'tname') {
       saveName(t.value);
+    } else if (t.id === 'pnpuser') {
+      savePnp(t.value);
     }
   });
 });

@@ -52,7 +52,7 @@ const strings = {
     errorFailedToSendTip: "Failed to send tip",
 
     // Tip payment tabs
-    tabTokens: "Tokens",
+    tabTokens: "Ru$h 💎",
     tokenInstantNote: "Instant · No popup · No waiting",
 
     // Add tip message toggle
@@ -69,7 +69,7 @@ const strings = {
     tokens: "tokens",
     linkDpns: "Link DPNS",
     history: "History",
-    buyTokens: "Buy Tokens",
+    buyTokens: "Buy Ru$h 💎",
     dpnsPlaceholder: "yourname.dash",
     save: "Save",
     saving: "Saving...",
@@ -470,7 +470,7 @@ const strings = {
     errorFailedToSendTip: "Error al enviar la propina",
 
     // Tip payment tabs
-    tabTokens: "Tokens",
+    tabTokens: "Ru$h 💎",
     tokenInstantNote: "Instantáneo · Sin esperas · Sin ventanas emergentes",
 
     // Add tip message toggle
@@ -501,7 +501,7 @@ const strings = {
         : `${balance} tokens — toca para comprar`,
 
     // Buy tokens modal
-    buyPnpTokensTitle: "Comprar Tokens PNP con Dash",
+    buyPnpTokensTitle: "Comprar Ru$h 💎",
     buyTokensPoweredBy: "Impulsado por",
     buyTokensRateNote:
       "Usa tokens para propinas instantáneas — sin ventanas emergentes, sin esperas.",

@@ -1062,8 +1062,14 @@ const createChannel = async (req, res) => {
     // blocked pending Phase 2 (themed extra paid channels).
     //   subscription — the canonical channel (auto-provisioned on onboarding)
     //   paid         — [Phase 2 only] separate themed paid channel
-    //   prime        — included with PRIME (admin-only, no creator self-create)
-    const ALLOWED_ACCESS_TYPES = new Set(['paid', 'subscription', 'prime']);
+    //   prime        — admin-only (system channel 209); creators cannot self-create
+    const ALLOWED_ACCESS_TYPES = new Set(['paid', 'subscription']);
+    if (accessType === 'prime') {
+      return res.status(403).json({
+        error: 'Creators can only set access to paid or subscription.',
+        code: 'ACCESS_TYPE_FORBIDDEN',
+      });
+    }
     const safeAccessType = ALLOWED_ACCESS_TYPES.has(accessType) ? accessType : 'subscription';
 
     if (safeAccessType === 'free') {

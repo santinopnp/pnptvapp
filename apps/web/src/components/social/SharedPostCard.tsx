@@ -228,6 +228,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                       muted
                       playsInline
                       preload="metadata"
+                      creatorDisclaimer
                       disablePictureInPicture
                       onContextMenu={(e) => e.preventDefault()}
                     />

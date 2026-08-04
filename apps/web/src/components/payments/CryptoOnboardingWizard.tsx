@@ -11,6 +11,8 @@ const TW_SRC = "/crypto-tutorial/truewallet-setup.mp4";
 
 const T = {
   eyebrow:    { en: "GETTING STARTED",                            es: "PARA EMPEZAR" },
+  readyStartPay: { en: "Ready — Start Payment →",                 es: "Listo — Iniciar Pago →" },
+  skipGuide:   { en: "Skip guide",                                 es: "Omitir guía" },
   title:      { en: "How to pay in PNPtv with crypto",            es: "Cómo pagar en PnP con criptomonedas" },
   subtitle:   { en: "5 quick steps: pick a wallet, install it, load it with crypto, and pay — memberships, calls and tokens land in your account automatically.",
                 es: "5 pasos: elige una wallet, instálala, cárgala con cripto y paga — la membresía, las llamadas y los tokens llegan a tu cuenta automáticamente." },
@@ -549,7 +551,17 @@ function Callout({ tone, label, children }: { tone: "tip" | "warn" | "info" | "g
 
 // ── Main wizard ─────────────────────────────────────────────────────────────
 
-export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
+export function CryptoOnboardingWizard({
+  lang,
+  onConfirm,
+  onSkip,
+}: {
+  lang: Lang;
+  /** When provided, adds a "Ready — Start Payment →" CTA + a "Skip guide" link.
+   *  Used by the paywall auto-launch modal to hand control back to the NP flow. */
+  onConfirm?: () => void;
+  onSkip?: () => void;
+}) {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [walletKey, setWalletKey] = useState<WalletKey | null>(null);
   const [rewarded, setRewarded] = useState<boolean | null>(null);
@@ -660,6 +672,25 @@ export function CryptoOnboardingWizard({ lang }: { lang: Lang }) {
           {nextLabel}
         </button>
       </div>
+
+      {onConfirm && (
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <button
+            onClick={onConfirm}
+            style={{ width: "100%", padding: "13px 14px", borderRadius: 10, border: "none", background: "linear-gradient(135deg,#2DD4BF,#22D3EE)", color: "#04252b", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            {T.readyStartPay[lang]}
+          </button>
+          {onSkip && (
+            <button
+              onClick={onSkip}
+              style={{ width: "100%", padding: "8px 14px", borderRadius: 10, border: "none", background: "transparent", color: "#8E8E93", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+            >
+              {T.skipGuide[lang]}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

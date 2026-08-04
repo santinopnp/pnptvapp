@@ -872,6 +872,249 @@ export function PayoutsTab({ withdrawable, withdrawals, t, onReload }: PayoutsTa
           t={t}
         />
       )}
+
+      {/* Ru$h 💎 withdraw / convert panel — creator's two exits */}
+      <RushCreatorPanel />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RushCreatorPanel — withdraw earnings to USDT OR convert to spendable Ru$h
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface EarningsSummary {
+  success: boolean;
+  earnings: { available_usd: string | number; holding_usd: string | number; paidout_usd: string | number; inpayout_usd: string | number };
+  wallet: { balance_tokens: number; gifted_balance: number; total: number };
+}
+
+interface WithdrawRequestRow {
+  id: string;
+  amount_usd: string | number;
+  destination_currency: string;
+  destination_address: string;
+  status: string;
+  requested_at: string;
+  reviewed_at: string | null;
+  completed_at: string | null;
+  admin_notes: string | null;
+  deny_reason: string | null;
+}
+
+function RushCreatorPanel() {
+  const [summary, setSummary] = useState<EarningsSummary | null>(null);
+  const [reqs, setReqs] = useState<WithdrawRequestRow[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [mode, setMode] = useState<'none' | 'withdraw' | 'convert'>('none');
+  const [wAmount, setWAmount] = useState('');
+  const [wCurrency, setWCurrency] = useState('usdttrc20');
+  const [wAddress, setWAddress] = useState('');
+  const [cAmount, setCAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setErr(null);
+    try {
+      const [s, r] = await Promise.all([
+        fetch('/api/webapp/creators/earnings-summary', { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))),
+        fetch('/api/webapp/creators/withdraw', { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))),
+      ]);
+      setSummary(s);
+      setReqs(r.requests || []);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Load failed'); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const availableUsd = summary ? parseFloat(String(summary.earnings.available_usd || 0)) : 0;
+
+  const submitWithdraw = async () => {
+    const amt = parseFloat(wAmount);
+    if (!(amt >= 50)) { setErr('Minimum $50'); return; }
+    if (amt > availableUsd) { setErr(`You only have $${availableUsd.toFixed(2)} available`); return; }
+    if (wAddress.trim().length < 20) { setErr('Invalid destination address'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch('/api/webapp/creators/withdraw', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUsd: amt, destinationAddress: wAddress.trim(), destinationCurrency: wCurrency }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      setOkMsg(`Withdrawal request for $${amt.toFixed(2)} submitted. Admin will review shortly.`);
+      setMode('none'); setWAmount(''); setWAddress('');
+      await load();
+      setTimeout(() => setOkMsg(null), 8000);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Withdrawal failed'); }
+    finally { setBusy(false); }
+  };
+
+  const submitConvert = async () => {
+    const amt = parseFloat(cAmount);
+    if (!(amt >= 1)) { setErr('Minimum $1'); return; }
+    if (amt > availableUsd) { setErr(`You only have $${availableUsd.toFixed(2)} available`); return; }
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch('/api/webapp/creators/convert-earnings', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUsd: amt }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      setOkMsg(`Converted $${amt.toFixed(2)} → ${j.rushCredited} 💎 Ru$h. Ready to spend on other creators.`);
+      setMode('none'); setCAmount('');
+      await load();
+      setTimeout(() => setOkMsg(null), 8000);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Conversion failed'); }
+    finally { setBusy(false); }
+  };
+
+  if (!summary) return null;
+
+  return (
+    <div className="glass-card-sm p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-white">Ru$h 💎 — Withdraw or Spend</h3>
+        <button onClick={load} className="text-[10px] px-2 py-1 rounded bg-white/5 text-white/60 hover:bg-white/10">Refresh</button>
+      </div>
+
+      {okMsg && <div className="px-3 py-2 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-300">{okMsg}</div>}
+      {err && <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/25 text-xs text-red-300">{err}</div>}
+
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="p-2 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
+          <div className="uppercase tracking-wider text-[10px] opacity-70">Available</div>
+          <div className="font-mono text-sm">${availableUsd.toFixed(2)}</div>
+          <div className="text-[10px] opacity-60">{Math.floor(availableUsd * 6)} 💎</div>
+        </div>
+        <div className="p-2 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-300">
+          <div className="uppercase tracking-wider text-[10px] opacity-70">Holding (72h)</div>
+          <div className="font-mono text-sm">${Number(summary.earnings.holding_usd).toFixed(2)}</div>
+        </div>
+        <div className="p-2 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-300">
+          <div className="uppercase tracking-wider text-[10px] opacity-70">Wallet balance</div>
+          <div className="font-mono text-sm">{summary.wallet.total} 💎</div>
+        </div>
+      </div>
+
+      {mode === 'none' && (
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => { setMode('withdraw'); setErr(null); }}
+            disabled={availableUsd < 50}
+            className="p-3 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+          >
+            💵 Withdraw to crypto
+            <div className="text-[10px] opacity-70 mt-1">Min $50 to USDT-TRC20 or others</div>
+          </button>
+          <button
+            onClick={() => { setMode('convert'); setErr(null); }}
+            disabled={availableUsd < 1}
+            className="p-3 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+          >
+            💎 Convert to spendable Ru$h
+            <div className="text-[10px] opacity-70 mt-1">Spend on other creators (1:1 at $1 = 6 Ru$h)</div>
+          </button>
+        </div>
+      )}
+
+      {mode === 'withdraw' && (
+        <div className="space-y-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-blue-200 font-semibold">Withdraw to crypto</div>
+            <button onClick={() => setMode('none')} className="text-[10px] text-white/60">Cancel</button>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <input
+              type="number" step="0.01" min="50" placeholder={`Min $50 · Max $${availableUsd.toFixed(2)}`}
+              value={wAmount} onChange={(e) => setWAmount(e.target.value)}
+              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+            />
+            <select
+              value={wCurrency} onChange={(e) => setWCurrency(e.target.value)}
+              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+            >
+              <option value="usdttrc20">USDT (TRON)</option>
+              <option value="usdterc20">USDT (ERC-20)</option>
+              <option value="usdtbsc">USDT (BSC)</option>
+              <option value="usdcsol">USDC (Solana)</option>
+              <option value="btc">Bitcoin</option>
+              <option value="dash">Dash</option>
+            </select>
+            <input
+              type="text" placeholder="Destination address"
+              value={wAddress} onChange={(e) => setWAddress(e.target.value)}
+              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+            />
+          </div>
+          <button
+            onClick={submitWithdraw} disabled={busy}
+            className="w-full py-2 rounded-md bg-blue-500/25 border border-blue-500/40 text-blue-100 hover:bg-blue-500/35 disabled:opacity-50 text-sm"
+          >{busy ? 'Submitting…' : 'Request withdrawal'}</button>
+          <p className="text-[10px] text-white/50">Admin will review your request within 72 hours. You cannot cancel once approved.</p>
+        </div>
+      )}
+
+      {mode === 'convert' && (
+        <div className="space-y-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-amber-200 font-semibold">Convert earnings → Ru$h 💎</div>
+            <button onClick={() => setMode('none')} className="text-[10px] text-white/60">Cancel</button>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number" step="0.01" min="1" placeholder={`Min $1 · Max $${availableUsd.toFixed(2)}`}
+              value={cAmount} onChange={(e) => setCAmount(e.target.value)}
+              className="flex-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+            />
+            <div className="text-xs text-amber-200 whitespace-nowrap">
+              → {cAmount && !isNaN(parseFloat(cAmount)) ? Math.floor(parseFloat(cAmount) * 6) : 0} 💎
+            </div>
+          </div>
+          <button
+            onClick={submitConvert} disabled={busy}
+            className="w-full py-2 rounded-md bg-amber-500/25 border border-amber-500/40 text-amber-100 hover:bg-amber-500/35 disabled:opacity-50 text-sm"
+          >{busy ? 'Converting…' : 'Convert now'}</button>
+          <p className="text-[10px] text-white/50">Instant. Spend Ru$h on private calls, tips, exclusive content, or upgrade your own membership.</p>
+        </div>
+      )}
+
+      {reqs.length > 0 && (
+        <div className="rounded-md border border-white/10 overflow-hidden">
+          <div className="px-3 py-2 bg-white/5 text-[10px] uppercase tracking-wider text-white/60">Withdrawal history</div>
+          <table className="w-full text-xs">
+            <thead className="bg-white/[0.02] text-white/50">
+              <tr className="text-left">
+                <th className="px-2 py-1">Date</th>
+                <th className="px-2 py-1">Amount</th>
+                <th className="px-2 py-1">To</th>
+                <th className="px-2 py-1">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reqs.map(r => (
+                <tr key={r.id} className="border-t border-white/5">
+                  <td className="px-2 py-1 text-white/70">{new Date(r.requested_at).toLocaleDateString()}</td>
+                  <td className="px-2 py-1 font-mono">${Number(r.amount_usd).toFixed(2)}</td>
+                  <td className="px-2 py-1 text-white/50 text-[10px]">{r.destination_currency.toUpperCase()}</td>
+                  <td className="px-2 py-1">
+                    <span className={
+                      r.status === 'paid'      ? 'text-emerald-300' :
+                      r.status === 'denied'    ? 'text-red-300' :
+                      r.status === 'cancelled' ? 'text-white/40' :
+                      'text-amber-300'
+                    }>{r.status}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

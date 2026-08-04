@@ -1224,11 +1224,18 @@ class CreatorService {
 
   // ── Exclusive Content Access ───────────────────────────────────────────────
 
-  static async canViewExclusivePost(viewerId, creatorId, postId) {
-    // Owner always sees their own exclusive content
+  // @deprecated 2026-08-03 — replaced by inline logic in
+  // filterFeedExclusivePosts (feed) and socialController.getPost (single-post).
+  // Kept only to stop the linter from flagging orphan references; the current
+  // access model has no legitimate call sites. If you find yourself reaching
+  // for this, wire your handler through the canonical implementations instead.
+  //
+  // Behavior aligned with the new model: PRIME co-founders (Santino/Lex) unlock
+  // via PRIME entitlement; regular creators require a per-creator subscription;
+  // the 'teaser' status has been retired.
+  static async canViewExclusivePost(viewerId, creatorId, _postId) {
     if (viewerId === creatorId) return { status: 'unlocked', reason: 'owner' };
 
-    // Check viewer's role and entitlements via live data (not stale users.tier)
     const viewerRes = await query(
       "SELECT role FROM users WHERE id = $1",
       [viewerId]
@@ -1237,28 +1244,17 @@ class CreatorService {
     const isAdminRole = viewerRole === 'admin' || viewerRole === 'superadmin';
     const EntitlementAccessService = require('./entitlementAccessService');
 
-    // Admin always unlocked
-    if (isAdminRole) {
-      return { status: 'unlocked', reason: 'admin' };
-    }
+    if (isAdminRole) return { status: 'unlocked', reason: 'admin' };
 
-    // Check creator-subscription entitlement first (subscriber wins unconditionally)
     const hasCreatorSub = await EntitlementAccessService.hasEntitlement(
       viewerId, 'creator-subscription', { creatorId }
     );
-    if (hasCreatorSub) {
-      return { status: 'unlocked', reason: 'subscribed' };
-    }
+    if (hasCreatorSub) return { status: 'unlocked', reason: 'subscribed' };
 
-    // PRIME users get a teaser preview (not full unlock without subscribing)
     const hasPrimeEnt = await EntitlementAccessService.hasEntitlement(viewerId, 'prime');
-    if (hasPrimeEnt) {
-      if (isTeaserPost(postId, viewerId)) {
-        return { status: 'teaser', reason: 'prime_preview' };
-      }
-      return { status: 'locked', reason: 'not_subscribed' };
+    if (hasPrimeEnt && EntitlementAccessService.isPrimeCoFounder(creatorId)) {
+      return { status: 'unlocked', reason: 'prime_cofounder' };
     }
-
     return { status: 'locked', reason: 'not_subscribed' };
   }
 
@@ -1287,6 +1283,7 @@ class CreatorService {
     }
 
     const isPrime = (viewerTier || '').toLowerCase() === 'prime';
+    const { isPrimeCoFounder } = require('./entitlementAccessService');
 
     // Batch-check subscriptions unconditionally — subscribers without PRIME must
     // still see content from creators they pay for.
@@ -1309,6 +1306,37 @@ class CreatorService {
       }
     }
 
+    // Build a locked-post payload that carries the fields the paywall UI needs
+    // to render a blurred-preview video card + open the correct NowPayments
+    // invoice inline. Only video posts get the preview clip; text/image posts
+    // keep the classic static lock UI.
+    const buildLockedPayload = (p) => {
+      const meta = typeof p.metadata === 'string'
+        ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })()
+        : (p.metadata || null);
+      const mediaType = (p.media_type || '').toLowerCase();
+      const isVideo = mediaType.startsWith('video');
+      const authorPrime = isPrimeCoFounder(p.author_id || p.user_id);
+      return {
+        ...p,
+        exclusive_status: 'locked',
+        locked_reason: 'not_subscribed',
+        content: null,
+        media_url: null,
+        media_urls: null,
+        video_thumbnail_url: null,
+        video_title: null,
+        video_description: null,
+        // Enriched paywall hints — client uses these to render the CTA + trigger
+        // the correct NowPayments checkout flow without an intermediate page.
+        preview_gif_url: isVideo ? (meta?.preview_gif_url || null) : null,
+        is_video_exclusive: isVideo,
+        unlock_target: authorPrime ? 'prime' : 'creator_sub',
+        plan_slug: authorPrime ? 'monthly-pass' : null,
+        creator_channel_url: p.author_username ? `/c/${p.author_username}` : null,
+      };
+    };
+
     return posts.map(p => {
       if (!p.is_exclusive) return p;
 
@@ -1324,32 +1352,14 @@ class CreatorService {
         return { ...p, exclusive_status: 'unlocked' };
       }
 
-      // PRIME users (non-subscribed) get a teaser preview
-      if (isPrime) {
-        if (isTeaserPost(p.id, viewerId)) {
-          return { ...p, exclusive_status: 'teaser' };
-        }
-        return {
-          ...p,
-          exclusive_status: 'locked',
-          locked_reason: 'not_subscribed',
-          content: null,
-          media_url: null,
-          media_urls: null,
-          video_thumbnail_url: null,
-        };
+      // Santino/Lex: PRIME entitlement IS the unlock (no per-creator sub needed)
+      if (isPrime && isPrimeCoFounder(postCreatorId)) {
+        return { ...p, exclusive_status: 'unlocked' };
       }
 
-      // Non-PRIME, non-subscribed: locked
-      return {
-        ...p,
-        exclusive_status: 'locked',
-        locked_reason: 'not_subscribed',
-        content: null,
-        media_url: null,
-        media_urls: null,
-        video_thumbnail_url: null,
-      };
+      // Other PRIME users on a regular creator's exclusive: locked (must sub to creator)
+      // Non-PRIME viewers: locked
+      return buildLockedPayload(p);
     });
   }
 

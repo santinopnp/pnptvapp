@@ -213,6 +213,10 @@ export default function PaymentHealth() {
         <StatusPill count={data.stuck.dash.count} label="BTCPay Stuck" />
       </div>
 
+      {/* Ru$h 💎 Currency Health */}
+      <CurrencyHealthPanel />
+
+
       {/* 7-day activity */}
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
         <h2 className="text-sm uppercase tracking-wide text-zinc-400 mb-3">7-day Activity</h2>
@@ -252,3 +256,112 @@ export default function PaymentHealth() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CurrencyHealthPanel — Ru$h 💎 supply, flow, integrity check
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CurrencyHealth {
+  success: boolean;
+  circulation: { total_circulating: string | number; total_balance: string | number; total_gifted: string | number; holders: string | number };
+  windows: Array<{ label: string; purchased: string | number; granted: string | number; spent: string | number; event_count: string | number }>;
+  top_holders: Array<{ user_id: string; username: string | null; first_name: string | null; balance_tokens: number; gifted_balance: number; total: number }>;
+  drift: Array<{ user_id: string; wallet_balance: number; wallet_gifted: number; ledger_balance: number; ledger_gifted: number }>;
+  drift_ok: boolean;
+}
+
+function CurrencyHealthPanel() {
+  const [d, setD] = useState<CurrencyHealth | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/webapp/admin/currency-health', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setD(await res.json());
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Load failed'); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (err) return <div className="rounded-lg bg-red-950/40 border border-red-800 p-4 text-sm text-red-300">Currency Health: {err}</div>;
+  if (!d) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4 text-sm text-zinc-400">Loading Ru$h health…</div>;
+
+  return (
+    <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm uppercase tracking-wide text-amber-400">Ru$h 💎 Currency Health</h2>
+        {d.drift_ok
+          ? <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-800 text-emerald-300">LEDGER ✓</span>
+          : <span className="text-[10px] px-2 py-0.5 rounded bg-red-950/40 border border-red-800 text-red-300">DRIFT {d.drift.length}</span>}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div><div className="text-zinc-400 text-xs">In circulation</div><div className="text-lg font-mono">{Number(d.circulation.total_circulating).toLocaleString()} 💎</div></div>
+        <div><div className="text-zinc-400 text-xs">Purchased Ru$h</div><div className="text-lg font-mono">{Number(d.circulation.total_balance).toLocaleString()} 💎</div></div>
+        <div><div className="text-zinc-400 text-xs">Gifted Ru$h</div><div className="text-lg font-mono">{Number(d.circulation.total_gifted).toLocaleString()} 💎</div></div>
+        <div><div className="text-zinc-400 text-xs">Holders</div><div className="text-lg font-mono">{Number(d.circulation.holders).toLocaleString()}</div></div>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Flow</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-zinc-400 border-b border-zinc-800">
+              <tr className="text-left">
+                <th className="py-1 pr-3">Window</th>
+                <th className="py-1 pr-3">Purchased</th>
+                <th className="py-1 pr-3">Granted</th>
+                <th className="py-1 pr-3">Spent</th>
+                <th className="py-1 pr-3">Events</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.windows.map(w => (
+                <tr key={w.label} className="border-b border-zinc-800/60">
+                  <td className="py-1 pr-3">{w.label}</td>
+                  <td className="py-1 pr-3 font-mono text-emerald-300">+{Number(w.purchased).toLocaleString()} 💎</td>
+                  <td className="py-1 pr-3 font-mono text-amber-300">+{Number(w.granted).toLocaleString()} 💎</td>
+                  <td className="py-1 pr-3 font-mono text-red-300">−{Number(w.spent).toLocaleString()} 💎</td>
+                  <td className="py-1 pr-3 font-mono text-zinc-400">{Number(w.event_count).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Top holders</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-zinc-400 border-b border-zinc-800">
+              <tr className="text-left">
+                <th className="py-1 pr-3">User</th>
+                <th className="py-1 pr-3">Purchased</th>
+                <th className="py-1 pr-3">Gifted</th>
+                <th className="py-1 pr-3">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.top_holders.map(h => (
+                <tr key={h.user_id} className="border-b border-zinc-800/60">
+                  <td className="py-1 pr-3">{h.username || h.first_name || h.user_id}</td>
+                  <td className="py-1 pr-3 font-mono">{Number(h.balance_tokens).toLocaleString()} 💎</td>
+                  <td className="py-1 pr-3 font-mono text-amber-300">{Number(h.gifted_balance).toLocaleString()} 💎</td>
+                  <td className="py-1 pr-3 font-mono font-semibold">{Number(h.total).toLocaleString()} 💎</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {!d.drift_ok && (
+        <div className="rounded-md bg-red-950/40 border border-red-800 p-3 text-xs text-red-300">
+          <strong>Ledger drift detected</strong> — {d.drift.length} wallet(s) don't match the sum of their ledger rows.
+          Manual reconciliation required.
+        </div>
+      )}
+    </div>
+  );
+}
+

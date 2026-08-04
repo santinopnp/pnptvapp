@@ -7,6 +7,8 @@ import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
+import { useInlineNpCheckout } from "@/hooks/useNowPayments";
+import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import {
   getReplies,
@@ -410,8 +412,8 @@ export default function SocialPostCard({
   // Santino & Lex's videos push Become PRIME (classic Telegram content + 2 Hangouts);
   // every other active creator pushes membership for exclusive content, channel & private hangout.
   const isSantinoOrLex =
-    ["8599671840", "8370209084", "8552451957", "66127d88-817a-445b-a398-81d22d2587c1"].includes(String(post.author_id)) ||
-    ["santinofurioso", "pnplatinoboy", "pnplatinotv"].includes(String(post.author_username || "").toLowerCase());
+    ["8599671840", "8552451957", "7246621722"].includes(String(post.author_id)) ||
+    ["santinofurioso", "pnplatinoboy", "pnptv"].includes(String(post.author_username || "").toLowerCase());
   const showPrimeUpsell = isSantinoOrLex && !isPrime && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
@@ -439,10 +441,15 @@ export default function SocialPostCard({
     setCreatorUpsellDismissed(true);
   };
 
-  // Feed CTA banner (2026-07-24): opens the shared CreatorSubscribeWizard
-  // inline right under the post card — no navigation to the profile.
-  const [showFeedSubPanel, setShowFeedSubPanel] = useState(false);
-  const [showLockedSubPanel, setShowLockedSubPanel] = useState(false);
+  // Inline NowPayments checkout — used by PRIME CTAs only (Santino/Lex/direct-PRIME).
+  // Opens NP popup directly; if the viewer has never seen the crypto guide,
+  // we show it as a modal first.
+  const inlineCheckout = useInlineNpCheckout();
+
+  // Creator-subscription CTAs reveal the canonical CreatorSubscribeWizard
+  // inline — same widget the creator-profile "Subscribe" button opens. This
+  // keeps the UX identical across every creator-sub entry point.
+  const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);
 
   const loadReplies = useCallback(async () => {
     if (loadingReplies) return;
@@ -834,14 +841,6 @@ export default function SocialPostCard({
                 Exclusive
               </span>
             )}
-            {post.is_exclusive && post.exclusive_status === "teaser" && (
-              <span
-                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}
-              >
-                PRIME Preview
-              </span>
-            )}
             {/* Verified creator badge */}
             {post.author_creator_verified && (
               <svg
@@ -1024,67 +1023,89 @@ export default function SocialPostCard({
               </div>
             </FreeTierOverlay>
           ) : (post.is_exclusive && post.exclusive_status === "locked") || (post.content_locked && !post.blurred) ? (
-            <div
-              className="mt-2 rounded-xl p-4 text-center space-y-3"
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.1)",
-              }}
-            >
-              {!showLockedSubPanel ? (
-                <>
-                  <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/10 flex items-center justify-center border border-pink-500/20">
-                    <svg
-                      className="w-5 h-5 text-pink-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={1.5}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-                      />
-                    </svg>
+            (() => {
+              const unlockPrime = post.unlock_target === "prime";
+              const price = Number(post.author_creator_price || 15);
+              const displayName = post.author_first_name || post.author_username || (lang === "es" ? "este creador" : "this creator");
+              const previewSrc = post.preview_gif_url || null;
+              const ctaLabel = unlockPrime
+                ? (lang === "es" ? "Ver video completo en PRIME" : "Watch full video on PRIME")
+                : (lang === "es" ? `Ver video — Suscríbete a @${post.author_username || displayName} $${price}/mes` : `Watch full video — Subscribe to @${post.author_username || displayName} $${price}/mo`);
+              // Creator-sub wizard reveal: mirrors CreatorProfilePage subscribe pill.
+              if (!unlockPrime && showCreatorSubWizard) {
+                return (
+                  <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                    <CreatorSubscribeWizard
+                      creatorId={String(post.author_id)}
+                      creatorName={post.author_first_name || post.author_username}
+                      username={post.author_username}
+                      priceUsd={price}
+                      lang={lang === "es" ? "es" : "en"}
+                      compact
+                      onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+                      onClose={() => setShowCreatorSubWizard(false)}
+                      storageKey={`pnp_creator_sub_${post.author_id}`}
+                    />
                   </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">
-                      {lang === "es" ? "Suscríbete para Ver" : "Subscribe to Watch"}
-                    </h4>
-                    <p className="text-xs text-white/60 mt-1 max-w-sm mx-auto">
-                      {lang === "es"
-                        ? `Suscríbete a ${post.author_first_name || post.author_username || "este creador"} por $${post.author_creator_price || 15}/mes para acceder a su contenido exclusivo, canal y hangout privado.`
-                        : `Subscribe to ${post.author_first_name || post.author_username || "this creator"} for $${post.author_creator_price || 15}/mo to access their exclusive content, channel, and private hangout.`}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowLockedSubPanel(true)}
-                    className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95"
-                    style={{
-                      background: "linear-gradient(135deg, #D4007A, #E69138)",
-                    }}
+                );
+              }
+              return (
+                <div
+                  className="mt-2 rounded-xl overflow-hidden relative"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {post.is_video_exclusive && previewSrc && (
+                    <video
+                      src={previewSrc}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      preload="metadata"
+                      className="w-full block"
+                      style={{ filter: "blur(6px)", maxHeight: 340, objectFit: "cover" }}
+                    />
+                  )}
+                  <div
+                    className="p-4 text-center space-y-3"
+                    style={previewSrc ? { position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backdropFilter: "blur(2px)" } : undefined}
                   >
-                    🔒 {lang === "es" ? "Suscríbete para Ver" : "Subscribe to Watch"}
-                  </button>
-                </>
-              ) : (
-                <CreatorSubscribeWizard
-                  creatorId={String(post.author_id)}
-                  creatorName={post.author_first_name || post.author_username || undefined}
-                  username={post.author_username}
-                  priceUsd={Number(post.author_creator_price || 15)}
-                  lang={lang === "es" ? "es" : "en"}
-                  compact
-                  storageKey={`pnp_creator_sub_${post.author_id}`}
-                  onSuccess={() => {
-                    setShowLockedSubPanel(false);
-                  }}
-                  onClose={() => setShowLockedSubPanel(false)}
-                />
-              )}
-            </div>
+                    <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/15 flex items-center justify-center border border-pink-500/30">
+                      <svg className="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (unlockPrime) {
+                          inlineCheckout.start({ planId: post.plan_slug || "monthly-pass", isSubscription: false, storageKey: "pnp_pending_prime_paywall" });
+                        } else {
+                          setShowCreatorSubWizard(true);
+                        }
+                      }}
+                      disabled={unlockPrime && inlineCheckout.launching}
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+                      style={{ background: unlockPrime ? "linear-gradient(135deg, #D4007A, #7B61FF)" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      {unlockPrime && inlineCheckout.launching ? (lang === "es" ? "Abriendo…" : "Opening…") : `🔒 ${ctaLabel}`}
+                    </button>
+                    {unlockPrime && inlineCheckout.error && (
+                      <p className="text-[11px] text-red-300">{inlineCheckout.error}</p>
+                    )}
+                    <a
+                      href="/crypto-guide"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[10px] text-white/50 hover:text-white/80 underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {lang === "es" ? "¿Primera vez pagando con cripto? Guía de 2 min →" : "First time paying with crypto? See the 2-min guide →"}
+                    </a>
+                  </div>
+                </div>
+              );
+            })()
           ) : (
             <>
               {/* Promoted thumbnail banner — suppressed when the post has
@@ -1500,7 +1521,7 @@ export default function SocialPostCard({
                           disablePictureInPicture
                           onContextMenu={(e) => e.preventDefault()}
                           playsInline
-                          creatorDisclaimer={post.author_creator_status === "active"}
+                          creatorDisclaimer
                           className="w-full rounded-xl overflow-hidden shadow-md"
                           preload="metadata"
                           poster={thumbUrl || undefined}
@@ -1563,7 +1584,7 @@ export default function SocialPostCard({
                             disablePictureInPicture
                             onContextMenu={(e) => e.preventDefault()}
                             playsInline
-                            creatorDisclaimer={post.author_creator_status === "active"}
+                            creatorDisclaimer
                             className="w-full rounded-xl overflow-hidden shadow-md"
                             preload="metadata"
                             poster={post.video_thumbnail_url || undefined}
@@ -1613,20 +1634,11 @@ export default function SocialPostCard({
                 </div>
               )}
 
-              {/* Teaser CTA */}
-              {post.is_exclusive && post.exclusive_status === "teaser" && (
-                <div
-                  className="mt-2 px-3 py-2 rounded-lg text-xs"
-                  style={{ background: "rgba(94,209,196,0.08)", color: "#5ED1C4" }}
-                >
-                  Subscribe to see all exclusive content from this creator
-                </div>
-              )}
-
-              {/* PRIME upsell micro-banner — Santino & Lex free posts push PRIME */}
+              {/* PRIME upsell micro-banner — Santino & Lex free posts push PRIME.
+                  Opens NowPayments popup inline (no /subscribe redirect). */}
               {showPrimeUpsell && !primeUpsellDismissed && (
                 <div
-                  onClick={(e) => { e.stopPropagation(); onNavigate("/subscribe"); }}
+                  onClick={(e) => { e.stopPropagation(); inlineCheckout.start({ planId: "monthly-pass", isSubscription: false, storageKey: "pnp_pending_prime_banner" }); }}
                   className="mt-2 cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
                   style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
                 >
@@ -1643,7 +1655,7 @@ export default function SocialPostCard({
                       className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm"
                       style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
                     >
-                      {lang === "es" ? "Hazte PRIME" : "Become PRIME"}
+                      {inlineCheckout.launching ? (lang === "es" ? "…" : "…") : (lang === "es" ? "Hazte PRIME" : "Become PRIME")}
                     </span>
                     <button
                       type="button"
@@ -1660,7 +1672,19 @@ export default function SocialPostCard({
               {/* Creator subscribe upsell micro-banner: shown on every free post from active creators */}
               {showCreatorSubscribeUpsell && !creatorUpsellDismissed && (
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                  {!showFeedSubPanel ? (
+                  {showCreatorSubWizard ? (
+                    <CreatorSubscribeWizard
+                      creatorId={String(post.author_id)}
+                      creatorName={post.author_first_name || post.author_username}
+                      username={post.author_username}
+                      priceUsd={Number(post.author_creator_price || 15)}
+                      lang={lang === "es" ? "es" : "en"}
+                      compact
+                      onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+                      onClose={() => setShowCreatorSubWizard(false)}
+                      storageKey={`pnp_creator_sub_${post.author_id}`}
+                    />
+                  ) : (
                     <div
                       className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-amber-500/30 transition-all"
                       style={{ background: "rgba(230, 145, 56, 0.12)", backdropFilter: "blur(4px)" }}
@@ -1676,7 +1700,7 @@ export default function SocialPostCard({
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
                           type="button"
-                          onClick={() => setShowFeedSubPanel(true)}
+                          onClick={() => setShowCreatorSubWizard(true)}
                           className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm transition-transform active:scale-95"
                           style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
                         >
@@ -1692,24 +1716,23 @@ export default function SocialPostCard({
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <CreatorSubscribeWizard
-                      creatorId={String(post.author_id)}
-                      creatorName={post.author_first_name || post.author_username || undefined}
-                      username={post.author_username}
-                      priceUsd={Number(post.author_creator_price || 0)}
-                      lang={lang === "es" ? "es" : "en"}
-                      compact
-                      storageKey={`pnp_creator_sub_${post.author_id}`}
-                      onSuccess={() => {
-                        // Dismiss the upsell for this creator across the feed.
-                        try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
-                        setCreatorUpsellDismissed(true);
-                        setShowFeedSubPanel(false);
-                      }}
-                      onClose={() => setShowFeedSubPanel(false)}
-                    />
                   )}
+                </div>
+              )}
+
+              {/* "More from @X" — shown to viewers who already unlocked an exclusive post */}
+              {post.is_exclusive && post.exclusive_status === "unlocked" && post.author_username && !isOwn && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  <a
+                    href={`/c/${post.author_username}`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white shadow-sm transition-all hover:scale-[1.02]"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                  >
+                    <span>▶</span>
+                    {lang === "es"
+                      ? `Más de @${post.author_username}${isSantinoOrLex ? " en PRIME" : ""}`
+                      : `More from @${post.author_username}${isSantinoOrLex ? " on PRIME" : ""}`}
+                  </a>
                 </div>
               )}
             </>
@@ -2128,6 +2151,27 @@ export default function SocialPostCard({
                 style={{ maxHeight: "60vh" }}
               />
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Crypto onboarding guide — auto-launched on first NP checkout */}
+      {inlineCheckout.showGuide && (
+        <div
+          className="fixed inset-0 z-[210] flex items-start justify-center p-3 overflow-y-auto"
+          style={{ background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)" }}
+          onClick={(e) => { e.stopPropagation(); inlineCheckout.dismissGuide(); }}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl p-4 my-6"
+            style={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CryptoOnboardingWizard
+              lang={lang === "es" ? "es" : "en"}
+              onConfirm={inlineCheckout.confirmGuideAndStart}
+              onSkip={inlineCheckout.skipGuideAndStart}
+            />
           </div>
         </div>
       )}

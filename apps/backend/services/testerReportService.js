@@ -19,9 +19,14 @@
 const crypto = require('crypto');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const tokenLedger = require('./tokenLedgerService');
+
+const REWARD_TOKENS  = 180; // 180 Ru$h = $30 at 6-per-USD rate
+const REWARD_SOURCE  = 'tester_reward_v1';
+const REWARD_RUN_ID  = '2026_08_03';
 
 const cfg = () => ({
-  webhookUrl:  process.env.SLACK_TESTER_INCOMING_WEBHOOK,
+  botToken:    process.env.SLACK_BOT_TOKEN,
   channelId:   (String(process.env.SLACK_TESTER_CHANNELS || '').split(',')[0] || '').trim(),
   grokKey:     process.env.GROK_API_KEY,
   grokModel:   process.env.GROK_MODEL || 'grok-3-mini',
@@ -85,9 +90,65 @@ const SEV_EMOJI = {
   clean:    ':tada:',
 };
 
-async function postToSlack({ tester, counts, summary, permalink }) {
+// ── $30 tester reward ────────────────────────────────────────────────────────
+// Looks up user by pnptv_username (case-insensitive), grants 180 Ru$h
+// (gifted first — spendable only on Santino+Lex per monetizationConfig).
+// Idempotent by source_type/source_id. Returns { status, message } for the
+// Slack post to render.
+async function grantTesterReward({ pnptv_username, scope }) {
+  const uname = String(pnptv_username || '').trim();
+  if (!uname) return { status: 'skipped', message: 'no PNPtv username provided — reward not credited' };
+  const scopeTag = String(scope || 'live').toLowerCase();
+  const sourceId = `${scopeTag}_${REWARD_RUN_ID}`;
+
+  // Case-insensitive username match
+  const { rows: userRows } = await query(
+    `SELECT id, username, role FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1`,
+    [uname],
+  );
+  if (!userRows.length) {
+    return { status: 'not_found', message: `no PNPtv user matching *${uname}* — reward pending, grant manually` };
+  }
+  const user = userRows[0];
+
+  // Idempotency check
+  const { rows: prior } = await query(
+    `SELECT id FROM token_ledger
+      WHERE user_id = $1 AND source_type = $2 AND source_id = $3
+      LIMIT 1`,
+    [String(user.id), REWARD_SOURCE, sourceId],
+  );
+  if (prior.length) {
+    return { status: 'already_granted', message: `reward already credited to *${user.username}* for this scope` };
+  }
+
+  // Prefer gifted (auto-scoped to Santino+Lex spend). Creators can't receive
+  // gifted — tokenLedger drops giftedDelta silently for role=creator/model.
+  const isCreator = user.role === 'creator' || user.role === 'model';
+  const opts = {
+    userId:  String(user.id),
+    reason:  'admin_grant',
+    sourceType: REWARD_SOURCE,
+    sourceId,
+    actorId: 'system_tester_reward',
+    metadata: { scope: scopeTag, tester_username: user.username, run: REWARD_RUN_ID },
+  };
+  if (isCreator) opts.balanceDelta = REWARD_TOKENS;
+  else           opts.giftedDelta  = REWARD_TOKENS;
+
+  const result = await tokenLedger.credit(opts);
+  const flavor = isCreator ? 'regular (creator role — gifted-guard fallback)' : 'gifted (spendable on Santino+Lex only)';
+  return {
+    status: 'granted',
+    message: `🎁 $30 (180 Ru$h) credited to *${user.username}* — ${flavor}`,
+    ledger_id: result.ledger_id,
+  };
+}
+
+async function postToSlack({ tester, counts, summary, permalink, reward }) {
   const c = cfg();
-  if (!c.webhookUrl) throw new Error('SLACK_TESTER_INCOMING_WEBHOOK not set');
+  if (!c.botToken)  throw new Error('SLACK_BOT_TOKEN not set');
+  if (!c.channelId) throw new Error('SLACK_TESTER_CHANNELS not set');
   const sev = SEV_EMOJI[summary.severity] || ':white_circle:';
   const total = counts.ok + counts.bad + counts.warn + counts.skip;
   const lines = [
@@ -104,16 +165,22 @@ async function postToSlack({ tester, counts, summary, permalink }) {
     lines.push(``, `*Quick wins*`);
     summary.quick_wins.forEach(x => lines.push(`• ${x}`));
   }
+  if (reward && reward.message) {
+    lines.push(``, reward.message);
+  }
   if (permalink) lines.push(``, `_Full report_ → ${permalink}`);
 
-  const res = await fetch(c.webhookUrl, {
+  const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: lines.join('\n') }),
+    headers: {
+      Authorization: `Bearer ${c.botToken}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify({ channel: c.channelId, text: lines.join('\n') }),
   });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`Slack webhook ${res.status}: ${txt}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    throw new Error(`Slack chat.postMessage ${res.status}: ${data.error || 'unknown'}`);
   }
 }
 
@@ -131,6 +198,8 @@ async function postToSlack({ tester, counts, summary, permalink }) {
 async function handleReport(req, res) {
   const b = req.body || {};
   const tester = String(b.tester || 'anonymous').slice(0, 60);
+  const pnptvUsername = String(b.pnptv_username || '').slice(0, 80).trim();
+  const scope  = String(b.scope || 'live').toLowerCase().slice(0, 20);
   const results = (b.results && typeof b.results === 'object') ? b.results : {};
   const notes   = (b.notes   && typeof b.notes   === 'object') ? b.notes   : {};
   const reportText = String(b.report_text || '').slice(0, 20000);
@@ -156,7 +225,7 @@ async function handleReport(req, res) {
     [
       syntheticTs,
       c.channelId || 'checklist',
-      'testing-chase-the-clouds',
+      'testing-team',
       tester,
       tester,
       reportText,
@@ -181,16 +250,25 @@ async function handleReport(req, res) {
           JSON.stringify(summary.raw),
         ]
       );
-      await postToSlack({ tester, counts, summary });
-      logger.info('Tester report posted to Slack', { tester, counts, severity: summary.severity });
+      let reward = { status: 'skipped', message: '' };
+      try {
+        reward = await grantTesterReward({ pnptv_username: pnptvUsername, scope });
+      } catch (rewardErr) {
+        logger.error('Tester reward grant failed', { error: rewardErr.message, tester, pnptvUsername, scope });
+        reward = { status: 'error', message: `⚠️ reward grant failed: ${rewardErr.message}` };
+      }
+      await postToSlack({ tester, counts, summary, reward });
+      logger.info('Tester report posted to Slack', { tester, scope, counts, severity: summary.severity, reward: reward.status });
     } catch (err) {
       logger.error('Tester report background triage failed', {
         error: err.message, tester,
       });
       // Best-effort fallback post so the team still sees it landed
       try {
+        let reward = { status: 'skipped', message: '' };
+        try { reward = await grantTesterReward({ pnptv_username: pnptvUsername, scope }); } catch (_) {}
         await postToSlack({
-          tester, counts,
+          tester, counts, reward,
           summary: {
             severity: counts.bad > 0 ? 'high' : counts.warn > 0 ? 'medium' : 'low',
             headline: `Report received (Grok triage failed — see DB row ${syntheticTs})`,

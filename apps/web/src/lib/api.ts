@@ -1187,8 +1187,14 @@ export interface SocialPostItem {
   video_description?: string | null;
   // Exclusive content fields
   is_exclusive?: boolean;
-  exclusive_status?: "unlocked" | "teaser" | "locked";
+  exclusive_status?: "unlocked" | "locked";
   locked_reason?: "not_prime" | "not_subscribed";
+  // Paywall enrichment (populated only when contentLocked)
+  preview_gif_url?: string | null;
+  is_video_exclusive?: boolean;
+  unlock_target?: "prime" | "creator_sub";
+  plan_slug?: string | null;
+  creator_channel_url?: string | null;
   // Creator info on author
   author_creator_status?: string;
   author_creator_type?: string;

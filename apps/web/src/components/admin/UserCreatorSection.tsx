@@ -574,6 +574,304 @@ export function UserCreatorSection({ user, onUpdated }: UserCreatorSectionProps)
           </div>
         </div>
       )}
+
+      {/* Creator Ru$h 💎 balance panel — visible for creators only */}
+      {isCreator && <CreatorBalancePanel userId={user.id} />}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CreatorBalancePanel — earnings ledger + admin actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface EarningRow {
+  id: string;
+  amount_gross: string | number;
+  amount_creator: string | number;
+  amount_platform: string | number;
+  status: 'pending'|'holding'|'available'|'in_payout'|'paid_out'|'void'|'refund_review';
+  subscription_id: string | null;
+  source_payment_id: string | null;
+  is_tip: boolean;
+  created_at: string;
+  available_at: string | null;
+  paid_at: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+interface WithdrawRow {
+  id: string;
+  amount_usd: string | number;
+  destination_currency: string;
+  destination_address: string;
+  status: string;
+  requested_at: string;
+  reviewed_at: string | null;
+  completed_at: string | null;
+  admin_notes: string | null;
+  deny_reason: string | null;
+}
+
+interface BalanceResp {
+  success: boolean;
+  totals: {
+    available_usd: string | number;
+    holding_usd: string | number;
+    pending_usd: string | number;
+    paidout_usd: string | number;
+    void_usd: string | number;
+    inpayout_usd: string | number;
+    row_count: string | number;
+  };
+  earnings: EarningRow[];
+  payouts: Array<{ id: string; amount_usd: string | number; status: string; created_at: string; completed_at: string | null; notes: string | null }>;
+  withdraw_requests: WithdrawRow[];
+}
+
+function usdFmt(v: string | number | null | undefined) {
+  const n = typeof v === 'string' ? parseFloat(v) : (v ?? 0);
+  return `$${n.toFixed(2)}`;
+}
+
+function rushEquiv(v: string | number | null | undefined) {
+  const n = typeof v === 'string' ? parseFloat(v) : (v ?? 0);
+  return `${Math.round(n * 6)} 💎`;
+}
+
+function CreatorBalancePanel({ userId }: { userId: string }) {
+  const [data, setData] = useState<BalanceResp | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [showCreditForm, setShowCreditForm] = useState(false);
+  const [creditAmount, setCreditAmount] = useState('');
+  const [creditReason, setCreditReason] = useState('');
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/webapp/admin/creators/${encodeURIComponent(userId)}/balance`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+      setData(j);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Load failed'); }
+    finally { setLoading(false); }
+  }, [userId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const doCredit = async () => {
+    const amt = parseFloat(creditAmount);
+    if (!(amt > 0)) { setErr('Amount must be > 0'); return; }
+    if (!creditReason.trim()) { setErr('Reason required'); return; }
+    setBusyRow('credit');
+    try {
+      const res = await fetch(`/api/webapp/admin/creators/${encodeURIComponent(userId)}/credit`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUsd: amt, reason: creditReason.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || `HTTP ${res.status}`);
+      setCreditAmount(''); setCreditReason(''); setShowCreditForm(false);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Credit failed'); }
+    finally { setBusyRow(null); }
+  };
+
+  const doVoid = async (earningId: string) => {
+    const reason = window.prompt('Void reason (required):');
+    if (!reason?.trim()) return;
+    setBusyRow(earningId);
+    try {
+      const res = await fetch(`/api/webapp/admin/creators/${encodeURIComponent(userId)}/void/${earningId}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || `HTTP ${res.status}`);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Void failed'); }
+    finally { setBusyRow(null); }
+  };
+
+  const doReleaseHold = async (earningId: string) => {
+    if (!window.confirm('Release this holding earning to available now?')) return;
+    setBusyRow(earningId);
+    try {
+      const res = await fetch(`/api/webapp/admin/creators/${encodeURIComponent(userId)}/release-hold/${earningId}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'admin_early_release' }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || `HTTP ${res.status}`);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Release failed'); }
+    finally { setBusyRow(null); }
+  };
+
+  return (
+    <div className="mt-4 rounded-xl bg-amber-500/5 border border-amber-500/20 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider">
+          Balance · Ru$h 💎
+        </h3>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowCreditForm(v => !v); setErr(null); }}
+            className="text-xs px-3 py-1.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 min-h-[36px]"
+          >{showCreditForm ? 'Cancel' : '+ Credit'}</button>
+          <button
+            onClick={load}
+            className="text-xs px-3 py-1.5 rounded-md bg-pnp-surface border border-pnp-border text-pnp-textSecondary hover:bg-pnp-surfaceHover min-h-[36px]"
+          >Refresh</button>
+        </div>
+      </div>
+
+      {err && <div className="px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-xs text-red-400">{err}</div>}
+      {loading && !data && <div className="text-xs text-pnp-textSecondary">Loading…</div>}
+
+      {showCreditForm && (
+        <div className="p-3 rounded-lg bg-pnp-surface border border-pnp-border space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="number" step="0.01" min="0.01" placeholder="USD amount"
+              value={creditAmount} onChange={(e) => setCreditAmount(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
+            />
+            <input
+              type="text" placeholder="Reason (required)"
+              value={creditReason} onChange={(e) => setCreditReason(e.target.value)}
+              className="flex-[2] px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
+            />
+            <button
+              onClick={doCredit} disabled={busyRow === 'credit'}
+              className="px-4 py-2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 text-sm disabled:opacity-50 min-h-[44px]"
+            >{busyRow === 'credit' ? 'Crediting…' : 'Credit'}</button>
+          </div>
+          {creditAmount && !isNaN(parseFloat(creditAmount)) && (
+            <p className="text-xs text-pnp-textSecondary">
+              ≈ {Math.round(parseFloat(creditAmount) * 6)} 💎 Ru$h equivalent · will be added as available immediately
+            </p>
+          )}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* Totals grid */}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
+            {[
+              ['Available', data.totals.available_usd, 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'],
+              ['Holding', data.totals.holding_usd, 'text-amber-400 border-amber-500/30 bg-amber-500/10'],
+              ['Pending', data.totals.pending_usd, 'text-blue-400 border-blue-500/30 bg-blue-500/10'],
+              ['In Payout', data.totals.inpayout_usd, 'text-purple-400 border-purple-500/30 bg-purple-500/10'],
+              ['Paid Out', data.totals.paidout_usd, 'text-pnp-textSecondary border-pnp-border bg-pnp-surface'],
+              ['Void', data.totals.void_usd, 'text-red-400 border-red-500/30 bg-red-500/10'],
+            ].map(([label, val, cls]) => (
+              <div key={String(label)} className={`px-2 py-2 rounded-md border ${cls}`}>
+                <div className="uppercase tracking-wider opacity-70 text-[10px]">{label}</div>
+                <div className="font-mono text-sm">{usdFmt(val as string | number)}</div>
+                <div className="text-[10px] opacity-60">{rushEquiv(val as string | number)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Earnings table */}
+          <div className="rounded-lg border border-pnp-border overflow-hidden">
+            <div className="px-3 py-2 bg-pnp-surface text-xs text-pnp-textSecondary border-b border-pnp-border">
+              Recent earnings ({String(data.totals.row_count)} total)
+            </div>
+            <div className="max-h-96 overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-pnp-surface sticky top-0">
+                  <tr className="text-left text-pnp-textSecondary">
+                    <th className="px-2 py-1">When</th>
+                    <th className="px-2 py-1">Amount</th>
+                    <th className="px-2 py-1">Status</th>
+                    <th className="px-2 py-1">Source</th>
+                    <th className="px-2 py-1 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.earnings.length === 0 && (
+                    <tr><td colSpan={5} className="px-2 py-3 text-center text-pnp-textSecondary italic">No earnings yet</td></tr>
+                  )}
+                  {data.earnings.map(row => (
+                    <tr key={row.id} className="border-t border-pnp-border/50 hover:bg-pnp-surfaceHover/50">
+                      <td className="px-2 py-1 text-pnp-textSecondary whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
+                      <td className="px-2 py-1 font-mono">
+                        {usdFmt(row.amount_creator)}
+                        <span className="text-pnp-textSecondary text-[10px] ml-1">({rushEquiv(row.amount_creator)})</span>
+                      </td>
+                      <td className="px-2 py-1">
+                        <span className={
+                          row.status === 'available' ? 'text-emerald-400' :
+                          row.status === 'holding'   ? 'text-amber-400'   :
+                          row.status === 'paid_out'  ? 'text-pnp-textSecondary' :
+                          row.status === 'void'      ? 'text-red-400 line-through' :
+                          'text-blue-400'
+                        }>{row.status}</span>
+                        {row.is_tip && <span className="ml-1 text-[10px] text-purple-400">TIP</span>}
+                      </td>
+                      <td className="px-2 py-1 text-pnp-textSecondary text-[10px] max-w-[200px] truncate" title={row.source_payment_id || row.subscription_id || ''}>
+                        {row.source_payment_id || (row.subscription_id ? `sub:${row.subscription_id.slice(0,8)}` : (row.metadata as { source?: string })?.source || '—')}
+                      </td>
+                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                        {row.status === 'holding' && (
+                          <button
+                            onClick={() => doReleaseHold(row.id)}
+                            disabled={busyRow === row.id}
+                            className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 text-[10px] disabled:opacity-50 mr-1"
+                          >Release</button>
+                        )}
+                        {['pending','holding','available'].includes(row.status) && (
+                          <button
+                            onClick={() => doVoid(row.id)}
+                            disabled={busyRow === row.id}
+                            className="px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 text-[10px] disabled:opacity-50"
+                          >Void</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Withdraw requests */}
+          {data.withdraw_requests.length > 0 && (
+            <div className="rounded-lg border border-pnp-border overflow-hidden">
+              <div className="px-3 py-2 bg-pnp-surface text-xs text-pnp-textSecondary border-b border-pnp-border">
+                Withdraw requests
+              </div>
+              <table className="w-full text-xs">
+                <thead className="bg-pnp-surface">
+                  <tr className="text-left text-pnp-textSecondary">
+                    <th className="px-2 py-1">When</th>
+                    <th className="px-2 py-1">Amount</th>
+                    <th className="px-2 py-1">To</th>
+                    <th className="px-2 py-1">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.withdraw_requests.map(w => (
+                    <tr key={w.id} className="border-t border-pnp-border/50">
+                      <td className="px-2 py-1 text-pnp-textSecondary">{new Date(w.requested_at).toLocaleDateString()}</td>
+                      <td className="px-2 py-1 font-mono">{usdFmt(w.amount_usd)}</td>
+                      <td className="px-2 py-1 text-[10px] text-pnp-textSecondary max-w-[240px] truncate" title={w.destination_address}>
+                        {w.destination_currency.toUpperCase()} · {w.destination_address}
+                      </td>
+                      <td className="px-2 py-1">{w.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

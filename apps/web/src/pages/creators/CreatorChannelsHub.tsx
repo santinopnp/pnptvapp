@@ -325,7 +325,6 @@ export function CreatorChannelsHub() {
                 >
                   <option value="free">Free — all registered members</option>
                   <option value="subscription">Subscription — your paid fans</option>
-                  <option value="prime">PRIME — platform PRIME members</option>
                   <option value="paid">Pay-per-view — one-time purchase</option>
                 </select>
               </div>
