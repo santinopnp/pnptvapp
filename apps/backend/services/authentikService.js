@@ -1450,7 +1450,10 @@ class AuthentikService {
         headers: { Authorization: `Bearer ${AUTHENTIK_TOKEN}` },
         timeout: 10000,
       });
-      if (checkRes.data?.user !== authentikUserPk) {
+      // Authentik API may return `user` as an integer PK or as a nested object
+      // depending on version — normalize both sides to string before comparing.
+      const deviceOwner = String(checkRes.data?.user?.pk ?? checkRes.data?.user ?? '');
+      if (deviceOwner !== String(authentikUserPk)) {
         return { success: false, error: 'forbidden' };
       }
       await axios.delete(`${AUTHENTIK_URL}/api/v3/authenticators/webauthn/${devicePk}/`, {

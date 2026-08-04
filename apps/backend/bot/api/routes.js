@@ -9109,7 +9109,8 @@ app.delete('/api/webapp/account', requireSessionAuth, deleteAccountLimiter, asyn
 
 // Hard-delete — Right to be Forgotten (GDPR erasure). Body: { confirm: "DELETE MY ACCOUNT" }
 // Rate-limited to 1 request per minute (same limiter reused) — erasure is irreversible.
-app.delete('/api/users/me/erase', requireSessionAuth, deleteAccountLimiter, asyncHandler(usersController.selfEraseAccount));
+// Use NoConsent variant — a user who hasn't accepted terms must still be able to erase their account
+app.delete('/api/users/me/erase', requireSessionAuthNoConsent, deleteAccountLimiter, asyncHandler(usersController.selfEraseAccount));
 
 // ==========================================
 // SERVICE PROXY ENDPOINTS (Media, Live, Social)
