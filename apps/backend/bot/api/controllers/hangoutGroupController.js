@@ -477,7 +477,7 @@ const getGroup = async (req, res) => {
          WHERE group_id = g.id AND status = 'active'
          ORDER BY created_at DESC LIMIT 1
        ) hvc ON TRUE
-       WHERE g.id = $1 AND g.parent_group_id IS NULL`,
+       WHERE g.id = $1`,
       [groupId]
     );
 

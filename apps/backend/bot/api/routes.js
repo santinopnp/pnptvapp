@@ -12341,6 +12341,9 @@ const btcAvailableLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Dash/BTCPay retired 2026-07-31 — tombstone so clients don't get 404 log noise
+app.get('/api/webapp/payments/dash/available', (req, res) => res.json({ available: false }));
+
 // GET /api/webapp/payments/btc/available — returns true only if BTC is configured in the BTCPay store
 app.get('/api/webapp/payments/btc/available', btcAvailableLimiter, asyncHandler(async (req, res) => {
   if (!process.env.BTCPAY_API_KEY || !process.env.BTCPAY_STORE_ID || !process.env.BTCPAY_URL) {
