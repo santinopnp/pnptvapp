@@ -375,7 +375,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
 
   const es = t.lang === "es";
   const headerTitle = buyMethod === 'select'
-    ? (es ? 'Comprar Ru$h 💎' : 'Buy Ru$h 💎')
+    ? (es ? 'Comprar Ru$h ⚡💲' : 'Buy Ru$h ⚡💲')
     : (es ? 'Elige tu paquete' : 'Choose your package');
 
   return (
@@ -449,7 +449,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
               </div>
             )}
             <p className="text-xs text-pnp-textSecondary mb-3">
-              Selecciona cómo quieres comprar Ru$h 💎.
+              Selecciona cómo quieres comprar Ru$h ⚡💲.
             </p>
 
             {/* Crypto — NowPayments multi-coin with inline coin picker */}
@@ -630,8 +630,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-base font-semibold text-green-400">¡Tokens agregados!</p>
-                <p className="text-xs text-pnp-textSecondary">Tus Ru$h 💎 ya están disponibles.</p>
+                <p className="text-base font-semibold text-green-400">¡Ru$h agregado!</p>
+                <p className="text-xs text-pnp-textSecondary">Tu Ru$h ⚡💲 ya está disponible.</p>
               </div>
             ) : dashSecondsLeft === 0 ? (
               <div className="flex flex-col items-center gap-3 py-6">
@@ -760,8 +760,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-base font-semibold text-green-400">¡Tokens agregados!</p>
-                <p className="text-xs text-pnp-textSecondary">Tus Ru$h 💎 ya están disponibles.</p>
+                <p className="text-base font-semibold text-green-400">¡Ru$h agregado!</p>
+                <p className="text-xs text-pnp-textSecondary">Tu Ru$h ⚡💲 ya está disponible.</p>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-4 py-4">
@@ -811,7 +811,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
           <NowPaymentsWaitingPanel
             order={{
               orderId: npPayment.invoiceId,
-              planName: t.lang === "es" ? "Compra de Tokens" : "Token Purchase",
+              planName: t.lang === "es" ? "Compra de Ru$h" : "Ru$h Purchase",
               usdAmount: npPayment.usdAmount || 0,
               invoiceUrl: npPayment.checkoutUrl,
               createdAt: Date.now(),
@@ -854,8 +854,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
               <>
                 <p className="text-xs text-pnp-textSecondary leading-relaxed">
                   {es
-                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tus Ru$h 💎."
-                    : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your tokens."}
+                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tu Ru$h ⚡💲."
+                    : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your Ru$h ⚡💲."}
                 </p>
 
                 {/* Package cards — Meru-only card packs (1,500 / 3,000 tokens for $250 / $500,
@@ -873,7 +873,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                       className={`p-4 rounded-xl border text-left transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 ${meruProduct === pkg.product ? 'border-pink-500/60 bg-pink-500/10' : 'border-pnp-border bg-pnp-surface hover:border-pink-400/40 hover:bg-pnp-surfaceHover'}`}
                     >
                       <p className="text-2xl font-extrabold leading-none mb-1" style={{ color: "#D4007A" }}>{pkg.tokens}</p>
-                      <p className="text-xs text-pnp-textSecondary font-medium mb-0.5">tokens</p>
+                      <p className="text-xs text-pnp-textSecondary font-medium mb-0.5">Ru$h ⚡💲</p>
                       <p className="text-[10px] text-pnp-textSecondary">{pkg.sub}</p>
                       <p className="text-xs font-bold text-pnp-textPrimary mt-1.5">${pkg.priceUsd}</p>
                       {meruProduct === pkg.product && (
@@ -1067,8 +1067,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                           className="text-[9px] leading-tight mb-1"
                           style={{ color: "#D4007A" }}
                           title={es
-                            ? "Estos tokens de bono solo pueden gastarse en streams y contenido de Santino y Lex (@PNPLatinoBoy)."
-                            : "These bonus tokens can only be spent on Santino and Lex (@PNPLatinoBoy) streams and content."}
+                            ? "Este Ru$h de bono solo puede gastarse en streams y contenido de Santino y Lex (@PNPLatinoBoy)."
+                            : "This bonus Ru$h can only be spent on Santino and Lex (@PNPLatinoBoy) streams and content."}
                         >
                           +{bonusTokens.toLocaleString()} {es ? "para Santino & Lex" : "Santino & Lex only"}
                         </p>

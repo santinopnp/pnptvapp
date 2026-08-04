@@ -506,7 +506,7 @@ export default function Subscribe() {
     if (submitting) return;
     const tokenCost = Math.round(planPrice * 6);
     if (tokenBalance !== null && tokenBalance < tokenCost) {
-      setError(t.lang === "es" ? `Ru$h 💎 insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.` : `Not enough Ru$h 💎. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
+      setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${tokenCost.toLocaleString()} Ru$h — you have ${tokenBalance.toLocaleString()} Ru$h.`);
       return;
     }
     setSelectedPlan(planId);
@@ -517,7 +517,7 @@ export default function Subscribe() {
       const result = await paySubscriptionWithTokens(planId);
       if (!result.success) {
         if (result.code === "INSUFFICIENT_TOKENS") {
-          setError(t.lang === "es" ? `Ru$h 💎 insuficientes. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.` : `Not enough Ru$h 💎. Need ${(result.required ?? 0).toLocaleString()} F — you have ${(result.current ?? 0).toLocaleString()} F.`);
+          setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${result.required?.toLocaleString()} Ru$h — tienes ${result.current?.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${(result.required ?? 0).toLocaleString()} Ru$h — you have ${(result.current ?? 0).toLocaleString()} Ru$h.`);
         } else {
           setError(result.error || (t.lang === "es" ? "No se pudo activar el plan." : "Failed to activate plan."));
         }
@@ -528,7 +528,7 @@ export default function Subscribe() {
       await refreshUser();
       setTimeout(() => { setPaymentSuccess(true); trackEvent("payment_success", { plan: planId, provider: "tokens" }); }, 400);
     } catch (err: any) {
-      setError(err.message || (t.lang === "es" ? "Error al pagar con Tokens." : "Tokens payment error."));
+      setError(err.message || (t.lang === "es" ? "Error al pagar con Ru$h." : "Ru$h payment error."));
     } finally {
       setSubmitting(false);
     }
@@ -1031,7 +1031,7 @@ export default function Subscribe() {
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between gap-2 mb-2.5">
-                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
+                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu cripto:" : "Choose your crypto:"}</p>
                       <div className="flex items-center gap-3">
                         <a
                           href="/crypto-guide"
@@ -1339,7 +1339,7 @@ export default function Subscribe() {
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between gap-2 mb-2.5">
-                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu token:" : "Choose your token:"}</p>
+                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu cripto:" : "Choose your crypto:"}</p>
                       <div className="flex items-center gap-3">
                         <a
                           href="/crypto-guide"

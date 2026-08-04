@@ -291,7 +291,7 @@ export default function PaymentsSettings() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs" style={{ color: "var(--pnp-text-secondary)" }}>{dateStr}</span>
                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span className="text-xs font-semibold" style={{ color: "#008DE4" }}>+{tx.tokens_credited} tokens</span>
+                          <span className="text-xs font-semibold" style={{ color: "#008DE4" }}>+{tx.tokens_credited} Ru$h ⚡💲</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">

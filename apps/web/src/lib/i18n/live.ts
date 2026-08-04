@@ -43,16 +43,16 @@ const strings = {
     tipTo: (name: string) => `to ${name}`,
     selectPerformerError: "Select a performer to tip",
     insufficientTokens: (balance: number) =>
-      `Tokens insuficientes. Tienes ${balance} tokens. Compra más abajo.`,
+      `Ru$h insuficiente. Tienes ${balance} Ru$h. Compra más abajo.`,
     tokensSentSuccess: (amount: number, name: string) =>
-      `¡${amount} tokens enviados a ${name}!`,
+      `¡${amount} Ru$h enviados a ${name}!`,
     paymentWindowOpened: (amount: number) =>
-      `Payment window opened for ${amount} tokens tip`,
-    tipSubmitted: (amount: number) => `${amount} tokens tip sent!`,
+      `Payment window opened for ${amount} Ru$h tip`,
+    tipSubmitted: (amount: number) => `${amount} Ru$h tip sent!`,
     errorFailedToSendTip: "Failed to send tip",
 
     // Tip payment tabs
-    tabTokens: "Ru$h 💎",
+    tabTokens: "Ru$h ⚡💲",
     tokenInstantNote: "Instant · No popup · No waiting",
 
     // Add tip message toggle
@@ -65,33 +65,33 @@ const strings = {
     loginToChat: "Log in to chat",
 
     // Token wallet widget
-    tokenBalance: "My Tokens",
-    tokens: "tokens",
+    tokenBalance: "My Ru$h ⚡💲",
+    tokens: "Ru$h",
     linkDpns: "Link DPNS",
     history: "History",
-    buyTokens: "Buy Ru$h 💎",
+    buyTokens: "Buy Ru$h ⚡💲",
     dpnsPlaceholder: "yourname.dash",
     save: "Save",
     saving: "Saving...",
     invalidDpnsHandle: "Invalid DPNS handle",
     viewPurchaseHistory: "View purchase history",
-    giftTokensLabel: "gift tokens",
-    santinoGiftLabel: "Santino & Lex gift tokens",
+    giftTokensLabel: "gift Ru$h",
+    santinoGiftLabel: "Santino & Lex gift Ru$h",
     walletTooltip: (balance: number, gift: number) =>
       gift > 0
-        ? `${balance} tokens · +${gift} gift tokens — tap to buy`
-        : `${balance} tokens — tap to buy`,
+        ? `${balance} Ru$h · +${gift} gift Ru$h — tap to buy`
+        : `${balance} Ru$h — tap to buy`,
 
     // Buy tokens modal
-    buyPnpTokensTitle: "Buy PNP Tokens with Dash",
+    buyPnpTokensTitle: "Buy Ru$h ⚡💲",
     buyTokensPoweredBy: "Powered by",
     buyTokensRateNote:
-      "Use tokens for instant tips — no popups, no waiting.",
+      "Use Ru$h ⚡💲 for instant tips — no popups, no waiting.",
     buyTokensCheckoutNote:
-      "A Dash checkout window will open. Once payment is confirmed, tokens are credited automatically.",
+      "A Dash checkout window will open. Once payment is confirmed, Ru$h ⚡💲 is credited automatically.",
     yourDashIdentity: (handle: string) => ` Your Dash identity: @${handle}`,
     loadingPackages: "Loading packages...",
-    tokensLabel: "tokens",
+    tokensLabel: "Ru$h",
     opening: "Opening...",
     errorDashUnavailable:
       "Dash payments are not available yet. Contact support.",
@@ -100,7 +100,7 @@ const strings = {
     errorFailedToOpenCheckout: "Failed to open Dash checkout",
 
     // Wallet history modal
-    tokenPurchaseHistoryTitle: "Token Purchase History",
+    tokenPurchaseHistoryTitle: "Ru$h Purchase History",
     noPurchasesYet: "No purchases yet.",
 
     // Live chat
@@ -217,7 +217,7 @@ const strings = {
     watchLive: "Watch Live",
     upgradeToMember: "Upgrade to Member",
     liveStreamsTitle: "Live Streams",
-    freeUserUpsell: "Watch creators go live, tip with tokens, and book private sessions. Upgrade to Member to unlock live streaming.",
+    freeUserUpsell: "Watch creators go live, tip with Ru$h ⚡💲, and book private sessions. Upgrade to Member to unlock live streaming.",
     streamNotFound: "Stream not found",
     streamOffline: "Stream Offline",
     checkBackLater: "Check back later",
@@ -384,7 +384,7 @@ const strings = {
 
     // Token activation code flow (Meru card/bank)
     tokenActTitle: "Pay with Card or PSE",
-    tokenActSubtitle: "Your activation code has been reserved. Complete payment on Meru, then return here to activate your tokens.",
+    tokenActSubtitle: "Your activation code has been reserved. Complete payment on Meru, then return here to activate your Ru$h ⚡💲.",
     tokenActCodeLabel: "Your Activation Code",
     tokenActAlsoEmailed: "Also sent to your email",
     tokenActExpiresIn: "Expires in",
@@ -394,19 +394,19 @@ const strings = {
     tokenActCodeCopied: "Copied!",
     tokenActActivating: "Activating…",
     tokenActPolling: "Payment not received yet. Checking again in a few seconds…",
-    tokenActSuccess: (tokens: number, balance: number) => `You got ${tokens} tokens! New balance: ${balance}`,
+    tokenActSuccess: (tokens: number, balance: number) => `You got ${tokens} Ru$h ⚡💲! New balance: ${balance}`,
     tokenActExpired: "This code has expired.",
     tokenActStartOver: "Start over",
-    tokenActAlreadyUsed: "These tokens have already been credited to your wallet.",
+    tokenActAlreadyUsed: "This Ru$h has already been credited to your wallet.",
     tokenActNotPaidYet: "Payment not received yet. Try again in a minute.",
     tokenActUnavailable: "Card payment temporarily unavailable. Try a crypto method.",
     tokenActReserving: "Getting your payment link…",
     tokenActReserveError: "Failed to get payment link. Please try again.",
     tokenActSelectPackage: "Select a package",
-    tokenActSelectPackageHint: "Choose how many tokens you want to buy.",
-    tokenActTokens250Label: "250 Tokens",
+    tokenActSelectPackageHint: "Choose how much Ru$h ⚡💲 you want to buy.",
+    tokenActTokens250Label: "250 Ru$h",
     tokenActTokens250Sub: "Starter Pack",
-    tokenActTokens500Label: "500 Tokens",
+    tokenActTokens500Label: "500 Ru$h",
     tokenActTokens500Sub: "Plus Pack",
     tokenActGetLink: "Get payment link →",
     tokenActEmailLabel: "Your email address",
@@ -461,16 +461,16 @@ const strings = {
     tipTo: (name: string) => `a ${name}`,
     selectPerformerError: "Selecciona un artista para dar propina",
     insufficientTokens: (balance: number) =>
-      `Tokens insuficientes. Tienes ${balance} tokens. Compra más abajo.`,
+      `Ru$h insuficiente. Tienes ${balance} Ru$h. Compra más abajo.`,
     tokensSentSuccess: (amount: number, name: string) =>
-      `¡${amount} tokens enviados a ${name}!`,
+      `¡${amount} Ru$h enviados a ${name}!`,
     paymentWindowOpened: (amount: number) =>
-      `Ventana de pago abierta para propina de ${amount} tokens`,
-    tipSubmitted: (amount: number) => `¡Propina de ${amount} tokens enviada!`,
+      `Ventana de pago abierta para propina de ${amount} Ru$h`,
+    tipSubmitted: (amount: number) => `¡Propina de ${amount} Ru$h enviada!`,
     errorFailedToSendTip: "Error al enviar la propina",
 
     // Tip payment tabs
-    tabTokens: "Ru$h 💎",
+    tabTokens: "Ru$h ⚡💲",
     tokenInstantNote: "Instantáneo · Sin esperas · Sin ventanas emergentes",
 
     // Add tip message toggle
@@ -483,34 +483,34 @@ const strings = {
     loginToChat: "Inicia sesión para chatear",
 
     // Token wallet widget
-    tokenBalance: "Mis Tokens",
-    tokens: "tokens",
+    tokenBalance: "Mi Ru$h ⚡💲",
+    tokens: "Ru$h",
     linkDpns: "Vincular DPNS",
     history: "Historial",
-    buyTokens: "Comprar tokens",
+    buyTokens: "Comprar Ru$h ⚡💲",
     dpnsPlaceholder: "tunombre.dash",
     save: "Guardar",
     saving: "Guardando...",
     invalidDpnsHandle: "Identificador DPNS inválido",
     viewPurchaseHistory: "Ver historial de compras",
-    giftTokensLabel: "tokens de regalo",
-    santinoGiftLabel: "regalo de Santino y Lex",
+    giftTokensLabel: "Ru$h de regalo",
+    santinoGiftLabel: "Ru$h de regalo de Santino y Lex",
     walletTooltip: (balance: number, gift: number) =>
       gift > 0
-        ? `${balance} tokens · +${gift} tokens de regalo — toca para comprar`
-        : `${balance} tokens — toca para comprar`,
+        ? `${balance} Ru$h · +${gift} Ru$h de regalo — toca para comprar`
+        : `${balance} Ru$h — toca para comprar`,
 
     // Buy tokens modal
-    buyPnpTokensTitle: "Comprar Ru$h 💎",
+    buyPnpTokensTitle: "Comprar Ru$h ⚡💲",
     buyTokensPoweredBy: "Impulsado por",
     buyTokensRateNote:
-      "Usa tokens para propinas instantáneas — sin ventanas emergentes, sin esperas.",
+      "Usa Ru$h ⚡💲 para propinas instantáneas — sin ventanas emergentes, sin esperas.",
     buyTokensCheckoutNote:
-      "Se abrirá una ventana de pago de Dash. Una vez confirmado el pago, las tokens se acreditan automáticamente.",
+      "Se abrirá una ventana de pago de Dash. Una vez confirmado el pago, tu Ru$h ⚡💲 se acredita automáticamente.",
     yourDashIdentity: (handle: string) =>
       ` Tu identidad Dash: @${handle}`,
     loadingPackages: "Cargando paquetes...",
-    tokensLabel: "tokens",
+    tokensLabel: "Ru$h",
     opening: "Abriendo...",
     errorDashUnavailable:
       "Los pagos con Dash no están disponibles aún. Contacta con soporte.",
@@ -519,7 +519,7 @@ const strings = {
     errorFailedToOpenCheckout: "Error al abrir el pago de Dash",
 
     // Wallet history modal
-    tokenPurchaseHistoryTitle: "Historial de tokens",
+    tokenPurchaseHistoryTitle: "Historial de Ru$h",
     noPurchasesYet: "Sin compras todavía.",
 
     // Live chat
@@ -639,7 +639,7 @@ const strings = {
     watchLive: "Ver en Vivo",
     upgradeToMember: "Actualizar a Member",
     liveStreamsTitle: "Transmisiones en Vivo",
-    freeUserUpsell: "Mira a creadores en vivo, envía propinas con tokens y reserva sesiones privadas. Actualiza a Member para desbloquear streaming en vivo.",
+    freeUserUpsell: "Mira a creadores en vivo, envía propinas con Ru$h ⚡💲 y reserva sesiones privadas. Actualiza a Member para desbloquear streaming en vivo.",
     streamNotFound: "Transmisión no encontrada",
     streamOffline: "Transmisión Fuera de Línea",
     checkBackLater: "Vuelve más tarde",
@@ -806,7 +806,7 @@ const strings = {
 
     // Token activation code flow (Meru card/bank)
     tokenActTitle: "Pagar con Tarjeta o PSE",
-    tokenActSubtitle: "Tu código de activación está reservado. Completa el pago en Meru y vuelve aquí para activar tus tokens.",
+    tokenActSubtitle: "Tu código de activación está reservado. Completa el pago en Meru y vuelve aquí para activar tu Ru$h ⚡💲.",
     tokenActCodeLabel: "Tu código de activación",
     tokenActAlsoEmailed: "También enviado a tu correo",
     tokenActExpiresIn: "Expira en",
@@ -816,19 +816,19 @@ const strings = {
     tokenActCodeCopied: "¡Copiado!",
     tokenActActivating: "Activando…",
     tokenActPolling: "Pago no recibido aún. Verificando de nuevo en unos segundos…",
-    tokenActSuccess: (tokens: number, balance: number) => `¡Recibiste ${tokens} tokens! Saldo nuevo: ${balance}`,
+    tokenActSuccess: (tokens: number, balance: number) => `¡Recibiste ${tokens} Ru$h ⚡💲! Saldo nuevo: ${balance}`,
     tokenActExpired: "Este código ha expirado.",
     tokenActStartOver: "Empezar de nuevo",
-    tokenActAlreadyUsed: "Estos tokens ya fueron acreditados en tu saldo.",
+    tokenActAlreadyUsed: "Este Ru$h ya fue acreditado en tu saldo.",
     tokenActNotPaidYet: "Pago no recibido todavía. Intenta en un minuto.",
     tokenActUnavailable: "Pago con tarjeta temporalmente no disponible. Intenta con cripto.",
     tokenActReserving: "Obteniendo tu enlace de pago…",
     tokenActReserveError: "No se pudo obtener el enlace de pago. Inténtalo de nuevo.",
     tokenActSelectPackage: "Selecciona un paquete",
-    tokenActSelectPackageHint: "Elige cuántos tokens quieres comprar.",
-    tokenActTokens250Label: "250 Tokens",
+    tokenActSelectPackageHint: "Elige cuánto Ru$h ⚡💲 quieres comprar.",
+    tokenActTokens250Label: "250 Ru$h",
     tokenActTokens250Sub: "Paquete Starter",
-    tokenActTokens500Label: "500 Tokens",
+    tokenActTokens500Label: "500 Ru$h",
     tokenActTokens500Sub: "Paquete Plus",
     tokenActGetLink: "Obtener enlace de pago →",
     tokenActEmailLabel: "Tu correo electrónico",

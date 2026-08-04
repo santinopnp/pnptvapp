@@ -146,7 +146,7 @@ export default function ReferralAdmin() {
           <StatCard label="Total" value={data.stats.total} />
           <StatCard label="Completed" value={data.stats.completed} accent />
           <StatCard label="Pending" value={data.stats.pending} />
-          <StatCard label="Tokens paid out" value={data.stats.totalTokensPaidOut} />
+          <StatCard label="Ru$h paid out" value={data.stats.totalTokensPaidOut} />
           <StatCard label="Unique referrers" value={data.stats.uniqueReferrers} />
         </div>
       )}

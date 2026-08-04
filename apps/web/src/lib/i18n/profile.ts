@@ -150,14 +150,14 @@ const strings = {
     // ── Referral card ─────────────────────────────────────────────────────────
     referralProgram: "Referral Program",
     referralInviteDesc: "Invite friends — when they buy a paid plan you earn",
-    referralFreePrime: "tokens de PNP Live",
+    referralFreePrime: "Ru$h de PNP Live",
     referralWhenTheyJoin: "(1 for week/monthly, 3 for any other plan).",
     copy: "Copy",
     copied: "Copied!",
     invited: "Invited",
     joined_noun: "Joined",
     daysEarned: "Days earned",
-    tokensEarned: "Tokens earned",
+    tokensEarned: "Ru$h earned",
 
     // ── App preferences ───────────────────────────────────────────────────────
     appPreferences: "App Preferences",
@@ -178,13 +178,13 @@ const strings = {
     dpnsSaving: "Saving...",
     dpnsSaved: "DPNS handle linked!",
     dpnsInvalidFormat: "Invalid DPNS handle (3-63 chars, letters, numbers, hyphens, underscores)",
-    dpnsTokenBalance: "My Tokens",
+    dpnsTokenBalance: "My Ru$h ⚡💲",
     txHistoryToggle: "View Transaction History",
     txHistoryHide: "Hide Transaction History",
     txHistoryEmpty: "No transactions yet",
     txHistoryDate: "Date",
     txHistoryAmount: "Amount",
-    txHistoryTokens: "Ru$h 💎",
+    txHistoryTokens: "Ru$h ⚡💲",
     txHistoryMethod: "Method",
     txHistoryStatus: "Status",
     txStatusCompleted: "Completed",
@@ -210,7 +210,7 @@ const strings = {
     payHistoryPlan: "Plan",
     payHistoryCall: "Private Call",
     payHistoryDonation: "Donation",
-    payHistoryTokens: "Token Purchase",
+    payHistoryTokens: "Ru$h Purchase",
 
     // ── Privacy toggles ───────────────────────────────────────────────────────
     public: "Public",
@@ -372,7 +372,7 @@ const strings = {
     catPrivacyTitle: "Privacy",
     catPrivacyDesc: "Blocked users, data policy, consents",
     catPaymentsTitle: "Payments",
-    catPaymentsDesc: "Tokens, Dash identity, transaction history",
+    catPaymentsDesc: "Ru$h ⚡💲, Dash identity, transaction history",
     catDangerZoneTitle: "Danger Zone",
     catDangerZoneDesc: "Delete or erase your account permanently",
 
@@ -627,7 +627,7 @@ const strings = {
     // ── Referral card ─────────────────────────────────────────────────────────
     referralProgram: "Programa de referidos",
     referralInviteDesc: "Invita amigos: cuando compren un plan, ganas",
-    referralFreePrime: "tokens de PNP Live",
+    referralFreePrime: "Ru$h de PNP Live",
     referralWhenTheyJoin: "(1 por plan semanal/mensual, 3 por cualquier otro).",
     copy: "Copiar",
     copied: "¡Copiado!",
@@ -661,7 +661,7 @@ const strings = {
     txHistoryEmpty: "Sin transacciones aún",
     txHistoryDate: "Fecha",
     txHistoryAmount: "Monto",
-    txHistoryTokens: "Ru$h 💎",
+    txHistoryTokens: "Ru$h ⚡💲",
     txHistoryMethod: "Método",
     txHistoryStatus: "Estado",
     txStatusCompleted: "Completado",
@@ -849,7 +849,7 @@ const strings = {
     catPrivacyTitle: "Privacidad",
     catPrivacyDesc: "Usuarios bloqueados, política de datos, consentimientos",
     catPaymentsTitle: "Pagos",
-    catPaymentsDesc: "Tokens, identidad Dash, historial de transacciones",
+    catPaymentsDesc: "Ru$h ⚡💲, identidad Dash, historial de transacciones",
     catDangerZoneTitle: "Zona de Peligro",
     catDangerZoneDesc: "Eliminar o borrar tu cuenta permanentemente",
 

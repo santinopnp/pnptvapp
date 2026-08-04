@@ -137,7 +137,7 @@ export default function CreatorLive() {
   const handleSetGoal = useCallback(async () => {
     const amt = parseInt(goalAmount);
     if (!amt || amt <= 0 || amt > 10000) {
-      setGoalError("Goal must be between 1 and 10,000 tokens.");
+      setGoalError("Goal must be between 1 and 10,000 Ru$h.");
       return;
     }
     setGoalSaving(true);
@@ -554,7 +554,7 @@ export default function CreatorLive() {
             <div className="space-y-5">
               <div>
                 <h1 className="text-xl font-bold text-white">Set your earning tools</h1>
-                <p className="text-sm text-pnp-textSecondary mt-1">Give viewers ways to support you with tokens.</p>
+                <p className="text-sm text-pnp-textSecondary mt-1">Give viewers ways to support you with Ru$h ⚡💲.</p>
               </div>
 
               <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -566,7 +566,7 @@ export default function CreatorLive() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-pnp-textPrimary">{currentGoal.goalLabel || "Goal"}</span>
-                      <span className="text-xs text-pnp-textSecondary">{Math.round(currentGoal.progress)}/{Math.round(currentGoal.goalAmount ?? 0)} tokens</span>
+                      <span className="text-xs text-pnp-textSecondary">{Math.round(currentGoal.progress)}/{Math.round(currentGoal.goalAmount ?? 0)} Ru$h</span>
                     </div>
                     <div className="h-2 rounded-full bg-pnp-border overflow-hidden">
                       <div className="h-full rounded-full bg-pnp-accent transition-all duration-500" style={{ width: `${currentGoal.goalAmount && currentGoal.goalAmount > 0 ? Math.min(100, Math.round(((currentGoal.progress ?? 0) / currentGoal.goalAmount) * 100)) : 0}%` }} />
@@ -576,7 +576,7 @@ export default function CreatorLive() {
                 ) : (
                   <div className="space-y-2">
                     <div className="flex gap-2">
-                      <input type="number" min="1" placeholder="Tokens (e.g. 500)" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)}
+                      <input type="number" min="1" placeholder="Ru$h (e.g. 500)" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)}
                         className="w-32 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                         style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
                       <input type="text" placeholder="Label (e.g. Full show)" maxLength={60} value={goalLabel} onChange={(e) => setGoalLabel(e.target.value)}
@@ -609,7 +609,7 @@ export default function CreatorLive() {
                 )}
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <input type="number" min="1" placeholder="Tokens" value={newItemAmount} onChange={(e) => setNewItemAmount(e.target.value)}
+                    <input type="number" min="1" placeholder="Ru$h" value={newItemAmount} onChange={(e) => setNewItemAmount(e.target.value)}
                       className="w-24 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
                     <input type="text" placeholder="What you'll do (e.g. Take off shirt)" maxLength={80} value={newItemLabel} onChange={(e) => setNewItemLabel(e.target.value)}
@@ -644,7 +644,7 @@ export default function CreatorLive() {
                 {([
                   { key: "boundaries", label: "What you won't do", placeholder: "e.g. No face reveal, no explicit requests…" },
                   { key: "turnOns", label: "What you enjoy showing", placeholder: "e.g. dancing, teasing, connecting with fans…" },
-                  { key: "streamGoal", label: "Tonight's stream goal", placeholder: "e.g. Reach 500 tokens for a full show…" },
+                  { key: "streamGoal", label: "Tonight's stream goal", placeholder: "e.g. Reach 500 Ru$h for a full show…" },
                 ] as const).map(({ key, label, placeholder }) => (
                   <div key={key}>
                     <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">{label}</label>
@@ -816,7 +816,7 @@ export default function CreatorLive() {
       {/* Tip alert toast */}
       {tipAlert && (
         <div className="fixed right-4 z-50 px-4 py-3 rounded-xl bg-pnp-surface border border-pnp-accent/40 shadow-lg shadow-pnp-accent/10 max-w-xs pointer-events-none" style={{ top: "calc(1rem + env(safe-area-inset-top, 0px))" }}>
-          <p className="text-sm font-bold text-pnp-accent">+{tipAlert.amount} tokens</p>
+          <p className="text-sm font-bold text-pnp-accent">+{tipAlert.amount} Ru$h ⚡💲</p>
           <p className="text-xs text-pnp-textSecondary">from @{tipAlert.username}</p>
           {tipAlert.message && (
             <p className="text-xs text-pnp-textPrimary mt-0.5 italic">"{tipAlert.message}"</p>
@@ -833,7 +833,7 @@ export default function CreatorLive() {
             <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#008CE7" }}>
               <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 fill-white"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16 13.5 16.5z"/></svg>
             </div>
-            <span className="text-xs font-semibold tabular-nums" style={{ color: "#5BB8F5" }}>{tokenBalance} tokens</span>
+            <span className="text-xs font-semibold tabular-nums" style={{ color: "#5BB8F5" }}>{tokenBalance} Ru$h</span>
           </div>
         )}
 
@@ -1455,7 +1455,7 @@ export default function CreatorLive() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-pnp-textPrimary">{currentGoal.goalLabel || "Goal"}</span>
                       <span className="text-xs text-pnp-textSecondary">
-                        {Math.round(currentGoal.progress)}/{Math.round(currentGoal.goalAmount ?? 0)} tokens
+                        {Math.round(currentGoal.progress)}/{Math.round(currentGoal.goalAmount ?? 0)} Ru$h
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-pnp-border overflow-hidden">
@@ -1488,7 +1488,7 @@ export default function CreatorLive() {
                       <input
                         type="number"
                         min="1"
-                        placeholder="Tokens (e.g. 500)"
+                        placeholder="Ru$h (e.g. 500)"
                         value={goalAmount}
                         onChange={(e) => setGoalAmount(e.target.value)}
                         className="w-32 rounded-lg bg-pnp-surface border border-pnp-border px-2.5 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-1 focus:ring-pnp-accent"
@@ -1570,7 +1570,7 @@ export default function CreatorLive() {
                       <input
                         type="number"
                         min="1"
-                        placeholder="Tokens"
+                        placeholder="Ru$h"
                         value={newItemAmount}
                         onChange={(e) => setNewItemAmount(e.target.value)}
                         className="w-24 rounded-lg bg-pnp-surface border border-pnp-border px-2.5 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-1 focus:ring-pnp-accent"
@@ -1635,7 +1635,7 @@ export default function CreatorLive() {
                     [
                       { key: "boundaries", label: "What you won't do", placeholder: "e.g. No face reveal, no explicit requests…" },
                       { key: "turnOns", label: "What turns you on / what you enjoy showing", placeholder: "e.g. dancing, teasing, connecting with fans…" },
-                      { key: "streamGoal", label: "Tonight's stream goal", placeholder: "e.g. Reach 500 tokens for a full show, hit follower milestone…" },
+                      { key: "streamGoal", label: "Tonight's stream goal", placeholder: "e.g. Reach 500 Ru$h for a full show, hit follower milestone…" },
                     ] as const
                   ).map(({ key, label, placeholder }) => (
                     <div key={key}>

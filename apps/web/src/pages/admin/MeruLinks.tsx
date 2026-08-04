@@ -29,8 +29,8 @@ const EMPTY_FILTERS: FilterState = { product: "all", status: "all" };
 // path filters on lowercase). The `label` is what admins see in the dropdown.
 const PRODUCT_PRESETS: Array<{ code: string; label: string; hint: string }> = [
   { code: "lifetime100",  label: "Lifetime Pass — $100",         hint: "One-time PRIME membership" },
-  { code: "tokens_250",   label: "Tokens Pack — $250 → 1,500 F", hint: "Card/PSE token purchase" },
-  { code: "tokens_500",   label: "Tokens Pack — $500 → 3,000 F", hint: "Card/PSE token purchase" },
+  { code: "tokens_250",   label: "Ru$h Pack — $250 → 1,500 Ru$h", hint: "Card/PSE Ru$h purchase" },
+  { code: "tokens_500",   label: "Ru$h Pack — $500 → 3,000 Ru$h", hint: "Card/PSE Ru$h purchase" },
 ];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

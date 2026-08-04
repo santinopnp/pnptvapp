@@ -96,12 +96,12 @@ export default function ReferralCenter() {
             {es ? "Centro de Referidos" : "Referral Center"}
           </p>
           <h1 className="text-2xl font-bold text-white" style={{ lineHeight: 1.25, marginBottom: 8 }}>
-            {es ? "Invita amigos, gana PRIME + tokens" : "Invite friends, earn PRIME + tokens"}
+            {es ? "Invita amigos, gana PRIME + Ru$h ⚡💲" : "Invite friends, earn PRIME + Ru$h ⚡💲"}
           </h1>
           <p className="text-sm" style={{ color: "rgba(255,255,255,0.50)", marginBottom: 20 }}>
             {es
-              ? "Cada vez que alguien se registra con tu enlace, ambos reciben 24 horas de PRIME gratis. Si además pagan un plan, tú ganas tokens PNP Live."
-              : "Every time someone signs up with your link, you both get 24 hours of PRIME free. When they buy a plan, you also earn PNP Live tokens."}
+              ? "Cada vez que alguien se registra con tu enlace, ambos reciben 24 horas de PRIME gratis. Si además pagan un plan, tú ganas Ru$h ⚡💲 de PNP Live."
+              : "Every time someone signs up with your link, you both get 24 hours of PRIME free. When they buy a plan, you also earn Ru$h ⚡💲."}
           </p>
 
           {/* Referral link box */}
@@ -268,7 +268,7 @@ export default function ReferralCenter() {
             style={{ background: "rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
           >
             <span className="text-sm font-bold text-white">
-              {es ? "Tokens por plan" : "Tokens per plan"}
+              {es ? "Ru$h ⚡💲 por plan" : "Ru$h ⚡💲 per plan"}
             </span>
           </div>
           {[
@@ -288,7 +288,7 @@ export default function ReferralCenter() {
                 className="text-sm font-bold px-2.5 py-0.5 rounded-full"
                 style={{ background: "rgba(212,0,122,0.12)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.20)" }}
               >
-                {tokens} {tokens === 1 ? "token" : "tokens"}
+                {tokens} Ru$h
               </span>
             </div>
           ))}
@@ -335,7 +335,7 @@ export default function ReferralCenter() {
                         className="text-xs font-semibold px-2 py-0.5 rounded-full"
                         style={{ background: "rgba(34,197,94,0.12)", color: "#4ADE80", border: "1px solid rgba(34,197,94,0.20)" }}
                       >
-                        +{entry.reward_tokens} {entry.reward_tokens === 1 ? "token" : "tokens"}
+                        +{entry.reward_tokens} Ru$h
                       </span>
                     ) : (
                       <span

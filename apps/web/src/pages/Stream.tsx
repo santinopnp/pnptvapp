@@ -192,7 +192,7 @@ function StreamNoTokensWall() {
       </div>
       <div>
         <h2 className="text-xl font-bold text-pnp-textPrimary mb-2">Inicia sesión para ver</h2>
-        <p className="text-sm text-pnp-textSecondary max-w-xs">Los shows en vivo son de pago. Inicia sesión para comprar tokens y ver.</p>
+        <p className="text-sm text-pnp-textSecondary max-w-xs">Los shows en vivo son de pago. Inicia sesión para comprar Ru$h ⚡💲 y ver.</p>
       </div>
       <button
         onClick={() => navigate('/login')}
@@ -227,12 +227,12 @@ function InsufficientTokensWall({ current, streamName, onBuyTokens }: { current?
         </svg>
       </div>
       <div>
-        <h2 className="text-base font-bold text-white mb-1.5">Tokens insuficientes</h2>
+        <h2 className="text-base font-bold text-white mb-1.5">Ru$h insuficiente</h2>
         <p className="text-xs text-white/60 leading-relaxed">
-          Necesitas al menos <strong className="text-white/90">60 tokens</strong> para ver este show.
+          Necesitas al menos <strong className="text-white/90">60 Ru$h</strong> para ver este show.
           {current !== undefined && (
             <span className="block mt-1.5">
-              Tienes <strong className="text-pnp-accent">{current}</strong> token{current !== 1 ? "s" : ""}.
+              Tienes <strong className="text-pnp-accent">{current}</strong> Ru$h.
             </span>
           )}
         </p>
@@ -242,7 +242,7 @@ function InsufficientTokensWall({ current, streamName, onBuyTokens }: { current?
         className="w-full py-3 rounded-xl text-sm font-bold text-white active:scale-95 transition-transform"
         style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
       >
-        Comprar tokens →
+        Comprar Ru$h ⚡💲 →
       </button>
       <button onClick={() => navigate(-1)} className="text-xs text-white/40 hover:text-white/70 transition-colors">
         ← Volver
@@ -1979,7 +1979,7 @@ function StreamInner() {
                       className="w-full px-4 py-2.5 rounded-lg btn-gradient text-white text-xs font-bold disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
                       {ticketBuying && <span className="w-3 h-3 border border-white/60 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
-                      Buy for {ticketStatus.priceTokens} Tokens
+                      Buy for {ticketStatus.priceTokens} Ru$h
                     </button>
                   )}
                   {ticketStatus.priceUsd && !dashTicketPollActive && (
@@ -2068,7 +2068,7 @@ function StreamInner() {
               <span className="tabular-nums">{tokenBalance ?? "—"}</span>
               <button
                 onClick={() => setShowTopUp(true)}
-                aria-label="Add tokens"
+                aria-label="Add Ru$h"
                 className="ml-1 text-pnp-accent font-bold hover:text-white transition-colors"
               >
                 +Add
@@ -2158,11 +2158,11 @@ function StreamInner() {
                 </span>
               ) : tokenBalance !== null && tokenBalance < 10 ? (
                 <span className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/20 border border-red-500/40 text-red-300 backdrop-blur-sm animate-pulse">
-                  Pocos tokens — recarga pronto
+                  Poco Ru$h — recarga pronto
                 </span>
               ) : (
                 <span className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 border border-amber-500/40 text-amber-300 backdrop-blur-sm">
-                  1 token/min{tokenBalance !== null ? ` · ${tokenBalance} tokens` : ""}
+                  1 Ru$h/min{tokenBalance !== null ? ` · ${tokenBalance} Ru$h` : ""}
                 </span>
               )}
             </div>
@@ -2234,7 +2234,7 @@ function StreamInner() {
                   className="pointer-events-auto text-xs text-white rounded-lg px-2.5 py-1.5 w-fit max-w-full font-semibold"
                   style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.6), rgba(230,145,56,0.5))", boxShadow: "0 0 0 1px rgba(230,145,56,0.55)" }}
                 >
-                  🎁 {tipAlert.username}: {tipAlert.amount} tokens
+                  🎁 {tipAlert.username}: {tipAlert.amount} Ru$h
                 </div>
               )}
             </div>
@@ -2311,7 +2311,7 @@ function StreamInner() {
                   key={amt}
                   onClick={() => handleTip(amt)}
                   disabled={tipping}
-                  aria-label={`Tip ${amt} tokens`}
+                  aria-label={`Tip ${amt} Ru$h`}
                   className="flex-1 max-w-[80px] py-2 rounded-xl text-xs font-bold text-white active:scale-95 transition-transform disabled:opacity-50"
                   style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#E69138)" }}
                 >
@@ -2460,7 +2460,7 @@ function StreamInner() {
 
         {tipAlert && (
           <div className="absolute top-12 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full bg-pnp-accent text-white text-xs font-bold shadow-lg animate-bounce pointer-events-none">
-            {tipAlert.message || `${tipAlert.username} tipped ${tipAlert.amount} tokens`}
+            {tipAlert.message || `${tipAlert.username} tipped ${tipAlert.amount} Ru$h`}
           </div>
         )}
 
@@ -2579,11 +2579,11 @@ function StreamInner() {
                 </span>
               ) : tokenBalance !== null && tokenBalance < 10 ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-red-500/15 border border-red-500/30 text-red-400 animate-pulse">
-                  Pocos tokens — recarga pronto
+                  Poco Ru$h — recarga pronto
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 border border-amber-500/25 text-amber-400">
-                  1 token/min{tokenBalance !== null ? ` · ${tokenBalance} tokens` : ""}
+                  1 Ru$h/min{tokenBalance !== null ? ` · ${tokenBalance} Ru$h` : ""}
                 </span>
               )}
             </div>
@@ -2855,7 +2855,7 @@ function StreamInner() {
                         <div className="flex flex-shrink-0 gap-0.5">
                           <button
                             onClick={() => setTipPaymentTab("tokens")}
-                            aria-label="Pay with Tokens"
+                            aria-label="Pay with Ru$h ⚡💲"
                             className={`px-2 py-1.5 rounded-l-lg text-[10px] font-medium border transition-colors ${tipPaymentTab === "tokens" ? "bg-pnp-accent/20 border-pnp-accent/40 text-pnp-accent" : "bg-pnp-surface border-pnp-border text-pnp-textSecondary"}`}
                           >
                             T
@@ -2876,7 +2876,7 @@ function StreamInner() {
                       <p className="text-[10px] text-pnp-error">{tipError}</p>
                       {tipPaymentTab === "tokens" && tokenBalance !== null && (
                         <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
-                          Comprar tokens →
+                          Comprar Ru$h ⚡💲 →
                         </button>
                       )}
                     </div>
@@ -3066,7 +3066,7 @@ function StreamInner() {
                               <p className="text-[10px] text-pnp-error">{bookCallError}</p>
                               {bookCallError.toLowerCase().includes("insufficient") && (
                                 <button onClick={() => setShowTopUp(true)} className="text-[10px] font-bold text-pnp-accent hover:underline flex-shrink-0">
-                                  Comprar tokens →
+                                  Comprar Ru$h ⚡💲 →
                                 </button>
                               )}
                             </div>
@@ -3371,7 +3371,7 @@ function StreamInner() {
                         <div className="flex flex-shrink-0 gap-0.5">
                           <button
                             onClick={() => setTipPaymentTab("tokens")}
-                            aria-label="Pay with Tokens"
+                            aria-label="Pay with Ru$h ⚡💲"
                             className={`px-2 py-1.5 rounded-l-lg text-[10px] font-medium border transition-colors ${tipPaymentTab === "tokens" ? "bg-pnp-accent/20 border-pnp-accent/40 text-pnp-accent" : "bg-pnp-surface border-pnp-border text-pnp-textSecondary"}`}
                           >
                             T
@@ -3392,7 +3392,7 @@ function StreamInner() {
                       <p className="text-[10px] text-pnp-error">{tipError}</p>
                       {tipPaymentTab === "tokens" && tokenBalance !== null && (
                         <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
-                          Comprar tokens →
+                          Comprar Ru$h ⚡💲 →
                         </button>
                       )}
                     </div>
@@ -3853,7 +3853,7 @@ function StreamInner() {
                         <p className="text-[10px] text-pnp-error">{bookCallError}</p>
                         {bookCallError.toLowerCase().includes("insufficient") && (
                           <button onClick={() => setShowTopUp(true)} className="text-[10px] font-bold text-pnp-accent hover:underline flex-shrink-0">
-                            Comprar tokens →
+                            Comprar Ru$h ⚡💲 →
                           </button>
                         )}
                       </div>

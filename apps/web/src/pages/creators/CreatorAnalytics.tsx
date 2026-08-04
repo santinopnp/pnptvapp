@@ -204,7 +204,7 @@ function RevenueSection() {
                 ${data.byDay.slice(-days).reduce((s, e) => s + e.usd, 0).toFixed(2)}
               </p>
               <p className="text-[10px] mt-0.5" style={{ color: "#5ED1C4" }}>
-                {data.byDay.slice(-days).reduce((s, e) => s + e.tokens, 0)} tokens
+                {data.byDay.slice(-days).reduce((s, e) => s + e.tokens, 0)} Ru$h
               </p>
             </div>
             {/* All-time */}
@@ -216,7 +216,7 @@ function RevenueSection() {
                 ${(data.totals.usd ?? 0).toFixed(2)}
               </p>
               <p className="text-[10px] mt-0.5" style={{ color: "#5ED1C4" }}>
-                {data.totals.tokens ?? 0} tokens
+                {data.totals.tokens ?? 0} Ru$h
               </p>
             </div>
           </div>
@@ -237,7 +237,7 @@ function RevenueSection() {
                   <th className="px-4 py-2 text-left font-medium">Source</th>
                   <th className="px-4 py-2 text-right font-medium">Count</th>
                   <th className="px-4 py-2 text-right font-medium">USD</th>
-                  <th className="px-4 py-2 text-right font-medium">Tokens</th>
+                  <th className="px-4 py-2 text-right font-medium">Ru$h</th>
                 </tr>
               </thead>
               <tbody>
@@ -357,7 +357,7 @@ export default function CreatorAnalytics() {
                 <p className="text-2xl font-bold" style={{ color: "#D4007A" }}>
                   {summary?.total_tips_tokens ?? 0}
                 </p>
-                <p className="text-xs mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Tokens Earned</p>
+                <p className="text-xs mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Ru$h Earned</p>
               </div>
             </div>
 
@@ -398,7 +398,7 @@ export default function CreatorAnalytics() {
                         <th className="px-4 py-2 text-left font-medium">Date</th>
                         <th className="px-4 py-2 text-right font-medium">Duration</th>
                         <th className="px-4 py-2 text-right font-medium">Peak</th>
-                        <th className="px-4 py-2 text-right font-medium">Tokens</th>
+                        <th className="px-4 py-2 text-right font-medium">Ru$h</th>
                       </tr>
                     </thead>
                     <tbody>

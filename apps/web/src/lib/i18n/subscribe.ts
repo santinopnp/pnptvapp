@@ -21,9 +21,9 @@ const strings = {
 
     // ── Plan tier section labels ──────────────────────────────────────────────
     communityMember: "Community Member",
-    communityMemberDesc: "Social features, PNP Live & Radio, Hangouts, Nearby — PRIME channel, exclusive creator profiles, show tokens & private calls cost extra",
+    communityMemberDesc: "Social features, PNP Live & Radio, Hangouts, Nearby — PRIME channel, exclusive creator profiles, Ru$h for shows & private calls cost extra",
     prime: "PRIME",
-    primeDesc: "All Basic features + PNPtv! PRIME channel — exclusive creator profiles, show tokens & private calls cost extra",
+    primeDesc: "All Basic features + PNPtv! PRIME channel — exclusive creator profiles, Ru$h for shows & private calls cost extra",
 
     // ── Plan duration labels ──────────────────────────────────────────────────
     lifetime: "Lifetime",
@@ -192,9 +192,9 @@ const strings = {
     showPricesInCOP: "Ver precios en COP",
 
     communityMember: "Miembro de comunidad",
-    communityMemberDesc: "Funciones sociales, PNP Live & Radio, Hangouts, Nearby — canal PRIME, perfiles exclusivos de creadores, tokens de shows y llamadas privadas tienen costo adicional",
+    communityMemberDesc: "Funciones sociales, PNP Live & Radio, Hangouts, Nearby — canal PRIME, perfiles exclusivos de creadores, Ru$h en shows y llamadas privadas tienen costo adicional",
     prime: "PRIME",
-    primeDesc: "Todo lo de Basic + canal PNPtv! PRIME — perfiles exclusivos de creadores, tokens de shows y llamadas privadas tienen costo adicional",
+    primeDesc: "Todo lo de Basic + canal PNPtv! PRIME — perfiles exclusivos de creadores, Ru$h en shows y llamadas privadas tienen costo adicional",
 
     lifetime: "De por vida",
     monthly: "Mensual",
@@ -349,9 +349,9 @@ const strings = {
     showPricesInCOP: "Ver preços em COP",
 
     communityMember: "Membro da Comunidade",
-    communityMemberDesc: "Recursos sociais, PNP Live & Radio, Hangouts, Nearby — canal PRIME, perfis exclusivos de criadores, tokens de shows e chamadas privadas têm custo adicional",
+    communityMemberDesc: "Recursos sociais, PNP Live & Radio, Hangouts, Nearby — canal PRIME, perfis exclusivos de criadores, Ru$h em shows e chamadas privadas têm custo adicional",
     prime: "PRIME",
-    primeDesc: "Tudo do Basic + canal PNPtv! PRIME — perfis exclusivos de criadores, tokens de shows e chamadas privadas têm custo adicional",
+    primeDesc: "Tudo do Basic + canal PNPtv! PRIME — perfis exclusivos de criadores, Ru$h em shows e chamadas privadas têm custo adicional",
 
     lifetime: "Vitalício",
     monthly: "Mensal",
@@ -818,9 +818,9 @@ const strings = {
     showPricesInCOP: "Voir les prix en COP",
 
     communityMember: "Membre de la Communauté",
-    communityMemberDesc: "Fonctionnalités sociales, PNP Live & Radio, Hangouts, Nearby — canal PRIME, profils exclusifs de créateurs, tokens de shows et appels privés en supplément",
+    communityMemberDesc: "Fonctionnalités sociales, PNP Live & Radio, Hangouts, Nearby — canal PRIME, profils exclusifs de créateurs, Ru$h pour shows et appels privés en supplément",
     prime: "PRIME",
-    primeDesc: "Tout le Basic + canal PNPtv! PRIME — profils exclusifs de créateurs, tokens de shows et appels privés en supplément",
+    primeDesc: "Tout le Basic + canal PNPtv! PRIME — profils exclusifs de créateurs, Ru$h pour shows et appels privés en supplément",
 
     lifetime: "À vie",
     monthly: "Mensuel",
@@ -974,9 +974,9 @@ const strings = {
     showPricesInCOP: "Preise in COP anzeigen",
 
     communityMember: "Community-Mitglied",
-    communityMemberDesc: "Soziale Funktionen, PNP Live & Radio, Hangouts, Nearby — PRIME-Kanal, exklusive Erstellerprofile, Show-Tokens und private Anrufe kosten extra",
+    communityMemberDesc: "Soziale Funktionen, PNP Live & Radio, Hangouts, Nearby — PRIME-Kanal, exklusive Erstellerprofile, Ru$h für Shows und private Anrufe kosten extra",
     prime: "PRIME",
-    primeDesc: "Alle Basic-Funktionen + PNPtv! PRIME-Kanal — exklusive Erstellerprofile, Show-Tokens und private Anrufe kosten extra",
+    primeDesc: "Alle Basic-Funktionen + PNPtv! PRIME-Kanal — exklusive Erstellerprofile, Ru$h für Shows und private Anrufe kosten extra",
 
     lifetime: "Lebenslang",
     monthly: "Monatlich",
@@ -1286,9 +1286,9 @@ const strings = {
     showPricesInCOP: "Mostra prezzi in COP",
 
     communityMember: "Membro della Community",
-    communityMemberDesc: "Funzionalità social, PNP Live & Radio, Hangouts, Nearby — canale PRIME, profili esclusivi dei creator, token per show e chiamate private a pagamento extra",
+    communityMemberDesc: "Funzionalità social, PNP Live & Radio, Hangouts, Nearby — canale PRIME, profili esclusivi dei creator, Ru$h per show e chiamate private a pagamento extra",
     prime: "PRIME",
-    primeDesc: "Tutto di Basic + canale PNPtv! PRIME — profili esclusivi dei creator, token per show e chiamate private a pagamento extra",
+    primeDesc: "Tutto di Basic + canale PNPtv! PRIME — profili esclusivi dei creator, Ru$h per show e chiamate private a pagamento extra",
 
     lifetime: "A vita",
     monthly: "Mensile",
@@ -1442,9 +1442,9 @@ const strings = {
     showPricesInCOP: "Fiyatları COP olarak göster",
 
     communityMember: "Topluluk Üyesi",
-    communityMemberDesc: "Sosyal özellikler, PNP Live & Radio, Hangouts, Nearby — PRIME kanal, özel yaratıcı profilleri, show tokenleri ve özel aramalar ek ücretlidir",
+    communityMemberDesc: "Sosyal özellikler, PNP Live & Radio, Hangouts, Nearby — PRIME kanal, özel yaratıcı profilleri, Ru$h ile shows ve özel aramalar ek ücretlidir",
     prime: "PRIME",
-    primeDesc: "Tüm Basic özellikleri + PNPtv! PRIME kanalı — özel yaratıcı profilleri, show tokenleri ve özel aramalar ek ücretlidir",
+    primeDesc: "Tüm Basic özellikleri + PNPtv! PRIME kanalı — özel yaratıcı profilleri, Ru$h ile shows ve özel aramalar ek ücretlidir",
 
     lifetime: "Ömür Boyu",
     monthly: "Aylık",
@@ -1754,9 +1754,9 @@ const strings = {
     showPricesInCOP: "Prijzen in COP weergeven",
 
     communityMember: "Community-lid",
-    communityMemberDesc: "Sociale functies, PNP Live & Radio, Hangouts, Nearby — PRIME-kanaal, exclusieve creatorprofielen, show-tokens en privégesprekken kosten extra",
+    communityMemberDesc: "Sociale functies, PNP Live & Radio, Hangouts, Nearby — PRIME-kanaal, exclusieve creatorprofielen, Ru$h voor shows en privégesprekken kosten extra",
     prime: "PRIME",
-    primeDesc: "Alle Basic-functies + PNPtv! PRIME-kanaal — exclusieve creatorprofielen, show-tokens en privégesprekken kosten extra",
+    primeDesc: "Alle Basic-functies + PNPtv! PRIME-kanaal — exclusieve creatorprofielen, Ru$h voor shows en privégesprekken kosten extra",
 
     lifetime: "Levenslang",
     monthly: "Maandelijks",
@@ -1910,9 +1910,9 @@ const strings = {
     showPricesInCOP: "Hiển thị giá bằng COP",
 
     communityMember: "Thành viên Cộng đồng",
-    communityMemberDesc: "Tính năng xã hội, PNP Live & Radio, Hangouts, Nearby — kênh PRIME, hồ sơ độc quyền của người tạo, token show và cuộc gọi riêng tư tính thêm phí",
+    communityMemberDesc: "Tính năng xã hội, PNP Live & Radio, Hangouts, Nearby — kênh PRIME, hồ sơ độc quyền của người tạo, Ru$h cho shows và cuộc gọi riêng tư tính thêm phí",
     prime: "PRIME",
-    primeDesc: "Tất cả tính năng Basic + kênh PNPtv! PRIME — hồ sơ độc quyền của người tạo, token show và cuộc gọi riêng tư tính thêm phí",
+    primeDesc: "Tất cả tính năng Basic + kênh PNPtv! PRIME — hồ sơ độc quyền của người tạo, Ru$h cho shows và cuộc gọi riêng tư tính thêm phí",
 
     lifetime: "Trọn đời",
     monthly: "Hàng tháng",
@@ -2222,9 +2222,9 @@ const strings = {
     showPricesInCOP: "Tampilkan harga dalam COP",
 
     communityMember: "Anggota Komunitas",
-    communityMemberDesc: "Fitur sosial, PNP Live & Radio, Hangouts, Nearby — saluran PRIME, profil eksklusif kreator, token show dan panggilan pribadi biaya tambahan",
+    communityMemberDesc: "Fitur sosial, PNP Live & Radio, Hangouts, Nearby — saluran PRIME, profil eksklusif kreator, Ru$h untuk shows dan panggilan pribadi biaya tambahan",
     prime: "PRIME",
-    primeDesc: "Semua fitur Basic + saluran PNPtv! PRIME — profil eksklusif kreator, token show dan panggilan pribadi biaya tambahan",
+    primeDesc: "Semua fitur Basic + saluran PNPtv! PRIME — profil eksklusif kreator, Ru$h untuk shows dan panggilan pribadi biaya tambahan",
 
     lifetime: "Seumur Hidup",
     monthly: "Bulanan",
