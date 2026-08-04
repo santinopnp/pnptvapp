@@ -681,6 +681,15 @@ class EntitlementAccessService {
       return { allowed: false, reason: 'not_found', code: 'NOT_FOUND' };
     }
 
+    // Owner bypass — creators always access their own resources.
+    // For hangout/channel: resource.creator_id is the owner.
+    // For creator profile: resource.id is the user themselves.
+    const resourceOwner = resource.creator_id != null ? String(resource.creator_id) : null;
+    const selfOwned = kind === 'creator' ? String(resource.id) === String(userId) : resourceOwner === String(userId);
+    if (selfOwned) {
+      return { allowed: true, reason: 'resource_owner' };
+    }
+
     // 3. direct scope match — highest priority because it's what the user paid for
     if (kind === 'channel') {
       if (await EntitlementAccessService.hasEntitlement(userId, 'channel-access', { creatorId: String(resource.id) })) {
