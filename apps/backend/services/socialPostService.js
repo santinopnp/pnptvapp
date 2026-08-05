@@ -276,20 +276,33 @@ class SocialPostService {
        LIMIT $2`,
       params
     );
+    // Fire live/online pin fetch in parallel with post-processing (first page only)
+    const pinsPromise = cursorId
+      ? Promise.resolve([])
+      : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+
     let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
     if (viewerTier !== undefined) {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
     }
-    // Apply content_tier blurring based on viewer tier (H-01, H-08)
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
-    // Interleave by author so every user gets seen before prolific posters dominate
     posts = SocialPostService._diversifyFeed(posts);
-    // Boost posts from online + PRIME authors to the top of the page window.
-    // Cursor pagination still works because we only re-order within the bounded
-    // window (sp.id < cursor); the next page resumes at the lowest id we returned.
     posts = await SocialPostService._applyDiscoveryBoost(posts);
+
+    // Prepend guaranteed live/online pins — they always appear regardless of feed cursor age
+    const rawPins = await pinsPromise;
+    if (rawPins.length > 0) {
+      let pins = rawPins;
+      if (viewerTier !== undefined) {
+        pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
+        pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
+      }
+      const pinnedIds = new Set(pins.map(p => p.id));
+      posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
+    }
+
     posts = await SocialPostService.hydrateTopHypers(posts);
     const page = posts.slice(0, lim);
     const nextCursor = posts.length > lim ? String(page[page.length - 1].id) : null;
@@ -353,6 +366,128 @@ class SocialPostService {
     } catch (err) {
       logger.warn('_applyDiscoveryBoost failed (non-fatal)', { error: err.message });
       return posts;
+    }
+  }
+
+  /**
+   * Fetch the most-recent post from each currently-live or currently-online
+   * active creator. These are prepended to every feed tab on the first page so
+   * live/online creators are always visible regardless of how old their post is.
+   *
+   * Priority: live (streaming) > online-only; within each group, most recent post first.
+   * Cap: up to 3 live + up to 5 online-only = 8 pins max.
+   */
+  static async _fetchLiveOnlinePins(userId, blockedIds = []) {
+    try {
+      const { getRedis } = require('../config/redis');
+      const redis = getRedis();
+
+      // Step 1: live creator IDs from the shared Restreamer cache (5s TTL)
+      let liveCreatorIds = [];
+      try {
+        const cached = await redis.get('featured:live-channels');
+        if (cached) {
+          const channels = JSON.parse(cached);
+          if (channels.length > 0) {
+            const { rows: ownerRows } = await query(
+              `SELECT id::text AS user_id FROM users
+               WHERE live_channel = ANY($1::text[])
+                 AND creator_status = 'active' AND creator_locked = FALSE`,
+              [channels]
+            );
+            liveCreatorIds = ownerRows.map(r => r.user_id).slice(0, 3);
+          }
+        }
+      } catch (_) {}
+
+      // Step 2: online active creators via Redis pipeline
+      const blockedStr = blockedIds.map(String);
+      const { rows: activeCreators } = await query(
+        `SELECT id::text AS user_id FROM users
+         WHERE creator_status = 'active' AND creator_locked = FALSE
+           AND id != ALL($1::text[])
+         LIMIT 150`,
+        [blockedStr.length > 0 ? blockedStr : ['']]
+      );
+      const creatorIds = activeCreators.map(r => r.user_id);
+      const onlineIds = new Set(liveCreatorIds);
+      if (creatorIds.length > 0) {
+        const pipeline = redis.pipeline();
+        for (const id of creatorIds) pipeline.get(`presence:online:${id}`);
+        const replies = await pipeline.exec();
+        creatorIds.forEach((id, i) => {
+          const [err, val] = replies[i];
+          if (!err && val) onlineIds.add(id);
+        });
+      }
+
+      const liveSet = new Set(liveCreatorIds);
+      const onlineOnly = [...onlineIds].filter(id => !liveSet.has(id)).slice(0, 5);
+      const pinnedIds = [...liveCreatorIds, ...onlineOnly];
+      if (pinnedIds.length === 0) return [];
+
+      // Step 3: most recent post per creator (DISTINCT ON guarantees one per user)
+      const { rows } = await query(
+        `SELECT DISTINCT ON (sp.user_id)
+                sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls,
+                sp.video_thumbnail_url, sp.video_title, sp.video_description,
+                sp.metadata, sp.mux_playback_id, sp.mux_status,
+                sp.content_type, sp.x_embed_url, sp.channel_id,
+                sp.source_channel, sp.hangout_group_id, sp.category,
+                sp.reply_to_id, sp.repost_of_id,
+                sp.likes_count, sp.reposts_count, sp.replies_count,
+                sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+                sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+                sp.promoted_link2, sp.promoted_link2_label,
+                COALESCE(sp.content_tier, 'free') as content_tier,
+                u.id as author_id, u.username as author_username,
+                u.first_name as author_first_name, u.photo_file_id as author_photo,
+                u.city as author_city, u.country as author_country,
+                u.tier as author_tier,
+                u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+                u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+                (
+                  (SELECT COUNT(*)::int FROM channel_videos cv
+                     JOIN creator_channels cc ON cc.id = cv.channel_id
+                   WHERE cc.creator_id = u.id AND cv.status = 'published')
+                  +
+                  (SELECT COUNT(*)::int FROM social_posts sp2
+                   WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                     AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+                ) AS author_exclusive_video_count,
+                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+                rp.content as repost_content, rp.created_at as repost_created_at,
+                ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+                hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+                (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+         FROM social_posts sp
+         JOIN users u ON sp.user_id = u.id
+         LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+         LEFT JOIN users ru ON rp.user_id = ru.id
+         LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+         WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+           AND sp.user_id = ANY($2::text[])
+           AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+           AND sp.user_id != ALL($3::text[])
+         ORDER BY sp.user_id, sp.id DESC`,
+        [String(userId), pinnedIds, blockedStr.length > 0 ? blockedStr : ['']]
+      );
+
+      // Sort: live first, then online-only; within each group newest post first
+      rows.sort((a, b) => {
+        const aLive = liveSet.has(String(a.author_id)) ? 0 : 1;
+        const bLive = liveSet.has(String(b.author_id)) ? 0 : 1;
+        if (aLive !== bLive) return aLive - bLive;
+        return Number(b.id) - Number(a.id);
+      });
+
+      const pins = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+      return pins;
+    } catch (err) {
+      logger.warn('_fetchLiveOnlinePins failed (non-fatal)', { error: err.message });
+      return [];
     }
   }
 
@@ -1555,6 +1690,11 @@ class SocialPostService {
        ${orderBy}
        LIMIT $2`;
 
+    // Fire live/online pin fetch alongside the main query (first page only)
+    const pinsPromise = cursorId
+      ? Promise.resolve([])
+      : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+
     const { rows } = await query(sql, params);
     let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
 
@@ -1563,16 +1703,26 @@ class SocialPostService {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
 
-    // Boost applies to all filters except 'hot' (already engagement-sorted) and
-    // 'latest' (pure chronological — user explicitly asked for the newest first).
     if (f !== 'hot' && f !== 'latest') {
       posts = SocialPostService._diversifyFeed(posts);
       posts = await SocialPostService._applyDiscoveryBoost(posts);
     }
+
+    // Prepend guaranteed live/online pins at the top of every tab, first page only
+    const rawPins = await pinsPromise;
+    if (rawPins.length > 0) {
+      let pins = rawPins;
+      if (viewerTier !== undefined) {
+        pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
+        pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
+      }
+      const pinnedIds = new Set(pins.map(p => p.id));
+      posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
+    }
+
     posts = await SocialPostService.hydrateTopHypers(posts);
 
     const page = posts.slice(0, lim);
-    // 'hot' does not paginate (small bounded window)
     const nextCursor = f === 'hot' ? null
       : (posts.length > lim ? String(page[page.length - 1].id) : null);
 
