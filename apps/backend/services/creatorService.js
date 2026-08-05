@@ -1006,6 +1006,12 @@ class CreatorService {
         paymentId,
         isRenewal: false,
       });
+
+      // Notify creator in their personal Slack channel
+      const slackCreator = require('./slackCreatorNotifyService');
+      slackCreator.notifyNewSubscriber(creatorId, {
+        subscriberUsername: subResNotif.rows[0]?.username || 'Someone',
+      }).catch(() => {});
     } catch (_) { /* non-critical */ }
 
     return { subscriptionId: rows[0].id, expiresAt, price: priceUsd, complianceHeld: !isContentCompliant };

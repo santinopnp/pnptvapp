@@ -2355,6 +2355,33 @@ app.get('/api/webapp/creator/:creatorId/subscription-status', requireSessionAuth
 app.post('/api/webapp/creator/:creatorId/subscribe', requireSessionAuth, creatorSubscriptionLimiter, asyncHandler(creatorController.subscribeToCreator));
 app.post('/api/webapp/creator/:creatorId/unsubscribe', requireSessionAuth, creatorSubscriptionLimiter, asyncHandler(creatorController.unsubscribeFromCreator));
 
+// GET /api/webapp/creator/:creatorId/subscription-preview — public preview for the subscribe confirmation modal
+app.get('/api/webapp/creator/:creatorId/subscription-preview', softAuth, asyncHandler(async (req, res) => {
+  const { creatorId } = req.params;
+  const { rows } = await getPool().query(
+    `SELECT
+       u.first_name, u.creator_price_usd,
+       (SELECT COUNT(*)::int FROM social_posts
+        WHERE user_id = u.id AND is_exclusive = true AND is_deleted = false AND media_type = 'image') AS photo_count,
+       (SELECT COUNT(*)::int FROM social_posts
+        WHERE user_id = u.id AND is_exclusive = true AND is_deleted = false AND media_type = 'video') AS video_count,
+       (SELECT COUNT(*)::int FROM social_posts
+        WHERE user_id = u.id AND is_exclusive = true AND is_deleted = false) AS total_count
+     FROM users u
+     WHERE u.id = $1 AND u.creator_status = 'active'`,
+    [String(creatorId)]
+  );
+  if (!rows[0]) return res.status(404).json({ success: false, error: 'Creator not found' });
+  const r = rows[0];
+  return res.json({
+    success: true,
+    priceUsd: parseFloat(r.creator_price_usd || '15'),
+    exclusivePhotoCount: r.photo_count,
+    exclusiveVideoCount: r.video_count,
+    exclusiveTotalCount: r.total_count,
+  });
+}));
+
 // LiveKit webhook — participant_joined, participant_left, room_finished
 // express.raw() is required — livekit-server-sdk verifies the raw body signature
 app.post(
@@ -2398,8 +2425,31 @@ app.post('/api/webhooks/transak', cashoutRoutes.transakWebhook);
 // Slack Events API — tester feedback triage bot.
 // Signature verified inside handleEvent via SLACK_SIGNING_SECRET.
 // Grok classifies each message, posts a threaded summary, DMs admin on critical.
+// Also fans out support escalation events (thread replies + ✅ reactions in #support-human).
 const slackFeedbackService = require('../../services/slackFeedbackService');
-app.post('/api/webhooks/slack/events', webhookLimiter, asyncHandler(slackFeedbackService.handleEvent));
+app.post('/api/webhooks/slack/events', webhookLimiter, asyncHandler(async (req, res) => {
+  // Delegate primary handling (signature verify, url_verification, tester-feedback triage)
+  await slackFeedbackService.handleEvent(req, res);
+
+  // Fan-out support bridge events (fire-and-forget, after ACK is already sent)
+  if (req.body && req.body.type === 'event_callback' && req.body.event) {
+    const event = req.body.event;
+    try {
+      const slackSupport = require('../../services/slackSupportService');
+      if (event.type === 'message' && event.thread_ts && !event.bot_id && !event.subtype) {
+        slackSupport.handleTeamReply(event).catch(() => {});
+      }
+      if (event.type === 'reaction_added' && event.reaction === 'white_check_mark') {
+        slackSupport.handleResolveReaction(event).catch(() => {});
+      }
+    } catch (_) {}
+  }
+}));
+
+// Slack support bridge — dedicated endpoint for a separate Slack app subscription (optional).
+// If you use a single Slack app, the fan-out above covers it and this endpoint is unused.
+const slackEventsRouter = require('./slackEventsRouter');
+app.use(slackEventsRouter);
 
 // Tester checklist report submissions from /testing-chase.html.
 // Grok summarises + posts via SLACK_TESTER_INCOMING_WEBHOOK — no bot invite,
@@ -2821,6 +2871,29 @@ app.post('/api/radio/request', requireSessionAuth, asyncHandler(async (req, res)
 // Broadcast Queue API Routes
 const broadcastQueueRoutes = require('./broadcastQueueRoutes');
 app.use('/api/admin/queue', broadcastQueueRoutes);
+
+// Bull Board — real-time job queue dashboard (superadmin only)
+(async () => {
+  try {
+    const { createBullBoard } = require('@bull-board/api');
+    const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
+    const { ExpressAdapter } = require('@bull-board/express');
+    const { getAllQueues } = require('../../services/queueService');
+
+    const serverAdapter = new ExpressAdapter();
+    serverAdapter.setBasePath('/admin/queues');
+
+    createBullBoard({
+      queues: getAllQueues().map((q) => new BullMQAdapter(q)),
+      serverAdapter,
+    });
+
+    app.use('/admin/queues', superadminGuard, serverAdapter.getRouter());
+    logger.info('[BullMQ] Bull Board mounted at /admin/queues');
+  } catch (err) {
+    logger.error('[BullMQ] Bull Board setup failed', { error: err.message });
+  }
+})();
 
 // Admin User Management Routes
 app.use('/api/admin/users', adminUserRoutes);
@@ -4257,8 +4330,8 @@ app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req
   }
 
   // Public URLs only — never expose internal env-var addresses to the browser
+  // btcpay removed 2026-07-31 (retired)
   const PING_URLS = {
-    btcpay:      'https://btcpay.pnptv.app',
     restreamer:  'https://live.pnptv.app',
     livekit:     'https://livekit.pnptv.app',
     authentik:   'https://auth.pnptv.app',
@@ -4319,8 +4392,7 @@ app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='partially_paid') AS partial_all,
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND metadata->>'provider'='nowpayments' AND created_at > NOW() - INTERVAL '24 hours') AS np_pending_24h,
         (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND metadata->>'provider'='nowpayments' AND completed_at > NOW() - INTERVAL '7 days') AS np_completed_7d,
-        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='pending' AND (metadata->>'provider' IS NULL OR metadata->>'provider'='btcpay') AND created_at > NOW() - INTERVAL '24 hours') AS btcpay_pending_24h,
-        (SELECT COUNT(*)::int FROM dash_subscription_orders WHERE status='completed' AND (metadata->>'provider' IS NULL OR metadata->>'provider'='btcpay') AND completed_at > NOW() - INTERVAL '7 days') AS btcpay_completed_7d,
+        -- btcpay_pending_24h and btcpay_completed_7d removed 2026-07-31 (provider retired)
         (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='used' AND used_at > NOW() - INTERVAL '7 days') AS meru_completed_7d,
         (SELECT COUNT(*)::int FROM meru_payment_links WHERE status='active' AND reserved_for_user_id IS NULL) AS meru_available
     `).then(r => r.rows[0]),
@@ -4408,13 +4480,13 @@ app.get('/api/webapp/admin/monitoring', adminGuard, asyncHandler(async (_req, re
     finally { await hcPool.end().catch(() => {}); }
   }
 
-  const [db, redis, botSelf, web, restreamer, btcpay, livekit, cms, kuma, calcom, hcJobs] = await Promise.all([
+  // btcpay-server removed from health checks 2026-07-31 (provider retired)
+  const [db, redis, botSelf, web, restreamer, livekit, cms, kuma, calcom, hcJobs] = await Promise.all([
     dbPing(),
     redisPing(),
     httpPing('http://localhost:3001/health'),
     httpPing('http://pnptv-web:80/'),
     httpPing('http://restreamer:8080/api/v1/ping'),
-    httpPing('http://btcpay-server:23000/'),
     httpPing('http://livekit-pnptv:7880/'),
     httpPing('http://directus:8055/server/health'),
     httpPing('http://uptime-kuma:3001/api/entry-page'),
@@ -4431,7 +4503,6 @@ app.get('/api/webapp/admin/monitoring', adminGuard, asyncHandler(async (_req, re
       { key: 'web',         label: 'Web Frontend', category: 'core',     ...web },
       { key: 'restreamer',  label: 'Restreamer',   category: 'stream',   ...restreamer },
       { key: 'livekit',     label: 'LiveKit',      category: 'stream',   ...livekit },
-      { key: 'btcpay',      label: 'BTCPay',       category: 'payment',  ...btcpay },
       { key: 'cms',         label: 'CMS (Directus)', category: 'infra',  ...cms },
       { key: 'kuma',        label: 'Uptime Kuma',  category: 'infra',    ...kuma },
       { key: 'calcom',      label: 'Cal.com',      category: 'infra',    ...calcom },
@@ -6651,6 +6722,40 @@ app.post('/api/webapp/admin/creators/:id/release-hold/:earningId', adminGuard, a
 app.post('/api/webapp/admin/creators/:id/note', adminGuard, asyncHandler(adminCreatorBalanceController.addNote));
 app.get('/api/webapp/admin/creators/:id/audit', adminGuard, asyncHandler(adminCreatorBalanceController.getAudit));
 
+// Set a creator's personal Slack channel ID (Phase 0 onboarding)
+app.post('/api/webapp/admin/creators/:id/slack-channel', adminGuard, asyncHandler(async (req, res) => {
+  const { id: userId } = req.params;
+  const { channelId } = req.body;
+  if (!channelId || typeof channelId !== 'string' || !channelId.startsWith('C')) {
+    return res.status(400).json({ error: 'channelId must be a valid Slack channel ID (starts with C)' });
+  }
+  const result = await getPool().query(
+    `UPDATE users SET slack_channel_id = $1, updated_at = NOW() WHERE id = $2`,
+    [channelId.trim(), userId]
+  );
+  if (result.rowCount === 0) {
+    return res.status(404).json({ error: 'Creator not found' });
+  }
+  return res.json({ success: true, userId, slackChannelId: channelId.trim() });
+}));
+
+// Set a creator's Slack member ID (Phase 4 — Slack status availability polling)
+app.post('/api/webapp/admin/creators/:id/slack-member', adminGuard, asyncHandler(async (req, res) => {
+  const { id: userId } = req.params;
+  const { memberId } = req.body;
+  if (!memberId || typeof memberId !== 'string' || !memberId.startsWith('U')) {
+    return res.status(400).json({ error: 'memberId must be a valid Slack member ID (starts with U)' });
+  }
+  const result = await getPool().query(
+    `UPDATE users SET slack_member_id = $1, updated_at = NOW() WHERE id = $2`,
+    [memberId.trim(), userId]
+  );
+  if (result.rowCount === 0) {
+    return res.status(404).json({ error: 'Creator not found' });
+  }
+  return res.json({ success: true, userId, slackMemberId: memberId.trim() });
+}));
+
 // ─── Currency Health dashboard (Ru$h ledger overview) ─────────────────────────
 app.get('/api/webapp/admin/currency-health', adminGuard, asyncHandler(async (req, res) => {
   const { rows: circ } = await getPool().query(
@@ -8245,8 +8350,8 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
           targetUserId: String(user.id),
           entityType: 'crypto_guide',
           entityId: String(user.id),
-          message: 'You completed the crypto guide — 30 tokens added to spend on Santino 🎁',
-          metadata: { url: '/creator/santinofurioso', pushTitle: '+30 Santino tokens', pushBody: 'Crypto guide complete — enjoy the reward on Santino.' },
+          message: 'You completed the crypto guide — 30 Ru$h 💎 added to spend on Santino 🎁',
+          metadata: { url: '/creator/santinofurioso', pushTitle: '+30 Santino Ru$h', pushBody: 'Crypto guide complete — enjoy the reward on Santino.' },
         }).catch(() => {});
       } catch (_) { /* non-fatal */ }
     } catch (grantErr) {
@@ -8326,8 +8431,8 @@ async function maybeGrantFirstHourCryptoBonus(userId) {
       targetUserId: String(userId),
       entityType: 'crypto_guide',
       entityId: String(userId),
-      message: '⚡ First-hour bonus unlocked — +100 tokens added to spend on Santino',
-      metadata: { url: '/creator/santinofurioso', pushTitle: '+100 Santino tokens', pushBody: 'First-hour crypto bonus unlocked.' },
+      message: '⚡ First-hour bonus unlocked — +100 Ru$h 💎 added to spend on Santino',
+      metadata: { url: '/creator/santinofurioso', pushTitle: '+100 Santino Ru$h', pushBody: 'First-hour crypto bonus unlocked.' },
     }).catch(() => {});
   } catch (_) { /* non-fatal */ }
   logger.info('[crypto_guide] first-hour bonus granted', { userId, tokens: 100, creatorId: SANTINO_USER_ID });
@@ -8921,6 +9026,7 @@ app.post('/api/admin/social/sync-content', adminGuard, asyncHandler(contentFeedS
 
 // Users search
 app.get('/api/webapp/users/search', asyncHandler(usersController.searchUsers));
+app.get('/api/webapp/users/new', requireSessionAuth, asyncHandler(usersController.getNewMembers));
 
 // Tag taxonomy + discovery endpoints
 const discoverService = require('../../services/discoverService');
@@ -9394,7 +9500,8 @@ async function _getMasterHasABR(refId, restreamerService) {
   const cached = _abrCache.get(refId);
   if (cached && Date.now() < cached.expiresAt) return cached.hasABR;
   const proc = await restreamerService.getProcess(refId);
-  const hasABR = (proc?.config?.output?.length || 0) >= 2;
+  // Only count an actual _720p HLS output — not JPEG thumbnail outputs which also appear as outputs[1]
+  const hasABR = (proc?.config?.output || []).some(o => typeof o.address === 'string' && o.address.includes('_720p'));
   if (_abrCache.size >= _ABR_CACHE_MAX) _abrCache.delete(_abrCache.keys().next().value);
   _abrCache.set(refId, { hasABR, expiresAt: Date.now() + 30_000 });
   return hasABR;
@@ -10699,7 +10806,7 @@ app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter,
 }));
 
 // POST /api/proxy/live/tips — Create a tip (member+ required)
-// paymentMethod: 'tokens' (instant, deducts from wallet) | 'dash' (BTCPay invoice)
+// paymentMethod: 'tokens' (instant, deducts from wallet) — Dash/BTCPay retired 2026-07-31
 app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(async (req, res) => {
   const user = req.session?.user;
 
@@ -10715,8 +10822,8 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
     return res.status(400).json({ success: false, error: `Amount must be one of: ${validAmounts.join(', ')}` });
   }
 
-  if (!['tokens', 'dash'].includes(paymentMethod)) {
-    return res.status(400).json({ success: false, error: 'paymentMethod must be tokens or dash' });
+  if (!['tokens'].includes(paymentMethod)) {
+    return res.status(400).json({ success: false, error: 'paymentMethod must be tokens' });
   }
 
   try {
@@ -11588,13 +11695,8 @@ app.post('/api/proxy/live/tips/callback', webhookLimiter, asyncHandler(async (re
 // DASH TOKEN WALLET ROUTES
 // ==========================================
 const DashTokenService = require('../../services/dashTokenService');
-const {
-  createInvoice: createBtcpayInvoice,
-  validateWebhookSignature,
-  checkInvoiceProcessed,
-  markInvoiceProcessed,
-  isConfigured: btcpayConfigured,
-} = require('../../config/btcpay');
+// Note: btcpay config require removed 2026-07-31 — BTCPay/Dash retired.
+// config/btcpay.js still exists for the /api/webhooks/btcpay tombstone route.
 
 // GET /api/wallet/balance — get current user's token balance + DPNS
 app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res) => {
@@ -12106,154 +12208,20 @@ app.get('/api/invoice/:paymentId', requireSessionAuth, asyncHandler(async (req, 
   res.send(buffer);
 }));
 
-// GET /api/webapp/payments/lightning/available — check if Lightning is configured & enabled in BTCPay store
-app.get('/api/webapp/payments/lightning/available', healthLimiter, asyncHandler(async (req, res) => {
-  const { checkLightningHealth } = require('../../config/btcpay');
-  const health = await checkLightningHealth();
-  return res.json({ available: health.configured && health.reachable, ...health });
-}));
+// ─────────────────────────────────────────────────────────────────────────────
+// BTCPay / Lightning / Dash — RETIRED 2026-07-31
+// All routes below are tombstones to prevent 404 log noise.
+// NowPayments is the only active crypto payment provider.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// POST /api/webapp/payments/lightning/create — create a BTCPay Lightning invoice for a subscription plan.
-app.post('/api/webapp/payments/lightning/create', requireSessionAuth, paymentCreateLimiter, asyncHandler(async (req, res) => {
-  const user = req.session.user;
+// GET /api/webapp/payments/lightning/available — retired
+app.get('/api/webapp/payments/lightning/available', (req, res) => res.json({ available: false, configured: false, reason: 'BTCPay/Lightning retired 2026-07-31' }));
 
-  const { planId, email, creatorId } = req.body;
-  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+// POST /api/webapp/payments/lightning/create — retired
+app.post('/api/webapp/payments/lightning/create', (req, res) => res.status(410).json({ success: false, error: 'Lightning payments retired. Use NowPayments crypto checkout.', code: 'LIGHTNING_RETIRED' }));
 
-  const userId = String(user.telegram_id || user.id);
-  const { query: dbQuery } = require('../../config/postgres');
-
-  // Gate: check Lightning is configured before doing any work
-  const { checkLightningHealth, createLightningInvoice } = require('../../config/btcpay');
-  const health = await checkLightningHealth();
-  if (!health.configured) {
-    return res.status(503).json({
-      success: false,
-      error: 'Lightning payments are not available yet. Please use Card or Dash.',
-      code: 'LIGHTNING_NOT_CONFIGURED',
-    });
-  }
-  if (!health.reachable) {
-    return res.status(503).json({
-      success: false,
-      error: 'Payment server is temporarily unavailable. Please try again later.',
-      code: 'BTCPAY_UNREACHABLE',
-    });
-  }
-
-  if (creatorId && String(creatorId) === userId) {
-    return res.status(400).json({ success: false, error: 'You cannot subscribe to yourself' });
-  }
-
-  let planDisplayName;
-  let usdAmount;
-  let discountInfo = null;
-
-  if (planId === 'creator_monthly') {
-    if (!creatorId) {
-      return res.status(400).json({ success: false, error: 'creatorId is required for creator subscriptions' });
-    }
-    const creatorRes = await dbQuery(
-      'SELECT id, username, first_name, creator_price_usd, creator_locked, creator_subscription_paused FROM users WHERE id = $1 AND creator_status = $2',
-      [String(creatorId), 'active']
-    );
-    if (creatorRes.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Creator not found or not active' });
-    }
-    const creator = creatorRes.rows[0];
-    if (creator.creator_locked) {
-      return res.status(423).json({ success: false, error: 'This creator is completing onboarding and cannot accept new subscriptions yet.', code: 'CREATOR_LOCKED' });
-    }
-    if (creator.creator_subscription_paused) {
-      return res.status(423).json({ success: false, error: 'This creator has paused new memberships.', code: 'SUBSCRIPTIONS_PAUSED' });
-    }
-    const price = parseFloat(creator.creator_price_usd);
-    if (!Number.isFinite(price) || price <= 0) {
-      return res.status(400).json({ success: false, error: 'Creator has no active subscription price' });
-    }
-    usdAmount = price;
-    planDisplayName = 'Premium subscription';
-  } else {
-    const PlanModel = require('../../models/planModel');
-    const plan = await PlanModel.getById(planId);
-    if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
-    const basePrice = parseFloat(plan.price);
-    // crypto payment_method = fixed promo price, no stacking discount
-    if (plan.payment_method === 'crypto') {
-      usdAmount = basePrice;
-    } else if (basePrice > 50) {
-      usdAmount = Math.round(basePrice * 0.80 * 100) / 100;
-      discountInfo = { originalAmount: basePrice, discountPct: 20 };
-    } else {
-      usdAmount = basePrice;
-    }
-    planDisplayName = plan.display_name || plan.name;
-  }
-
-  // M-8: deduplicate — return existing pending invoice for same user+plan within 15 minutes
-  const { rows: existingOrders } = await dbQuery(
-    `SELECT id, btcpay_invoice_id FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-       AND created_at > NOW() - INTERVAL '15 minutes'
-     LIMIT 1`,
-    [userId, planId]
-  );
-  if (existingOrders.length) {
-    const existingInvoiceId = existingOrders[0].btcpay_invoice_id;
-    const btcpayBase = (process.env.BTCPAY_URL || 'https://btcpay.pnptv.app').replace(/\/$/, '');
-    return res.json({
-      success: true,
-      invoiceId: existingInvoiceId,
-      checkoutUrl: `${btcpayBase}/i/${existingInvoiceId}`,
-      planName: planDisplayName,
-      usdAmount,
-      deduplicated: true,
-    });
-  }
-
-  const orderId = `pnptv-ln-${userId}-${Date.now()}`;
-
-  try {
-    const invoice = await createLightningInvoice({
-      usdAmount,
-      userId,
-      orderId,
-      description: `${planDisplayName} subscription`,
-      redirectUrl: `${process.env.WEBAPP_URL || 'https://pnptv.app'}/subscribe`,
-    });
-
-    await dbQuery(
-      `INSERT INTO dash_subscription_orders (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-      [userId, planId, email || null, usdAmount, invoice.invoiceId, creatorId ? String(creatorId) : null]
-    );
-
-    return res.json({
-      success: true,
-      invoiceId: invoice.invoiceId,
-      checkoutUrl: invoice.checkoutUrl,
-      planName: planDisplayName,
-      usdAmount,
-      ...(discountInfo || {}),
-    });
-  } catch (err) {
-    logger.error(`Lightning subscription invoice error: ${err.message}`);
-    if (err.message?.includes('not configured')) {
-      return res.status(503).json({ success: false, error: 'Lightning payments are not available yet. Please use another payment method.', code: 'LIGHTNING_NOT_CONFIGURED' });
-    }
-    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
-      return res.status(503).json({ success: false, error: 'Payment server is temporarily unavailable. Please try again later.', code: 'BTCPAY_UNREACHABLE' });
-    }
-    return res.status(500).json({ success: false, error: 'Failed to create Lightning invoice. Please try again.', code: 'LIGHTNING_ERROR' });
-  }
-}));
-
-// GET /api/webapp/payments/lightning/status/:invoiceId — poll invoice status
+// GET /api/webapp/payments/lightning/status/:invoiceId — tombstone; DB read preserved for historical data
 app.get('/api/webapp/payments/lightning/status/:invoiceId', requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
-
   const { invoiceId } = req.params;
   if (!invoiceId || !/^[A-Za-z0-9_-]{5,64}$/.test(invoiceId)) {
     return res.status(400).json({ success: false, error: 'Invalid invoiceId' });
@@ -12261,225 +12229,26 @@ app.get('/api/webapp/payments/lightning/status/:invoiceId', requireSessionAuth, 
   const { query: dbQuery } = require('../../config/postgres');
   const result = await dbQuery(
     `SELECT status FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 AND user_id = $2`,
-    [invoiceId, String(user.telegram_id || user.id)]
+    [invoiceId, String(req.session.user.telegram_id || req.session.user.id)]
   );
-
   if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Order not found' });
   return res.json({ success: true, status: result.rows[0].status });
 }));
 
-// GET /api/webapp/payments/lightning/details/:invoiceId — fetch Lightning bolt11 + amount for a pending invoice
-app.get('/api/webapp/payments/lightning/details/:invoiceId', requireSessionAuth, async (req, res) => {
-  try {
-    const user = req.session?.user;
-    if (!user) return res.status(401).json({ success: false, error: 'Authentication required' });
-    const userId = String(user.telegram_id || user.id);
-    const { invoiceId } = req.params;
+// GET /api/webapp/payments/lightning/details/:invoiceId — retired
+app.get('/api/webapp/payments/lightning/details/:invoiceId', (req, res) => res.status(410).json({ success: false, error: 'Lightning payments retired.', code: 'LIGHTNING_RETIRED' }));
 
-    if (!invoiceId || !/^[A-Za-z0-9_-]{5,64}$/.test(invoiceId)) {
-      return res.status(400).json({ success: false, error: 'Invalid invoiceId' });
-    }
+// GET /api/webapp/payments/dash/available — retired 2026-07-31
+app.get('/api/webapp/payments/dash/available', (req, res) => res.json({ available: false, configured: false, reason: 'Dash/BTCPay retired 2026-07-31' }));
 
-    // Verify ownership — Lightning invoices are stored in dash_subscription_orders
-    const ownerCheck = await pool.query(
-      `SELECT user_id FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 AND user_id = $2 LIMIT 1`,
-      [invoiceId, userId]
-    );
+// GET /api/webapp/payments/btc/available — retired 2026-07-31
+app.get('/api/webapp/payments/btc/available', (req, res) => res.json({ available: false, configured: false, reason: 'BTCPay/BTC retired 2026-07-31' }));
 
-    if (ownerCheck.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Invoice not found' });
-    }
+// POST /api/webapp/payments/btc/create — retired 2026-07-31
+app.post('/api/webapp/payments/btc/create', (req, res) => res.status(410).json({ success: false, error: 'BTCPay BTC payments retired. Use NowPayments with payCurrency:btc.', code: 'BTCPAY_RETIRED' }));
 
-    const { getInvoicePaymentMethods, getInvoice } = require('../../config/btcpay');
-
-    const [methods, invoice] = await Promise.all([
-      getInvoicePaymentMethods(invoiceId),
-      getInvoice(invoiceId),
-    ]);
-
-    // Find the Lightning payment method
-    const lightningMethod = methods.find(
-      (m) =>
-        m.paymentMethodId?.includes('Lightning') ||
-        m.paymentMethodId === 'BTC-LightningNetwork'
-    );
-
-    if (!lightningMethod) {
-      return res.status(404).json({ success: false, error: 'No Lightning payment method found for this invoice' });
-    }
-
-    // For Lightning, the destination field IS the bolt11 string
-    const bolt11 = lightningMethod.destination || lightningMethod.bolt11 || '';
-    const amount = lightningMethod.amount || lightningMethod.cryptoAmount || '0';
-    const invoiceAmount = invoice?.amount ? parseFloat(invoice.amount) : null;
-
-    res.json({
-      success: true,
-      bolt11,
-      amount,
-      due: lightningMethod.due || amount,
-      rate: lightningMethod.rate || null,
-      status: invoice?.status || 'New',
-      currency: invoice?.currency || 'USD',
-      invoiceAmount,
-    });
-  } catch (err) {
-    logger.error('[Lightning] Failed to get payment details', { error: err.message, invoiceId: req.params.invoiceId });
-    res.status(500).json({ success: false, error: 'Failed to fetch payment details' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BTCPay — Bitcoin + Lightning payments
-// Buttons are hidden on the frontend when BTC is not yet configured in BTCPay.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const btcAvailableLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  keyGenerator: (req) => req.ip,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Dash/BTCPay retired 2026-07-31 — tombstone so clients don't get 404 log noise
-app.get('/api/webapp/payments/dash/available', (req, res) => res.json({ available: false }));
-
-// GET /api/webapp/payments/btc/available — returns true only if BTC is configured in the BTCPay store
-app.get('/api/webapp/payments/btc/available', btcAvailableLimiter, asyncHandler(async (req, res) => {
-  if (!process.env.BTCPAY_API_KEY || !process.env.BTCPAY_STORE_ID || !process.env.BTCPAY_URL) {
-    return res.json({ available: false, configured: false });
-  }
-  try {
-    const resp = await axios.get(
-      `${process.env.BTCPAY_URL}/api/v1/stores/${process.env.BTCPAY_STORE_ID}/payment-methods`,
-      { headers: { Authorization: `token ${process.env.BTCPAY_API_KEY}` }, timeout: 5000 }
-    );
-    const methods = Array.isArray(resp.data) ? resp.data : [];
-    const hasBtc = methods.some(m => m.paymentMethodId === 'BTC-CHAIN' || m.paymentMethodId === 'BTC-LN' || m.paymentMethodId === 'BTC-LightningNetwork');
-    return res.json({ available: hasBtc, configured: hasBtc });
-  } catch {
-    return res.json({ available: false, configured: false });
-  }
-}));
-
-const btcSubscribeLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 3,
-  keyGenerator: (req) => req.session?.user?.id || req.ip,
-  message: { success: false, error: 'Too many payment requests. Please wait a few minutes.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// POST /api/webapp/payments/btc/create — create a BTCPay BTC+Lightning invoice for a subscription plan
-app.post('/api/webapp/payments/btc/create', requireSessionAuth, btcSubscribeLimiter, asyncHandler(async (req, res) => {
-  const user = req.session.user;
-  const { planId, creatorId, promoCode } = req.body;
-  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
-
-  const userId = String(user.telegram_id || user.id);
-  const { query: dbQuery } = require('../../config/postgres');
-  const { createInvoice: createBtcpayInvoice } = require('../../config/btcpay');
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-
-  let usdAmount, planDisplayName;
-  let promoApplied = null;
-
-  if (planId === 'creator_monthly') {
-    if (!creatorId) return res.status(400).json({ success: false, error: 'creatorId is required for creator subscriptions' });
-    if (String(creatorId) === userId) return res.status(400).json({ success: false, error: 'You cannot subscribe to yourself' });
-    const creatorRes = await dbQuery('SELECT creator_price_usd, username, first_name FROM users WHERE id = $1 AND creator_status = $2', [String(creatorId), 'active']);
-    if (!creatorRes.rows[0]) return res.status(404).json({ success: false, error: 'Creator not found' });
-    const price = parseFloat(creatorRes.rows[0].creator_price_usd);
-    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ success: false, error: 'Creator has no active subscription price' });
-    usdAmount = price;
-    planDisplayName = 'Premium subscription';
-  } else {
-    const planRes = await dbQuery('SELECT * FROM plans WHERE id = $1 AND active = true', [planId]);
-    const plan = planRes.rows[0];
-    if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
-    const basePrice = parseFloat(plan.price);
-    // Promo code, if supplied, overrides the auto 20% crypto discount.
-    try {
-      promoApplied = await _resolveSubscriptionPromo({ userId, promoCode, planId, plan });
-    } catch (promoErr) {
-      return res.status(promoErr.httpStatus || 400).json({ success: false, error: promoErr.message, code: promoErr.code });
-    }
-    usdAmount = promoApplied
-      ? promoApplied.finalPrice
-      : ((plan.payment_method === 'crypto' || basePrice <= 50) ? basePrice : Math.round(basePrice * 0.80 * 100) / 100);
-    planDisplayName = plan.display_name || plan.name;
-  }
-
-  // Dedup: resume existing pending BTC invoice within 23h
-  const existingRes = await dbQuery(
-    `SELECT btcpay_invoice_id, metadata FROM dash_subscription_orders
-     WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
-       AND metadata->>'provider' = 'btcpay_btc'
-       AND created_at > NOW() - INTERVAL '23 hours'
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId, planId]
-  );
-  if (existingRes.rows.length > 0) {
-    const meta = existingRes.rows[0].metadata || {};
-    if (meta.checkoutUrl) {
-      return res.json({ success: true, invoiceId: existingRes.rows[0].btcpay_invoice_id, checkoutUrl: meta.checkoutUrl, planName: planDisplayName, usdAmount, resumed: true });
-    }
-  }
-
-  const orderId = `pnptv-btc-${userId}-${Date.now()}`;
-  let invoice;
-  try {
-    invoice = await createBtcpayInvoice({
-      amount: usdAmount,
-      currency: 'USD',
-      orderId,
-      userId,
-      planId,
-      metadata: { provider: 'btcpay_btc', flow: 'subscription', creatorId: creatorId || null },
-      redirectUrl: `${webappUrl}/subscribe`,
-      paymentMethods: ['BTC-LightningNetwork', 'BTC'],
-    });
-  } catch (err) {
-    logger.error('[BTC] Invoice creation failed', { userId, planId, error: err.message });
-    return res.status(502).json({ success: false, error: 'Could not create BTC invoice. Please try again.', code: 'BTCPAY_BTC_ERROR' });
-  }
-
-  await dbQuery(
-    `INSERT INTO dash_subscription_orders (user_id, plan_id, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
-     VALUES ($1, $2, $3, $4, 'pending', $5, $6)
-     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [userId, planId, usdAmount, invoice.invoiceId, creatorId ? String(creatorId) : null,
-     JSON.stringify({
-       provider: 'btcpay_btc',
-       flow: 'subscription',
-       checkoutUrl: invoice.checkoutLink,
-       ...(promoApplied ? {
-         promoId: promoApplied.promoId,
-         promoCode: promoApplied.promoCode,
-         redemptionId: promoApplied.redemptionId,
-         originalPrice: promoApplied.originalPrice,
-         discountAmount: promoApplied.discountAmount,
-       } : {}),
-     })]
-  );
-
-  logger.info('[BTC] Subscription invoice created', { userId, planId, orderId: invoice.invoiceId, usdAmount, promoCode: promoApplied?.promoCode || null });
-  return res.json({ success: true, invoiceId: invoice.invoiceId, checkoutUrl: invoice.checkoutLink, planName: planDisplayName, usdAmount });
-}));
-
-const btcStatusLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  keyGenerator: (req) => req.session?.user?.id || req.ip,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// GET /api/webapp/payments/btc/status/:invoiceId — poll BTC invoice status from DB
-// Checks both dash_subscription_orders (subscription/creator) and token_purchases (wallet top-up).
-app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcStatusLimiter, asyncHandler(async (req, res) => {
+// GET /api/webapp/payments/btc/status/:invoiceId — historical DB read preserved
+app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const { invoiceId } = req.params;
   if (!invoiceId || !/^[A-Za-z0-9_-]{5,100}$/.test(invoiceId)) {
@@ -12488,7 +12257,7 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
   const userId = String(user.telegram_id || user.id);
   const { query: dbQuery } = require('../../config/postgres');
 
-  // Check subscriptions/creator payments first
+  // Check subscriptions/creator payments first (historical read)
   const subResult = await dbQuery(
     `SELECT status FROM dash_subscription_orders WHERE btcpay_invoice_id = $1 AND user_id = $2 LIMIT 1`,
     [invoiceId, userId]
@@ -12503,7 +12272,7 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
     });
   }
 
-  // Fall back to token purchases (integer user_id in token_purchases)
+  // Fall back to token purchases (historical read)
   const tokResult = await dbQuery(
     `SELECT tp.status FROM token_purchases tp
      JOIN users u ON u.id = tp.user_id
@@ -12512,8 +12281,6 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
   );
   if (tokResult.rows.length > 0) {
     const { status } = tokResult.rows[0];
-    // token_purchases.status is one of pending|paid|expired|invalid|failed —
-    // 'paid' is the terminal success state (no 'completed' value in this table).
     return res.json({
       success: true, status,
       completed: status === 'paid' || status === 'completed',
@@ -12525,20 +12292,13 @@ app.get('/api/webapp/payments/btc/status/:invoiceId', requireSessionAuth, btcSta
   return res.status(404).json({ success: false, error: 'Order not found' });
 }));
 
-// POST /api/wallet/buy-btc — BTCPay BTC+Lightning invoice for token purchase (20% discount)
+// POST /api/wallet/buy-btc — retired 2026-07-31; use /api/wallet/buy-nowpayments with payCurrency:btc
 app.post('/api/wallet/buy-btc', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session.user;
-  const { packageId } = req.body;
-  if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
-  const userId = String(user.telegram_id || user.id);
-  try {
-    const result = await TokenCheckoutService.createBtcCheckout(userId, packageId);
-    return res.json(result);
-  } catch (err) {
-    logger.error('[wallet/buy-btc]', { error: err.message, code: err.code });
-    if (err.code === 'INVALID_PACKAGE') return res.status(404).json({ success: false, error: err.message });
-    return res.status(502).json({ success: false, error: 'Could not create BTC invoice. Please try again.' });
-  }
+  return res.status(410).json({
+    success: false,
+    error: 'BTCPay BTC token top-ups retired. Use crypto (NowPayments) instead.',
+    code: 'BTCPAY_RETIRED',
+  });
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13368,6 +13128,10 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       `UPDATE dash_subscription_orders SET status = 'failed', notes = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
       [order_id, `nowpayments:${payment_id}:wrong_asset`]
     );
+    try {
+      const slackOps = require('../../services/slackOpsService');
+      slackOps.notifyPaymentFailed({ orderId: order_id, userId: null, username: '', amount: 0, reason: `Wrong asset sent: ${pay_currency}`, provider: 'NowPayments' }).catch(() => {});
+    } catch (_) {}
     return res.json({ received: true });
   }
 
@@ -13412,8 +13176,8 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
                 targetUserId: String(order.user_id),
                 entityType: 'token_purchase',
                 entityId: String(order.id),
-                message: `You paid ${(paidRatio * 100).toFixed(0)}% of your token order — we credited ${prorated} tokens (of ${baseTokens} full).`,
-                metadata: { url: '/buy-tokens', pushTitle: 'Tokens credited', pushBody: `${prorated} tokens added — top up any time for the rest.` },
+                message: `You paid ${(paidRatio * 100).toFixed(0)}% of your Ru$h order — we credited ${prorated} Ru$h (of ${baseTokens} full).`,
+                metadata: { url: '/buy-tokens', pushTitle: 'Ru$h 💎 credited', pushBody: `${prorated} Ru$h added — top up any time for the rest.` },
               }).catch(() => {});
             } catch (_) { /* non-fatal */ }
             logger.info('[NOWPayments] auto-prorated token grant', {
@@ -14478,6 +14242,22 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   }
 
   logger.info('[NOWPayments] IPN: payment completed', { userId: order.user_id, planId: order.plan_id, order_id });
+
+  // Slack ops-payments alert (best-effort, fire-and-forget)
+  try {
+    const slackOps = require('../../services/slackOpsService');
+    const orderMeta = order.metadata || {};
+    slackOps.notifyPaymentSuccess({
+      orderId: order_id,
+      userId: order.user_id,
+      username: orderMeta.username || '',
+      amount: parseFloat(order.usd_amount) || 0,
+      currency: price_currency || 'USD',
+      plan: order.plan_id || 'unknown',
+      provider: 'NowPayments',
+    }).catch(() => {});
+  } catch (_) {}
+
   maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
   return res.json({ received: true });
 }));
@@ -15656,6 +15436,23 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
         commenterId, content, null, null, promoPostId,
         null, false, false, false, null, null, null, null, null, null
       );
+
+      // Notify video creator in their personal Slack channel (reuse rows[0] already fetched above)
+      try {
+        const slackCreator = require('../../services/slackCreatorNotifyService');
+        const { rows: videoRows } = await getPool().query(
+          `SELECT uploader_id, title FROM channel_videos WHERE id = $1 AND status = 'published'`,
+          [videoId]
+        );
+        if (videoRows[0]?.uploader_id) {
+          slackCreator.notifyNewVideoComment(videoRows[0].uploader_id, {
+            videoTitle: videoRows[0].title || 'your video',
+            commentExcerpt: content.slice(0, 150),
+            commenterName: req.session.user?.username || 'Someone',
+          }).catch(() => {});
+        }
+      } catch (_) {}
+
       return res.json({ success: true, comment: post });
     })
   );
@@ -18600,6 +18397,33 @@ app.get('/api/og-prerender', (req, res, next) => {
     <meta name="twitter:card" content="summary_large_image" />
   </head><body></body></html>`);
 });
+
+// ── Bull Board queue dashboard — /admin/queues ─────────────────────────────
+// Mounts the BullMQ web UI under /admin/queues, protected by adminGuard.
+// Safe to require — if BullMQ init failed the queues map is empty and
+// Bull Board mounts an empty dashboard rather than crashing.
+try {
+  const { createBullBoard } = require('@bull-board/api');
+  const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter');
+  const { ExpressAdapter } = require('@bull-board/express');
+  const { getAllQueues, initializeQueues } = require('../../services/queueService');
+
+  // Ensure all queues are created before Bull Board tries to register them
+  initializeQueues().catch(() => {});
+
+  const serverAdapter = new ExpressAdapter();
+  serverAdapter.setBasePath('/admin/queues');
+
+  createBullBoard({
+    queues: getAllQueues().map((q) => new BullMQAdapter(q)),
+    serverAdapter,
+  });
+
+  app.use('/admin/queues', adminGuard, serverAdapter.getRouter());
+  logger.info('[BullBoard] Dashboard mounted at /admin/queues');
+} catch (bullBoardErr) {
+  logger.warn('[BullBoard] Failed to mount dashboard: ' + bullBoardErr.message);
+}
 
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback

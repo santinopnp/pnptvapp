@@ -39,6 +39,17 @@ async function startSession(creatorId, channelRef) {
  * @param {{ peakViewers?: number, uniqueViewers?: number }} metrics
  */
 async function endSession(sessionId, { peakViewers = 0, uniqueViewers = null } = {}) {
+  // Fetch started_at and creator display name in the same round-trip so we can
+  // compute duration and fire the Slack end-of-stream notification.
+  const { rows: sessionRows } = await getPool().query(
+    `SELECT ss.started_at, ss.creator_id,
+            COALESCE(u.display_name, u.username, u.telegram, ss.creator_id::text) AS performer_name
+     FROM stream_sessions ss
+     LEFT JOIN users u ON u.id = ss.creator_id
+     WHERE ss.id = $1`,
+    [sessionId]
+  );
+
   await getPool().query(
     `UPDATE stream_sessions
      SET ended_at      = NOW(),
@@ -47,7 +58,17 @@ async function endSession(sessionId, { peakViewers = 0, uniqueViewers = null } =
      WHERE id = $1`,
     [sessionId, peakViewers, uniqueViewers]
   );
+
   logger.info('streamAnalytics: session ended', { sessionId, peakViewers, uniqueViewers });
+
+  // Best-effort Slack notification — never throws.
+  try {
+    if (sessionRows.length > 0) {
+      const { started_at, performer_name } = sessionRows[0];
+      const durationMinutes = Math.round((Date.now() - new Date(started_at).getTime()) / 60000);
+      require('./slackLiveService').notifyStreamEnd(String(sessionId), performer_name, durationMinutes).catch(() => {});
+    }
+  } catch (_e) { /* swallow — Slack must never surface to callers */ }
 }
 
 /**

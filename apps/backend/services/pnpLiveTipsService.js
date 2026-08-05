@@ -351,6 +351,14 @@ class PNPLiveTipsService {
                 paymentMethod: 'tokens'
               });
 
+              // Tip animation broadcast to all mainstage viewers
+              io.to('mainstage').emit('mainstage:tip-animation', {
+                amount,
+                username: tipperUsername,
+                performerName,
+                message,
+              });
+
               // Update tip goal progress. Goals live in Redis at
               // stream:goal:<channelRef> (see routes.js POST /api/webapp/live/goal).
               // We HINCRBY progress atomically, then HMGET the full state to
@@ -412,6 +420,51 @@ class PNPLiveTipsService {
       } catch (socketErr) {
         logger.warn('Failed to emit socket updates after token tip', { error: socketErr.message });
       }
+
+      // Slack ops-live notification — best-effort, never blocks the response
+      try {
+        if (amount >= 50) {
+          const slackLive = require('./slackLiveService');
+          // Resolve performer name for Slack (already fetched above inside socket block;
+          // re-query only if the socket block errored before setting it).
+          const { rows: slackPerfRows } = await query(
+            'SELECT display_name FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
+            [String(performerId)]
+          );
+          const slackPerfName = slackPerfRows[0]?.display_name || String(performerId);
+          const { rows: slackTipperRows } = await query(
+            'SELECT username FROM users WHERE id = $1',
+            [String(userId)]
+          );
+          const slackTipperName = slackTipperRows[0]?.username || 'Someone';
+          slackLive.notifyTipReceived(slackPerfName, slackTipperName, amount, message).catch(() => {});
+        }
+      } catch (_) {}
+
+      // Creator personal Slack notification — best-effort, separate from ops channel
+      try {
+        if (amount >= 10) {
+          const creatorNotify = require('./slackCreatorNotifyService');
+          // performerUserId resolved inside the socket block above; re-query if socket errored.
+          const { rows: cnPerfRows } = await query(
+            'SELECT user_id FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
+            [String(performerId)]
+          );
+          const cnPerformerUserId = cnPerfRows[0]?.user_id;
+          const { rows: cnTipperRows } = await query(
+            'SELECT username FROM users WHERE id = $1',
+            [String(userId)]
+          );
+          const cnTipperUsername = cnTipperRows[0]?.username || 'Someone';
+          if (cnPerformerUserId) {
+            creatorNotify.notifyTipReceived(cnPerformerUserId, {
+              tipperUsername: cnTipperUsername,
+              amount,
+              message,
+            }).catch(() => {});
+          }
+        }
+      } catch (_) {}
 
       logger.info('Token tip processed atomically', { userId, performerId, amount, tipId: tip.id });
 

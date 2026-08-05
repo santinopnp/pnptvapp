@@ -627,6 +627,18 @@ class PaymentSettlementService {
         transactionId: invoiceId,
         customerName: order.user_id,
       });
+      // Parallel Slack ops-payments notification
+      try {
+        const slackOps = require('./slackOpsService');
+        slackOps.notifyPaymentSuccess({
+          userId: order.user_id,
+          amount: order.usd_amount || order.amount || 0,
+          currency: 'USD',
+          plan: plan?.display_name || plan?.name || order.plan_id || 'unknown',
+          txId: invoiceId,
+          provider: order.provider || 'nowpayments',
+        }).catch(() => {});
+      } catch (_) {}
     } catch (alertErr) {
       if (!alertErr.isFreeSkip) logger.warn('BTCPay: operator alert failed (non-critical)', { error: alertErr.message });
     }
@@ -707,7 +719,7 @@ class PaymentSettlementService {
         const PaymentNotificationService = require('./paymentNotificationService');
         await PaymentNotificationService.deliverPurchaseConfirmation(userId, {
           planId: 'token_purchase',
-          planName: `${tokens} PNP Tokens`,
+          planName: `${tokens} Ru$h 💎`,
           amount: Number(purchaseResult.rows[0].usd_amount || 0),
           transactionId: invoiceId,
           provider: 'Dash (BTCPay)',

@@ -313,6 +313,20 @@ class ApplyController {
         logger.warn(`Failed to send admin notification for model application: ${err.message}`);
       });
 
+      // Fire-and-forget Slack ops-creator notification
+      try {
+        const slackOps = require('../../../services/slackOpsService');
+        slackOps.notifyCreatorApplication({
+          userId,
+          displayName: stageName,
+          stageName,
+          bio: bio || '',
+          applicationType,
+          applicationId: application.id,
+          appliedAt: application.created_at ? new Date(application.created_at).toISOString() : new Date().toISOString(),
+        }).catch(() => {});
+      } catch (_) {}
+
       return res.json({ success: true, application });
     } catch (error) {
       logger.error('Error submitting application:', error);

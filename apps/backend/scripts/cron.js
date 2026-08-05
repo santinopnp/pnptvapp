@@ -31,6 +31,29 @@ const autoReplyService = require(path.join(backendPath, 'services/autoReplyServi
 
 /**
  * Initialize and start cron jobs
+ *
+ * Wave 5 (BullMQ migration): Most jobs below are now also registered as BullMQ
+ * repeatable jobs in services/queueService.js and executed by services/workers/index.js.
+ * During the transition period both paths run in parallel (safe — all jobs are idempotent).
+ * Once BullMQ is confirmed stable, the cron.schedule() blocks below will be removed.
+ *
+ * Jobs migrated to BullMQ (cron-jobs + compliance-checks queues):
+ *   membership-cleanup, membership-sync, payment-cleanup, call-booking-expire,
+ *   btcpay-reconcile, nowpayments-reconcile, lifetime100-rescue, meru-reconcile,
+ *   meru-token-reconcile, video-leak-detector, channel-video-sweep, video-log-cleanup,
+ *   btcpay-webhook-probe, performer-eligibility, media-cleanup, creator-eligibility,
+ *   creator-sub-expiry, creator-renewal, channel-hangout-renewal, creator-payout-monthly,
+ *   creator-payout-remind, creator-weekly-proposal, creator-weekly-deadline,
+ *   reconcile-stuck-payouts, earnings-maturation, notification-cleanup, sub-expiry-email,
+ *   sub-reengagement, notification-digest, cristina-wellness, cristina-tutorial1/2,
+ *   cristina-promo, recording-expiry, live-stream-sweep, channel-video-stuck,
+ *   channel-post-count-reconcile, booking-auto-complete, meru-reservation-cleanup,
+ *   access-logs-retention, call-notifications, call-overdue-end, call-no-shows,
+ *   weekly-log-retention, auto-reply-poll, creator-avail-expiry-notify,
+ *   slack-avail-poll, 2257-enforcement, content-compliance-enforce
+ *
+ * NOT migrated (stateful — must stay here):
+ *   stream-health-monitor (uses in-memory Map + seed flag that doesn't survive restarts)
  */
 const startCronJobs = async (bot = null) => {
   try {
@@ -950,6 +973,17 @@ const startCronJobs = async (bot = null) => {
             await sendSystemDM(SYSTEM_SENDER_ID, String(creator.id), dmText, pgQuery).catch((dmErr) =>
               logger.warn('[2257] Failed to DM suspended creator', { userId: creator.id, error: dmErr.message })
             );
+
+            // Notify creator in their personal Slack channel — enqueue via BullMQ
+            // so a Slack outage won't block the suspension loop.
+            try {
+              const { addJob } = require(path.join(backendPath, 'services/queueService'));
+              addJob('notifications', 'slack_creator.notify2257Expiring', {
+                type: 'slack_creator',
+                fn: 'notify2257Expiring',
+                args: [creator.id, { daysUntilExpiry: 0, renewLink: 'https://pnptv.app/settings/verification' }],
+              }).catch(() => {});
+            } catch (_) {}
           } catch (innerErr) {
             logger.error('[2257] Enforcement error for creator', {
               userId: creator.id,
@@ -1586,6 +1620,147 @@ const startCronJobs = async (bot = null) => {
         logger.warn('Weekly group rank scheduler failed to start', { error: err.message });
       }
     }
+
+    // ── Restreamer stream health monitor — every 2 minutes ───────────────────
+    // Tracks per-stream state transitions: running↔stopped, failed alerts.
+    // Map value: { state, startedAt: number|null, isRunning: bool }
+    // _seeded: true after first tick — prevents Slack flood on bot restart
+    // (first tick silently populates state without sending notifications).
+    const _streamHealthState = new Map();
+    let _streamHealthSeeded = false;
+    cron.schedule('*/2 * * * *', async () => {
+      try {
+        const restreamer = require(path.join(backendPath, 'services/restreamerService'));
+        const slackLive = require(path.join(backendPath, 'services/slackLiveService'));
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+        const streams = await restreamer.getStreamHealthSummary();
+        const seen = new Set();
+
+        // Resolve display names — users.display_name does not exist; use username
+        const refIds = streams.map(s => s.refId).filter(Boolean);
+        let displayNames = {};
+        if (refIds.length > 0) {
+          try {
+            const nameRes = await pgQuery(
+              `SELECT live_channel, COALESCE(username, first_name, live_channel) AS display_name FROM users WHERE live_channel = ANY($1::text[])`,
+              [refIds]
+            );
+            for (const row of nameRes.rows) {
+              displayNames[row.live_channel] = row.display_name;
+            }
+          } catch (_) {}
+        }
+        const _name = (refId) => displayNames[refId] || refId;
+
+        // First tick after startup: seed state silently (no Slack posts) so
+        // we don't flood the channel with fake "X went live" for all running streams.
+        if (!_streamHealthSeeded) {
+          for (const s of streams) {
+            _streamHealthState.set(s.streamId, { state: s.state, startedAt: s.isLive ? Date.now() : null, isRunning: s.isLive });
+          }
+          _streamHealthSeeded = true;
+          return;
+        }
+
+        for (const s of streams) {
+          seen.add(s.streamId);
+          const prev = _streamHealthState.get(s.streamId);
+
+          if (s.isLive && !prev?.isRunning) {
+            // Transition TO live
+            _streamHealthState.set(s.streamId, { state: s.state, startedAt: Date.now(), isRunning: true });
+            slackLive.notifyStreamLive(s.refId, _name(s.refId)).catch(() => {});
+          } else if (!s.isLive && prev?.isRunning) {
+            // Transition FROM live
+            const durationMinutes = Math.round((Date.now() - prev.startedAt) / 60000);
+            _streamHealthState.set(s.streamId, { state: s.state, startedAt: null, isRunning: false });
+            slackLive.notifyStreamEnd(s.refId, _name(s.refId), durationMinutes).catch(() => {});
+            if (s.isFailed) {
+              slackLive.notifyStreamHealth(s.refId, _name(s.refId), s.state).catch(() => {});
+            }
+          } else if (s.isFailed && !prev?.isRunning && prev?.state !== s.state) {
+            // Failed without ever being tracked as running (e.g. first poll shows failed)
+            slackLive.notifyStreamHealth(s.refId, _name(s.refId), s.state).catch(() => {});
+            _streamHealthState.set(s.streamId, { state: s.state, startedAt: null, isRunning: false });
+          } else {
+            // No transition — update state field only
+            _streamHealthState.set(s.streamId, { ...(prev || { startedAt: null, isRunning: false }), state: s.state });
+          }
+        }
+        // Remove state for streams that no longer exist; fire end notification if was running
+        for (const [id, entry] of _streamHealthState.entries()) {
+          if (!seen.has(id)) {
+            if (entry.isRunning) {
+              const durationMinutes = Math.round((Date.now() - entry.startedAt) / 60000);
+              slackLive.notifyStreamEnd(id, _name(id), durationMinutes).catch(() => {});
+            }
+            _streamHealthState.delete(id);
+          }
+        }
+      } catch (_) {}
+    });
+
+    // ── Phase 4: Slack status → performer availability (every 5 min) ─────────
+    // For each performer whose slack_member_id is set, poll Slack presence +
+    // status. If active + status suggests availability → extend or create the
+    // accepting_calls Redis key (12-min TTL via SET NX). Does not overwrite a
+    // manually-set key with a longer TTL (manual toggle wins via NX flag).
+    // If Slack says not available: let the key expire naturally (no DEL).
+    cron.schedule('*/5 * * * *', async () => {
+      try {
+        const token = process.env.SLACK_BOT_TOKEN;
+        if (!token) return;
+        const { query: pgQ } = require(path.join(backendPath, 'config/postgres'));
+        const { getRedis } = require(path.join(backendPath, 'config/redis'));
+        const redis = getRedis();
+        if (!redis) return;
+
+        const { rows: performers } = await pgQ(
+          `SELECT u.id, u.slack_member_id
+           FROM users u
+           WHERE u.slack_member_id IS NOT NULL
+             AND u.creator_status = 'active'`
+        );
+        if (performers.length === 0) return;
+
+        const SLACK_API = 'https://slack.com/api';
+        const headers = { Authorization: `Bearer ${token}` };
+
+        for (const perf of performers) {
+          try {
+            // Presence check
+            const presRes = await fetch(
+              `${SLACK_API}/users.getPresence?user=${encodeURIComponent(perf.slack_member_id)}`,
+              { headers }
+            );
+            const presData = await presRes.json().catch(() => ({}));
+            if (!presData.ok || presData.presence !== 'active') continue;
+
+            // Profile check for status
+            const profRes = await fetch(
+              `${SLACK_API}/users.profile.get?user=${encodeURIComponent(perf.slack_member_id)}`,
+              { headers }
+            );
+            const profData = await profRes.json().catch(() => ({}));
+            const statusEmoji = profData.profile?.status_emoji || '';
+            const statusText = (profData.profile?.status_text || '').toLowerCase();
+            const slackSaysAvailable = statusEmoji === ':large_green_circle:' ||
+              statusText.includes('available') || statusText.includes('disponible');
+
+            if (!slackSaysAvailable) continue;
+
+            // SET NX — only if key does not already exist (manual 60-min toggle wins)
+            const key = `user:${perf.id}:accepting_calls`;
+            const set = await redis.set(key, '1', 'EX', 720, 'NX');
+            if (set) {
+              logger.debug('[slackAvailPoller] set accepting_calls from Slack status', { userId: perf.id });
+            }
+          } catch (_) {}
+        }
+      } catch (err) {
+        logger.warn('[slackAvailPoller] cron error', { error: err.message });
+      }
+    });
 
     logger.info('✓ Cron jobs started successfully');
     return true;

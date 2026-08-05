@@ -229,6 +229,17 @@ REAL USER DATA FOR THIS TICKET:
       // Escalate: bump priority and notify admins in support thread
       await SupportTopicModel.updatePriority(userId, 'high');
       await this.postToSupportThread(ticket, '🚨 *Cristina AI:* Ticket requires human attention. Escalated to high priority.');
+
+      // Post to #support-human in Slack (best-effort — never blocks)
+      try {
+        const slackSupport = require('./slackSupportService');
+        // Refresh ticket row so escalateToSlack has the updated priority
+        const pool = getPool();
+        const freshRow = await pool.query('SELECT * FROM support_topics WHERE user_id = $1', [userId]);
+        const freshTicket = freshRow.rows[0] || ticket;
+        await slackSupport.escalateToSlack(freshTicket).catch(() => {});
+      } catch (_) {}
+
       logger.info('CristinaTicketWorker: escalated to human', { userId });
       return 'needs_human';
     }

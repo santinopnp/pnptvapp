@@ -346,6 +346,15 @@ async function handlePayoutWebhook(npPayoutId, npStatus, body) {
       [payout.earning_ids]
     );
     logger.info('[NowPayments Payout Webhook] Earnings marked paid_out', { payoutId: payout.id, count: payout.earning_ids.length });
+
+    // Creator personal Slack notification — best-effort
+    try {
+      const creatorNotify = require('./slackCreatorNotifyService');
+      const amountUsd = payout.amount_usd != null ? parseFloat(payout.amount_usd) : null;
+      if (payout.creator_id && amountUsd != null) {
+        creatorNotify.notifyPayoutProcessed(payout.creator_id, { amount: amountUsd }).catch(() => {});
+      }
+    } catch (_) {}
   }
 
   if (mappedStatus === 'failed' && payout.earning_ids && payout.earning_ids.length > 0) {

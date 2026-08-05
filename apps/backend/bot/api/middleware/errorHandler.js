@@ -69,6 +69,20 @@ function errorHandler(err, req, res, _next) {
       query: req.query,
       ip: req.ip,
     });
+    // Fire-and-forget Slack alert for 5xx errors
+    try {
+      const slackOps = require('../../../services/slackOpsService');
+      slackOps.notifyUnhandledError({
+        route: req.path,
+        url: req.url,
+        method: req.method,
+        statusCode,
+        errorMessage: err.message,
+        message: err.message,
+        userId: req.session?.pnptv_id,
+        stack: err.stack,
+      }).catch(() => {});
+    } catch (_) {}
   }
 
   // Only send 5xx errors to Sentry — 4xx are expected user-input failures

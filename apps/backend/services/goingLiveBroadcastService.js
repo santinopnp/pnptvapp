@@ -392,6 +392,11 @@ async function broadcastGoingLive(bot, creatorId, channelRef, opts = {}, streamI
 
     const customMessage = opts?.message || null;
 
+    // ── Slack ops notification (best-effort, never blocks) ───────────────────
+    try {
+      require('./slackLiveService').notifyStreamLive(channelRef, creatorName).catch(() => {});
+    } catch (_e) { /* swallow — Slack must never block go-live */ }
+
     // ── Fire-and-forget channels (always fire, regardless of follower count) ──
 
     // 1. Feed post from @pnptv + X cross-post with branded snapshot card
