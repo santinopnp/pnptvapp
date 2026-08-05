@@ -1274,8 +1274,8 @@ async function createCallCheckoutTokens({ memberId, packageId, clientNotes = nul
           const safeNotes = clientNotes ? escapeHtml(String(clientNotes).slice(0, 200)) : '';
           await sendNotificationViaTelegram(pkg.creator_id, {
             type: 'call_booking',
-            title: '📞 New Call Booking (Tokens)',
-            body: `@${escapeHtml(member?.username || String(memberId))} booked a ${pkg.duration_minutes}-min call using ${tokenCost} tokens.${safeNotes ? `\nNote: ${safeNotes}` : ''}`,
+            title: '📞 New Call Booking (Ru$h 💎)',
+            body: `@${escapeHtml(member?.username || String(memberId))} booked a ${pkg.duration_minutes}-min call using ${tokenCost} Ru$h.${safeNotes ? `\nNote: ${safeNotes}` : ''}`,
           }).catch(() => {});
         }
       } catch (_) {}

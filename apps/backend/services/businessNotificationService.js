@@ -262,11 +262,11 @@ class BusinessNotificationService {
         : null;
 
       const lines = [
-        '🪙 <b>TOKENS COMPRADOS</b>',
+        '💎 <b>RU$H COMPRADO</b>',
         '',
         `👤 Usuario: ${userLabel} (ID: <code>${userId}</code>)`,
-        `🎯 Tokens: +${tokens} tokens`,
-        `💰 Saldo nuevo: ${newBalance} tokens`,
+        `🎯 Ru$h: +${tokens} Ru$h`,
+        `💰 Saldo nuevo: ${newBalance} Ru$h`,
         `💵 Monto: $${parseFloat(usdAmount || 0).toFixed(2)} USD`,
       ];
       if (refShort) lines.push(`🔗 Ref: <code>${refShort}</code>`);

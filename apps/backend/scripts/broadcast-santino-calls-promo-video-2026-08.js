@@ -285,8 +285,14 @@ async function main() {
   const tgAlreadySent    = loadSentSet(TG_SENT_FILE);
   const emailAlreadySent = loadSentSet(EMAIL_SENT_FILE);
 
-  const withTelegram = users.filter(u => u.telegram && isNew(u) && !tgAlreadySent.has(u.id));
-  const withEmail    = users.filter(u => u.email && !u.email.includes('@telegram.pnptv.app') && isNew(u) && !emailAlreadySent.has(u.id));
+  // Telegram/email delivery is tracked independently via the log-based sent-sets
+  // above, NOT via the in-app "alreadySent" gate (isNew/notifications table) —
+  // that gate only reflects whether the in-app bell went out, which can complete
+  // long before Telegram/email do on a crash-and-resume run. Gating these on
+  // isNew(u) as well caused a resumed run to skip everyone once step 1 had
+  // already finished, even though most users never got the video or email.
+  const withTelegram = users.filter(u => u.telegram && !tgAlreadySent.has(u.id));
+  const withEmail    = users.filter(u => u.email && !u.email.includes('@telegram.pnptv.app') && !emailAlreadySent.has(u.id));
 
   console.log(`\n   Total users:      ${users.length}`);
   console.log(`   Already notified: ${alreadySent.size}`);
@@ -442,7 +448,7 @@ async function main() {
       const lang = isEn(u.language) ? 'en' : 'es';
       const name = u.first_name || u.username || (lang === 'en' ? 'Member' : 'Miembro');
       try {
-        await emailService.sendViaHostingerApi({
+        await emailService.send({
           to: u.email,
           subject: EMAIL_SUBJECT[lang],
           html: buildEmailHtml(lang, name),

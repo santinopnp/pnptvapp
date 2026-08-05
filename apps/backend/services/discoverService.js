@@ -679,11 +679,17 @@ async function _fetchScoredFollows(userId, viewerLat, viewerLng, limit) {
        GROUP BY uf2.follower_id
     ),
     -- recent DM contact or shared hangout group (last 7 days)
+    -- split OR into UNION so each branch can use its own index
     recent_contact AS (
-      SELECT DISTINCT
-        CASE WHEN dm.sender_id = $1 THEN dm.recipient_id ELSE dm.sender_id END AS contact_id
+      SELECT DISTINCT dm.recipient_id AS contact_id
         FROM direct_messages dm
-       WHERE (dm.sender_id = $1 OR dm.recipient_id = $1)
+       WHERE dm.sender_id = $1
+         AND dm.created_at > NOW() - INTERVAL '7 days'
+         AND dm.is_deleted = false
+      UNION
+      SELECT DISTINCT dm.sender_id AS contact_id
+        FROM direct_messages dm
+       WHERE dm.recipient_id = $1
          AND dm.created_at > NOW() - INTERVAL '7 days'
          AND dm.is_deleted = false
       UNION
@@ -730,12 +736,14 @@ async function _fetchScoredFollows(userId, viewerLat, viewerLng, limit) {
       LEFT JOIN mutual_counts mc ON mc.candidate_id = u.id
       LEFT JOIN recent_contact rc ON rc.contact_id = u.id
       LEFT JOIN recent_posters rp ON rp.user_id = u.id
+      LEFT JOIN viewer_following vf ON vf.following_id = u.id
+      LEFT JOIN viewer_blocks vb ON vb.blocked_id = u.id
       WHERE u.creator_status IS DISTINCT FROM 'active'
         AND u.is_active = true
         AND u.tier != 'banned'
         AND u.id != $1
-        AND u.id NOT IN (SELECT following_id FROM viewer_following)
-        AND u.id NOT IN (SELECT blocked_id FROM viewer_blocks)
+        AND vf.following_id IS NULL
+        AND vb.blocked_id IS NULL
     )
     SELECT
       user_id,

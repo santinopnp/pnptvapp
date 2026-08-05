@@ -518,4 +518,71 @@ const selfEraseAccount = async (req, res) => {
   }
 };
 
-module.exports = { searchUsers, deleteMyAccount, hardDeleteUser, adminEraseUser, selfEraseAccount };
+const toPhotoUrl = (photo_file_id) => {
+  if (!photo_file_id) return null;
+  if (photo_file_id.startsWith('http') || photo_file_id.startsWith('/')) return photo_file_id;
+  return `/uploads/avatars/${photo_file_id}`;
+};
+
+const getNewMembers = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  const { cursor, limit = 20 } = req.query;
+  const lim = Math.min(Number(limit) || 20, 50);
+
+  try {
+    let cursorWhere = '';
+    let params = [user.id, lim];
+
+    if (cursor) {
+      const tilde = cursor.indexOf('~');
+      if (tilde > 0) {
+        const cursorDate = cursor.slice(0, tilde);
+        const cursorId   = cursor.slice(tilde + 1);
+        params = [user.id, lim, cursorDate, cursorId];
+        cursorWhere = `AND (u.created_at < $3::timestamptz OR (u.created_at = $3::timestamptz AND u.id < $4))`;
+      }
+    }
+
+    const { rows } = await query(
+      `SELECT u.id, u.username, u.first_name, u.last_name, u.photo_file_id, u.pnptv_id,
+              u.created_at, u.creator_status
+       FROM users u
+       WHERE u.is_deleted = false
+         AND u.id != $1
+         ${cursorWhere}
+       ORDER BY u.created_at DESC, u.id DESC
+       LIMIT $2`,
+      params
+    );
+
+    const redis = getRedis();
+    const members = await Promise.all(rows.map(async (r) => {
+      let isOnline = false;
+      if (redis) {
+        try { isOnline = !!(await redis.get(`presence:online:${r.id}`)); } catch { /* noop */ }
+      }
+      return {
+        id: r.id,
+        username: r.username,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        photo_url: toPhotoUrl(r.photo_file_id),
+        pnptv_id: r.pnptv_id,
+        created_at: r.created_at,
+        creator_status: r.creator_status,
+        is_online: isOnline,
+      };
+    }));
+
+    const nextCursor = rows.length === lim
+      ? `${rows[rows.length - 1].created_at.toISOString()}~${rows[rows.length - 1].id}`
+      : null;
+
+    return res.json({ success: true, members, nextCursor });
+  } catch (err) {
+    logger.error('getNewMembers error', err);
+    return res.status(500).json({ error: 'Failed to load new members' });
+  }
+};
+
+module.exports = { searchUsers, deleteMyAccount, hardDeleteUser, adminEraseUser, selfEraseAccount, getNewMembers };

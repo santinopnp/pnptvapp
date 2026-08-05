@@ -226,10 +226,11 @@ async function processStreamHeartbeat(viewerId, channelRef) {
   }
 
   // Free-period check — first 15 minutes after entering are unbilled
+  let redisForBilling;
   try {
     const { getRedis } = require('../config/redis');
-    const redisClient = getRedis();
-    const freeUntilStr = await redisClient.get(`live:viewer:freeuntil:${viewerId}:${channelRef}`);
+    redisForBilling = getRedis();
+    const freeUntilStr = await redisForBilling.get(`live:viewer:freeuntil:${viewerId}:${channelRef}`);
     if (freeUntilStr) {
       const freeUntil = parseInt(freeUntilStr, 10);
       if (Number.isFinite(freeUntil) && Date.now() < freeUntil) {
@@ -244,6 +245,25 @@ async function processStreamHeartbeat(viewerId, channelRef) {
     }
   } catch (freeCheckErr) {
     logger.warn('processStreamHeartbeat: free-period check failed, proceeding to bill', { viewerId, channelRef, error: freeCheckErr.message });
+  }
+
+  // Dedup lock — prevents double-charging within the same 55-second window.
+  // Guards against: effect re-runs on stream.isLive flicker, webcam-switch race
+  // conditions, and clients sending multiple heartbeats within one minute.
+  try {
+    if (redisForBilling) {
+      const lockKey = `live:hb:lock:${viewerId}:${channelRef}`;
+      const acquired = await redisForBilling.set(lockKey, '1', 'EX', 55, 'NX');
+      if (!acquired) {
+        const balRow = await query(
+          `SELECT COALESCE(balance_tokens,0) + COALESCE(gifted_balance,0) AS total FROM user_token_wallets WHERE user_id = $1`,
+          [String(viewerId)]
+        );
+        return { success: true, newBalance: Number(balRow.rows[0]?.total) || 0 };
+      }
+    }
+  } catch (lockErr) {
+    logger.warn('processStreamHeartbeat: dedup lock check failed, proceeding to bill', { viewerId, channelRef, error: lockErr.message });
   }
 
   // Gifted tokens are accepted for Santino/PNPLatinoBoy streams; regular-only elsewhere.

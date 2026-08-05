@@ -349,10 +349,45 @@ async function deleteProcess(refId) {
   }
 }
 
+/**
+ * Return a lightweight health summary for all known ingest processes.
+ * Never throws — returns [] on any error so callers can always iterate.
+ *
+ * Each entry shape:
+ *   { streamId: string, refId: string, state: string, isLive: boolean, isFailed: boolean }
+ *
+ * @returns {Promise<Array<{streamId: string, refId: string, state: string, isLive: boolean, isFailed: boolean}>>}
+ */
+async function getStreamHealthSummary() {
+  try {
+    const processes = await listProcesses();
+    return processes.map((proc) => {
+      // proc.id = 'restreamer-ui:ingest:pnptv-frank'
+      // proc.reference = 'pnptv-frank'
+      const refId = proc.reference || proc.id.replace('restreamer-ui:ingest:', '');
+      const state = proc.state?.exec || 'unknown';
+      const isLive = state === 'running';
+      // 'finished' can mean the process exited without being explicitly stopped —
+      // treat it as a failure signal alongside 'failed'.
+      const isFailed = state === 'failed' || state === 'finished';
+      return {
+        streamId: proc.id,
+        refId,
+        state,
+        isLive,
+        isFailed,
+      };
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
 module.exports = {
   getToken,
   listProcesses,
   getProcess,
   createProcess,
   deleteProcess,
+  getStreamHealthSummary,
 };

@@ -253,9 +253,29 @@ const NotificationEmitter = {
   /**
    * Emit a single notification.
    *
+   * Wave 1: Attempts to enqueue via BullMQ as the primary path.
+   * Falls back to the existing sync logic (_emitSync) if BullMQ is unavailable.
+   */
+  async emit(payload) {
+    try {
+      const { notificationsQueue, DEFAULT_JOB_OPTIONS } = require('./queueService');
+      if (notificationsQueue) {
+        await notificationsQueue.add('in-app', payload, { ...DEFAULT_JOB_OPTIONS });
+        return;
+      }
+    } catch (_) {
+      // BullMQ not ready — fall through to sync path
+    }
+    return this._emitSync(payload);
+  },
+
+  /**
+   * Direct (synchronous) notification path — used as BullMQ fallback and by
+   * the 'in-app' BullMQ worker processor when running inside the queue.
+   *
    * Flow: check prefs → insert to DB → emit Socket.IO → fire-and-forget push + bot DM
    */
-  async emit({
+  async _emitSync({
     type,
     category = 'social',
     priority = 'normal',

@@ -1277,6 +1277,16 @@ class CreatorPayoutService {
         [approval.source_earning_ids, approvalId, txReference || '']
       );
       await client.query('COMMIT');
+
+      // Creator personal Slack notification — best-effort, outside transaction
+      try {
+        const creatorNotify = require('./slackCreatorNotifyService');
+        const amountUsd = approval.balance_usd != null ? parseFloat(approval.balance_usd) : null;
+        if (approval.creator_id && amountUsd != null) {
+          creatorNotify.notifyPayoutProcessed(approval.creator_id, { amount: amountUsd }).catch(() => {});
+        }
+      } catch (_) {}
+
       return approval;
     } catch (e) {
       try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }

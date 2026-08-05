@@ -1,7 +1,10 @@
 /**
  * Broadcast Queue API Routes
- * REST endpoints for monitoring and managing async broadcast queue
+ * REST endpoints for monitoring and managing async broadcast queue.
  * All routes require admin authentication.
+ *
+ * Wave 4: New broadcast dispatches go through BullMQ (`broadcast-emails` queue).
+ * Legacy PG-backed queue remains intact and accessible at existing endpoints.
  */
 
 const express = require('express');
@@ -195,6 +198,31 @@ router.get('/health', (req, res) => {
     activeJobs: q.getActiveJobsCount(),
     timestamp: new Date(),
   });
+});
+
+/**
+ * POST /api/admin/queue/broadcast/bullmq
+ * Wave 4: Enqueue a new broadcast via BullMQ instead of the PG-backed queue.
+ * Body: { subject, html, audienceFilter?, creatorId?, batchSize? }
+ */
+router.post('/broadcast/bullmq', async (req, res) => {
+  try {
+    const { subject, html, audienceFilter, creatorId, batchSize } = req.body;
+    if (!subject || !html) {
+      return res.status(400).json({ error: 'subject and html are required' });
+    }
+
+    const { broadcastQueue, DEFAULT_JOB_OPTIONS } = require('../../services/queueService');
+    const job = await broadcastQueue.add('email-broadcast', {
+      subject, html, audienceFilter, creatorId, batchSize,
+    }, { ...DEFAULT_JOB_OPTIONS });
+
+    logger.info('[BroadcastQueue] BullMQ broadcast job enqueued', { jobId: job.id, subject });
+    res.json({ success: true, jobId: job.id, queue: 'broadcast-emails' });
+  } catch (error) {
+    logger.error('Error enqueuing BullMQ broadcast:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 module.exports = router;

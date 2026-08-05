@@ -223,7 +223,7 @@ async function fanoutViewerOnline(viewerId) {
       if (!(await canPingPair(creator_id, viewerId, B_PAIR_DEBOUNCE_HOURS, B_CREATOR_DAILY_CAP))) continue;
 
       const title = 'A spender is online 💸';
-      const body = `${viewerName} just logged in with ${balance} tokens to spend.`;
+      const body = `${viewerName} just logged in with ${balance} Ru$h 💎 to spend.`;
       const url = `/profile/${viewerId}`;
       await deliverPush(creator_id, {
         title, body, url,
@@ -234,7 +234,7 @@ async function fanoutViewerOnline(viewerId) {
       // the site root and break the profile CTA.
       await deliverTelegram(creator_id, {
         type: 'follow',
-        message: `💸 ${viewerName} is online now — ${balance} tokens available to spend. Go say hi.`,
+        message: `💸 ${viewerName} is online now — ${balance} Ru$h 💎 available to spend. Go say hi.`,
         entityType: 'profile',
         entityId: viewerId,
       });
