@@ -635,14 +635,13 @@ export function getSlotTicketStatus(slotId: string): Promise<{
 
 export function buySlotTicket(
   slotId: string,
-  currency: "tokens" | "dash"
+  currency: "tokens"
 ): Promise<{
   success: boolean;
   hasTicket?: boolean;
   alreadyOwned?: boolean;
   newBalance?: number;
   error?: string;
-  provider?: "dash";
   paymentId?: string;
   checkoutUrl?: string;
   invoiceId?: string;
@@ -848,7 +847,7 @@ export function sendTip(
   performerId: string,
   amount: number,
   message?: string,
-  paymentMethod: "tokens" | "dash" = "tokens"
+  paymentMethod: "tokens" = "tokens"
 ): Promise<{ success: boolean; tipId: number; paymentUrl: string | null; invoiceId?: string; checkoutUrl?: string; amount: number; paymentMethod: string; newBalance?: number }> {
   return request("/api/proxy/live/tips", {
     method: "POST",
@@ -2278,11 +2277,13 @@ export function toggleMessageReaction(
 export async function sendGroupMediaMessage(
   groupId: number,
   mediaFile: File,
-  caption?: string
+  caption?: string,
+  messageType?: string
 ): Promise<{ success: boolean; message: GroupMessage }> {
   const formData = new FormData();
   formData.append("media", mediaFile);
   if (caption?.trim()) formData.append("content", caption.trim());
+  if (messageType) formData.append("messageType", messageType);
 
   const res = await fetch(
     `${API_BASE}/api/webapp/hangouts/groups/${groupId}/media`,
@@ -3274,7 +3275,7 @@ export function getMyAccess(): Promise<MyAccessResponse> {
 
 export function createPayment(
   planId: string,
-  provider: "dash" | "nowpayments",
+  provider: "nowpayments",
   email?: string,
   promoCode?: string
 ): Promise<{
@@ -3330,7 +3331,7 @@ export function validatePromoCode(
 
 export function initiateCreatorSubscriptionPayment(
   creatorId: string,
-  provider: "dash" | "nowpayments",
+  provider: "nowpayments",
   email: string
 ): Promise<{
   success: boolean;
@@ -3361,7 +3362,7 @@ export function getPaymentStatus(
 
 export function purchaseChannelAccess(
   channelId: number,
-  provider: 'dash' | 'nowpayments',
+  provider: 'nowpayments',
   email?: string
 ): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
   return request(`/api/webapp/channels/${channelId}/purchase`, {
@@ -3375,7 +3376,7 @@ export function purchaseChannelAccess(
 // channel-access grants cover both the channel and its linked hangout.
 export function purchaseHangoutAccess(
   hangoutGroupId: number,
-  provider: 'dash' | 'nowpayments',
+  provider: 'nowpayments',
   email?: string
 ): Promise<{ success: boolean; paymentId: string; invoiceId: string; paymentUrl?: string; checkoutUrl: string }> {
   return request(`/api/webapp/hangouts/groups/${hangoutGroupId}/purchase`, {
@@ -3384,27 +3385,26 @@ export function purchaseHangoutAccess(
   });
 }
 
-export function createDashSubscription(
-  planId: string,
-  email?: string,
-  creatorId?: string,
-  promoCode?: string,
+// Dash/BTCPay retired 2026-07-31 — /api/wallet/buy, /payments/dash/create, and
+// /payments/dash/status all now return 410/tombstone responses server-side, and
+// dashAvailable in BuyTokensModal is never set to true, so callers of these two
+// never actually reach them. Kept as thin wrappers (rather than deleted) so
+// Stream.tsx/BuyTokensModal.tsx's dead Dash-branch call sites still type-check.
+export function getDashPaymentDetails(
+  invoiceId: string
 ): Promise<{
   success: boolean;
-  invoiceId: string;
-  checkoutUrl: string;
-  planName?: string;
-  usdAmount?: number;
-  error?: string;
+  destination: string;
+  amount: string;
+  due: string;
+  totalDue: string;
+  rate: string | null;
+  networkFee: string;
+  status: string;
+  currency: string;
+  invoiceAmount: number | null;
 }> {
-  const body: Record<string, string> = { planId };
-  if (email) body.email = email;
-  if (creatorId) body.creatorId = creatorId;
-  if (promoCode) body.promoCode = promoCode;
-  return request("/api/webapp/payments/dash/create", {
-    method: "POST",
-    body,
-  });
+  return request(`/api/webapp/payments/dash/details/${encodeURIComponent(invoiceId)}`);
 }
 
 export function getDashSubscriptionStatus(invoiceId: string): Promise<{
@@ -3428,88 +3428,6 @@ export function getNowPaymentsOrderStatus(orderId: string): Promise<{
 }> {
   return request(`/api/wallet/np-status/${encodeURIComponent(orderId)}`);
 }
-
-export function getDashAvailable(): Promise<{
-  available: boolean;
-  configured: boolean;
-  reachable: boolean;
-  reason?: string;
-}> {
-  return request("/api/webapp/payments/dash/available");
-}
-
-export function getDashPaymentDetails(
-  invoiceId: string
-): Promise<{
-  success: boolean;
-  destination: string;
-  amount: string;
-  due: string;
-  totalDue: string;
-  rate: string | null;
-  networkFee: string;
-  status: string;
-  currency: string;
-  invoiceAmount: number | null;
-}> {
-  return request(`/api/webapp/payments/dash/details/${encodeURIComponent(invoiceId)}`);
-}
-
-export function createLightningSubscription(
-  planId: string,
-  email?: string,
-  creatorId?: string,
-): Promise<{
-  success: boolean;
-  invoiceId: string;
-  checkoutUrl: string;
-  planName?: string;
-  usdAmount?: number;
-  error?: string;
-}> {
-  const body: Record<string, string> = { planId };
-  if (email) body.email = email;
-  if (creatorId) body.creatorId = creatorId;
-  return request("/api/webapp/payments/lightning/create", {
-    method: "POST",
-    body,
-  });
-}
-
-export function getLightningSubscriptionStatus(invoiceId: string): Promise<{
-  success: boolean;
-  status: string;
-  error?: string;
-}> {
-  return request(`/api/webapp/payments/lightning/status/${encodeURIComponent(invoiceId)}`);
-}
-
-export function getLightningAvailable(): Promise<{
-  available: boolean;
-  configured: boolean;
-  reachable: boolean;
-  reason?: string;
-}> {
-  return request("/api/webapp/payments/lightning/available");
-}
-
-export function getLightningPaymentDetails(
-  invoiceId: string
-): Promise<{
-  success: boolean;
-  bolt11: string;
-  amount: string;
-  due: string;
-  rate: string | null;
-  status: string;
-  currency: string;
-  invoiceAmount: number | null;
-}> {
-  return request(`/api/webapp/payments/lightning/details/${encodeURIComponent(invoiceId)}`);
-}
-
-// BTCPay BTC routes removed — Bitcoin payments use NowPayments via prepareUsdcSubscription
-// with payCurrency:'btc', or buyTokensWithNowPayments with payCurrency:'btc'.
 
 export function prepareUsdcSubscription(
   planId: string,
@@ -4362,6 +4280,16 @@ export function getCreatorSubscriptionStatus(
   creatorId: string
 ): Promise<{ success: boolean } & CreatorSubscriptionStatus> {
   return request(`/api/webapp/creator/${creatorId}/subscription-status`);
+}
+
+export function getCreatorSubscriptionPreview(creatorId: string): Promise<{
+  success: boolean;
+  priceUsd: number;
+  exclusivePhotoCount: number;
+  exclusiveVideoCount: number;
+  exclusiveTotalCount: number;
+}> {
+  return request(`/api/webapp/creator/${encodeURIComponent(creatorId)}/subscription-preview`);
 }
 
 export function subscribeToCreator(
@@ -7026,10 +6954,10 @@ export interface MediaLibraryVideo {
  * the backend MUST belong to one of these domains (or a subdomain), otherwise
  * the client refuses to navigate — preventing open-redirect & phishing attacks.
  */
+// btcpay.pnptv.app removed 2026-07-31 (BTCPay retired)
 const ALLOWED_PAYMENT_HOSTS = [
   "pnptv.app",
   "app.pnptv.app",
-  "btcpay.pnptv.app",
   "nowpayments.io",
 ];
 
@@ -7440,20 +7368,7 @@ export function createCallCheckoutBtc(
   return request("/api/webapp/book-call/checkout/btc", { method: "POST", body });
 }
 
-export function createCallCheckoutDash(
-  packageId: number,
-  startTimeUtc?: string,
-  endTimeUtc?: string,
-  clientNotes?: string,
-  email?: string
-): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; paymentId: string; amountUsd: number; bookingId?: string; orderId?: string }> {
-  const body: Record<string, unknown> = { packageId };
-  if (startTimeUtc) body.startTimeUtc = startTimeUtc;
-  if (endTimeUtc) body.endTimeUtc = endTimeUtc;
-  if (clientNotes) body.clientNotes = clientNotes;
-  if (email) body.email = email;
-  return request("/api/webapp/book-call/checkout/dash", { method: "POST", body });
-}
+// createCallCheckoutDash removed 2026-07-31 — Dash/BTCPay retired.
 
 export interface MyCallCredit {
   id: number;
@@ -7552,6 +7467,11 @@ export function getStreamReplay(channelRef: string): Promise<{
   return request(`/api/webapp/live/replay/${encodeURIComponent(channelRef)}`);
 }
 
+// BTCPay/BTC retired 2026-07-31 — backend now tombstones /payments/btc/available to
+// always return { available: false }, so callers self-hide the BTC option. Keeping
+// these two thin wrappers (rather than deleting) avoids touching the gated call
+// sites in Profile.tsx / BookCallModal.tsx, which never actually invoke them once
+// getBtcAvailable() reports unavailable.
 export function getBtcAvailable(): Promise<{ available: boolean; configured: boolean }> {
   return request("/api/webapp/payments/btc/available");
 }
@@ -7577,6 +7497,11 @@ export function getBtcSubscriptionStatus(
   return request(`/api/webapp/payments/btc/status/${encodeURIComponent(invoiceId)}`);
 }
 
+// buyTokensWithBtc: /api/wallet/buy-btc is tombstoned to 410 server-side, and
+// BuyTokensModal only reaches this via the "Bitcoin" tile which is gated on
+// getBtcAvailable() (always false). Kept as a thin wrapper for the same reason
+// as getBtcAvailable/createBtcSubscription above — unreachable, but needs to
+// exist so the call site still type-checks.
 export function buyTokensWithBtc(
   packageId: string
 ): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; tokens: number; usd: number; error?: string }> {
@@ -9542,7 +9467,7 @@ export interface ServiceStatus {
     completed_7d: number; revenue_7d: string; completed_24h: number;
     pending_24h: number; partial_all: number;
     np_pending_24h: number; np_completed_7d: number;
-    btcpay_pending_24h: number; btcpay_completed_7d: number;
+    // btcpay_pending_24h, btcpay_completed_7d removed 2026-07-31 (provider retired)
     meru_completed_7d: number; meru_available: number;
   };
   generated_at: string;

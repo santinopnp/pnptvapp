@@ -1,5 +1,5 @@
 import React, { lazy, useEffect, useState } from "react";
-import { createBrowserRouter, Navigate, useNavigate, useParams } from "react-router-dom";
+import { createBrowserRouter, Navigate, useNavigate, useParams, useRouteError } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { joinHangoutByInvite, ApiError, getEvent, type EventItem } from "@/lib/api";
 import { EventDetailModal } from "@/components/events/EventDetailModal";
@@ -107,6 +107,30 @@ function HangoutToChatRedirect() {
 function CreatorUsernameRedirect() {
   const { username } = useParams<{ username: string }>();
   return <Navigate to={`/c/${username}`} replace />;
+}
+
+function RouteErrorFallback() {
+  const error = useRouteError() as any;
+  const is404 = error?.status === 404;
+  return (
+    <div
+      className="min-h-dvh flex flex-col items-center justify-center gap-4 px-6 text-center"
+      style={{ background: "var(--pnp-background, #0A0A0F)" }}
+    >
+      <p className="text-3xl font-bold text-white">{is404 ? "404" : "Oops"}</p>
+      <p className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+        {is404 ? "Page not found" : "Something went wrong"}
+      </p>
+      <button
+        type="button"
+        onClick={() => { window.location.href = "/"; }}
+        className="mt-2 min-h-[44px] px-6 rounded-2xl text-sm font-semibold text-white"
+        style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+      >
+        Go home
+      </button>
+    </div>
+  );
 }
 
 // Guard the `/:username` catch-all against dead top-level routes. Without this
@@ -356,6 +380,7 @@ export const router = createBrowserRouter([
   {
     path: "/",
     element: <Layout />,
+    errorElement: <RouteErrorFallback />,
     children: [
       {
         index: true,
@@ -806,6 +831,7 @@ export const router = createBrowserRouter([
   {
     path: "/admin",
     element: <AdminLayout />,
+    errorElement: <RouteErrorFallback />,
     children: [
       {
         index: true,
@@ -1079,6 +1105,7 @@ export const router = createBrowserRouter([
           </ModuleLoader>
         ),
       },
+      { path: "*", element: <Navigate to="/admin" replace /> },
     ],
   },
   // Creator Studio section
@@ -1091,6 +1118,7 @@ export const router = createBrowserRouter([
         </VerificationGate>
       </ModuleLoader>
     ),
+    errorElement: <RouteErrorFallback />,
     children: [
       { index: true, element: <ModuleLoader><CreatorOverview /></ModuleLoader> },
       { path: "setup", element: <ModuleLoader><CreatorStudioWizard /></ModuleLoader> },
@@ -1358,4 +1386,5 @@ export const router = createBrowserRouter([
       </ModuleLoader>
     ),
   },
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);

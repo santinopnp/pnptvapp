@@ -61,7 +61,6 @@ import {
   purchaseChannelAccess,
   purchaseHangoutAccess,
   assertPaymentUrl,
-  getDashSubscriptionStatus,
   getUsdcSubscriptionStatus,
   fetchOgPreview,
   createHangoutTopic,
@@ -507,7 +506,15 @@ function HangoutChatPanel({
           setHasMore((data.messages || []).length >= 30);
         }
       })
-      .catch(() => setChatError("Failed to load messages"))
+      .catch((err: any) => {
+        if (err?.status === 403 && err?.code === 'PRIME_REQUIRED') {
+          setChatError("PRIME_REQUIRED");
+        } else if (err?.status === 403) {
+          setChatError("ACCESS_DENIED");
+        } else {
+          setChatError("Failed to load messages");
+        }
+      })
       .finally(() => setIsLoading(false));
   }, [groupId]);
 
@@ -700,6 +707,21 @@ function HangoutChatPanel({
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (err) {
       setChatError(err instanceof Error ? err.message : "Failed to send voice note");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleVideoNoteRecorded = async (blob: Blob, durationSeconds: number) => {
+    if (!durationSeconds) return;
+    const file = new File([blob], `vidnote-${Date.now()}.webm`, { type: blob.type || "video/webm" });
+    setSending(true);
+    setChatError(null);
+    try {
+      await sendGroupMediaMessage(groupId, file, undefined, "video_note");
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to send video note");
     } finally {
       setSending(false);
     }
@@ -922,9 +944,20 @@ function HangoutChatPanel({
         </div>
       )}
       {chatError && (
-        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 flex-shrink-0 flex items-center justify-between gap-2">
-          <p className="text-xs text-red-400 flex-1">{chatError}</p>
-          <button onClick={() => setChatError(null)} className="text-red-400/60 hover:text-red-400 flex-shrink-0 p-1">
+        <div
+          className="px-4 py-2 border-b flex-shrink-0 flex items-center justify-between gap-2"
+          style={chatError === "PRIME_REQUIRED" || chatError === "ACCESS_DENIED"
+            ? { background: "rgba(212,0,122,0.08)", borderColor: "rgba(212,0,122,0.2)" }
+            : { background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.18)" }}
+        >
+          <p className="text-xs flex-1" style={{ color: chatError === "PRIME_REQUIRED" || chatError === "ACCESS_DENIED" ? "#D4007A" : "#f87171" }}>
+            {chatError === "PRIME_REQUIRED"
+              ? "PRIME membership required to access this hangout. Renew at /subscribe."
+              : chatError === "ACCESS_DENIED"
+              ? "You don't have access to this hangout."
+              : chatError}
+          </p>
+          <button onClick={() => setChatError(null)} className="flex-shrink-0 p-1 opacity-50 hover:opacity-100">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
@@ -1033,6 +1066,7 @@ function HangoutChatPanel({
                               isMe={isMe}
                               mediaGroup={mediaGroupMap.get(msg.id)}
                               hasCaption={!!msg.content}
+                              messageType={msg.message_type}
                             />
                           )}
                           {msg.reply_to && (
@@ -1601,6 +1635,7 @@ function HangoutChatPanel({
                 onFilesSelect={handleMediaFilesPicked}
                 onError={(msg) => setChatError(msg)}
                 onVoiceRecord={handleVoiceRecorded}
+                onVideoNoteRecord={handleVideoNoteRecorded}
                 disabled={sending}
               />
             </div>
@@ -1864,7 +1899,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     groupName?: string;
     videoCount?: number;
   } | null>(null);
-  const [pgProvider, setPgProvider] = useState<'dash' | 'nowpayments'>('nowpayments');
+  const [pgProvider, setPgProvider] = useState<'nowpayments'>('nowpayments');
   const [pgLoading, setPgLoading] = useState(false);
   const [pgPolling, setPgPolling] = useState(false);
   const [pgError, setPgError] = useState<string | null>(null);
@@ -2528,7 +2563,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   const handleDiscoverJoin = async (group: DiscoverGroup) => {
     try {
-      if (group.isPublic) {
+      // PRIME co-founder hangouts use direct join even though is_public=false
+      if (group.isPublic || (group as any).isPrimeHangout) {
         await joinHangoutGroup(group.id);
         loadGroups();
         loadDiscover();
@@ -2561,7 +2597,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   // Unified purchase handler: picks channel-access or hangout-access based on
   // whether the gated resource is a channel-linked hangout (channelId present)
   // or a standalone paid hangout.
-  const handlePurchaseChannel = async (provider: 'dash' | 'nowpayments' = pgProvider) => {
+  const handlePurchaseChannel = async (provider: 'nowpayments' = pgProvider) => {
     if (!paymentGateInfo) return;
     const { channelId, groupId } = paymentGateInfo;
     if (!channelId && !groupId) return;
@@ -2581,9 +2617,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       const invoiceId = res.invoiceId;
       pgIntervalRef.current = setInterval(async () => {
         try {
-          const poll = provider === 'nowpayments'
-            ? await getUsdcSubscriptionStatus(invoiceId)
-            : await getDashSubscriptionStatus(invoiceId);
+          const poll = await getUsdcSubscriptionStatus(invoiceId);
           const done = ('completed' in poll && (poll as { completed: boolean }).completed) || poll.status === 'completed' || poll.status === 'paid' || poll.status === 'success';
           if (done) {
             if (pgIntervalRef.current) { clearInterval(pgIntervalRef.current); pgIntervalRef.current = null; }
@@ -5690,7 +5724,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                             </div>
                           )}
                         </div>
-                        {group.isPublic ? (
+                        {(group.isPublic || (group as any).isPrimeHangout) ? (
                           <button
                             onClick={() => handleDiscoverJoin(group)}
                             className="btn-gradient px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"

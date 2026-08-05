@@ -636,10 +636,16 @@ const joinGroup = async (req, res) => {
       [groupId]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-    if (!rows[0].is_public) return res.status(403).json({ error: 'This group is invite-only' });
 
     const group = rows[0];
     const isOwner = String(group.creator_id) === String(user.id);
+
+    // Private hangouts block direct joins — EXCEPT PRIME co-founder hangouts (719/785)
+    // which gate by entitlement rather than invite. PRIME members self-join; non-PRIME
+    // get a 402 from the entitlement check below instead of a generic 403.
+    if (!group.is_public && !isOwner && !isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
+      return res.status(403).json({ error: 'This group is invite-only' });
+    }
 
     // Access gate — channel-linked hangouts use channel access rules; standalone use is_paid
     if (!isOwner) {
@@ -1217,9 +1223,41 @@ const getMessages = async (req, res) => {
     await ensureMainGroupMembership(user.id);
     await ensureLanguageGroupMembership(user.id, user.language);
 
-    // Check membership
-    if (!(await isMember(groupId, user.id))) {
-      return res.status(403).json({ error: 'Not a member of this group' });
+    // Check membership — PRIME co-founder hangouts auto-join qualifying members on first read
+    // Creator of the hangout (or its parent topic) always has access regardless of membership table.
+    const { rows: [ownerRowGet] } = await query(
+      `SELECT 1 FROM hangout_groups h
+       WHERE h.id = $1
+         AND (h.creator_id = $2
+              OR EXISTS (
+                SELECT 1 FROM hangout_groups p
+                WHERE p.id = h.parent_group_id AND p.creator_id = $2
+              ))
+       LIMIT 1`,
+      [groupId, String(user.id)]
+    );
+    const isHangoutCreator = !!ownerRowGet;
+
+    if (!isHangoutCreator && !(await isMember(groupId, user.id))) {
+      const { rows: [grpInfo] } = await query(
+        'SELECT parent_group_id FROM hangout_groups WHERE id = $1', [groupId]
+      );
+      if (isPrimeCoFounderHangout(groupId, grpInfo?.parent_group_id)) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
+        if (!qualifies) {
+          return res.status(403).json({ error: 'Not a member of this group' });
+        }
+        await query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           SELECT g.id, $2, 'member' FROM hangout_groups g
+           WHERE g.id = COALESCE($3::int, $1) OR g.parent_group_id = COALESCE($3::int, $1)
+           ON CONFLICT DO NOTHING`,
+          [groupId, user.id, grpInfo?.parent_group_id ?? null]
+        );
+      } else {
+        return res.status(403).json({ error: 'Not a member of this group' });
+      }
     }
 
     // In wellness mode, only permit messages from wellness-flagged hangouts
@@ -1321,8 +1359,38 @@ const sendMessage = async (req, res) => {
     await ensureMainGroupMembership(user.id);
     await ensureLanguageGroupMembership(user.id, user.language);
 
-    if (!(await isMember(groupId, user.id))) {
-      return res.status(403).json({ error: 'Not a member of this group' });
+    // Creator of the hangout (or its parent topic) always has send access.
+    const { rows: [ownerRowSend] } = await query(
+      `SELECT 1 FROM hangout_groups h
+       WHERE h.id = $1
+         AND (h.creator_id = $2
+              OR EXISTS (
+                SELECT 1 FROM hangout_groups p
+                WHERE p.id = h.parent_group_id AND p.creator_id = $2
+              ))
+       LIMIT 1`,
+      [groupId, String(user.id)]
+    );
+    const isHangoutCreatorSend = !!ownerRowSend;
+
+    if (!isHangoutCreatorSend && !(await isMember(groupId, user.id))) {
+      const { rows: [grpInfo] } = await query(
+        'SELECT parent_group_id FROM hangout_groups WHERE id = $1', [groupId]
+      );
+      if (isPrimeCoFounderHangout(groupId, grpInfo?.parent_group_id)) {
+        const EntitlementAccessService = require('../../../services/entitlementAccessService');
+        const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);
+        if (!qualifies) return res.status(403).json({ error: 'Not a member of this group' });
+        await query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           SELECT g.id, $2, 'member' FROM hangout_groups g
+           WHERE g.id = COALESCE($3::int, $1) OR g.parent_group_id = COALESCE($3::int, $1)
+           ON CONFLICT DO NOTHING`,
+          [groupId, user.id, grpInfo?.parent_group_id ?? null]
+        );
+      } else {
+        return res.status(403).json({ error: 'Not a member of this group' });
+      }
     }
 
     // Enforce read-only, mute, and slow mode.
@@ -1460,20 +1528,34 @@ const sendMessage = async (req, res) => {
       io.to(room).emit('chat:message', msg);
     }
 
+    // Slack hangout bridge — notify creator channel of member message (fire-and-forget)
+    (async () => {
+      try {
+        const slackHangoutBridgeService = require('../../../services/slackHangoutBridgeService');
+        await slackHangoutBridgeService.notifyHangoutMessage(groupId, msg, user);
+      } catch (_) {}
+    })();
+
     // ── Webapp → Telegram bridge: forward text to linked Telegram group ──
     (async () => {
       try {
         const { rows: tgRows } = await query(
-          'SELECT telegram_chat_id FROM hangout_groups WHERE id = $1 AND telegram_chat_id IS NOT NULL',
+          `SELECT COALESCE(p.telegram_chat_id, g.telegram_chat_id) AS tg_chat_id,
+                  g.telegram_topic_id
+           FROM hangout_groups g
+           LEFT JOIN hangout_groups p ON p.id = g.parent_group_id
+           WHERE g.id = $1
+             AND COALESCE(p.telegram_chat_id, g.telegram_chat_id) IS NOT NULL`,
           [groupId]
         );
         if (tgRows.length === 0) return;
-        const tgChatId = tgRows[0].telegram_chat_id;
+        const tgChatId = tgRows[0].tg_chat_id;
+        const tgThreadId = tgRows[0].telegram_topic_id || undefined;
         const { getBotInstance } = require('../../core/bot');
         const bot = getBotInstance();
         if (!bot) return;
         const senderName = user.firstName || user.first_name || user.username || 'User';
-        await bot.telegram.sendMessage(tgChatId, `${senderName}: ${text}`, { parse_mode: undefined });
+        await bot.telegram.sendMessage(tgChatId, `${senderName}: ${text}`, { parse_mode: undefined, message_thread_id: tgThreadId });
       } catch (bridgeErr) {
         logger.warn('[App→TG Bridge] REST text forward failed', { error: bridgeErr.message, groupId });
       }
@@ -1567,6 +1649,7 @@ const discoverGroups = async (req, res) => {
                AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
            ))
          )`;
+    const queryParams = isAdmin ? [user.id] : [user.id, primeHangoutIds];
     const { rows } = await query(
       `SELECT g.id, g.name, g.description, g.avatar_url, g.creator_id,
               g.is_public, g.is_paid, g.price_usd, g.created_at, g.channel_id,
@@ -1589,7 +1672,7 @@ const discoverGroups = async (req, res) => {
          )${accessFilter}
        ORDER BY g.created_at DESC
        LIMIT 50`,
-      [user.id, primeHangoutIds]
+      queryParams
     );
 
     const groups = rows.map(r => ({
@@ -1610,6 +1693,8 @@ const discoverGroups = async (req, res) => {
       channelAccessType: r.channel_access_type || null,
       channelPriceUsd: r.channel_price_usd ? Number(r.channel_price_usd) : null,
       channelVideoCount: r.channel_video_count ?? 0,
+      // Tells the frontend to use direct join (not request) even if is_public=false
+      isPrimeHangout: isPrimeCoFounderHangout(r.id, r.parent_group_id),
     }));
 
     return res.json({ success: true, groups });

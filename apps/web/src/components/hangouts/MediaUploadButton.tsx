@@ -9,6 +9,7 @@ interface MediaUploadButtonProps {
   onFilesSelect: (files: File[], previewUrls: string[]) => void;
   onError: (error: string) => void;
   onVoiceRecord?: (blob: Blob, duration: number) => void;
+  onVideoNoteRecord?: (blob: Blob, duration: number) => void;
   disabled: boolean;
 }
 
@@ -22,6 +23,7 @@ export function MediaUploadButton({
   onFilesSelect,
   onError,
   onVoiceRecord,
+  onVideoNoteRecord,
   disabled,
 }: MediaUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -42,6 +44,21 @@ export function MediaUploadButton({
   const isMobilePressRef = useRef(false);
   const cancelledRef = useRef(false);
 
+  // --- Video note recording state ---
+  const [isVideoNoteRecording, setIsVideoNoteRecording] = useState(false);
+  const [videoNoteSeconds, setVideoNoteSeconds] = useState(0);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const videoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoStartTimeRef = useRef<number>(0);
+  const videoAutoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoStreamRef = useRef<MediaStream | null>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement>(null);
+  const videoCancelledRef = useRef(false);
+  const vidButtonRef = useRef<HTMLButtonElement>(null);
+  const vidPressOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const isVidMobilePressRef = useRef(false);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -49,6 +66,14 @@ export function MediaUploadButton({
       if (autoStopRef.current) clearTimeout(autoStopRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
+      }
+      if (videoTimerRef.current) clearInterval(videoTimerRef.current);
+      if (videoAutoStopRef.current) clearTimeout(videoAutoStopRef.current);
+      if (videoRecorderRef.current && videoRecorderRef.current.state !== "inactive") {
+        videoRecorderRef.current.stop();
+      }
+      if (videoStreamRef.current) {
+        videoStreamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
   }, []);
@@ -240,6 +265,172 @@ export function MediaUploadButton({
     setTimeout(() => { isMobilePressRef.current = false; }, 0);
   }
 
+  // ─── Video note helpers ──────────────────────────────────────────────────
+
+  function startVideoTimer() {
+    setVideoNoteSeconds(0);
+    videoStartTimeRef.current = Date.now();
+    videoTimerRef.current = setInterval(() => {
+      setVideoNoteSeconds(Math.floor((Date.now() - videoStartTimeRef.current) / 1000));
+    }, 500);
+  }
+
+  function clearVideoTimer() {
+    if (videoTimerRef.current) {
+      clearInterval(videoTimerRef.current);
+      videoTimerRef.current = null;
+    }
+  }
+
+  function clearVideoAutoStop() {
+    if (videoAutoStopRef.current) {
+      clearTimeout(videoAutoStopRef.current);
+      videoAutoStopRef.current = null;
+    }
+  }
+
+  function stopVideoPreview() {
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = null;
+    }
+    if (videoStreamRef.current) {
+      videoStreamRef.current.getTracks().forEach((t) => t.stop());
+      videoStreamRef.current = null;
+    }
+  }
+
+  const stopVideoNoteRecording = useCallback((cancelled: boolean) => {
+    clearVideoTimer();
+    clearVideoAutoStop();
+    videoCancelledRef.current = cancelled;
+
+    const recorder = videoRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      stopVideoPreview();
+      setIsVideoNoteRecording(false);
+      return;
+    }
+    recorder.stop();
+    // onstop handler will finalize
+  }, []);
+
+  async function startVideoNoteRecording() {
+    if (disabled || isRecording || isVideoNoteRecording) return;
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 400 }, height: { ideal: 400 }, aspectRatio: 1 },
+        audio: true,
+      });
+    } catch {
+      onError("Camera access denied. Please allow camera and microphone permissions.");
+      return;
+    }
+
+    videoStreamRef.current = stream;
+
+    // Attach stream to live preview element
+    if (videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = stream;
+    }
+
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+      ? "video/webm;codecs=vp9,opus"
+      : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
+      ? "video/webm;codecs=vp8,opus"
+      : MediaRecorder.isTypeSupported("video/webm")
+      ? "video/webm"
+      : "video/mp4";
+
+    videoChunksRef.current = [];
+    videoCancelledRef.current = false;
+
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream, { mimeType });
+    } catch {
+      stopVideoPreview();
+      onError("Video recording is not supported in this browser.");
+      return;
+    }
+    videoRecorderRef.current = recorder;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) videoChunksRef.current.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      stopVideoPreview();
+
+      if (videoCancelledRef.current || !onVideoNoteRecord) {
+        videoChunksRef.current = [];
+        setIsVideoNoteRecording(false);
+        setVideoNoteSeconds(0);
+        return;
+      }
+
+      const durationSeconds = Math.round((Date.now() - videoStartTimeRef.current) / 1000);
+      const blob = new Blob(videoChunksRef.current, { type: mimeType });
+      videoChunksRef.current = [];
+      setIsVideoNoteRecording(false);
+      setVideoNoteSeconds(0);
+
+      if (blob.size > 0 && durationSeconds > 0) {
+        onVideoNoteRecord(blob, durationSeconds);
+      }
+    };
+
+    recorder.start(100);
+    setIsVideoNoteRecording(true);
+    startVideoTimer();
+
+    videoAutoStopRef.current = setTimeout(() => {
+      stopVideoNoteRecording(false);
+    }, MAX_RECORDING_SECONDS * 1000);
+  }
+
+  // ─── Video note button interactions ─────────────────────────────────────────
+
+  function handleVideoCamClick() {
+    if (isVidMobilePressRef.current) return;
+    if (isVideoNoteRecording) {
+      stopVideoNoteRecording(false);
+    } else {
+      startVideoNoteRecording();
+    }
+  }
+
+  function handleVideoCamTouchStart(e: React.TouchEvent) {
+    isVidMobilePressRef.current = true;
+    const touch = e.touches[0];
+    vidPressOriginRef.current = { x: touch.clientX, y: touch.clientY };
+    startVideoNoteRecording();
+  }
+
+  function handleVideoCamTouchMove(e: React.TouchEvent) {
+    if (!isVideoNoteRecording || !vidPressOriginRef.current) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - vidPressOriginRef.current.x;
+    const dy = touch.clientY - vidPressOriginRef.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 50) {
+      stopVideoNoteRecording(true);
+    }
+  }
+
+  function handleVideoCamTouchEnd() {
+    if (isVideoNoteRecording) {
+      stopVideoNoteRecording(false);
+    }
+    setTimeout(() => { isVidMobilePressRef.current = false; }, 0);
+  }
+
+  function handleVideoCamTouchCancel() {
+    stopVideoNoteRecording(true);
+    setTimeout(() => { isVidMobilePressRef.current = false; }, 0);
+  }
+
   return (
     <>
       <input
@@ -350,6 +541,79 @@ export function MediaUploadButton({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Video note recording button + indicator */}
+      {onVideoNoteRecord && (
+        <div className="flex-shrink-0 flex items-center gap-1.5 select-none">
+          {isVideoNoteRecording && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-pnp-accent/15 border border-pnp-accent/30">
+              {/* Live circular preview */}
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  overflow: "hidden",
+                  border: "2px solid rgba(212,0,122,0.7)",
+                  flexShrink: 0,
+                }}
+              >
+                <video
+                  ref={videoPreviewRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                  style={{ display: "block" }}
+                />
+              </div>
+              <span className="text-[11px] font-mono text-pnp-accent tabular-nums min-w-[2.4rem]">
+                {formatElapsed(videoNoteSeconds)}
+              </span>
+              <span className="text-[10px] text-pnp-accent/70 hidden sm:inline">
+                {videoNoteSeconds < 55 ? "Release to send" : `${MAX_RECORDING_SECONDS - videoNoteSeconds}s left`}
+              </span>
+            </div>
+          )}
+
+          <button
+            ref={vidButtonRef}
+            type="button"
+            onClick={handleVideoCamClick}
+            onTouchStart={handleVideoCamTouchStart}
+            onTouchMove={handleVideoCamTouchMove}
+            onTouchEnd={handleVideoCamTouchEnd}
+            onTouchCancel={handleVideoCamTouchCancel}
+            disabled={disabled || isRecording}
+            className={[
+              "w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full transition-all",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent",
+              "disabled:opacity-40 disabled:pointer-events-none",
+              isVideoNoteRecording
+                ? "bg-pnp-accent text-white scale-110 shadow-lg shadow-pnp-accent/40 hover:bg-pnp-accentHover"
+                : "hover:bg-white/10 active:scale-90 text-pnp-textSecondary hover:text-pnp-textPrimary",
+            ].join(" ")}
+            aria-label={isVideoNoteRecording ? "Stop video note recording" : "Record video note (hold on mobile)"}
+            title={isVideoNoteRecording ? "Stop recording" : "Record video note"}
+          >
+            {isVideoNoteRecording ? (
+              // Stop icon when recording
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              // Video camera icon
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25V7.5A2.25 2.25 0 0013.5 5.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"
                 />
               </svg>
             )}

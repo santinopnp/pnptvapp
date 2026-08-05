@@ -893,6 +893,29 @@ class EntitlementAccessService {
         return res.status(400).json({ success: false, error: `Missing ${paramName} param` });
       }
 
+      // Hangout creator shortcut: owner of a hangout (or parent topic) always bypasses.
+      // Belt-and-suspenders alongside the selfOwned check inside hasResourceAccess.
+      if (kind === 'hangout') {
+        try {
+          const { rows: ownerRows } = await query(
+            `SELECT 1 FROM hangout_groups h
+             WHERE h.id = $1::int
+               AND (h.creator_id = $2
+                    OR EXISTS (
+                      SELECT 1 FROM hangout_groups p
+                      WHERE p.id = h.parent_group_id AND p.creator_id = $2
+                    ))
+             LIMIT 1`,
+            [resourceId, String(user.id)]
+          );
+          if (ownerRows.length > 0) return next();
+        } catch (ownerErr) {
+          logger.warn('requireResourceAccess: hangout creator check failed, falling through', {
+            userId: user.id, hangoutId: resourceId, error: ownerErr.message,
+          });
+        }
+      }
+
       const decision = await EntitlementAccessService.hasResourceAccess(user.id, kind, resourceId);
       if (decision.allowed) return next();
 

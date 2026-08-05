@@ -21,6 +21,7 @@ interface MediaMessageProps {
   isMe: boolean;
   mediaGroup?: MediaGroupItem[];
   hasCaption?: boolean;
+  messageType?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -220,6 +221,138 @@ function AudioPlayer({ src, knownDuration, isMe }: AudioPlayerProps) {
   );
 }
 
+// ─── Video note player ────────────────────────────────────────────────────────
+
+function VideoNotePlayer({ src, isMe }: { src: string; isMe: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    function onMetadata() {
+      if (video && isFinite(video.duration)) setDuration(video.duration);
+    }
+    function onTimeUpdate() {
+      if (video) setCurrentTime(video.currentTime);
+    }
+    function onEnded() {
+      setIsPlaying(false);
+      if (video) setCurrentTime(video.duration || 0);
+    }
+
+    video.addEventListener("loadedmetadata", onMetadata);
+    video.addEventListener("durationchange", onMetadata);
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("ended", onEnded);
+    return () => {
+      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("durationchange", onMetadata);
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.removeEventListener("ended", onEnded);
+    };
+  }, []);
+
+  function toggle() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      v.pause();
+      setIsPlaying(false);
+    }
+  }
+
+  const size = "min(240px, 72vw)";
+  const progress = duration > 0 ? currentTime / duration : 0;
+  // SVG circle circumference for r=48: 2π×48 ≈ 301.6
+  const CIRCUMFERENCE = 301.6;
+
+  return (
+    <div
+      className="relative flex-shrink-0 cursor-pointer select-none"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        overflow: "hidden",
+        border: isMe ? "3px solid rgba(255,255,255,0.2)" : "3px solid rgba(255,255,255,0.12)",
+        flexShrink: 0,
+      }}
+      onClick={toggle}
+      role="button"
+      aria-label={isPlaying ? "Pause video note" : "Play video note"}
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+    >
+      <video
+        ref={videoRef}
+        src={src}
+        className="w-full h-full"
+        style={{ objectFit: "cover", borderRadius: "50%", display: "block" }}
+        playsInline
+        preload="metadata"
+      />
+
+      {/* Play/pause overlay — only when paused */}
+      {!isPlaying && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.35)", borderRadius: "50%", pointerEvents: "none" }}
+        >
+          <svg className="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </div>
+      )}
+
+      {/* Duration / current-time badge */}
+      {duration > 0 && (
+        <div
+          className="absolute font-mono text-white"
+          style={{
+            bottom: "14px",
+            right: "14px",
+            fontSize: 11,
+            lineHeight: 1,
+            padding: "2px 6px",
+            borderRadius: 9999,
+            background: "rgba(0,0,0,0.55)",
+            pointerEvents: "none",
+          }}
+        >
+          {formatTime(isPlaying ? currentTime : duration)}
+        </div>
+      )}
+
+      {/* Progress ring — only while playing */}
+      {isPlaying && (
+        <svg
+          className="absolute inset-0 w-full h-full"
+          viewBox="0 0 100 100"
+          style={{ transform: "rotate(-90deg)", pointerEvents: "none" }}
+          aria-hidden="true"
+        >
+          <circle
+            cx="50"
+            cy="50"
+            r="48"
+            fill="none"
+            stroke="rgba(212,0,122,0.85)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={`${progress * CIRCUMFERENCE} ${CIRCUMFERENCE}`}
+          />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 // ─── Album grid ───────────────────────────────────────────────────────────────
 
 function GridCell({
@@ -355,6 +488,7 @@ export function MediaMessage({
   isMe,
   mediaGroup,
   hasCaption,
+  messageType,
 }: MediaMessageProps) {
   const { user } = useAuth();
   const [imgError, setImgError] = useState(false);
@@ -385,6 +519,12 @@ export function MediaMessage({
         {hasCaption && <div className="h-2" />}
       </>
     );
+  }
+
+  // ─── Video note (circular) ─────────────────────────────────────────────────
+
+  if (messageType === "video_note" && mediaType === "video" && mediaUrl) {
+    return <VideoNotePlayer src={mediaUrl} isMe={isMe} />;
   }
 
   // ─── Audio ─────────────────────────────────────────────────────────────────
