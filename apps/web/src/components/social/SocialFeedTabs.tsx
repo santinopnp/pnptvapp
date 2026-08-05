@@ -7,6 +7,7 @@ import {
   getSocialFeedPosts,
   getPostsByHashtag,
   getHangoutFeed,
+  getNewMembers,
   togglePostLike,
   deleteSocialPost,
   updateProfile,
@@ -16,6 +17,7 @@ import {
   type LiveStream,
   type FeaturedPerformer,
   type FeedFilter,
+  type NewMember,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNearbyDistances } from "@/components/NearbyBadge";
@@ -159,6 +161,9 @@ export default function SocialFeedTabs({
   const [freeUserLimited, setFreeUserLimited] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [needsLocation, setNeedsLocation] = useState(false);
+  // New-members tab state (separate from posts)
+  const [newMembers, setNewMembers] = useState<NewMember[]>([]);
+  const [newMembersCursor, setNewMembersCursor] = useState<string | null>(null);
   // Feed tabs. Default = 'latest' (pure chronological). User can pick another
   // tab (persisted in localStorage) and can reorder the tab strip.
   const FEED_STORAGE_KEY = "pnptv:feed:tab";
@@ -286,6 +291,20 @@ export default function SocialFeedTabs({
   const loadFeed = useCallback(async (cursor?: string) => {
     try {
       setNeedsLocation(false);
+
+      if (!hangoutGroupId && !hashtagFilter && feedMode === "new") {
+        const res = await getNewMembers(cursor, 20);
+        if (res.success) {
+          if (cursor) {
+            setNewMembers((prev) => [...prev, ...res.members]);
+          } else {
+            setNewMembers(res.members);
+          }
+          setNewMembersCursor(res.nextCursor);
+        }
+        return;
+      }
+
       const res = hangoutGroupId
         ? await getHangoutFeed(hangoutGroupId, cursor, 20)
         : hashtagFilter
@@ -309,10 +328,12 @@ export default function SocialFeedTabs({
     }
   }, [hashtagFilter, hangoutGroupId, feedMode]);
 
-  // Reset and reload whenever the hashtag filter changes
+  // Reset and reload whenever the filter/hashtag changes
   useEffect(() => {
     setPosts([]);
     setNextCursor(null);
+    setNewMembers([]);
+    setNewMembersCursor(null);
     setError(null);
     setIsLoading(true);
     loadFeed();
@@ -340,10 +361,16 @@ export default function SocialFeedTabs({
   }, [hashtagFilter, hangoutGroupId]);
 
   const handleLoadMore = useCallback(() => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    loadFeed(nextCursor);
-  }, [nextCursor, loadingMore, loadFeed]);
+    if (feedMode === "new") {
+      if (!newMembersCursor || loadingMore) return;
+      setLoadingMore(true);
+      loadFeed(newMembersCursor);
+    } else {
+      if (!nextCursor || loadingMore) return;
+      setLoadingMore(true);
+      loadFeed(nextCursor);
+    }
+  }, [feedMode, nextCursor, newMembersCursor, loadingMore, loadFeed]);
 
   // ── Post actions ────────────────────────────────────────────────────────────
 
@@ -590,6 +617,8 @@ export default function SocialFeedTabs({
                     try { localStorage.setItem(FEED_STORAGE_KEY, key); } catch { /* ignore */ }
                     setPosts([]);
                     setNextCursor(null);
+                    setNewMembers([]);
+                    setNewMembersCursor(null);
                     setIsLoading(true);
                   }}
                   className={`flex-shrink-0 px-3.5 py-1.5 text-sm font-semibold whitespace-nowrap rounded-full transition-all ${
@@ -722,6 +751,80 @@ export default function SocialFeedTabs({
             {t.retry}
           </button>
         </div>
+      ) : feedMode === "new" && !hashtagFilter && !hangoutGroupId ? (
+        /* ── New members grid ── */
+        newMembers.length === 0 ? (
+          <div
+            className="rounded-2xl p-10 text-center"
+            style={{
+              background: "linear-gradient(135deg, rgba(212,0,122,0.06), rgba(230,145,56,0.04))",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            <p className="text-white font-semibold mb-1">{userLang === "es" ? "No hay nuevos miembros" : "No new members yet"}</p>
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              {newMembers.map((m) => {
+                const joinedMs = Date.now() - new Date(m.created_at).getTime();
+                const joinedDays = Math.floor(joinedMs / 86_400_000);
+                const joinedHours = Math.floor(joinedMs / 3_600_000);
+                const joinedLabel = joinedHours < 24
+                  ? (userLang === "es" ? `hace ${joinedHours}h` : `${joinedHours}h ago`)
+                  : (userLang === "es" ? `hace ${joinedDays}d` : `${joinedDays}d ago`);
+                const displayName = [m.first_name, m.last_name].filter(Boolean).join(" ") || m.username;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => onNavigate(`/profile/${m.username}`)}
+                    className="glass-card-sm p-3 flex flex-col items-center gap-2 text-center hover:bg-white/5 transition-colors active:scale-95"
+                  >
+                    <div className="relative">
+                      {m.photo_url ? (
+                        <img
+                          src={m.photo_url}
+                          alt={displayName}
+                          className="w-14 h-14 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          className="w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold text-white"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          {(displayName[0] || "?").toUpperCase()}
+                        </div>
+                      )}
+                      {m.is_online && (
+                        <span
+                          className="absolute bottom-0.5 right-0.5 w-3 h-3 rounded-full border-2 border-pnp-bg"
+                          style={{ background: "#34C759" }}
+                        />
+                      )}
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className="text-white text-xs font-semibold truncate">{displayName}</p>
+                      <p className="text-[11px] truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>@{m.username}</p>
+                      <p className="text-[10px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{joinedLabel}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {newMembersCursor && (
+              <div className="text-center pt-2 pb-4">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  className="text-sm font-medium px-6 py-2 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"
+                  style={{ color: "#D4007A" }}
+                >
+                  {loadingMore ? t.loading : t.loadMore}
+                </button>
+              </div>
+            )}
+          </div>
+        )
       ) : posts.length === 0 ? (
         <div
           className="rounded-2xl p-10 text-center"

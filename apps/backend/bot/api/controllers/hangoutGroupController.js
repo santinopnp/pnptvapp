@@ -1252,8 +1252,9 @@ const getMessages = async (req, res) => {
       [groupId, String(user.id)]
     );
     const isHangoutCreator = !!ownerRowGet;
+    const isSuperAdminGet = user.role === 'admin' || user.role === 'superadmin';
 
-    if (!isHangoutCreator && !(await isMember(groupId, user.id))) {
+    if (!isSuperAdminGet && !isHangoutCreator && !(await isMember(groupId, user.id))) {
       const { rows: [grpInfo] } = await query(
         'SELECT parent_group_id FROM hangout_groups WHERE id = $1', [groupId]
       );
@@ -1387,8 +1388,9 @@ const sendMessage = async (req, res) => {
       [groupId, String(user.id)]
     );
     const isHangoutCreatorSend = !!ownerRowSend;
+    const isSuperAdminSend = user.role === 'admin' || user.role === 'superadmin';
 
-    if (!isHangoutCreatorSend && !(await isMember(groupId, user.id))) {
+    if (!isSuperAdminSend && !isHangoutCreatorSend && !(await isMember(groupId, user.id))) {
       const { rows: [grpInfo] } = await query(
         'SELECT parent_group_id FROM hangout_groups WHERE id = $1', [groupId]
       );
