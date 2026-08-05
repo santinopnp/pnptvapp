@@ -696,7 +696,7 @@ export function BookCallModal({
       if (provider === "tokens") {
         const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
         if (tokenBalance !== null && tokenBalance < tokenCost) {
-          setCheckoutError(`Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} T — tienes ${tokenBalance.toLocaleString()} T.`);
+          setCheckoutError(`Ru$h insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.`);
           return;
         }
         const tokenRes = await payCallWithTokens(activePackage.id, {
@@ -706,7 +706,7 @@ export function BookCallModal({
         });
         if (!tokenRes.success) {
           if (tokenRes.code === "INSUFFICIENT_TOKENS") {
-            setCheckoutError(`Tokens insuficientes. Necesitas ${tokenRes.required?.toLocaleString()} T — tienes ${tokenRes.current?.toLocaleString()} T.`);
+            setCheckoutError(`Ru$h insuficiente. Necesitas ${tokenRes.required?.toLocaleString()} Ru$h — tienes ${tokenRes.current?.toLocaleString()} Ru$h.`);
           } else {
             setCheckoutError(tokenRes.error || "No se pudieron aplicar los créditos.");
           }
@@ -1385,13 +1385,13 @@ export function BookCallModal({
                 ? { background: "rgba(212,0,122,0.18)", border: "1.5px solid #D4007A", color: "#FF69B4" }
                 : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
             >
-              🎫 Tokens
+              🎫 Ru$h 💎
             </button>
           )}
         </div>
         {provider === "tokens" && activePackage && (
           <p className="text-[11px] text-[#FF69B4] mt-1.5">
-            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 6).toLocaleString()} Tokens · Saldo: {tokenBalance?.toLocaleString() ?? "—"} T
+            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 6).toLocaleString()} Ru$h · Saldo: {tokenBalance?.toLocaleString() ?? "—"} Ru$h
           </p>
         )}
 

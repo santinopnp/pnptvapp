@@ -8,9 +8,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   infra: "Tools & Services",
 };
 
+// btcpay removed 2026-07-31 (provider retired)
 const EXTERNAL_URLS: Record<string, string> = {
   restreamer: "https://live.pnptv.app",
-  btcpay:     "https://btcpay.pnptv.app",
   cms:        "https://cms.pnptv.app",
   kuma:       "https://status.pnptv.app",
   calcom:     "https://booking.pnptv.app",

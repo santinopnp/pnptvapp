@@ -76,8 +76,9 @@ function StuckMeruTable({ items }: { items: PaymentHealthStuckPayment[] }) {
   );
 }
 
+// StuckDashTable: historical view — BTCPay/Dash retired 2026-07-31, shows only old records
 function StuckDashTable({ items }: { items: PaymentHealthStuckPayment[] }) {
-  if (!items.length) return <p className="text-sm text-zinc-400 italic">No stuck Dash/BTCPay invoices.</p>;
+  if (!items.length) return <p className="text-sm text-zinc-400 italic">No stuck BTCPay invoices (provider retired 2026-07-31).</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -193,8 +194,8 @@ export default function PaymentHealth() {
             Stuck payments, suspicious access, and reconciler activity. Refreshes every 60s.
           </p>
           <p className="text-xs text-zinc-500 mt-1">
-            Active providers: <span className="text-zinc-300">NowPayments</span> + <span className="text-zinc-300">BTCPay</span>.
-            ePayco closed 2026-06-27. Daimo retired 2026-04-21.
+            Active provider: <span className="text-zinc-300">NowPayments</span>.
+            BTCPay/Dash retired 2026-07-31. ePayco closed 2026-06-27. Daimo retired 2026-04-21.
           </p>
         </div>
         <button
@@ -210,7 +211,7 @@ export default function PaymentHealth() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <StatusPill count={total} label="Stuck Total" />
         <StatusPill count={data.stuck.meru.count} label="Meru Stuck" />
-        <StatusPill count={data.stuck.dash.count} label="BTCPay Stuck" />
+        <StatusPill count={data.stuck.dash.count} label="BTCPay (retired)" />
       </div>
 
       {/* Ru$h 💎 Currency Health */}
@@ -221,7 +222,7 @@ export default function PaymentHealth() {
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
         <h2 className="text-sm uppercase tracking-wide text-zinc-400 mb-3">7-day Activity</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div><div className="text-zinc-400 text-xs">BTCPay completed</div><div className="text-lg font-mono">{data.activity.dash_completed_7d ?? 0}</div></div>
+          <div><div className="text-zinc-400 text-xs">BTCPay (retired)</div><div className="text-lg font-mono">{data.activity.dash_completed_7d ?? 0}</div></div>
           <div><div className="text-zinc-400 text-xs">Meru completed</div><div className="text-lg font-mono">{data.activity.meru_completed_7d ?? 0}</div></div>
           <div><div className="text-zinc-400 text-xs">Video fetches</div><div className="text-lg font-mono">{data.activity.video_views_7d ?? 0}</div></div>
           <div><div className="text-zinc-400 text-xs">Distinct videos</div><div className="text-lg font-mono">{data.activity.distinct_videos_7d ?? 0}</div></div>
@@ -245,7 +246,7 @@ export default function PaymentHealth() {
 
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
         <h2 className="text-sm uppercase tracking-wide text-zinc-400 mb-3">
-          Stuck BTCPay — {data.stuck.dash.count}
+          Stuck BTCPay (retired 2026-07-31, historical) — {data.stuck.dash.count}
         </h2>
         <StuckDashTable items={data.stuck.dash.items} />
       </div>

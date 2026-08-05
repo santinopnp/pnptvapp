@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   NP_COINS_SUBSCRIBE,
+  getCreatorSubscriptionPreview,
   getCreatorSubscriptionStatus,
   getWalletBalance,
   payCreatorSubWithTokens,
@@ -91,9 +92,23 @@ export default function CreatorSubscribeWizard({
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
   const [showAllCoins, setShowAllCoins] = useState(false);
   // Compliance hold: creator hasn't uploaded 4-min exclusive minimum yet.
-  // Wizard shows a distinct "held" copy instead of the false "active" tick.
   const [complianceHeld, setComplianceHeld] = useState(false);
   const inFlight = useRef(false);
+
+  // Step 0: confirmation before showing payment options.
+  const [confirmed, setConfirmed] = useState(false);
+  const [preview, setPreview] = useState<{ exclusivePhotoCount: number; exclusiveVideoCount: number; exclusiveTotalCount: number } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
+
+  // Fetch exclusive content counts for the confirmation step.
+  useEffect(() => {
+    let cancelled = false;
+    getCreatorSubscriptionPreview(creatorId)
+      .then((r) => { if (!cancelled && r.success) setPreview(r); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [creatorId]);
 
   // Fetch token balance once for the tokens button.
   useEffect(() => {
@@ -113,8 +128,8 @@ export default function CreatorSubscribeWizard({
     if (inFlight.current) return;
     if (tokenBalance !== null && tokenBalance < tokenCost) {
       setError(lang === "es"
-        ? `Tokens insuficientes. Necesitas ${tokenCost.toLocaleString()} F — tienes ${tokenBalance.toLocaleString()} F.`
-        : `Not enough tokens. Need ${tokenCost.toLocaleString()} F — you have ${tokenBalance.toLocaleString()} F.`);
+        ? `Ru$h insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.`
+        : `Not enough Ru$h. Need ${tokenCost.toLocaleString()} Ru$h — you have ${tokenBalance.toLocaleString()} Ru$h.`);
       return;
     }
     inFlight.current = true;
@@ -140,7 +155,7 @@ export default function CreatorSubscribeWizard({
       if (result.newBalance !== undefined) setTokenBalance(result.newBalance);
       onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : (lang === "es" ? "Error al pagar con Tokens." : "Token payment failed."));
+      setError(err instanceof Error ? err.message : (lang === "es" ? "Error al pagar con Ru$h." : "Ru$h payment failed."));
     } finally {
       setLoading(null);
       inFlight.current = false;
@@ -220,6 +235,93 @@ export default function CreatorSubscribeWizard({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [paymentSuccess, creatorId]);
+
+  // ── Step 0: confirmation with price + exclusive content preview ─────────
+  if (!confirmed) {
+    const hasContent = preview && preview.exclusiveTotalCount > 0;
+    return (
+      <div
+        className={`rounded-2xl ${compact ? "p-3" : "p-4"} space-y-3`}
+        style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid var(--pnp-border, #2a2a2a)" }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {lang === "es" ? "Suscripción a" : "Subscribing to"}
+            </p>
+            <p className="text-sm font-bold text-white truncate">{displayName}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-xl font-bold text-white leading-none">${priceUsd.toFixed(0)}</p>
+            <p className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>/mes · 30 días</p>
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="text-white/50 hover:text-white text-xs shrink-0"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* Exclusive content counts */}
+        {!previewLoading && preview && (
+          <div className="flex gap-2">
+            <div
+              className="flex-1 rounded-xl py-2.5 text-center"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}
+            >
+              <p className="text-base font-bold text-white leading-none">{preview.exclusivePhotoCount}</p>
+              <p className="text-[9px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                {lang === "es" ? "fotos exclusivas" : "exclusive photos"}
+              </p>
+            </div>
+            <div
+              className="flex-1 rounded-xl py-2.5 text-center"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}
+            >
+              <p className="text-base font-bold text-white leading-none">{preview.exclusiveVideoCount}</p>
+              <p className="text-[9px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                {lang === "es" ? "videos exclusivos" : "exclusive videos"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!previewLoading && !hasContent && (
+          <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {lang === "es"
+              ? "Este creador está construyendo su contenido exclusivo. ¡Sé el primero en suscribirte!"
+              : "This creator is building their exclusive content. Be the first to subscribe!"}
+          </p>
+        )}
+
+        {/* Benefits */}
+        <ul className="space-y-0.5">
+          {(lang === "es" ? BENEFITS_ES : BENEFITS_EN).map((b) => (
+            <li key={b} className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              <span style={{ color: "#34C759" }}>✓</span>
+              {b}
+            </li>
+          ))}
+        </ul>
+
+        <button
+          onClick={() => setConfirmed(true)}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+          style={{ background: "linear-gradient(135deg, #D4007A, #a0005e)" }}
+        >
+          {lang === "es" ? "Confirmar y elegir pago" : "Confirm & choose payment"}
+        </button>
+
+        <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          {lang === "es" ? "Sin renovación automática." : "No auto-renewal."}
+        </p>
+      </div>
+    );
+  }
 
   // ── Success view (tokens or crypto confirmed) ────────────────────────────
   if (paymentSuccess) {
@@ -335,8 +437,8 @@ export default function CreatorSubscribeWizard({
             : (
               <>
                 <span>🎫</span>
-                <span>{lang === "es" ? "Pagar con Tokens" : "Pay with Tokens"} · {tokenCost.toLocaleString()} F</span>
-                <span className="text-[10px] opacity-70">({tokenBalance.toLocaleString()} F)</span>
+                <span>{lang === "es" ? "Pagar con Ru$h 💎" : "Pay with Ru$h 💎"} · {tokenCost.toLocaleString()} Ru$h</span>
+                <span className="text-[10px] opacity-70">({tokenBalance.toLocaleString()} Ru$h)</span>
               </>
             )}
         </button>

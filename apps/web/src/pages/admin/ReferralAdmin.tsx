@@ -216,7 +216,7 @@ export default function ReferralAdmin() {
           <span>Referee</span>
           <span>Code</span>
           <span>Status</span>
-          <span>Tokens</span>
+          <span>Ru$h 💎</span>
           <span>IP</span>
           <span>Date</span>
           <span>Completed</span>
@@ -294,7 +294,7 @@ export default function ReferralAdmin() {
               </span>
               {row.reward_tokens > 0 && (
                 <span className="text-xs font-bold" style={{ color: "#D4007A" }}>
-                  +{row.reward_tokens} tokens
+                  +{row.reward_tokens} Ru$h
                 </span>
               )}
             </div>

@@ -911,3 +911,13 @@
     transform: none !important;
   }
 }
+
+/* ── Main Stage tip animation ───────────────────────────────────────────────
+   Used by the mainstage:tip-animation socket event overlay in MainStage.tsx */
+@keyframes tipPop {
+  0%   { opacity: 0; transform: scale(0.85) translateX(16px); }
+  15%  { opacity: 1; transform: scale(1.04) translateX(-2px); }
+  25%  { transform: scale(1) translateX(0); }
+  75%  { opacity: 1; transform: scale(1) translateY(-4px); }
+  100% { opacity: 0; transform: scale(0.95) translateY(-12px); }
+}

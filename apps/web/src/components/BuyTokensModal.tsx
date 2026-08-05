@@ -1073,7 +1073,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                           +{bonusTokens.toLocaleString()} {es ? "para Santino & Lex" : "Santino & Lex only"}
                         </p>
                       )}
-                      <p className="text-[11px] text-pnp-textSecondary mb-1">tokens</p>
+                      <p className="text-[11px] text-pnp-textSecondary mb-1">Ru$h 💎</p>
                       <div className="flex items-center gap-1.5 mb-2">
                         <p className="text-sm font-bold text-pnp-textPrimary leading-none">
                           ${displayUsd.toFixed(2)}

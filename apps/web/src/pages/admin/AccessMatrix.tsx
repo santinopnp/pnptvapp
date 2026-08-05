@@ -77,7 +77,7 @@ export default function AccessMatrix() {
     {
       id: "pnp-member",
       label: "pnp-member",
-      description: "Base membership — hangouts, live streams, DMs, tokens & calls",
+      description: "Base membership — hangouts, live streams, DMs, Ru$h & calls",
       color: "text-blue-400 bg-blue-500/10 border-blue-500/20",
     },
     {

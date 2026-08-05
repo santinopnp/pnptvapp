@@ -655,7 +655,7 @@ const strings = {
     dpnsSaving: "Guardando...",
     dpnsSaved: "Identidad DPNS vinculada!",
     dpnsInvalidFormat: "Formato DPNS inválido (3-63 caracteres, letras, números, guiones)",
-    dpnsTokenBalance: "Mis Tokens",
+    dpnsTokenBalance: "Mis Ru$h ⚡💲",
     txHistoryToggle: "Ver Historial de Transacciones",
     txHistoryHide: "Ocultar Historial",
     txHistoryEmpty: "Sin transacciones aún",
@@ -687,7 +687,7 @@ const strings = {
     payHistoryPlan: "Plan",
     payHistoryCall: "Llamada Privada",
     payHistoryDonation: "Donación",
-    payHistoryTokens: "Compra de Tokens",
+    payHistoryTokens: "Compra de Ru$h 💎",
 
     // ── Privacy toggles ───────────────────────────────────────────────────────
     public: "Público",

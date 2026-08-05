@@ -457,6 +457,32 @@ export default function MainStage() {
     getSocket().emit('mainstage:reaction-send', { emoji });
   }, []);
 
+  // ── Tip animation toasts — one per tip, stacked bottom-right ────────────────
+  // Each toast lives independently for 4 s then removes itself.
+  // Multiple performers' tips stack simultaneously (max 4 visible).
+  interface TipItem { amount: number; username: string; performerName: string; message?: string; key: number; }
+  const [tipQueue, setTipQueue] = useState<TipItem[]>([]);
+  const tipTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onTipAnimation = (data: { amount: number; username: string; performerName: string; message?: string }) => {
+      const key = Date.now() + Math.random();
+      setTipQueue(prev => [...prev.slice(-3), { ...data, key }]);
+      const timer = setTimeout(() => {
+        setTipQueue(prev => prev.filter(t => t.key !== key));
+        tipTimersRef.current.delete(key);
+      }, 4000);
+      tipTimersRef.current.set(key, timer);
+    };
+    socket.on('mainstage:tip-animation', onTipAnimation);
+    return () => {
+      socket.off('mainstage:tip-animation', onTipAnimation);
+      tipTimersRef.current.forEach(t => clearTimeout(t));
+      tipTimersRef.current.clear();
+    };
+  }, []);
+
   // ── Skip-vote & Play-next ─────────────────────────────────────────────────────
   const [skipVoteCount, setSkipVoteCount] = useState(0);
   const [skipVoteThreshold, setSkipVoteThreshold] = useState(3);
@@ -1975,7 +2001,62 @@ export default function MainStage() {
           from { opacity: 0; transform: translateY(6px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes tipPop {
+          0%   { opacity: 0; transform: translateY(12px) scale(0.9); }
+          8%   { opacity: 1; transform: translateY(0) scale(1); }
+          80%  { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-8px) scale(0.95); }
+        }
       `}</style>
+
+      {/* ── Tip toasts — bottom-right stack, one per performer, max 4 simultaneous ── */}
+      {tipQueue.length > 0 && (
+        <div
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "80px",
+            right: "16px",
+            zIndex: 9999,
+            pointerEvents: "none",
+            display: "flex",
+            flexDirection: "column-reverse",
+            gap: "8px",
+          }}
+        >
+          {tipQueue.slice(-4).map((tip) => (
+            <div
+              key={tip.key}
+              aria-label="Tip received"
+              style={{
+                background: "linear-gradient(135deg, #D4007A, #7B61FF)",
+                color: "#fff",
+                borderRadius: "12px",
+                padding: "10px 16px",
+                boxShadow: "0 4px 20px rgba(212,0,122,0.4)",
+                minWidth: "180px",
+                maxWidth: "240px",
+                animation: "tipPop 4s ease-out forwards",
+              }}
+            >
+              <div style={{ fontSize: "10px", opacity: 0.75, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>
+                {tip.performerName}
+              </div>
+              <div style={{ fontSize: "22px", fontWeight: 900, letterSpacing: "-0.5px" }}>
+                💎 {tip.amount} Ru$h
+              </div>
+              <div style={{ fontSize: "12px", opacity: 0.9, marginTop: "2px" }}>
+                from <strong>{tip.username}</strong>
+              </div>
+              {tip.message && (
+                <div style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8, fontStyle: "italic" }}>
+                  "{tip.message}"
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {chatOverlayVisible && !isViewerMode && chatMessages.length > 0 && (
         <div
