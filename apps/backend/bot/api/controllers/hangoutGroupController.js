@@ -1276,8 +1276,9 @@ const getMessages = async (req, res) => {
       }
     }
 
-    // In wellness mode, only permit messages from wellness-flagged hangouts
-    if (await wellnessModeService.isActive(user.id)) {
+    // In wellness mode, only permit messages from wellness-flagged hangouts.
+    // Admins and hangout creators are exempt — they need access to manage their spaces.
+    if (!isSuperAdminGet && !isHangoutCreator && await wellnessModeService.isActive(user.id)) {
       const { rows: [grp] } = await query('SELECT is_wellness FROM hangout_groups WHERE id = COALESCE((SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL), $1)', [groupId]);
       if (!grp?.is_wellness) {
         return res.status(403).json({ error: 'Wellness Mode active — only wellness hangouts accessible', code: 'WELLNESS_MODE' });
