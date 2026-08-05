@@ -173,6 +173,15 @@ class MembershipCleanupService {
         results.primeHangoutReconcile = { kicked: 0, failed: 1, error: phErr.message };
       }
 
+      // Step 3: Kick members from channel-linked subscription/paid hangouts whose sub expired.
+      try {
+        const channelHangouts = await this.reconcileChannelHangouts({ dryRun: false, notify: true });
+        results.channelHangoutReconcile = channelHangouts;
+      } catch (chErr) {
+        logger.error('Channel hangouts reconcile failed (non-fatal)', { error: chErr.message });
+        results.channelHangoutReconcile = { kicked: 0, failed: 1, error: chErr.message };
+      }
+
       results.endTime = new Date();
       const duration = (results.endTime - results.startTime) / 1000;
 
@@ -1128,6 +1137,103 @@ Type /subscribe to view membership plans and reactivate your access!`;
       { dryRun, notify },
     );
     return { santino, lex };
+  }
+
+  /**
+   * Kick members from channel-linked subscription/paid hangouts whose
+   * creator_subscriptions row has expired or been cancelled.
+   * Mirrors reconcileOnePrimeHangout but for ALL creator channel hangouts.
+   */
+  static async reconcileChannelHangouts({ dryRun = false, notify = true } = {}) {
+    const results = { hangoutsScanned: 0, kicked: 0, failed: 0, dryRun, details: [] };
+    try {
+      const { rows: hangouts } = await query(`
+        SELECT hg.id AS group_id, hg.creator_id, cc.name AS channel_name
+        FROM hangout_groups hg
+        JOIN creator_channels cc ON cc.id = hg.channel_id
+        WHERE cc.access_type IN ('subscription', 'paid')
+          AND hg.parent_group_id IS NULL
+      `);
+
+      results.hangoutsScanned = hangouts.length;
+
+      for (const hangout of hangouts) {
+        const hangoutResult = { groupId: hangout.group_id, kicked: 0, failed: 0 };
+        try {
+          const { rows: toKick } = await query(`
+            SELECT DISTINCT hgm.user_id, u.telegram, u.username, u.language
+            FROM hangout_group_members hgm
+            LEFT JOIN users u ON u.id::text = hgm.user_id::text
+            WHERE hgm.group_id IN (
+              SELECT id FROM hangout_groups WHERE id = $1 OR parent_group_id = $1
+            )
+              AND hgm.user_id::text != $2
+              AND NOT EXISTS (
+                SELECT 1 FROM creator_subscriptions cs
+                WHERE cs.subscriber_id = hgm.user_id::text
+                  AND cs.creator_id = $2
+                  AND cs.status = 'active'
+                  AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+              )
+          `, [hangout.group_id, String(hangout.creator_id)]);
+
+          for (const m of toKick) {
+            if (dryRun) { hangoutResult.kicked++; continue; }
+            try {
+              await query(
+                `DELETE FROM hangout_group_members
+                 WHERE user_id = $1
+                   AND group_id IN (SELECT id FROM hangout_groups WHERE id = $2 OR parent_group_id = $2)`,
+                [m.user_id, hangout.group_id]
+              );
+              await query(
+                `INSERT INTO hangout_moderation_audit (group_id, actor_id, target_id, action, reason, metadata)
+                 VALUES ($1, $2, $3, 'kick', $4, $5)`,
+                [
+                  hangout.group_id,
+                  String(hangout.creator_id),
+                  m.user_id,
+                  'Creator subscription expired',
+                  JSON.stringify({ source: 'MembershipCleanupService.reconcileChannelHangouts', channelName: hangout.channel_name }),
+                ]
+              ).catch((auditErr) => logger.warn('reconcileChannelHangouts: audit failed', { error: auditErr.message }));
+
+              hangoutResult.kicked++;
+              results.kicked++;
+
+              if (notify && m.telegram && this.bot) {
+                const isEs = String(m.language || '').toLowerCase().startsWith('es');
+                const dmText = isEs
+                  ? `👋 Fuiste removido del hangout *${hangout.channel_name}* porque tu suscripción al creador venció.\n\n` +
+                    '🔄 Renueva tu suscripción para volver a entrar: https://pnptv.app/?view=hangouts'
+                  : `👋 You were removed from the *${hangout.channel_name}* hangout because your creator subscription expired.\n\n` +
+                    '🔄 Renew your subscription to rejoin: https://pnptv.app/?view=hangouts';
+                this.bot.telegram.sendMessage(m.telegram, dmText, { parse_mode: 'Markdown' })
+                  .catch((dmErr) => {
+                    if (!this.isBenignUserError(dmErr)) {
+                      logger.warn('reconcileChannelHangouts: DM failed', { userId: m.user_id, error: dmErr.message });
+                    }
+                  });
+              }
+            } catch (kickErr) {
+              hangoutResult.failed++;
+              results.failed++;
+              logger.error('reconcileChannelHangouts: kick failed', { groupId: hangout.group_id, userId: m.user_id, error: kickErr.message });
+            }
+          }
+        } catch (hangoutErr) {
+          results.failed++;
+          logger.error('reconcileChannelHangouts: hangout scan failed', { groupId: hangout.group_id, error: hangoutErr.message });
+        }
+        results.details.push(hangoutResult);
+      }
+
+      logger.info('reconcileChannelHangouts done', { dryRun, hangoutsScanned: results.hangoutsScanned, kicked: results.kicked, failed: results.failed });
+      return results;
+    } catch (err) {
+      logger.error('reconcileChannelHangouts fatal', { error: err.message });
+      return { ...results, error: err.message };
+    }
   }
 
   /**

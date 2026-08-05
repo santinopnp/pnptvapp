@@ -2563,8 +2563,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
   const handleDiscoverJoin = async (group: DiscoverGroup) => {
     try {
-      // PRIME co-founder hangouts use direct join even though is_public=false
-      if (group.isPublic || (group as any).isPrimeHangout) {
+      const isExclusiveChannelHangout = !!(group as any).channelId &&
+        ['subscription', 'paid'].includes((group as any).channelAccessType || '');
+      // Exclusive channel hangouts and PRIME co-founder hangouts: direct join
+      // (backend already verified the user has access — they appear in the list only if subscribed)
+      if (group.isPublic || (group as any).isPrimeHangout || isExclusiveChannelHangout) {
         await joinHangoutGroup(group.id);
         loadGroups();
         loadDiscover();
@@ -5572,6 +5575,74 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
         </div>
       )}
 
+      {/* Exclusive Member Spaces — subscription/paid channel hangouts, visible only to active subscribers */}
+      {(() => {
+        const exclusiveGroups = discoverList.filter(
+          (g) => !!(g as any).channelId && ['subscription', 'paid'].includes((g as any).channelAccessType || '')
+        );
+        if (discoverLoading || exclusiveGroups.length === 0) return null;
+        return (
+          <div className="mt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-sm font-semibold flex-1" style={{ color: "#E69138" }}>
+                Espacios Exclusivos
+              </h2>
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138" }}>
+                MIEMBRO
+              </span>
+            </div>
+            <div className="space-y-2">
+              {exclusiveGroups.map((group) => (
+                <div
+                  key={group.id}
+                  className="p-4 rounded-xl"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(230,145,56,0.08), rgba(212,0,122,0.08))",
+                    border: "1px solid rgba(230,145,56,0.35)",
+                  }}
+                >
+                  <div className="flex gap-3 items-center">
+                    <div className="w-10 h-10 flex-shrink-0 relative">
+                      {(group as any).avatarUrl ? (
+                        <img src={(group as any).avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-1" style={{ ringColor: "rgba(230,145,56,0.4)" }} />
+                      ) : (
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                          style={{ background: "linear-gradient(135deg, rgba(230,145,56,0.3), rgba(212,0,122,0.3))", color: "#E69138" }}
+                        >
+                          {(group.name?.[0] || "?").toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm truncate" style={{ color: "#F5D08A" }}>{group.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0" style={{ background: "rgba(230,145,56,0.2)", color: "#E69138" }}>
+                          {(group as any).channelName || "Exclusivo"}
+                        </span>
+                      </div>
+                      <p className="text-xs truncate mt-0.5" style={{ color: "rgba(230,145,56,0.7)" }}>
+                        {group.memberCount} {group.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}
+                      </p>
+                      {group.description && (
+                        <p className="text-[10px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>{group.description}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleDiscoverJoin(group)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"
+                      style={{ background: "linear-gradient(135deg, #E69138, #D4007A)", color: "#fff" }}
+                    >
+                      {t.chat.joinButton}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Discover Groups */}
       <div className="mt-6">
         <button
@@ -5617,12 +5688,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 <p className="text-sm text-pnp-textSecondary mb-2">{discoverError}</p>
                 <button onClick={() => { setDiscoverError(null); loadDiscover(); }} className="text-sm text-pnp-accent hover:underline">Retry</button>
               </div>
-            ) : discoverList.length === 0 ? (
+            ) : discoverList.filter((g) => !((g as any).channelId && ['subscription','paid'].includes((g as any).channelAccessType || ''))).length === 0 ? (
               <p className="text-sm text-pnp-textSecondary text-center py-4">No public groups to join yet.</p>
             ) : (
               <>
-                {/* Discover search */}
-                {/* Tag filter chips — shown above search for quick filtering */}
+                {/* Tag filter chips */}
                 <div className="flex flex-wrap gap-1.5 mb-2.5">
                   {[...new Set(["chill", "party", "dating", "music", "gaming", "art", "fitness", "travel", ...discoverList.flatMap((g: any) => g.tags || [])])].map((tag) => (
                     <button
@@ -5663,6 +5733,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 </div>
                 {discoverList
                   .filter((g) => {
+                    // Exclude exclusive subscription hangouts — shown in the section above
+                    if ((g as any).channelId && ['subscription', 'paid'].includes((g as any).channelAccessType || '')) return false;
                     const q = discoverQuery.toLowerCase();
                     const matchesQuery = !q || g.name.toLowerCase().includes(q) || (g.description || "").toLowerCase().includes(q);
                     const matchesTag = !discoverTagFilter || (g.tags || []).includes(discoverTagFilter);
@@ -5697,12 +5769,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                 style={
                                   (group as any).channelAccessType === "prime"
                                     ? { background: "rgba(167,139,250,0.15)", color: "#A78BFA" }
-                                    : (group as any).channelAccessType === "subscription"
-                                    ? { background: "rgba(212,0,122,0.15)", color: "#D4007A" }
                                     : { background: "rgba(230,145,56,0.15)", color: "#E69138" }
                                 }
                               >
-                                {(group as any).channelAccessType === "prime" ? "Prime" : (group as any).channelAccessType === "subscription" ? "Sub" : `$${Number((group as any).channelPriceUsd ?? 0).toFixed(0)}`}
+                                {(group as any).channelAccessType === "prime" ? "Prime" : `$${Number((group as any).channelPriceUsd ?? 0).toFixed(0)}`}
                               </span>
                             ) : group.isPaid && (group.priceUsd ?? 0) > 0 ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold flex-shrink-0" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138" }}>

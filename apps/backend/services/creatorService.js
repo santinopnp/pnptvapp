@@ -1014,6 +1014,31 @@ class CreatorService {
       }).catch(() => {});
     } catch (_) { /* non-critical */ }
 
+    // Auto-join subscriber to the creator's linked channel hangout (non-fatal)
+    try {
+      const { rows: [chRow] } = await query(
+        `SELECT hangout_group_id FROM creator_channels
+         WHERE creator_id = $1 AND hangout_group_id IS NOT NULL AND is_active = true
+         LIMIT 1`,
+        [String(creatorId)]
+      );
+      if (chRow?.hangout_group_id) {
+        await query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           VALUES ($1, $2, 'member')
+           ON CONFLICT (group_id, user_id) DO NOTHING`,
+          [chRow.hangout_group_id, String(subscriberId)]
+        );
+        logger.info('subscribeToCreator: auto-joined to channel hangout', {
+          subscriberId, creatorId, hangoutGroupId: chRow.hangout_group_id,
+        });
+      }
+    } catch (autoJoinErr) {
+      logger.warn('subscribeToCreator: auto-join to channel hangout failed (non-fatal)', {
+        subscriberId, creatorId, error: autoJoinErr.message,
+      });
+    }
+
     return { subscriptionId: rows[0].id, expiresAt, price: priceUsd, complianceHeld: !isContentCompliant };
   }
 
