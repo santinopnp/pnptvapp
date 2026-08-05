@@ -362,7 +362,6 @@ function StreamInner() {
   const [statsHistory, setStatsHistory] = useState<LivePlayerStats[]>([]);
   const [hudExpanded, setHudExpanded] = useState(false);
   const [healthOffline, setHealthOffline] = useState(false);
-  const healthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Host mode state ────────────────────────────────────────────────────────
   const [hostedChannelRef, setHostedChannelRef] = useState<string | null>(null);
@@ -418,13 +417,11 @@ function StreamInner() {
     socket.emit("live:mod_action", { targetUserId, channelRef, action: "ban" });
   }, []);
 
-  // Cleanup all timers/intervals on unmount: one-shot setTimeouts (tip-success
-  // toast, share-copied flash) plus health poll.
+  // Cleanup all timers/intervals on unmount
   useEffect(() => {
     return () => {
       if (tipSuccessTimerRef.current) clearTimeout(tipSuccessTimerRef.current);
       if (shareCopiedTimerRef.current) clearTimeout(shareCopiedTimerRef.current);
-      if (healthPollRef.current) clearInterval(healthPollRef.current);
       if (balancePollRef.current) clearInterval(balancePollRef.current);
       if (reactFlushTimerRef.current) clearTimeout(reactFlushTimerRef.current);
       if (reactTapWindowRef.current) clearTimeout(reactTapWindowRef.current);
@@ -501,13 +498,11 @@ function StreamInner() {
     return () => { socket.off("stream:react", onReact); };
   }, [streamId]);
 
-  // ── F3 — Poll balance every 30s while in stream ────────────────────────────
+  // ── F3 — Poll balance every 30s while in stream (fallback when socket isn't providing updates) ──
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || socketBalanceReceived) return;
     balancePollRef.current = setInterval(() => {
-      getWalletBalance().then((d) => {
-        if (!socketBalanceReceived) setTokenBalance(d.balance);
-      }).catch(() => {});
+      getWalletBalance().then((d) => { setTokenBalance(d.balance); }).catch(() => {});
     }, 30_000);
     return () => {
       if (balancePollRef.current) { clearInterval(balancePollRef.current); balancePollRef.current = null; }
@@ -699,24 +694,8 @@ function StreamInner() {
     };
   }, [loadStream]);
 
-  // Fallback poll: refresh viewer count from the streams endpoint every 30s
-  // when Socket.IO is disconnected so the displayed count does not freeze.
-  useEffect(() => {
-    if (chatConnected || !streamId) return;
-    const poll = () => {
-      getLiveStreams()
-        .then((data) => {
-          const found = (data.streams || []).find((s) => s.id === streamId);
-          if (found && typeof found.viewerCount === "number") {
-            setPolledViewerCount(found.viewerCount);
-          }
-        })
-        .catch(() => {});
-    };
-    poll();
-    const id = setInterval(poll, 30000);
-    return () => clearInterval(id);
-  }, [chatConnected, streamId]);
+  // Note: viewer count comes from socketViewerCount (Socket.IO room tracking).
+  // No separate polling — listStreams does not return viewerCount in its response.
 
   // Fetch overlay config for this channel and subscribe to real-time updates
   useEffect(() => {
@@ -937,28 +916,11 @@ function StreamInner() {
       .finally(() => setTicketLoading(false));
   }, [isAuthenticated, streamId, stream]);
 
-  // ── Health HUD: poll streams every 15s to detect offline ──────────────────
+  // ── Health HUD: derive offline state from stream data (updated by streamPollRef every 30s) ──
   useEffect(() => {
-    if (!isStreamOwner || !stream?.isLive) {
-      if (healthPollRef.current) { clearInterval(healthPollRef.current); healthPollRef.current = null; }
-      return;
-    }
-    const poll = () => {
-      getLiveStreams()
-        .then((data) => {
-          const channelRef = streamId ? extractChannelRef(streamId) : null;
-          const found = (data.streams || []).some(
-            (s) => s.id === streamId || (channelRef && s.id === channelRef)
-          );
-          setHealthOffline(!found);
-        })
-        .catch(() => {});
-    };
-    healthPollRef.current = setInterval(poll, 15_000);
-    return () => {
-      if (healthPollRef.current) { clearInterval(healthPollRef.current); healthPollRef.current = null; }
-    };
-  }, [isStreamOwner, stream?.isLive, streamId]);
+    if (!isStreamOwner) return;
+    setHealthOffline(stream ? !stream.isLive : false);
+  }, [isStreamOwner, stream?.isLive]);
 
   // Accumulate stats history (keep last 4 samples for HUD sparkline)
   const handlePlayerStats = useCallback((stats: LivePlayerStats) => {
@@ -1102,9 +1064,10 @@ function StreamInner() {
 
   useEffect(() => {
     loadTips();
+    if (chatConnected) return; // socket events handle real-time tip updates
     const interval = setInterval(loadTips, 15000);
     return () => clearInterval(interval);
-  }, [loadTips]);
+  }, [loadTips, chatConnected]);
 
   // Socket tip → recent tips
   useEffect(() => {
