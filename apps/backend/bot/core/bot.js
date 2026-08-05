@@ -117,6 +117,12 @@ const SupportTopicModel = safeRequire('../../models/supportTopicModel', _noopObj
 const BroadcastButtonModel = safeRequire('../../models/broadcastButtonModel', _noopObj);
 const { initializeAsyncBroadcastQueue } = safeRequire('../../services/initializeQueue', { initializeAsyncBroadcastQueue: _noop });
 const { startCronJobs } = safeRequire('../../scripts/cron', { startCronJobs: _noop });
+const { initializeQueues: initBullMQQueues } = safeRequire(
+  '../../services/queueService', { initializeQueues: _noop }
+);
+const { startAllWorkers: startQueueWorkers } = safeRequire(
+  '../../services/workers/index', { startAllWorkers: async () => {} }
+);
 
 // ─── Schedulers (non-critical) ──────────────────────────────────────────────
 const CommunityPostScheduler = safeRequire('./schedulers/communityPostScheduler', null);
@@ -380,6 +386,20 @@ const startBot = async () => {
     } catch (error) {
       logger.warn(`Redis initialization failed, continuing without cache: ${error.message}`);
       logger.warn('⚠️  Performance may be degraded without caching');
+    }
+
+    // ─── BullMQ queues + workers ─────────────────────────────────────────────
+    try {
+      await initBullMQQueues();
+      logger.info('✓ BullMQ queues initialized');
+    } catch (queueInitErr) {
+      logger.warn(`BullMQ queue init failed (non-fatal): ${queueInitErr.message}`);
+    }
+    try {
+      await startQueueWorkers();
+      logger.info('✓ BullMQ workers started (all 7 queues)');
+    } catch (queueErr) {
+      logger.warn(`BullMQ workers failed to start (non-fatal): ${queueErr.message}`);
     }
 
     // ─── CRITICAL: Start API server EARLY ───────────────────────────────
@@ -652,31 +672,60 @@ const startBot = async () => {
       const chatInfo = await telegram.getChat(chatId);
       if (!chatInfo.is_forum) return 0;
       const forumsResult = await telegram.callApi('getForumTopics', { chat_id: chatId, limit: 100 });
-      const tgTopics = (forumsResult?.topics || forumsResult || []).filter(t => t?.name);
+      const tgTopics = (forumsResult?.topics || forumsResult?.result?.topics || []).filter(t => t?.name && t?.message_thread_id);
       if (tgTopics.length === 0) return 0;
       const { rows: hgRows } = await dbQuery('SELECT creator_id FROM hangout_groups WHERE id=$1', [hangoutId]);
       const creatorId = hgRows[0]?.creator_id || null;
+      // Fetch existing child groups for this hangout
+      const { rows: existingTopics } = await dbQuery(
+        'SELECT id, name, telegram_topic_id FROM hangout_groups WHERE parent_group_id=$1',
+        [hangoutId]
+      );
       const client = await getClient();
+      let imported = 0;
       try {
         await client.query('BEGIN');
-        await client.query('DELETE FROM hangout_groups WHERE parent_group_id=$1', [hangoutId]);
         for (let i = 0; i < tgTopics.length; i++) {
           const t = tgTopics[i];
-          const { rows: tRows } = await client.query(
-            `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position, is_read_only, is_wall_of_fame)
-             VALUES ($1, '', $2, false, true, 200000, $3, $4, $5, false)
-             RETURNING id`,
-            [t.name.slice(0, 100), creatorId, hangoutId, i, !!t.is_closed]
-          );
-          if (creatorId) {
+          const tgTopicId = t.message_thread_id;
+          const topicName = t.name.slice(0, 100);
+          const isReadOnly = !!t.is_closed;
+          // Match by telegram_topic_id first, then by name (case-insensitive)
+          let existing = existingTopics.find(e => e.telegram_topic_id === tgTopicId);
+          if (!existing) existing = existingTopics.find(e => e.name.toLowerCase() === topicName.toLowerCase());
+          if (existing) {
             await client.query(
-              `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT (group_id, user_id) DO NOTHING`,
-              [tRows[0].id, creatorId]
+              `UPDATE hangout_groups SET name=$1, is_read_only=$2, telegram_topic_id=$3, position=$4 WHERE id=$5`,
+              [topicName, isReadOnly, tgTopicId, i, existing.id]
             );
+          } else {
+            const { rows: tRows } = await client.query(
+              `INSERT INTO hangout_groups (name, description, creator_id, is_main, is_public, max_members, parent_group_id, position, is_read_only, is_wall_of_fame, telegram_topic_id)
+               VALUES ($1, '', $2, false, true, 200000, $3, $4, $5, false, $6)
+               RETURNING id`,
+              [topicName, creatorId, hangoutId, i, isReadOnly, tgTopicId]
+            );
+            if (creatorId) {
+              await client.query(
+                `INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT (group_id, user_id) DO NOTHING`,
+                [tRows[0].id, creatorId]
+              );
+            }
           }
+          imported++;
         }
+        // Backfill all parent group members into all child topic groups
+        await client.query(
+          `INSERT INTO hangout_group_members (group_id, user_id, role)
+           SELECT child.id, parent_m.user_id, 'member'
+           FROM hangout_group_members parent_m
+           CROSS JOIN (SELECT id FROM hangout_groups WHERE parent_group_id = $1) AS child
+           WHERE parent_m.group_id = $1
+           ON CONFLICT (group_id, user_id) DO NOTHING`,
+          [hangoutId]
+        );
         await client.query('COMMIT');
-        return tgTopics.length;
+        return imported;
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -1100,20 +1149,38 @@ const startBot = async () => {
         const isValidPhoto = (p) => p && typeof p === 'string' && (p.startsWith('/') || p.startsWith('http'));
         const photoUrl = isValidPhoto(rawPhoto) ? rawPhoto : null;
 
+        // If this is a forum message in a specific topic, route to the child group room.
+        // Keep parentHangoutId for member-add and group metadata lookups.
+        const parentHangoutId = hangoutId;
+        const threadId = ctx.message?.message_thread_id;
+        if (threadId) {
+          try {
+            const { rows: topicRows } = await dbQuery(
+              `SELECT c.id FROM hangout_groups c
+               WHERE c.parent_group_id = $1 AND c.telegram_topic_id = $2 LIMIT 1`,
+              [hangoutId, threadId]
+            );
+            if (topicRows[0]) hangoutId = topicRows[0].id;
+          } catch (_) {}
+        }
         const room = `hangout:${hangoutId}`;
 
-        // Auto-add Telegram user as hangout member if they're a registered PNPtv user
+        // Auto-add Telegram user as hangout member if they're a registered PNPtv user.
+        // Always add to parent + all child topics so the user is fully joined.
         if (userId) {
           const addResult = await dbQuery(
             `INSERT INTO hangout_group_members (group_id, user_id, role)
-             VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`,
-            [hangoutId, userId]
+             SELECT g.id, $2, 'member'
+             FROM hangout_groups g
+             WHERE g.id = $1 OR g.parent_group_id = $1
+             ON CONFLICT DO NOTHING`,
+            [parentHangoutId, userId]
           );
-          // Send welcome message only if this is a first-time join
+          // Send welcome message only if this is a first-time join (rowCount > 0 = at least one new row)
           if (addResult.rowCount > 0) {
             (async () => {
               try {
-                const { rows: grpRows } = await dbQuery('SELECT name, rules, language_code FROM hangout_groups WHERE id = $1', [hangoutId]);
+                const { rows: grpRows } = await dbQuery('SELECT name, rules, language_code FROM hangout_groups WHERE id = $1', [parentHangoutId]);
                 if (!grpRows.length) return;
                 const { name: grpName, rules: grpRules, language_code: grpLang } = grpRows[0];
                 const displayFirst = (firstName || username || 'there').replace(/[_*`[]/g, '\\$&');
@@ -2566,7 +2633,18 @@ process.once('SIGINT', async () => {
       logger.error('Error closing database connections:', err);
     }
 
-    // 4. Close Redis connections
+    // 4. Stop BullMQ workers and close queues
+    try {
+      const { stopAllWorkers } = require('../../services/workers/index');
+      const { closeQueues } = require('../../services/queueService');
+      await stopAllWorkers();
+      await closeQueues();
+      logger.info('✓ BullMQ workers and queues closed');
+    } catch (err) {
+      logger.warn('BullMQ shutdown error (non-fatal):', err.message);
+    }
+
+    // 5. Close Redis connections
     const { getRedis } = require('../../config/redis');
     try {
       const redis = getRedis();
@@ -2578,7 +2656,7 @@ process.once('SIGINT', async () => {
       logger.error('Error closing Redis connections:', err);
     }
 
-    // 5. Release process lock and exit
+    // 6. Release process lock and exit
     releaseProcessLock();
     logger.info('✓ Graceful shutdown completed successfully');
     process.exit(0);
@@ -2630,7 +2708,18 @@ process.once('SIGTERM', async () => {
       logger.error('Error closing database connections:', err);
     }
 
-    // 4. Close Redis connections
+    // 4. Stop BullMQ workers and close queues
+    try {
+      const { stopAllWorkers } = require('../../services/workers/index');
+      const { closeQueues } = require('../../services/queueService');
+      await stopAllWorkers();
+      await closeQueues();
+      logger.info('✓ BullMQ workers and queues closed');
+    } catch (err) {
+      logger.warn('BullMQ shutdown error (non-fatal):', err.message);
+    }
+
+    // 5. Close Redis connections
     const { getRedis } = require('../../config/redis');
     try {
       const redis = getRedis();
@@ -2642,7 +2731,7 @@ process.once('SIGTERM', async () => {
       logger.error('Error closing Redis connections:', err);
     }
 
-    // 5. Release process lock and exit
+    // 6. Release process lock and exit
     releaseProcessLock();
     logger.info('✓ Graceful shutdown completed successfully');
     process.exit(0);

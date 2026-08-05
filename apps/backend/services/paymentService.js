@@ -898,10 +898,14 @@ class PaymentService {
             for (const groupId of PRIME_HANGOUT_GROUP_IDS) {
               try {
                 await query(
-                  'INSERT INTO hangout_group_members (group_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-                  [groupId, userId, 'member']
+                  `INSERT INTO hangout_group_members (group_id, user_id, role)
+                   SELECT g.id, $2, 'member'
+                   FROM hangout_groups g
+                   WHERE g.id = $1 OR g.parent_group_id = $1
+                   ON CONFLICT DO NOTHING`,
+                  [groupId, userId]
                 );
-                logger.info('Auto-joined PRIME hangout after qualifying prime grant', {
+                logger.info('Auto-joined PRIME hangout + topics after qualifying prime grant', {
                   userId, groupId, planId,
                 });
               } catch (joinErr) {
@@ -1054,31 +1058,46 @@ class PaymentService {
         } catch (_) { /* non-critical */ }
       }
 
-      // Telegram notification with full entitlement detail (non-blocking)
+      // Post-grant notification hooks — enqueue via BullMQ (Wave 2).
+      // Falls back to inline execution if BullMQ is unavailable.
       if (result.granted > 0) {
+        const addOnsForNotif = addOnsResult.rows.map((row) => ({
+          add_on_id: row.add_on_id,
+          add_on_name: row.add_on_name,
+          is_lifetime: row.is_lifetime || false,
+          durationDays: row.addon_duration_days || row.plan_duration_days || 30,
+        }));
+        let scopeLabel = null;
+        if (paymentMetadata?.channelId) scopeLabel = `Canal #${paymentMetadata.channelId}`;
+        else if (paymentMetadata?.hangoutGroupId) scopeLabel = `Hangout #${paymentMetadata.hangoutGroupId}`;
+        else if (paymentMetadata?.creatorId) scopeLabel = `Creador #${paymentMetadata.creatorId}`;
+
+        let enqueuedPostGrant = false;
         try {
-          const BNS = require('./businessNotificationService');
-          const addOnsForNotif = addOnsResult.rows.map((row) => ({
-            add_on_id: row.add_on_id,
-            add_on_name: row.add_on_name,
-            is_lifetime: row.is_lifetime || false,
-            durationDays: row.addon_duration_days || row.plan_duration_days || 30,
-          }));
-          // Build scope label for scoped grants (channel, hangout, creator)
-          let scopeLabel = null;
-          if (paymentMetadata?.channelId) scopeLabel = `Canal #${paymentMetadata.channelId}`;
-          else if (paymentMetadata?.hangoutGroupId) scopeLabel = `Hangout #${paymentMetadata.hangoutGroupId}`;
-          else if (paymentMetadata?.creatorId) scopeLabel = `Creador #${paymentMetadata.creatorId}`;
-          await BNS.notifyEntitlementGrant({
-            userId,
-            planId,
-            planName: addOnsResult.rows[0]?.add_on_name ? null : planId,
-            addOns: addOnsForNotif,
-            source,
-            sourcePaymentId: resolvedPaymentId,
-            scopeLabel,
-          });
-        } catch (_) { /* non-critical */ }
+          const { paymentQueue, DEFAULT_JOB_OPTIONS } = require('./queueService');
+          if (paymentQueue) {
+            await paymentQueue.add('post-grant-hooks', {
+              userId, planId, source, sourcePaymentId: resolvedPaymentId,
+              addOns: addOnsForNotif, scopeLabel, grantedCount: result.granted,
+            }, { ...DEFAULT_JOB_OPTIONS, attempts: 5 });
+            enqueuedPostGrant = true;
+          }
+        } catch (queueErr) {
+          logger.warn('[payment] Failed to enqueue post-grant hooks — running inline', { error: queueErr.message });
+        }
+
+        if (!enqueuedPostGrant) {
+          // Inline fallback — same calls the worker would make
+          try {
+            const BNS = require('./businessNotificationService');
+            await BNS.notifyEntitlementGrant({
+              userId, planId,
+              planName: addOnsResult.rows[0]?.add_on_name ? null : planId,
+              addOns: addOnsForNotif, source,
+              sourcePaymentId: resolvedPaymentId, scopeLabel,
+            });
+          } catch (_) { /* non-critical */ }
+        }
       }
 
       // After granting all add-ons: invalidate entitlement caches and sync users.tier.

@@ -1158,16 +1158,22 @@ function initSocketIO(io) {
         let telegramMsgId = null;
         try {
           const { rows: tgRows } = await query(
-            'SELECT telegram_chat_id FROM hangout_groups WHERE id = $1 AND telegram_chat_id IS NOT NULL',
+            `SELECT COALESCE(p.telegram_chat_id, g.telegram_chat_id) AS tg_chat_id,
+                    g.telegram_topic_id
+             FROM hangout_groups g
+             LEFT JOIN hangout_groups p ON p.id = g.parent_group_id
+             WHERE g.id = $1
+               AND COALESCE(p.telegram_chat_id, g.telegram_chat_id) IS NOT NULL`,
             [gid]
           );
           if (tgRows.length > 0) {
-            const tgChatId = tgRows[0].telegram_chat_id;
+            const tgChatId = tgRows[0].tg_chat_id;
+            const tgThreadId = tgRows[0].telegram_topic_id || undefined;
             const { getBotInstance } = require('../core/bot');
             const bot = getBotInstance();
             if (bot) {
               const senderName = user.firstName || user.first_name || user.username || 'User';
-              const tgResult = await bot.telegram.sendMessage(tgChatId, `${senderName}: ${text}`, { parse_mode: undefined });
+              const tgResult = await bot.telegram.sendMessage(tgChatId, `${senderName}: ${text}`, { parse_mode: undefined, message_thread_id: tgThreadId });
               if (tgResult?.message_id) {
                 telegramMsgId = tgResult.message_id;
                 await query(
