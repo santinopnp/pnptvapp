@@ -347,6 +347,9 @@ const Compliance2257 = lazy(() => import("@/pages/admin/Compliance2257"));
 const AdminInviteLinks = lazy(() => import("@/pages/admin/InviteLinks"));
 const ReferralAdmin = lazy(() => import("@/pages/admin/ReferralAdmin"));
 const Lifetime100 = lazy(() => import("@/pages/Lifetime100"));
+const NequiNegociosPage = lazy(() =>
+  import("@/pages/Lifetime100").then((m) => ({ default: m.NequiNegociosPage }))
+);
 const CryptoGuide = lazy(() => import("@/pages/CryptoGuide"));
 const GamificationPage = lazy(() => import("@/pages/GamificationPage"));
 const ReferralCenter = lazy(() => import("@/pages/ReferralCenter"));
@@ -1362,6 +1365,14 @@ export const router = createBrowserRouter([
   // Public alias — /lifetime → /subscribe (offer closed)
   { path: "/lifetime", element: <Navigate to="/subscribe" replace /> },
   { path: "/lifetime100b", element: <Navigate to="/lifetime100" replace /> },
+  {
+    path: "/nequinegocios",
+    element: (
+      <ModuleLoader>
+        <NequiNegociosPage />
+      </ModuleLoader>
+    ),
+  },
   {
     path: "/page/:slug",
     element: (

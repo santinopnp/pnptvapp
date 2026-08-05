@@ -8,9 +8,14 @@ import {
   listMeruLinks,
   addMeruLinks,
   deleteMeruLink,
+  listNequiActivations,
+  activateNequiPayment,
   type MeruLink,
   type MeruLinkStat,
+  type NequiActivation,
 } from "@/lib/api";
+
+type NequiStatusFilter = "pending" | "activated" | "rejected" | "all";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +64,10 @@ function truncateUrl(url: string, max = 40): string {
 
 export default function MeruLinks() {
   const t = useI18n().admin;
+
+  // ── Tab state ─────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<"meru" | "nequi">("meru");
+
   const [stats, setStats] = useState<MeruLinkStat[]>([]);
   const [links, setLinks] = useState<MeruLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +89,15 @@ export default function MeruLinks() {
 
   // Filters
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+
+  // ── Nequi Negocios state ──────────────────────────────────────────────────
+  const [nequiActivations, setNequiActivations] = useState<NequiActivation[]>([]);
+  const [nequiLoading, setNequiLoading] = useState(false);
+  const [nequiError, setNequiError] = useState<string | null>(null);
+  const [nequiFilter, setNequiFilter] = useState<NequiStatusFilter>("pending");
+  const [nequiGrantTarget, setNequiGrantTarget] = useState<NequiActivation | null>(null);
+  const [nequiGrantLoading, setNequiGrantLoading] = useState(false);
+  const [nequiGrantSuccess, setNequiGrantSuccess] = useState<string | null>(null);
 
   // ── Derived product list for filter dropdown ──────────────────────────────
 
@@ -125,6 +143,43 @@ export default function MeruLinks() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // ── Nequi load ────────────────────────────────────────────────────────────
+
+  const loadNequi = useCallback(async () => {
+    setNequiLoading(true);
+    setNequiError(null);
+    try {
+      const res = await listNequiActivations(nequiFilter);
+      setNequiActivations(res.activations ?? []);
+    } catch (err) {
+      setNequiError(err instanceof Error ? err.message : "Failed to load Nequi activations");
+    } finally {
+      setNequiLoading(false);
+    }
+  }, [nequiFilter]);
+
+  useEffect(() => {
+    if (activeTab === "nequi") loadNequi();
+  }, [activeTab, loadNequi]);
+
+  const handleNequiGrant = useCallback(async () => {
+    if (!nequiGrantTarget) return;
+    setNequiGrantLoading(true);
+    setNequiGrantSuccess(null);
+    setNequiError(null);
+    try {
+      await activateNequiPayment(nequiGrantTarget.id);
+      setNequiGrantSuccess(`Access granted to ${nequiGrantTarget.email}`);
+      setNequiGrantTarget(null);
+      await loadNequi();
+    } catch (err) {
+      setNequiError(err instanceof Error ? err.message : "Failed to grant access");
+      setNequiGrantTarget(null);
+    } finally {
+      setNequiGrantLoading(false);
+    }
+  }, [nequiGrantTarget, loadNequi]);
 
   // ── Copy URL ──────────────────────────────────────────────────────────────
 
@@ -326,20 +381,152 @@ export default function MeruLinks() {
           </p>
         </div>
         <button
-          onClick={load}
-          disabled={loading}
+          onClick={activeTab === "meru" ? load : loadNequi}
+          disabled={activeTab === "meru" ? loading : nequiLoading}
           className="px-3 py-2 rounded-lg border border-pnp-border text-xs text-pnp-textSecondary hover:text-pnp-textPrimary hover:border-pnp-accent/50 disabled:opacity-50 transition-colors"
         >
-          {loading ? t.shared.loading : t.shared.refresh}
+          {(activeTab === "meru" ? loading : nequiLoading) ? t.shared.loading : t.shared.refresh}
         </button>
       </div>
 
-      {error && (
+      {/* Tab switcher */}
+      <div className="flex gap-2 border-b border-pnp-border pb-1">
+        {(["meru", "nequi"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors ${
+              activeTab === tab
+                ? "text-pnp-textPrimary border-b-2 border-pnp-accent"
+                : "text-pnp-textSecondary hover:text-pnp-textPrimary"
+            }`}
+          >
+            {tab === "meru" ? "Meru Links" : "Nequi Negocios"}
+            {tab === "nequi" && nequiActivations.filter((a) => a.status === "pending").length > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 text-[10px] font-bold">
+                {nequiActivations.filter((a) => a.status === "pending").length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {error && activeTab === "meru" && (
         <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
           {error}
           <button onClick={() => setError(null)} className="ml-2 underline">{t.shared.dismiss}</button>
         </div>
       )}
+      {nequiError && activeTab === "nequi" && (
+        <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+          {nequiError}
+          <button onClick={() => setNequiError(null)} className="ml-2 underline">{t.shared.dismiss}</button>
+        </div>
+      )}
+      {nequiGrantSuccess && activeTab === "nequi" && (
+        <div className="px-4 py-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm text-green-400">
+          {nequiGrantSuccess}
+          <button onClick={() => setNequiGrantSuccess(null)} className="ml-2 underline">Dismiss</button>
+        </div>
+      )}
+
+      {/* ════════════════════════════ NEQUI NEGOCIOS TAB ════════════════════ */}
+      {activeTab === "nequi" && (
+        <div className="space-y-4">
+          {/* How-to note */}
+          <div className="px-4 py-3 rounded-xl bg-orange-500/8 border border-orange-500/20 text-sm text-orange-300 leading-relaxed">
+            <strong>Flujo:</strong> Comprador paga en Nequi → aterriza en <code className="font-mono text-xs">/nequinegocios</code> → ingresa su correo → aparece aquí.
+            Verifica en el dashboard de Wompi y haz clic en <strong>Grant Access</strong>.
+          </div>
+
+          {/* Status filter */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-pnp-textSecondary">Estado:</span>
+            {(["pending", "activated", "all"] as NequiStatusFilter[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setNequiFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  nequiFilter === s
+                    ? "bg-pnp-accent text-white"
+                    : "border border-pnp-border text-pnp-textSecondary hover:text-pnp-textPrimary"
+                }`}
+              >
+                {s === "pending" ? "Pendientes" : s === "activated" ? "Activados" : "Todos"}
+              </button>
+            ))}
+          </div>
+
+          {/* Activations table */}
+          {nequiLoading ? (
+            <p className="text-sm text-pnp-textSecondary py-8 text-center">Cargando…</p>
+          ) : nequiActivations.length === 0 ? (
+            <p className="text-sm text-pnp-textSecondary py-8 text-center">No hay registros.</p>
+          ) : (
+            <div className="rounded-xl border border-pnp-border bg-pnp-surface overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-pnp-border bg-pnp-background">
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary">Email</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary">Wompi Ref.</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary">Wompi Status</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary">Estado</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary">Fecha</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-pnp-textSecondary"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-pnp-border">
+                    {nequiActivations.map((row) => (
+                      <tr key={row.id} className="hover:bg-pnp-background/50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="text-xs text-pnp-textPrimary font-medium">{row.email}</div>
+                          {row.username && <div className="text-[10px] text-pnp-textSecondary">@{row.username}</div>}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-pnp-textSecondary">{row.wompi_reference || "—"}</td>
+                        <td className="px-4 py-3">
+                          {row.wompi_status === "APPROVED" ? (
+                            <Badge variant="success">APPROVED</Badge>
+                          ) : row.wompi_status ? (
+                            <Badge variant="warning">{row.wompi_status}</Badge>
+                          ) : (
+                            <span className="text-pnp-textSecondary text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {row.status === "activated" ? (
+                            <Badge variant="success">Activado</Badge>
+                          ) : row.status === "rejected" ? (
+                            <Badge variant="error">Rechazado</Badge>
+                          ) : (
+                            <Badge variant="warning">Pendiente</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-pnp-textSecondary whitespace-nowrap">
+                          {new Date(row.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-3">
+                          {row.status === "pending" && (
+                            <button
+                              onClick={() => setNequiGrantTarget(row)}
+                              className="px-3 py-1.5 rounded-lg bg-pnp-accent/10 border border-pnp-accent/30 text-pnp-accent text-xs font-semibold hover:bg-pnp-accent/20 transition-colors whitespace-nowrap"
+                            >
+                              Grant Access
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════════════ MERU LINKS TAB ════════════════════════ */}
+      {activeTab === "meru" && <>
 
       {/* ─── Stats row ────────────────────────────────────────────────────── */}
       {!loading && stats.length > 0 && (
@@ -565,6 +752,20 @@ export default function MeruLinks() {
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}
         loading={deleteLoading}
+      />
+
+      </> /* end Meru tab */}
+
+      {/* Nequi grant confirmation */}
+      <ConfirmModal
+        open={!!nequiGrantTarget}
+        title="Grant Lifetime Access"
+        message={`Grant lifetime PRIME membership to:\n\n${nequiGrantTarget?.email ?? ""}\n\nWompi Reference: ${nequiGrantTarget?.wompi_reference ?? "N/A"}\nWompi Status: ${nequiGrantTarget?.wompi_status ?? "N/A"}\n\nMake sure you have verified payment in the Wompi dashboard before proceeding.`}
+        confirmLabel="Yes, Grant Access"
+        variant="default"
+        onConfirm={handleNequiGrant}
+        onCancel={() => setNequiGrantTarget(null)}
+        loading={nequiGrantLoading}
       />
     </div>
   );

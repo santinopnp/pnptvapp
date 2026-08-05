@@ -38,7 +38,7 @@ export const strings = {
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Get Your Payment Link",
     modalSubtitle:
-      "Enter your email — we send a secure Meru payment link instantly. After paying you'll get an activation code.",
+      "Enter your email — we send a secure payment link instantly. After paying you'll get an activation code.",
     emailLabel: "Email address",
     emailPlaceholder: "you@example.com",
     invalidEmail: "Please enter a valid email address.",
@@ -75,7 +75,7 @@ export const strings = {
       "This code has expired. Please request a new payment link at /lifetime100.",
     errorCodeInvalid: "Code not found. Double-check that you entered it correctly.",
     errorPaymentNotReceived:
-      "Payment not received yet. Complete the payment on Meru, wait a minute, then try again.",
+      "Payment not received yet. Complete the payment and wait a minute, then try again.",
     errorCodeAlreadyUsed:
       "This code has already been redeemed. Contact support if you believe this is an error.",
     errorActivationInProgress:
@@ -86,6 +86,22 @@ export const strings = {
     // ── Already paid link ──────────────────────────────────────────────────────
     alreadyPaid: "Already paid?",
     alreadyPaidLink: "Activate here",
+
+    // ── /nequinegocios landing page ────────────────────────────────────────────
+    nequiPageTitle: "Payment Confirmed — PNPtv!",
+    nequiSuccessTitle: "Payment Received!",
+    nequiSuccessBody: "Your Nequi Negocios payment was received. Enter your email below so we can send you your account activation details.",
+    nequiPendingTitle: "Verifying Payment…",
+    nequiPendingBody: "Your payment is being verified. Enter your email below and we'll contact you once confirmed.",
+    nequiDeclinedTitle: "Payment Declined",
+    nequiDeclinedBody: "It looks like your payment did not go through. Please try again or contact support.",
+    nequiEmailLabel: "Your email address",
+    nequiSubmit: "Send Me Activation Details",
+    nequiSubmitting: "Sending…",
+    nequiDoneTitle: "You're all set!",
+    nequiDoneBody: "We'll send your activation details to your email within minutes. Already have a code?",
+    nequiActivateLink: "Activate your membership here",
+    nequiTryAgain: "Try a different email",
   },
 
   es: {
@@ -127,7 +143,7 @@ export const strings = {
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Obtén Tu Link de Pago",
     modalSubtitle:
-      "Escribe tu correo — te enviamos un link de pago seguro al instante. Después de pagar recibes tu código de activación.",
+      "Escribe tu correo — te enviamos un link de pago seguro al instante. Tras pagar recibes tu código de activación.",
     emailLabel: "Correo electrónico",
     emailPlaceholder: "tu@correo.com",
     invalidEmail: "Por favor ingresa un correo electrónico válido.",
@@ -165,7 +181,7 @@ export const strings = {
     errorCodeInvalid:
       "Código no encontrado. Verifica que lo hayas ingresado correctamente.",
     errorPaymentNotReceived:
-      "Pago no recibido aún. Completa el pago en Meru, espera un minuto e intenta de nuevo.",
+      "Pago no recibido aún. Completa el pago, espera un minuto e intenta de nuevo.",
     errorCodeAlreadyUsed:
       "Este código ya fue canjeado. Contacta a soporte si crees que es un error.",
     errorActivationInProgress:
@@ -176,6 +192,22 @@ export const strings = {
     // ── Already paid link ──────────────────────────────────────────────────────
     alreadyPaid: "¿Ya pagaste?",
     alreadyPaidLink: "Activa aquí",
+
+    // ── /nequinegocios landing page ────────────────────────────────────────────
+    nequiPageTitle: "Pago Confirmado — PNPtv!",
+    nequiSuccessTitle: "¡Pago Recibido!",
+    nequiSuccessBody: "Tu pago con Nequi fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
+    nequiPendingTitle: "Verificando tu pago…",
+    nequiPendingBody: "Tu pago está siendo verificado. Ingresa tu correo y te contactamos cuando sea confirmado.",
+    nequiDeclinedTitle: "Pago Rechazado",
+    nequiDeclinedBody: "Parece que tu pago no fue procesado. Intenta de nuevo o contáctanos.",
+    nequiEmailLabel: "Tu correo electrónico",
+    nequiSubmit: "Enviarme los detalles de activación",
+    nequiSubmitting: "Enviando…",
+    nequiDoneTitle: "¡Todo listo!",
+    nequiDoneBody: "Te enviaremos los detalles de activación a tu correo en minutos. ¿Ya tienes un código?",
+    nequiActivateLink: "Activa tu membresía aquí",
+    nequiTryAgain: "Usar otro correo",
   },
 };
 

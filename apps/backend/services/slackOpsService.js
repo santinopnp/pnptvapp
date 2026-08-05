@@ -480,6 +480,56 @@ function _qs() {
   return _queueSvc;
 }
 
+/**
+ * Notify #ops-payments when a buyer lands on /nequinegocios and registers.
+ * Admin must verify payment in Wompi dashboard and click "Grant Access" in the admin panel.
+ */
+async function notifyNequiPendingActivation(opts) {
+  const channel = _paymentsChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const { email = 'unknown', wompiReference = 'N/A', wompiTransactionId = 'N/A', wompiStatus = 'N/A' } = opts || {};
+    const text = `:nequi: Nequi Negocios: buyer registered — action required`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':nequi: Nequi Negocios — Buyer Registered', emoji: true },
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: 'A buyer completed the Nequi Negocios flow. *Verify payment in Wompi dashboard, then grant access in the admin panel.*' },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Email:*\n${email}` },
+          { type: 'mrkdwn', text: `*Wompi Status:*\n${wompiStatus}` },
+          { type: 'mrkdwn', text: `*Wompi Reference:*\n\`${wompiReference}\`` },
+          { type: 'mrkdwn', text: `*Transaction ID:*\n\`${wompiTransactionId}\`` },
+        ],
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Open Admin Panel', emoji: true },
+            url: 'https://pnptv.app/admin/meru-links',
+            action_id: 'open_admin_meru',
+          },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyNequiPendingActivation error', { error: e.message });
+  }
+}
+
 function _wrap(fnName, origFn) {
   return async function (...args) {
     const qs = _qs();
@@ -499,6 +549,7 @@ module.exports = {
   notifyUnhandledError: _wrap('notifyUnhandledError', notifyUnhandledError),
   notifyCreatorApplication: _wrap('notifyCreatorApplication', notifyCreatorApplication),
   notifyNpJwt403: _wrap('notifyNpJwt403', notifyNpJwt403),
+  notifyNequiPendingActivation: _wrap('notifyNequiPendingActivation', notifyNequiPendingActivation),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,
   _direct_notifyPaymentFailed: notifyPaymentFailed,

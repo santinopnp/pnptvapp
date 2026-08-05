@@ -6119,6 +6119,214 @@ app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHa
   }
 }));
 
+// ── Nequi Negocios (Wompi reusable link) ─────────────────────────────────────
+//
+// Flow: buyer pays at https://checkout.nequi.wompi.co/l/LILWzX
+//   → Wompi redirects to /nequinegocios?status=APPROVED&reference=xxx&id=xxx
+//   → buyer enters email → POST /api/public/nequinegocios/register (below)
+//   → admin sees pending row in admin panel → verifies in Wompi → clicks Grant
+//   → POST /api/webapp/admin/nequinegocios/:id/activate grants lifetime access
+
+const nequiRegisterLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { success: false, error: 'Too many attempts. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+});
+
+app.post('/api/public/nequinegocios/register', nequiRegisterLimiter, asyncHandler(async (req, res) => {
+  const { email: rawEmail, wompiReference, wompiTransactionId, wompiStatus } = req.body || {};
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required' });
+  }
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const crypto = require('crypto');
+  const { ensureEmailCredentials } = require('../../services/userService');
+
+  // Find or create user
+  const { rows: existing } = await dbQuery(
+    `SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND COALESCE(is_deleted,false)=false LIMIT 1`,
+    [email]
+  );
+  let userId;
+  if (existing.length > 0) {
+    userId = existing[0].id;
+  } else {
+    userId = crypto.randomUUID();
+    const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
+    await dbQuery(
+      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, created_at, updated_at)
+       VALUES ($1, $2, $3, 'free', 'user', 'free', NOW(), NOW())`,
+      [userId, email, firstName]
+    );
+  }
+
+  // Ensure Authentik credentials (non-blocking if fails)
+  try {
+    await ensureEmailCredentials(userId, email, 'es', { skipEmail: true });
+  } catch (credErr) {
+    logger.warn('nequinegocios register: credential provisioning failed (non-blocking)', { email, error: credErr.message });
+  }
+
+  // Insert pending activation row
+  await dbQuery(
+    `INSERT INTO nequi_negocios_activations
+       (email, user_id, wompi_reference, wompi_transaction_id, wompi_status, status)
+     VALUES ($1, $2, $3, $4, $5, 'pending')`,
+    [email, userId, wompiReference || null, wompiTransactionId || null, wompiStatus || null]
+  );
+
+  // Notify ops Slack channel (fire-and-forget)
+  const slackOpsService = require('../../services/slackOpsService');
+  slackOpsService.notifyNequiPendingActivation({
+    email, wompiReference: wompiReference || 'N/A',
+    wompiTransactionId: wompiTransactionId || 'N/A',
+    wompiStatus: wompiStatus || 'N/A',
+  }).catch(() => {});
+
+  return res.json({ success: true, message: 'Registered. You will receive your activation details shortly.' });
+}));
+
+// GET /api/webapp/admin/nequinegocios — list Nequi Negocios activations
+app.get('/api/webapp/admin/nequinegocios', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const statusFilter = req.query.status || 'pending';
+  const { rows } = await dbQuery(
+    `SELECT n.id, n.email, n.user_id, n.wompi_reference, n.wompi_transaction_id,
+            n.wompi_status, n.status, n.created_at, n.activated_at, n.notes,
+            u.username, u.first_name
+     FROM nequi_negocios_activations n
+     LEFT JOIN users u ON u.id = n.user_id
+     ${statusFilter !== 'all' ? 'WHERE n.status = $1' : ''}
+     ORDER BY n.created_at DESC
+     LIMIT 200`,
+    statusFilter !== 'all' ? [statusFilter] : []
+  );
+  return res.json({ success: true, activations: rows });
+}));
+
+// POST /api/webapp/admin/nequinegocios/:id/activate — grant lifetime access
+app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
+
+  const { query: dbQuery, getPool } = require('../../config/postgres');
+  const pool = getPool();
+  const actor = req.session?.user;
+
+  const { rows: [record] } = await dbQuery(
+    `SELECT * FROM nequi_negocios_activations WHERE id = $1`, [id]
+  );
+  if (!record) return res.status(404).json({ success: false, error: 'Activation record not found' });
+  if (record.status === 'activated') return res.status(409).json({ success: false, error: 'Already activated' });
+
+  const userId = record.user_id;
+  if (!userId) return res.status(500).json({ success: false, error: 'No user linked to this activation record' });
+
+  // Grant pnp-member (lifetime) + prime (60-day bonus)
+  const EntitlementModel = require('../../models/entitlementModel');
+  const EntitlementAccessService = require('../../services/entitlementAccessService');
+  const primeExpiry = new Date();
+  primeExpiry.setDate(primeExpiry.getDate() + 60);
+
+  await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
+    isLifetime: true, source: 'nequi_negocios', actorId: actor?.id || 'admin',
+    reason: 'Nequi Negocios admin activation',
+  });
+  await EntitlementModel.grantEntitlement(userId, 'prime', {
+    isLifetime: false, durationDays: 60, source: 'nequi_negocios', actorId: actor?.id || 'admin',
+    reason: 'Nequi Negocios — 2 month PRIME bonus',
+  });
+  await EntitlementAccessService.recomputeUserTier(userId);
+  await EntitlementAccessService.invalidateCache(userId);
+
+  // Sync users table (best-plan-wins, same as Meru flow)
+  const UserModel = require('../../models/userModel');
+  await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
+  try {
+    const txClient = await pool.connect();
+    try {
+      await txClient.query('BEGIN');
+      await txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+      await txClient.query(
+        `UPDATE users SET plan_expiry = CASE
+           WHEN plan_expiry IS NULL THEN NULL
+           WHEN plan_expiry > $2::timestamptz THEN plan_expiry
+           ELSE $2::timestamptz
+         END, updated_at = NOW() WHERE id = $1`,
+        [userId, primeExpiry.toISOString()]
+      );
+      await txClient.query('COMMIT');
+    } catch (txErr) {
+      await txClient.query('ROLLBACK').catch(() => {});
+    } finally {
+      txClient.release();
+    }
+  } catch { /* non-critical */ }
+
+  // Award founder badge
+  try {
+    const gamificationService = require('../../services/gamificationService');
+    await gamificationService.awardBadge(userId, 'founder', null, 'Nequi Negocios founding member');
+  } catch { /* non-critical */ }
+
+  // Mark row as activated
+  await dbQuery(
+    `UPDATE nequi_negocios_activations SET status='activated', activated_at=NOW(), notes=$2 WHERE id=$1`,
+    [id, `Activated by ${actor?.username || actor?.email || actor?.id || 'admin'}`]
+  );
+
+  // Record payment history
+  try {
+    const PaymentHistoryService = require('../../services/paymentHistoryService');
+    await PaymentHistoryService.recordPayment({
+      userId, paymentMethod: 'nequi_negocios', amount: 100, currency: 'COP',
+      planId: 'lifetime100', planName: 'Lifetime Member + 2 Months PRIME',
+      product: 'lifetime100', paymentReference: record.wompi_reference || `nequi-${id}`,
+      metadata: {
+        wompi_transaction_id: record.wompi_transaction_id,
+        wompi_status: record.wompi_status,
+        activated_by: actor?.id,
+      },
+      ipAddress: req.ip, userAgent: req.get('user-agent'),
+    });
+  } catch { /* non-critical */ }
+
+  // Send welcome email
+  try {
+    const EmailService = require('../../services/emailservice');
+    await EmailService.send({
+      to: record.email,
+      subject: '🎉 ¡Tu membresía de por vida en PNPtv! está activa',
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;color:#1a1a2e">
+          <h2 style="color:#D4007A">¡Bienvenido/a a PNPtv! 🌈</h2>
+          <p>Tu pago de Nequi fue confirmado y tu <strong>membresía de por vida + 2 meses PRIME</strong> ya está activa.</p>
+          <p>
+            <a href="https://pnptv.app" style="display:inline-block;padding:12px 24px;background:#D4007A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold">
+              Entrar a PNPtv!
+            </a>
+          </p>
+          <p style="color:#666;font-size:13px">
+            Inicia sesión con tu correo <strong>${record.email}</strong>.<br>
+            Si necesitas ayuda para acceder, escríbenos a <a href="mailto:support@pnptv.app">support@pnptv.app</a>.
+          </p>
+        </div>
+      `,
+    });
+  } catch (emailErr) {
+    logger.warn('nequinegocios admin activate: welcome email failed (non-critical)', { id, error: emailErr.message });
+  }
+
+  return res.json({ success: true, message: 'Lifetime access granted and welcome email sent.' });
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Meru Lifetime Pass activation (webapp)
 app.post('/api/webapp/activate/meru', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;

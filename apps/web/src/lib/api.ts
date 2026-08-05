@@ -1688,6 +1688,27 @@ export const getSocialPost = getPublicPost;
 /** Feed filter variants for the 5-tab home feed (2026-07-23). */
 export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot" | "latest";
 
+export interface NewMember {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string | null;
+  photo_url: string | null;
+  pnptv_id: string;
+  created_at: string;
+  creator_status: string | null;
+  is_online: boolean;
+}
+
+export function getNewMembers(
+  cursor?: string,
+  limit = 20
+): Promise<{ success: boolean; members: NewMember[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return request(`/api/webapp/users/new?${params}`);
+}
+
 export function getSocialFeedPosts(
   cursor?: string,
   limit = 20,
@@ -7998,6 +8019,52 @@ export function addMeruLinks(
 
 export function deleteMeruLink(id: string): Promise<{ success: boolean; message: string }> {
   return request(`/api/webapp/admin/meru-links/${id}`, { method: "DELETE" });
+}
+
+// ─── Nequi Negocios ───────────────────────────────────────────────────────────
+
+export interface NequiActivation {
+  id: number;
+  email: string;
+  user_id: string | null;
+  username: string | null;
+  first_name: string | null;
+  wompi_reference: string | null;
+  wompi_transaction_id: string | null;
+  wompi_status: string | null;
+  status: "pending" | "activated" | "rejected";
+  created_at: string;
+  activated_at: string | null;
+  notes: string | null;
+}
+
+export function registerNequiPayment(opts: {
+  email: string;
+  wompiReference?: string | null;
+  wompiTransactionId?: string | null;
+  wompiStatus?: string | null;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  return request("/api/public/nequinegocios/register", {
+    method: "POST",
+    body: JSON.stringify({
+      email: opts.email,
+      wompiReference: opts.wompiReference || null,
+      wompiTransactionId: opts.wompiTransactionId || null,
+      wompiStatus: opts.wompiStatus || null,
+    }),
+  });
+}
+
+export function listNequiActivations(
+  status: "pending" | "activated" | "rejected" | "all" = "pending"
+): Promise<{ success: boolean; activations: NequiActivation[] }> {
+  return request(`/api/webapp/admin/nequinegocios?status=${status}`);
+}
+
+export function activateNequiPayment(
+  id: number
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  return request(`/api/webapp/admin/nequinegocios/${id}/activate`, { method: "POST" });
 }
 
 // ─── Invite Links (Colombia Socio program) ────────────────────────────────────
