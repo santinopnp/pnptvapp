@@ -1234,6 +1234,8 @@ const startBot = async () => {
         let mediaThumbUrl = null;
         let mediaWidth = null;
         let mediaHeight = null;
+        let msgType = null; // message_type column (e.g. 'video_note'); null = plain text/media
+        let mediaDuration = null; // duration in seconds (video notes, voice, video)
 
         const msg = ctx.message;
 
@@ -1260,6 +1262,7 @@ const startBot = async () => {
 
         // Video / video note — Telegram getFile only works for files ≤ 20 MB
         if (msg.video || msg.video_note) {
+          const isVideoNote = !!msg.video_note;
           const vid = msg.video || msg.video_note;
           if ((vid.file_size || 0) > 20 * 1024 * 1024) {
             logger.info('Bridge: video too large for TG API, skipping link', { file_size: vid.file_size });
@@ -1267,10 +1270,14 @@ const startBot = async () => {
             try {
               const fileLink = await ctx.telegram.getFileLink(vid.file_id);
               mediaUrl = fileLink.href || fileLink.toString();
-              mediaType = 'video';
+              mediaType = isVideoNote ? 'video_note' : 'video';
               mediaMime = vid.mime_type || 'video/mp4';
-              mediaWidth = vid.width;
-              mediaHeight = vid.height;
+              mediaWidth = vid.width || null;
+              mediaHeight = vid.height || null;
+              if (isVideoNote) {
+                msgType = 'video_note';
+                mediaDuration = vid.duration || null;
+              }
             } catch (e) { logger.warn('Bridge: failed to get video link', { error: e.message }); }
           }
         }
@@ -1303,20 +1310,25 @@ const startBot = async () => {
         if (!textContent && !mediaUrl) return next();
 
         // Mark message as originating from Telegram bridge (store in metadata)
-        const metadata = { source: 'telegram', telegramMsgId: msg.message_id, telegramUserId: telegramId };
+        const metadata = {
+          source: 'telegram',
+          telegramMsgId: msg.message_id,
+          telegramUserId: telegramId,
+          ...(mediaDuration != null ? { duration: mediaDuration } : {}),
+        };
 
-        // Insert into chat_messages
+        // Insert into chat_messages — include message_type for video notes
         const { rows: inserted } = await dbQuery(
           `INSERT INTO chat_messages (room, user_id, username, first_name, photo_url, content,
-             media_url, media_type, media_mime, media_thumb_url, media_width, media_height, media_metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             media_url, media_type, media_mime, media_thumb_url, media_width, media_height, media_metadata, message_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
            RETURNING id, room, user_id, username, first_name, photo_url, content,
                      media_url, media_type, media_mime, media_thumb_url,
-                     media_width, media_height, media_metadata, reply_to_id, created_at`,
+                     media_width, media_height, media_metadata, reply_to_id, message_type, created_at`,
           [
             room, userId, username, firstName, photoUrl, textContent,
             mediaUrl, mediaType, mediaMime, mediaThumbUrl, mediaWidth, mediaHeight,
-            JSON.stringify(metadata),
+            JSON.stringify(metadata), msgType,
           ]
         );
 
@@ -1961,6 +1973,7 @@ const startBot = async () => {
       if (ctx.message.photo) messageType = 'photo';
       else if (ctx.message.document) messageType = 'document';
       else if (ctx.message.video) messageType = 'video';
+      else if (ctx.message.video_note) messageType = 'video_note';
       else if (ctx.message.voice) messageType = 'voice';
       else if (ctx.message.audio) messageType = 'audio';
       else if (ctx.message.sticker) messageType = 'sticker';

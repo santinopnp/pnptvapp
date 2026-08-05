@@ -484,7 +484,22 @@ const getGroup = async (req, res) => {
     if (groupRows.length === 0) return res.status(404).json({ error: 'Group not found' });
 
     const g = groupRows[0];
-    const member = await isMember(groupId, user.id);
+
+    // Superadmin and group creator always have full access — no membership gate
+    const isAdminBypass = user.role === 'admin' || user.role === 'superadmin';
+    const isCreatorBypass = g.creator_id && String(g.creator_id) === String(user.id);
+    // Also check parent creator (for topic sub-groups where creator_id propagates)
+    let isParentCreatorBypass = false;
+    if (!isAdminBypass && !isCreatorBypass && g.parent_group_id) {
+      const { rows: parentRows } = await query(
+        'SELECT creator_id FROM hangout_groups WHERE id = $1',
+        [g.parent_group_id]
+      );
+      isParentCreatorBypass = parentRows.length > 0 && String(parentRows[0].creator_id) === String(user.id);
+    }
+    const bypassMembershipGate = isAdminBypass || isCreatorBypass || isParentCreatorBypass;
+
+    const member = bypassMembershipGate ? true : await isMember(groupId, user.id);
 
     // Non-members cannot view private groups
     if (!g.is_public && !member) {
@@ -1825,11 +1840,23 @@ const handleJoinRequest = async (req, res) => {
   }
 
   try {
-    // Only creator can handle requests
+    // Creator, group owners (role='owner'), and platform admins/superadmins can manage requests
     const { rows: groupRows } = await query('SELECT * FROM hangout_groups WHERE id=$1', [groupId]);
     if (groupRows.length === 0) return res.status(404).json({ error: 'Group not found' });
-    if (String(groupRows[0].creator_id) !== String(user.id)) {
-      return res.status(403).json({ error: 'Only the group creator can manage requests' });
+
+    const isCreator = String(groupRows[0].creator_id) === String(user.id);
+    const isPlatformAdmin = user.role === 'admin' || user.role === 'superadmin';
+    let isGroupOwner = false;
+    if (!isCreator && !isPlatformAdmin) {
+      const { rows: ownerRows } = await query(
+        `SELECT 1 FROM hangout_group_members WHERE group_id = $1 AND user_id = $2 AND role = 'owner'`,
+        [groupId, String(user.id)]
+      );
+      isGroupOwner = ownerRows.length > 0;
+    }
+
+    if (!isCreator && !isPlatformAdmin && !isGroupOwner) {
+      return res.status(403).json({ error: 'Only the group creator or an owner can manage requests' });
     }
 
     // Wrap the accept path in a transaction so UPDATE request + INSERT member are atomic
@@ -1887,19 +1914,30 @@ const handleJoinRequest = async (req, res) => {
           }
         }
 
-        const { rowCount } = await client.query(
-          `INSERT INTO hangout_group_members (group_id, user_id, role)
-           SELECT $1, $2, 'member'
-           WHERE (SELECT COUNT(*) FROM hangout_group_members WHERE group_id = $1) < (
-             SELECT max_members FROM hangout_groups WHERE id = $1
-           )
-           ON CONFLICT DO NOTHING`,
+        // Check if user is already a member (ON CONFLICT DO NOTHING returns rowCount=0 for both
+        // capacity-exceeded AND already-member cases — distinguish them here so we don't falsely
+        // reject a valid approval when the user was already added via another path).
+        const { rows: alreadyMemberRows } = await client.query(
+          `SELECT 1 FROM hangout_group_members WHERE group_id = $1 AND user_id = $2`,
           [groupId, joinRequest.user_id]
         );
-        if (rowCount === 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'Group is full or user is already a member' });
+        if (alreadyMemberRows.length === 0) {
+          // Not yet a member — check capacity then insert
+          const { rowCount } = await client.query(
+            `INSERT INTO hangout_group_members (group_id, user_id, role)
+             SELECT $1, $2, 'member'
+             WHERE (SELECT COUNT(*) FROM hangout_group_members WHERE group_id = $1) < (
+               SELECT max_members FROM hangout_groups WHERE id = $1
+             )
+             ON CONFLICT DO NOTHING`,
+            [groupId, joinRequest.user_id]
+          );
+          if (rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Group is full' });
+          }
         }
+        // If already a member, accept is a no-op (idempotent) — commit the status update
       }
 
       await client.query('COMMIT');

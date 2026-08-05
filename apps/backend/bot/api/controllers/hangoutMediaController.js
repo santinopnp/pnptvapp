@@ -235,8 +235,14 @@ const uploadHangoutMedia = async (req, res) => {
         let tgResult;
         if (mediaResult.mediaType === 'image' && fullMediaUrl) {
           tgResult = await bot.telegram.sendPhoto(tgChatId, fullMediaUrl, { caption: mediaCaption, message_thread_id: tgThreadId });
-        } else if (mediaResult.mediaType === 'video' && fullMediaUrl) {
-          tgResult = await bot.telegram.sendVideo(tgChatId, fullMediaUrl, { caption: mediaCaption, message_thread_id: tgThreadId });
+        } else if ((mediaResult.mediaType === 'video' || mediaResult.mediaType === 'video_note') && fullMediaUrl) {
+          if (msgType === 'video_note') {
+            // Video notes (circular Telegram-style) must be uploaded as a file buffer, not a URL.
+            // Webapp-uploaded video notes don't have a Telegram file_id — skip TG mirror.
+            // TODO: download the file locally and re-upload via sendVideoNote when needed.
+          } else {
+            tgResult = await bot.telegram.sendVideo(tgChatId, fullMediaUrl, { caption: mediaCaption, message_thread_id: tgThreadId });
+          }
         } else if (mediaResult.mediaType === 'audio' && fullMediaUrl) {
           tgResult = await bot.telegram.sendVoice(tgChatId, fullMediaUrl, { caption: mediaCaption, message_thread_id: tgThreadId });
         } else if (fullMediaUrl) {
