@@ -266,7 +266,10 @@ async function processHangoutMedia(file, hangoutId, userId) {
     throw err;
   }
 
-  const mediaType = resolveMediaType(file.mimetype);
+  // Normalize MIME: strip codec parameters (e.g. "video/webm;codecs=vp9,opus" → "video/webm")
+  // so that MediaRecorder blobs pass resolveMediaType without needing exact codec string matches.
+  const normalizedMime = (file.mimetype || '').toLowerCase().split(';')[0].trim();
+  const mediaType = resolveMediaType(normalizedMime);
   if (!mediaType) {
     const err = new Error(`Disallowed mime type: ${file.mimetype}`);
     err.userMessage = 'Only images, videos, and voice messages are allowed.';

@@ -63,7 +63,9 @@ async function ensureUploadDir() {
  * @returns {'image'|'video'|null}
  */
 function resolveMediaType(mimetype) {
-  const normalized = (mimetype || '').toLowerCase().trim();
+  // Strip codec parameters (e.g. "video/webm;codecs=vp9,opus" → "video/webm")
+  // so MediaRecorder blobs with full codec strings pass the allow-list check.
+  const normalized = (mimetype || '').toLowerCase().trim().split(';')[0].trim();
   if (ALLOWED_IMAGE_MIMES.has(normalized)) return 'image';
   if (ALLOWED_VIDEO_MIMES.has(normalized)) return 'video';
   if (ALLOWED_AUDIO_MIMES.has(normalized)) return 'audio';
