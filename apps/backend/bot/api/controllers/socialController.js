@@ -108,7 +108,7 @@ const FREE_PROFILE_LIMIT = 3;
 const getFeed = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   try {
-    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin' || EntitlementAccessService.isSuperGod(user.id);
     const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
     if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
     const isFreeUser = !isAdmin && viewerTier === 'free';
@@ -136,7 +136,7 @@ const getFeed = async (req, res) => {
 const getWall = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
   try {
-    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin' || EntitlementAccessService.isSuperGod(user.id);
     const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
     if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
     // Fetch the viewer's blocked list from DB to exclude their posts (C-08)
@@ -2368,7 +2368,7 @@ const getHashtagFeed = async (req, res) => {
   const tag = (req.query.tag || '').trim();
   if (!tag) return res.status(400).json({ error: 'Missing tag parameter' });
   try {
-    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin' || EntitlementAccessService.isSuperGod(user.id);
     const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
     if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
     const blockedRes = await dbQuery('SELECT blocked FROM users WHERE id = $1', [user.id]);

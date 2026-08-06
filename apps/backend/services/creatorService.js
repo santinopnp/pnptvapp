@@ -1303,7 +1303,7 @@ class CreatorService {
         );
         const role = roleRes.rows[0]?.role || '';
         const EntitlementAccessService = require('./entitlementAccessService');
-        if (EntitlementAccessService.isEffectivelyAdmin({ id: viewerId, role })) {
+        if (EntitlementAccessService.isSuperGod(viewerId) || EntitlementAccessService.isEffectivelyAdmin({ id: viewerId, role })) {
           return posts.map(p => p.is_exclusive ? { ...p, exclusive_status: 'unlocked' } : p);
         }
       } catch (roleErr) {

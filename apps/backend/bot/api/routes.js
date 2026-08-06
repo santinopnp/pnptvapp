@@ -10583,6 +10583,8 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       collaboratorProfiles,
       isOwner,
       isCollaborator,
+      priceUsd: ch.price_usd ? Number(ch.price_usd) : null,
+      priceFreeForm: ch.price_free_form || null,
     };
 
     // Check access — owner/collaborator always allowed; otherwise delegate to
