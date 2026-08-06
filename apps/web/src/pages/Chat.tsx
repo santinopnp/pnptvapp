@@ -66,7 +66,6 @@ import {
   createHangoutTopic,
   updateHangoutTopic,
   deleteHangoutTopic,
-  markHangoutFirstVisitDone,
   ApiError,
   type HangoutGroup,
   type TopicLite,
@@ -643,12 +642,63 @@ function HangoutChatPanel({
         setMediaFiles([]);
         setMediaPreviews([]);
       } else {
-        const sendData = await sendGroupMessage(groupId, inputText.trim(), replyTo?.id ?? null);
-        if (sendData?.message) {
-          setMessages((prev) =>
-            prev.some((m) => m.id === sendData.message.id) ? prev : [...prev, sendData.message]
-          );
+        // Capture before clearing state
+        const text = inputText.trim();
+        const capturedReplyToId = replyTo?.id ?? null;
+        const capturedReplyTo = replyTo;
+        const tempId = -(Date.now());
+        const optimisticMsg: GroupMessage = {
+          id: tempId,
+          room: `hangout:${groupId}`,
+          user_id: String(myId),
+          username: user?.username ?? '',
+          first_name: user?.firstName ?? '',
+          photo_url: user?.photoUrl ?? null,
+          content: text,
+          media_url: null,
+          media_type: null,
+          media_mime: null,
+          media_thumb_url: null,
+          media_width: null,
+          media_height: null,
+          message_type: 'text',
+          created_at: new Date().toISOString(),
+          reactions: [],
+          reply_to_id: capturedReplyToId,
+          reply_to: capturedReplyTo ? {
+            name: capturedReplyTo.first_name || capturedReplyTo.username || 'User',
+            content: capturedReplyTo.content || '',
+            mediaType: capturedReplyTo.media_type ?? null,
+            mediaThumbUrl: capturedReplyTo.media_thumb_url ?? null,
+            mediaUrl: capturedReplyTo.media_url ?? null,
+          } : null,
+          is_deleted: false,
+        };
+        setMessages((prev) => [...prev, optimisticMsg]);
+        setInputText("");
+        setReplyTo(null);
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 10);
+        try {
+          const sendData = await sendGroupMessage(groupId, text, capturedReplyToId);
+          if (sendData?.message) {
+            setMessages((prev) =>
+              prev.some((m) => m.id === sendData.message.id)
+                ? prev.filter((m) => m.id !== tempId)
+                : prev.map((m) => m.id === tempId ? sendData.message : m)
+            );
+          } else {
+            setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          }
+        } catch (err) {
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          throw err;
         }
+        if (wasEditing) {
+          let draft = "";
+          try { draft = localStorage.getItem(`hangout-draft-${groupId}`) || ""; } catch { /* best-effort */ }
+          setInputText(draft);
+        }
+        return;
       }
       if (wasEditing) {
         let draft = "";
@@ -1601,15 +1651,24 @@ function HangoutChatPanel({
                       </svg>
                     </div>
                   )}
-                  <button
-                    onClick={() => cancelMedia(i)}
-                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center"
-                    aria-label="Remove file"
-                  >
-                    <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  {sending ? (
+                    <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                      <svg className="w-4 h-4 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => cancelMedia(i)}
+                      className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center"
+                      aria-label="Remove file"
+                    >
+                      <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -1661,13 +1720,9 @@ function HangoutChatPanel({
           <button
             type="button"
             onClick={handleSend}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              if (!sending && (inputText.trim() || mediaFiles.length > 0)) handleSend();
-            }}
             disabled={sending || (!inputText.trim() && mediaFiles.length === 0)}
             className="w-10 h-10 flex items-center justify-center rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30 mb-0.5"
-            style={{ background: editingMsg ? "#3B82F6" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+            style={{ background: editingMsg ? "#3B82F6" : "linear-gradient(135deg, #D4007A, #E69138)", touchAction: 'manipulation' }}
             aria-label={editingMsg ? "Save edit" : "Send message"}
           >
             {sending ? (
@@ -2075,7 +2130,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const [confirmDeleteTopicId, setConfirmDeleteTopicId] = useState<number | null>(null);
   // Ref map for scrolling the active topic pill into view
   const topicPillRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const autoLandedForGroupRef = useRef<number | null>(null);
 
 
   // ─── Group list loading ─────────────────────────────────────────────
@@ -2688,7 +2742,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       return;
     }
     if (showTutorial) dismissTutorial();
-    autoLandedForGroupRef.current = null;
     setActiveGroup(group);
     setActiveTopic(null);
     setView("chat");
@@ -2875,31 +2928,6 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
     setHangoutFeedNextCursor(null);
   }, [activeGroup?.id]);
 
-  // ─── Auto-land on topic when switching groups ─────────────────────────
-  // First-time visitors land on the "New Members" topic (position 1) and the
-  // visit is marked done. Returning visitors land on "General" (position 0).
-  // The ref prevents re-landing if topics update after the user has navigated.
-  useEffect(() => {
-    if (!activeGroup || !activeGroup.topics || activeGroup.topics.length === 0) return;
-    if (autoLandedForGroupRef.current === activeGroup.id) return;
-    autoLandedForGroupRef.current = activeGroup.id;
-
-    const topics = activeGroup.topics;
-
-    if (activeGroup.firstTopicVisitDone === false) {
-      const newMembersTopic = topics.find(t => t.position === 1) ?? topics[1];
-      if (newMembersTopic) {
-        setActiveTopic(newMembersTopic);
-        markHangoutFirstVisitDone(activeGroup.id).catch(() => {});
-      }
-    } else {
-      const generalTopic = topics.find(t => t.position === 0) ?? topics[0];
-      if (generalTopic) {
-        setActiveTopic(generalTopic);
-      }
-    }
-  // Re-run when topics first populate (async from loadGroupDetail for discover groups)
-  }, [activeGroup?.id, activeGroup?.topics?.length]);
 
   // ─── Topic creation ───────────────────────────────────────────────────
 
@@ -3333,6 +3361,23 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   aria-label={t.chat.topicsLabel}
                   className="flex items-center gap-1 px-3 pb-2 overflow-x-auto no-scrollbar"
                 >
+                  {/* Main pill — always first; navigates back to the parent room */}
+                  <div className="relative flex-shrink-0 flex items-center min-h-[44px]">
+                    <button
+                      role="tab"
+                      aria-selected={!activeTopic}
+                      onClick={() => setActiveTopic(null)}
+                      title="Main channel"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-1"
+                      style={
+                        !activeTopic
+                          ? { background: 'linear-gradient(135deg,#D4007A,#7B61FF)', color: '#fff', boxShadow: '0 1px 8px rgba(212,0,122,0.35)' }
+                          : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }
+                      }
+                    >
+                      # Main
+                    </button>
+                  </div>
                   {(activeGroup.topics ?? []).map(topic => (
                     <div
                       key={topic.id}
