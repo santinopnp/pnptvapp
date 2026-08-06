@@ -5263,7 +5263,13 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
       ) : (
         /* Group list */
         <div className="space-y-2">
-          {groups.map((group) => (
+          {[
+            ...groups.filter((g) => g.isMain),
+            ...groups.filter((g) => !g.isMain && g.channelId && ['subscription','paid'].includes((g as any).channelAccessType || '')),
+            ...groups.filter((g) => !g.isMain && !(g.channelId && ['subscription','paid'].includes((g as any).channelAccessType || ''))),
+          ].map((group) => {
+            const isExclusive = !group.isMain && !!group.channelId && ['subscription','paid'].includes((group as any).channelAccessType || '');
+            return (
             <div
               key={group.id}
               {...(group.isMain
@@ -5294,6 +5300,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                       border: "1.5px solid transparent",
                       boxShadow:
                         "0 8px 28px rgba(212,0,122,0.20), 0 0 0 1px rgba(212,0,122,0.10), inset 0 1px 0 rgba(255,255,255,0.06)",
+                    }
+                  : isExclusive
+                  ? {
+                      background: "linear-gradient(135deg, rgba(230,145,56,0.10), rgba(212,0,122,0.07))",
+                      border: "1px solid rgba(230,145,56,0.35)",
                     }
                   : undefined
               }
@@ -5575,7 +5586,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
