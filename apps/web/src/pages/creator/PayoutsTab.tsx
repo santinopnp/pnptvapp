@@ -902,15 +902,18 @@ interface WithdrawRequestRow {
   deny_reason: string | null;
 }
 
+const RUSH_TO_USD_MIN = 60; // must match backend RUSH_TO_USD_MIN
+
 function RushCreatorPanel() {
   const [summary, setSummary] = useState<EarningsSummary | null>(null);
   const [reqs, setReqs] = useState<WithdrawRequestRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [mode, setMode] = useState<'none' | 'withdraw' | 'convert'>('none');
+  const [mode, setMode] = useState<'none' | 'withdraw' | 'convert' | 'rush_to_usd'>('none');
   const [wAmount, setWAmount] = useState('');
   const [wCurrency, setWCurrency] = useState('usdttrc20');
   const [wAddress, setWAddress] = useState('');
   const [cAmount, setCAmount] = useState('');
+  const [rushConvertAmount, setRushConvertAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
@@ -973,6 +976,34 @@ function RushCreatorPanel() {
     finally { setBusy(false); }
   };
 
+  const submitRushToUsd = async () => {
+    const rushAmt = parseInt(rushConvertAmount, 10);
+    if (!Number.isFinite(rushAmt) || rushAmt < RUSH_TO_USD_MIN) {
+      setErr(`Minimum is ${RUSH_TO_USD_MIN} 💎 Ru$h ($${(RUSH_TO_USD_MIN / 6).toFixed(2)} gross)`);
+      return;
+    }
+    const walletBalance = summary?.wallet.balance_tokens ?? 0;
+    if (rushAmt > walletBalance) {
+      setErr(`You only have ${walletBalance} 💎 available`);
+      return;
+    }
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch('/api/webapp/creators/rush-to-usd', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rushAmount: rushAmt }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      setOkMsg(`Converted ${j.rushAmount} 💎 Ru$h → $${Number(j.creatorUsd).toFixed(2)} USD earnings. Added to your next Monday payout.`);
+      setMode('none'); setRushConvertAmount('');
+      await load();
+      setTimeout(() => setOkMsg(null), 10000);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Conversion failed'); }
+    finally { setBusy(false); }
+  };
+
   if (!summary) return null;
 
   return (
@@ -1002,22 +1033,35 @@ function RushCreatorPanel() {
       </div>
 
       {mode === 'none' && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => { setMode('withdraw'); setErr(null); }}
+              disabled={availableUsd < 50}
+              className="p-3 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+            >
+              💵 Withdraw to crypto
+              <div className="text-[10px] opacity-70 mt-1">Min $50 to USDT-TRC20 or others</div>
+            </button>
+            <button
+              onClick={() => { setMode('convert'); setErr(null); }}
+              disabled={availableUsd < 1}
+              className="p-3 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+            >
+              💎 Convert to spendable Ru$h
+              <div className="text-[10px] opacity-70 mt-1">Spend on other creators (1:1 at $1 = 6 Ru$h)</div>
+            </button>
+          </div>
           <button
-            onClick={() => { setMode('withdraw'); setErr(null); }}
-            disabled={availableUsd < 50}
-            className="p-3 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+            onClick={() => { setMode('rush_to_usd'); setErr(null); setRushConvertAmount(''); }}
+            disabled={(summary?.wallet.balance_tokens ?? 0) < RUSH_TO_USD_MIN}
+            className="w-full p-3 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm text-left"
           >
-            💵 Withdraw to crypto
-            <div className="text-[10px] opacity-70 mt-1">Min $50 to USDT-TRC20 or others</div>
-          </button>
-          <button
-            onClick={() => { setMode('convert'); setErr(null); }}
-            disabled={availableUsd < 1}
-            className="p-3 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
-          >
-            💎 Convert to spendable Ru$h
-            <div className="text-[10px] opacity-70 mt-1">Spend on other creators (1:1 at $1 = 6 Ru$h)</div>
+            <div className="flex items-center justify-between">
+              <span>💰 Withdraw Ru$h 💎 → USD earnings</span>
+              <span className="text-[10px] opacity-60">{summary?.wallet.balance_tokens ?? 0} 💎 available</span>
+            </div>
+            <div className="text-[10px] opacity-70 mt-1">Min {RUSH_TO_USD_MIN} 💎 · 70% to you · 30% platform · paid next Tuesday</div>
           </button>
         </div>
       )}
@@ -1082,6 +1126,73 @@ function RushCreatorPanel() {
           <p className="text-[10px] text-white/50">Instant. Spend Ru$h on private calls, tips, exclusive content, or upgrade your own membership.</p>
         </div>
       )}
+
+      {mode === 'rush_to_usd' && (() => {
+        const rushAmt = parseInt(rushConvertAmount, 10) || 0;
+        const grossUsd = rushAmt > 0 ? rushAmt / 6 : 0;
+        const creatorUsd = grossUsd * 0.70;
+        const platformUsd = grossUsd * 0.30;
+        const walletBalance = summary?.wallet.balance_tokens ?? 0;
+        const isValid = rushAmt >= RUSH_TO_USD_MIN && rushAmt <= walletBalance;
+        return (
+          <div className="space-y-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-emerald-200 font-semibold">💰 Withdraw Ru$h → USD earnings</div>
+              <button onClick={() => setMode('none')} className="text-[10px] text-white/60">Cancel</button>
+            </div>
+
+            {/* Input */}
+            <div>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-xs">💎</span>
+                <input
+                  type="number"
+                  step="1"
+                  min={RUSH_TO_USD_MIN}
+                  max={walletBalance}
+                  placeholder={`Min ${RUSH_TO_USD_MIN} · Max ${walletBalance}`}
+                  value={rushConvertAmount}
+                  onChange={(e) => { setRushConvertAmount(e.target.value); setErr(null); }}
+                  className="w-full pl-8 pr-3 py-2.5 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+                />
+              </div>
+              <p className="text-[10px] mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Available: {walletBalance} 💎 &nbsp;·&nbsp; Rate: 6 Ru$h = $1 USD
+              </p>
+            </div>
+
+            {/* Live breakdown */}
+            {rushAmt >= RUSH_TO_USD_MIN && (
+              <div className="rounded-md border border-white/8 divide-y divide-white/5 text-xs overflow-hidden">
+                <div className="flex justify-between px-3 py-2">
+                  <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Gross value</span>
+                  <span className="text-white font-mono">${grossUsd.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between px-3 py-2">
+                  <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Your earnings (70%)</span>
+                  <span className="font-mono font-semibold" style={{ color: "#5ED1C4" }}>${creatorUsd.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between px-3 py-2">
+                  <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Platform fee (30%)</span>
+                  <span className="font-mono" style={{ color: "#8E8E93" }}>${platformUsd.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={submitRushToUsd}
+              disabled={busy || !isValid}
+              className="w-full py-2.5 rounded-md text-sm font-semibold transition-opacity disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg, #34C759, #5ED1C4)", color: "#000" }}
+            >
+              {busy ? 'Converting…' : isValid ? `Convert ${rushAmt} 💎 → $${creatorUsd.toFixed(2)} USD` : `Enter amount (min ${RUSH_TO_USD_MIN} 💎)`}
+            </button>
+            <p className="text-[10px] text-white/40 text-center">
+              Added to Monday payout batch · paid Tuesday
+            </p>
+          </div>
+        );
+      })()}
 
       {reqs.length > 0 && (
         <div className="rounded-md border border-white/10 overflow-hidden">

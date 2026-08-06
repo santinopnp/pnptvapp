@@ -7323,6 +7323,94 @@ app.post('/api/webapp/creators/convert-earnings', requireSessionAuth, asyncHandl
   } finally { client.release(); }
 }));
 
+// POST /api/webapp/creators/rush-to-usd  { rushAmount: number (in Ru$h tokens) }
+// Converts creator's Ru$h wallet balance → creator_earnings (70% creator / 30% platform).
+// Earnings land as 'available' immediately and are picked up by Monday's weekly payout batch.
+const RUSH_TO_USD_MIN = 60; // 60 Ru$h = $10 gross minimum
+app.post('/api/webapp/creators/rush-to-usd', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session.user;
+  const rushAmount = parseInt(req.body?.rushAmount, 10);
+
+  if (!Number.isInteger(rushAmount) || rushAmount < RUSH_TO_USD_MIN) {
+    return res.status(400).json({
+      success: false,
+      error: `Minimum conversion is ${RUSH_TO_USD_MIN} Ru$h ($${(RUSH_TO_USD_MIN / 6).toFixed(2)} gross)`,
+      code: 'BELOW_MINIMUM',
+    });
+  }
+
+  const { rows: uRows } = await getPool().query(
+    'SELECT creator_status, username, first_name FROM users WHERE id = $1',
+    [String(user.id)]
+  );
+  if (!uRows.length || uRows[0].creator_status !== 'active') {
+    return res.status(403).json({ success: false, error: 'Not an active creator' });
+  }
+
+  const grossUsd = parseFloat((rushAmount / 6).toFixed(4));
+  const creatorUsd = parseFloat((grossUsd * 0.70).toFixed(2));
+  const platformUsd = parseFloat((grossUsd * 0.30).toFixed(2));
+
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const { getClient: getPgClient } = require('../../config/postgres');
+  const slackOps = require('../../services/slackOpsService');
+  const NotificationEmitter = require('../../services/notificationEmitter');
+  const client = await getPgClient();
+  try {
+    await client.query('BEGIN');
+
+    // Debit Ru$h from balance_tokens only (gifted balance cannot be converted)
+    await tokenLedger.debit({
+      userId: user.id,
+      amount: rushAmount,
+      reason: 'earnings_conversion',
+      sourceType: 'earnings_conversion',
+      actorId: String(user.id),
+      metadata: { type: 'rush_to_usd', grossUsd, creatorUsd, platformUsd },
+      externalClient: client,
+    });
+
+    // Create creator_earnings row — immediately 'available' for the weekly payout batch
+    const { rows: earnRows } = await client.query(
+      `INSERT INTO creator_earnings
+         (creator_id, amount_gross, amount_creator, amount_platform, status, period_month, is_tip, metadata)
+       VALUES ($1, $2, $3, $4, 'available', date_trunc('month', NOW()), false, $5::jsonb)
+       RETURNING id`,
+      [String(user.id), grossUsd, creatorUsd, platformUsd,
+       JSON.stringify({ source: 'rush_conversion', rush_amount: rushAmount })]
+    );
+    const earningId = earnRows[0].id;
+
+    await client.query('COMMIT');
+
+    // Ops Slack notification — includes the 30% platform cut explicitly
+    const handle = uRows[0].username || uRows[0].first_name || String(user.id);
+    slackOps.notifyRushConversion({ creatorId: user.id, handle, rushAmount, grossUsd, creatorUsd, platformUsd })
+      .catch(() => {});
+
+    // In-app notification to creator
+    NotificationEmitter.emit({
+      type: 'payment', category: 'commerce', priority: 'normal', actorId: null,
+      targetUserId: user.id, entityType: 'creator', entityId: String(user.id),
+      message: `Converted ${rushAmount} 💎 Ru$h → $${creatorUsd.toFixed(2)} USD earnings. Included in your next Monday payout.`,
+      metadata: { source: 'rush_conversion', rushAmount, creatorUsd, earningId },
+    }).catch(() => {});
+
+    logger.info('[Ru$h → USD] Converted', { creatorId: user.id, rushAmount, grossUsd, creatorUsd, platformUsd, earningId });
+    return res.json({ success: true, rushAmount, grossUsd, creatorUsd, platformUsd, earningId });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({
+        success: false, error: 'Insufficient Ru$h balance', code: 'INSUFFICIENT_FUNDS',
+        available: err.available, required: err.required,
+      });
+    }
+    logger.error('[Ru$h → USD] Failed', { userId: user.id, error: err.message });
+    return res.status(500).json({ success: false, error: 'Conversion failed. Please try again.' });
+  } finally { client.release(); }
+}));
+
 // GET /api/webapp/creators/earnings-summary — creator's own totals for the withdraw/convert UI
 app.get('/api/webapp/creators/earnings-summary', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;

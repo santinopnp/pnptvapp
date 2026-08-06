@@ -530,6 +530,51 @@ async function notifyNequiPendingActivation(opts) {
   }
 }
 
+/**
+ * Posts a Ru$h → USD conversion alert to #ops-payments.
+ * Fired when a creator converts their Ru$h token balance into creator_earnings.
+ * @param {object} opts
+ * @param {string} opts.creatorId
+ * @param {string} opts.handle        creator @username or display name
+ * @param {number} opts.rushAmount    Ru$h tokens debited
+ * @param {number} opts.grossUsd      total USD value (rushAmount / 6)
+ * @param {number} opts.creatorUsd    70% — goes to creator earnings
+ * @param {number} opts.platformUsd   30% — platform keeps this
+ */
+async function notifyRushConversion(opts) {
+  const channel = _paymentsChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const { creatorId = 'N/A', handle = 'unknown', rushAmount = 0, grossUsd = 0, creatorUsd = 0, platformUsd = 0 } = opts || {};
+    const userLabel = handle ? `@${handle}` : creatorId;
+    const text = `💎 Ru$h Withdrawal: ${userLabel} converted ${rushAmount} 💎 → $${Number(creatorUsd).toFixed(2)} USD earnings`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':gem: Ru$h → USD Withdrawal', emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Creator:*\n${userLabel}` },
+          { type: 'mrkdwn', text: `*Ru$h Converted:*\n${rushAmount} 💎` },
+          { type: 'mrkdwn', text: `*Gross USD:*\n$${Number(grossUsd).toFixed(2)}` },
+          { type: 'mrkdwn', text: `*Creator Earnings (70%):*\n$${Number(creatorUsd).toFixed(2)}` },
+          { type: 'mrkdwn', text: `*Platform Cut (30% → you):*\n*$${Number(platformUsd).toFixed(2)}*` },
+          { type: 'mrkdwn', text: `*Payout:*\nNext Monday batch` },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyRushConversion error', { error: e.message });
+  }
+}
+
 function _wrap(fnName, origFn) {
   return async function (...args) {
     const qs = _qs();
@@ -550,6 +595,7 @@ module.exports = {
   notifyCreatorApplication: _wrap('notifyCreatorApplication', notifyCreatorApplication),
   notifyNpJwt403: _wrap('notifyNpJwt403', notifyNpJwt403),
   notifyNequiPendingActivation: _wrap('notifyNequiPendingActivation', notifyNequiPendingActivation),
+  notifyRushConversion: _wrap('notifyRushConversion', notifyRushConversion),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,
   _direct_notifyPaymentFailed: notifyPaymentFailed,
@@ -558,4 +604,5 @@ module.exports = {
   _direct_notifyUnhandledError: notifyUnhandledError,
   _direct_notifyCreatorApplication: notifyCreatorApplication,
   _direct_notifyNpJwt403: notifyNpJwt403,
+  _direct_notifyRushConversion: notifyRushConversion,
 };
