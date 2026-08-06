@@ -1661,6 +1661,10 @@ function HangoutChatPanel({
           <button
             type="button"
             onClick={handleSend}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              if (!sending && (inputText.trim() || mediaFiles.length > 0)) handleSend();
+            }}
             disabled={sending || (!inputText.trim() && mediaFiles.length === 0)}
             className="w-10 h-10 flex items-center justify-center rounded-full text-white active:scale-90 transition-all flex-shrink-0 disabled:opacity-30 mb-0.5"
             style={{ background: editingMsg ? "#3B82F6" : "linear-gradient(135deg, #D4007A, #E69138)" }}
