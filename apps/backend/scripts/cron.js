@@ -1639,14 +1639,16 @@ const startCronJobs = async (bot = null) => {
         // Resolve display names — users.display_name does not exist; use username
         const refIds = streams.map(s => s.refId).filter(Boolean);
         let displayNames = {};
+        let creatorUserIds = {};
         if (refIds.length > 0) {
           try {
             const nameRes = await pgQuery(
-              `SELECT live_channel, COALESCE(username, first_name, live_channel) AS display_name FROM users WHERE live_channel = ANY($1::text[])`,
+              `SELECT live_channel, id, COALESCE(username, first_name, live_channel) AS display_name FROM users WHERE live_channel = ANY($1::text[])`,
               [refIds]
             );
             for (const row of nameRes.rows) {
               displayNames[row.live_channel] = row.display_name;
+              creatorUserIds[row.live_channel] = row.id;
             }
           } catch (_) {}
         }
@@ -1670,6 +1672,11 @@ const startCronJobs = async (bot = null) => {
             // Transition TO live
             _streamHealthState.set(s.streamId, { state: s.state, startedAt: Date.now(), isRunning: true });
             slackLive.notifyStreamLive(s.refId, _name(s.refId)).catch(() => {});
+            const goLiveCreatorId = creatorUserIds[s.refId];
+            if (goLiveCreatorId) {
+              require(path.join(backendPath, 'services/slackCreatorNotifyService'))
+                .notifyGoingLive(goLiveCreatorId, { channelRef: s.refId }).catch(() => {});
+            }
           } else if (!s.isLive && prev?.isRunning) {
             // Transition FROM live
             const durationMinutes = Math.round((Date.now() - prev.startedAt) / 60000);

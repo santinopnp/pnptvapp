@@ -38,6 +38,7 @@ async function _post(channel, text, blocks) {
         Authorization: `Bearer ${_tok()}`,
       },
       body: JSON.stringify({ channel, text, blocks }),
+      signal: AbortSignal.timeout(5000),
     });
     const data = await res.json();
     if (!data.ok) {

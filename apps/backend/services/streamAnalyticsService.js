@@ -61,12 +61,52 @@ async function endSession(sessionId, { peakViewers = 0, uniqueViewers = null } =
 
   logger.info('streamAnalytics: session ended', { sessionId, peakViewers, uniqueViewers });
 
-  // Best-effort Slack notification — never throws.
+  // Best-effort Slack notifications — ops channel + creator personal channel. Never throws.
   try {
     if (sessionRows.length > 0) {
-      const { started_at, performer_name } = sessionRows[0];
+      const { started_at, performer_name, creator_id } = sessionRows[0];
       const durationMinutes = Math.round((Date.now() - new Date(started_at).getTime()) / 60000);
+
+      // Ops channel (existing)
       require('./slackLiveService').notifyStreamEnd(String(sessionId), performer_name, durationMinutes).catch(() => {});
+
+      // Creator personal channel — richer report with previous-session comparison
+      if (creator_id) {
+        (async () => {
+          try {
+            const sessions = await getPool().query(
+              `SELECT
+                 ss.id,
+                 ss.peak_viewers,
+                 ss.unique_viewers,
+                 EXTRACT(EPOCH FROM (COALESCE(ss.ended_at, NOW()) - ss.started_at))::int AS duration_seconds,
+                 COALESCE(
+                   (SELECT SUM(ce.amount_gross)
+                    FROM creator_earnings ce
+                    WHERE ce.creator_id = ss.creator_id
+                      AND ce.created_at BETWEEN ss.started_at AND COALESCE(ss.ended_at, NOW())
+                   ), 0
+                 )::numeric(10,2) AS total_tips_usd,
+                 COALESCE(
+                   (SELECT SUM(t.amount)
+                    FROM pnp_tips t
+                    WHERE t.performer_id IN (
+                      SELECT id::text FROM performers WHERE user_id = ss.creator_id LIMIT 1
+                    )
+                    AND t.created_at BETWEEN ss.started_at AND COALESCE(ss.ended_at, NOW())
+                   ), 0
+                 )::int AS total_tips_tokens
+               FROM stream_sessions ss
+               WHERE ss.creator_id = $1
+               ORDER BY ss.started_at DESC
+               LIMIT 2`,
+              [String(creator_id)]
+            );
+            const [current, previous = null] = sessions.rows;
+            require('./slackCreatorNotifyService').notifyStreamEndStats(creator_id, { current, previous }).catch(() => {});
+          } catch (_) {}
+        })();
+      }
     }
   } catch (_e) { /* swallow — Slack must never surface to callers */ }
 }

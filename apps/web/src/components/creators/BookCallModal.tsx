@@ -36,6 +36,7 @@ import {
   getWalletBalance,
   payCallWithTokens,
   NP_COINS_SUBSCRIBE,
+  GIFTED_ELIGIBLE_PERFORMER_USER_IDS,
   type CallPackage,
   type BookingSlot,
   type FeaturedPerformer,
@@ -172,6 +173,7 @@ export function BookCallModal({
   const [email, setEmail] = useState("");
   const [clientNotes, setClientNotes] = useState("");
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [giftedBalance, setGiftedBalance] = useState<number>(0);
 
   // ── Data state ──────────────────────────────────────────────────────────────
   const [packages, setPackages] = useState<CallPackage[]>([]);
@@ -218,7 +220,12 @@ export function BookCallModal({
 
   useEffect(() => {
     getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
-    getWalletBalance().then((r) => { if (r.success) setTokenBalance(r.balance); }).catch(() => {});
+    getWalletBalance().then((r) => {
+      if (r.success) {
+        setTokenBalance(r.balance);
+        setGiftedBalance(r.giftedBalance ?? 0);
+      }
+    }).catch(() => {});
   }, []);
 
   // Permission preflight state
@@ -241,6 +248,19 @@ export function BookCallModal({
     : duration === 30
     ? 60
     : 100;
+
+  // Gifted Ru$h discount — only for Santino + Lex calls (GIFTED_ELIGIBLE_PERFORMER_USER_IDS)
+  const TOKENS_PER_USD = 6;
+  const GIFTED_MIN_CHARGE_USD = 0.50;
+  const isGiftedEligibleCreator = GIFTED_ELIGIBLE_PERFORMER_USER_IDS.has(String(creator.id));
+  const giftedDiscountUsd: number = (() => {
+    if (!isGiftedEligibleCreator || giftedBalance <= 0) return 0;
+    const raw = Math.floor(giftedBalance / TOKENS_PER_USD * 100) / 100;
+    const capped = Math.min(raw, pricePerUnit - GIFTED_MIN_CHARGE_USD);
+    return capped > 0 ? Math.round(capped * 100) / 100 : 0;
+  })();
+  const giftedTokensForDisplay = Math.round(giftedDiscountUsd * TOKENS_PER_USD);
+  const effectivePriceUsd = Math.round((pricePerUnit - giftedDiscountUsd) * 100) / 100;
 
   // ── Reset on open / cleanup on close ────────────────────────────────────────
   useEffect(() => {
@@ -534,6 +554,15 @@ export function BookCallModal({
           clientNotes.trim() || undefined,
           email.trim() || undefined
         );
+        // Refresh wallet balance if gifted tokens were debited
+        if (npRes.giftedTokensApplied && npRes.giftedTokensApplied > 0) {
+          getWalletBalance().then((r) => {
+            if (r.success) {
+              setTokenBalance(r.balance);
+              setGiftedBalance(r.giftedBalance ?? 0);
+            }
+          }).catch(() => {});
+        }
         if (npRes.invoiceUrl) {
           const safeUrl = assertPaymentUrl(npRes.invoiceUrl);
           setNpInvoiceUrl(safeUrl);
@@ -1330,12 +1359,28 @@ export function BookCallModal({
                 : "—"}
           </span>
         </div>
+        {giftedDiscountUsd > 0 && (
+          <div className="flex justify-between text-sm items-center">
+            <span style={{ color: "#FF69B4" }}>
+              {giftedTokensForDisplay.toLocaleString()} Ru$h applied
+            </span>
+            <span className="font-semibold" style={{ color: "#FF69B4" }}>
+              -{giftedDiscountUsd >= pricePerUnit - GIFTED_MIN_CHARGE_USD
+                ? `$${giftedDiscountUsd.toFixed(2)} (min. $${GIFTED_MIN_CHARGE_USD.toFixed(2)} charged)`
+                : `$${giftedDiscountUsd.toFixed(2)}`}
+            </span>
+          </div>
+        )}
         <div
           className="flex justify-between text-base pt-2 font-bold"
           style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
         >
           <span style={{ color: "#EBEBF5" }}>{t.creator.orderTotalLabel}</span>
-          <span style={{ color: "#E69138" }}>${pricePerUnit.toFixed(0)}</span>
+          <span style={{ color: "#E69138" }}>
+            {giftedDiscountUsd > 0
+              ? <><s style={{ color: "#636366", fontWeight: 400, fontSize: "0.85em" }}>${pricePerUnit.toFixed(2)}</s> ${effectivePriceUsd.toFixed(2)}</>
+              : `$${pricePerUnit.toFixed(0)}`}
+          </span>
         </div>
       </div>
 

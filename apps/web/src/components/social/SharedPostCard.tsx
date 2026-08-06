@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { togglePostLike, type PostCardSnapshot } from "@/lib/api";
+import { togglePostLike, togglePostHype, sharePostToHangouts, sharePostToDm, getHangoutGroups, type PostCardSnapshot, type HangoutGroup } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { MentionText } from "@/components/MentionText";
 import { VideoPlayer } from "@/components/VideoPlayer";
@@ -71,7 +71,76 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
   const [liked, setLiked] = useState<boolean>(false);
   const [likePending, setLikePending] = useState<boolean>(false);
 
+  const [hyped, setHyped] = useState<boolean>(false);
+  const [hypePending, setHypePending] = useState<boolean>(false);
+
+  const [shareOpen, setShareOpen] = useState<boolean>(false);
+  const [shareStep, setShareStep] = useState<"main" | "hangout" | "dm">("main");
+  const [shareHangouts, setShareHangouts] = useState<HangoutGroup[]>([]);
+  const [shareHangoutsLoaded, setShareHangoutsLoaded] = useState<boolean>(false);
+  const [shareDmInput, setShareDmInput] = useState<string>("");
+  const [shareSending, setShareSending] = useState<boolean>(false);
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+
   const relTime = relativeTime(snapshot.postCreatedAt, lang === "es" ? "es" : "en");
+
+  const handleHype = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hypePending) return;
+    setHypePending(true);
+    const willHype = !hyped;
+    setHyped(willHype);
+    try {
+      await togglePostHype(postId);
+    } catch {
+      setHyped(!willHype);
+    } finally {
+      setHypePending(false);
+    }
+  };
+
+  const handleOpenShare = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShareOpen(true);
+    setShareStep("main");
+    setShareSuccess(null);
+    setShareDmInput("");
+    if (!shareHangoutsLoaded) {
+      try {
+        const res = await getHangoutGroups();
+        setShareHangouts(res.groups ?? []);
+        setShareHangoutsLoaded(true);
+      } catch { setShareHangouts([]); }
+    }
+  }, [shareHangoutsLoaded]);
+
+  const handleCloseShare = useCallback(() => {
+    setShareOpen(false);
+    setShareStep("main");
+    setShareSuccess(null);
+    setShareDmInput("");
+    setShareSending(false);
+  }, []);
+
+  const handleShareToHangout = useCallback(async (groupId: number) => {
+    if (shareSending) return;
+    setShareSending(true);
+    try {
+      await sharePostToHangouts(postId, [groupId]);
+      setShareSuccess(lang === "es" ? "Compartido!" : "Shared!");
+      setTimeout(handleCloseShare, 1200);
+    } catch { setShareSending(false); }
+  }, [postId, shareSending, handleCloseShare, lang]);
+
+  const handleShareToDm = useCallback(async () => {
+    if (!shareDmInput.trim() || shareSending) return;
+    setShareSending(true);
+    try {
+      await sharePostToDm(shareDmInput.trim(), postId);
+      setShareSuccess(lang === "es" ? "Enviado!" : "Sent!");
+      setTimeout(handleCloseShare, 1200);
+    } catch { setShareSending(false); }
+  }, [postId, shareDmInput, shareSending, handleCloseShare, lang]);
 
   const goToProfile = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
@@ -313,6 +382,32 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
 
             <button
               type="button"
+              onClick={handleHype}
+              disabled={hypePending}
+              className="flex items-center gap-1 text-xs transition-colors hover:opacity-90 disabled:opacity-60"
+              style={{ color: hyped ? "#FF9500" : isMe ? "rgba(255,255,255,0.75)" : "var(--pnp-text-secondary, #8E8E93)" }}
+              aria-label="Hype"
+              aria-pressed={hyped}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenShare}
+              className="flex items-center gap-1 text-xs transition-colors hover:opacity-90"
+              style={{ color: isMe ? "rgba(255,255,255,0.75)" : "var(--pnp-text-secondary, #8E8E93)" }}
+              aria-label={lang === "es" ? "Compartir" : "Share"}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
               onClick={goToPost}
               className="ml-auto text-[11px] font-semibold hover:underline"
               style={{ color: accent }}
@@ -322,6 +417,104 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
           </div>
         </div>
       </div>
+
+      {shareOpen && (
+        <div
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm"
+          onClick={handleCloseShare}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-lg rounded-t-2xl overflow-hidden"
+            style={{ background: "#111118", border: "1px solid rgba(255,255,255,0.1)", borderBottom: "none" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <p className="text-sm font-semibold text-white">{lang === "es" ? "Compartir" : "Share"}</p>
+              <button onClick={handleCloseShare} className="w-8 h-8 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            {shareSuccess ? (
+              <div className="px-4 py-8 text-center text-sm font-semibold text-green-400">{shareSuccess}</div>
+            ) : shareStep === "main" ? (
+              <div className="p-4 space-y-2">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(`https://pnptv.app/social/post/${postId}`).catch(() => {}); setShareSuccess(lang === "es" ? "Enlace copiado!" : "Link copied!"); setTimeout(handleCloseShare, 1000); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" /></svg>
+                  {lang === "es" ? "Copiar enlace" : "Copy link"}
+                </button>
+                <button
+                  onClick={() => setShareStep("hangout")}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg>
+                  {lang === "es" ? "Compartir en Hangout" : "Share to Hangout"}
+                </button>
+                <button
+                  onClick={() => setShareStep("dm")}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                  {lang === "es" ? "Enviar por DM" : "Send via DM"}
+                </button>
+              </div>
+            ) : shareStep === "hangout" ? (
+              <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
+                <button onClick={() => setShareStep("main")} className="text-xs text-white/50 hover:text-white/80 mb-2 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  {lang === "es" ? "Volver" : "Back"}
+                </button>
+                {shareHangouts.length === 0 ? (
+                  <p className="text-xs text-white/40 text-center py-4">{lang === "es" ? "Sin hangouts" : "No hangouts joined yet"}</p>
+                ) : shareHangouts.map((g) => (
+                  <button
+                    key={g.id}
+                    onClick={() => handleShareToHangout(g.id)}
+                    disabled={shareSending}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/8 transition-colors disabled:opacity-50 text-left min-h-[44px]"
+                    style={{ border: "1px solid rgba(255,255,255,0.06)" }}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-white/10 flex-shrink-0 flex items-center justify-center text-xs font-semibold text-white/60">
+                      {g.name.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="truncate">{g.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 space-y-3">
+                <button onClick={() => setShareStep("main")} className="text-xs text-white/50 hover:text-white/80 mb-1 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  {lang === "es" ? "Volver" : "Back"}
+                </button>
+                <input
+                  type="text"
+                  value={shareDmInput}
+                  onChange={(e) => setShareDmInput(e.target.value)}
+                  placeholder={lang === "es" ? "Usuario o ID…" : "Enter username or user ID…"}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30 placeholder-white/25 min-h-[44px]"
+                />
+                <button
+                  onClick={handleShareToDm}
+                  disabled={shareSending || !shareDmInput.trim()}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity min-h-[44px]"
+                  style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                >
+                  {shareSending ? (lang === "es" ? "Enviando…" : "Sending…") : (lang === "es" ? "Enviar" : "Send")}
+                </button>
+              </div>
+            )}
+            <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

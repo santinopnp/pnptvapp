@@ -26,6 +26,14 @@ export const NP_COINS_SUBSCRIBE = [
 ] as const;
 export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
 
+// Performer user IDs eligible for Gifted Ru$h partial payment on private calls.
+// These are users.id values for Santino and Lex (PNPLatinoBoy).
+// Never expand without explicit approval — gifted pool is scoped to these two only.
+export const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
+  "8599671840",  // Santino
+  "7246621722",  // Lex / PNPLatinoBoy
+]);
+
 // Creators whose pay buttons are live before the June 1 launch gate lifts
 const LAUNCH_UNLOCKED = new Set(['SantinoFurioso', 'PNPLatinoBoy'].map(u => u.toLowerCase()));
 export const LAUNCH_DATE = new Date('2026-06-01T00:00:00-05:00');
@@ -1906,6 +1914,24 @@ export function toggleContentReaction(contentId: number, emoji: string): Promise
   reactions: ContentReaction[];
 }> {
   return request(`/api/webapp/content/${contentId}/react`, {
+    method: "POST",
+    body: { emoji },
+  });
+}
+
+export function getPostReactions(postId: number): Promise<{
+  success: boolean;
+  reactions: ContentReaction[];
+}> {
+  return request(`/api/webapp/social/posts/${postId}/reactions`);
+}
+
+export function reactToSocialPost(postId: number, emoji: string): Promise<{
+  success: boolean;
+  added: boolean;
+  reactions: ContentReaction[];
+}> {
+  return request(`/api/webapp/social/posts/${postId}/react`, {
     method: "POST",
     body: { emoji },
   });
@@ -3897,6 +3923,8 @@ export function getChannels(params?: {
 export interface CreatorChannel {
   id: number;
   creatorId: string;
+  /** Canonical owner user ID — used to detect when a video's uploader_id differs from the channel owner. */
+  owner_id?: string;
   name: string;
   slug: string;
   description: string | null;
@@ -3905,6 +3933,8 @@ export interface CreatorChannel {
   isPremium?: boolean;
   featured?: boolean;
   accessType: 'free' | 'prime' | 'subscription' | 'paid';
+  /** When true the backend requires an active PRIME entitlement to access this channel. Replaces the old client-side hardcoded set. */
+  requires_prime?: boolean;
   priceUsd: number;
   hangoutGroupId: number | null;
   hangoutGroupName?: string | null;
@@ -3924,6 +3954,7 @@ export interface CreatorChannel {
   isCollaborator?: boolean;
   telegramChannelId?: string | null;
   bridgeEnabled?: boolean;
+  requiresPrime?: boolean;
 }
 
 export function getOwnChannels(): Promise<{ success: boolean; channels: CreatorChannel[] }> {
@@ -7362,7 +7393,7 @@ export function createCallCheckoutNowPayments(
   payCurrency?: string,
   clientNotes?: string,
   email?: string
-): Promise<{ success: boolean; invoiceUrl: string; paymentId: string; amountUsd: number; expiresAt?: string; bookingId?: string; orderId?: string }> {
+): Promise<{ success: boolean; invoiceUrl: string; paymentId: string; amountUsd: number; fullAmountUsd?: number; giftedTokensApplied?: number; giftedDiscountUsd?: number; expiresAt?: string; bookingId?: string; orderId?: string }> {
   const body: Record<string, unknown> = { packageId };
   if (startTimeUtc) body.startTimeUtc = startTimeUtc;
   if (endTimeUtc) body.endTimeUtc = endTimeUtc;
@@ -8878,6 +8909,22 @@ export interface ChannelVideo {
   view_count: number;
   ai_generated_meta: Record<string, "ai" | "human" | "mixed">;
   created_at: string;
+  /** True when this video was auto-imported from the creator's social feed rather than directly uploaded to the channel. */
+  is_mirrored?: boolean;
+  /** User ID of the person who uploaded this video — may differ from the channel owner on joint/collab channels. */
+  uploader_id?: string | null;
+  /** Display name of the uploader, filled by the backend join when uploader_id !== channel owner. */
+  uploader_display_name?: string | null;
+  /** Username of the uploader. */
+  uploader_username?: string | null;
+  /** Like count from the associated promo social_post row. */
+  likes_count?: number;
+  /** Hype score from the associated promo social_post row. */
+  hype_score?: number;
+  /** Whether the current viewer has liked the associated promo social_post. */
+  liked_by_me?: boolean;
+  /** Whether the current viewer has hyped the associated promo social_post. */
+  hype_posted_by_me?: boolean;
   channel?: {
     id: number;
     slug: string;

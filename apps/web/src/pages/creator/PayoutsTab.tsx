@@ -1020,7 +1020,6 @@ function RushCreatorPanel() {
         <div className="p-2 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-300">
           <div className="uppercase tracking-wider text-[10px] opacity-70">Available</div>
           <div className="font-mono text-sm">${availableUsd.toFixed(2)}</div>
-          <div className="text-[10px] opacity-60">{Math.floor(availableUsd * 6)} 💎</div>
         </div>
         <div className="p-2 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-300">
           <div className="uppercase tracking-wider text-[10px] opacity-70">Holding (72h)</div>
@@ -1049,7 +1048,7 @@ function RushCreatorPanel() {
               className="p-3 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
             >
               💎 Convert to spendable Ru$h
-              <div className="text-[10px] opacity-70 mt-1">Spend on other creators (1:1 at $1 = 6 Ru$h)</div>
+              <div className="text-[10px] opacity-70 mt-1">Spend on other creators</div>
             </button>
           </div>
           <button
@@ -1157,7 +1156,7 @@ function RushCreatorPanel() {
                 />
               </div>
               <p className="text-[10px] mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                Available: {walletBalance} 💎 &nbsp;·&nbsp; Rate: 6 Ru$h = $1 USD
+                Available: {walletBalance} 💎
               </p>
             </div>
 

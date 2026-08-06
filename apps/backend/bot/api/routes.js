@@ -10673,6 +10673,7 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       isCollaborator,
       priceUsd: ch.price_usd ? Number(ch.price_usd) : null,
       priceFreeForm: ch.price_free_form || null,
+      requiresPrime: ch.access_type === 'prime',
     };
 
     // Check access — owner/collaborator always allowed; otherwise delegate to
@@ -10697,14 +10698,36 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
     let videos = [];
     if (!locked) {
       const videosRes = await getPool().query(
-        `SELECT id, title, description, tags, duration_sec, thumbnail_url, gif_url, video_url,
-                status, created_at, directus_file_id, view_count, promo_post_id, tagged_creator_ids,
-                mux_playback_id, mux_status
-         FROM channel_videos
-         WHERE channel_id = $1 AND status = 'published'
-         ORDER BY created_at DESC
+        `SELECT cv.id, cv.title, cv.description,
+                COALESCE(cv.tags, '{}') AS tags,
+                COALESCE(cv.duration_sec, 0) AS duration_sec,
+                cv.thumbnail_url, cv.gif_url, cv.video_url,
+                cv.status, cv.created_at, cv.directus_file_id,
+                COALESCE(cv.view_count, 0) AS view_count,
+                cv.promo_post_id, cv.post_to_feed,
+                COALESCE(cv.tagged_creator_ids, '{}') AS tagged_creator_ids,
+                COALESCE(cv.ai_generated_meta, '{}') AS ai_generated_meta,
+                cv.mux_playback_id, cv.mux_status,
+                (cv.promo_post_id IS NOT NULL AND cv.post_to_feed = false) AS is_mirrored,
+                u.username AS uploader_username,
+                COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username) AS uploader_display_name,
+                COALESCE(sp.likes_count, 0) AS likes_count,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                CASE WHEN $2::text IS NOT NULL THEN EXISTS(
+                  SELECT 1 FROM social_post_likes spl
+                  WHERE spl.post_id = sp.id AND spl.user_id::text = $2::text
+                ) ELSE false END AS liked_by_me,
+                CASE WHEN $2::text IS NOT NULL THEN EXISTS(
+                  SELECT 1 FROM post_hypes ph
+                  WHERE ph.post_id = sp.id AND ph.user_id::text = $2::text
+                ) ELSE false END AS hype_posted_by_me
+         FROM channel_videos cv
+         JOIN users u ON u.id = cv.uploader_id
+         LEFT JOIN social_posts sp ON sp.id = cv.promo_post_id
+         WHERE cv.channel_id = $1 AND cv.status = 'published'
+         ORDER BY cv.created_at DESC
          LIMIT 100`,
-        [channelId]
+        [channelId, viewerId ? String(viewerId) : null]
       );
       const directusBase = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
 
@@ -10721,14 +10744,20 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
         for (const u of tcRes.rows) taggedCreatorMap[u.id] = u;
       }
 
+      // Extract hashtags from description when tags array is empty (mirrored posts)
+      const hashtagRe = /#(\w+)/g;
+
       videos = videosRes.rows.map((cv) => {
         const taggedIds = cv.tagged_creator_ids || [];
+        const tags = cv.tags && cv.tags.length > 0
+          ? cv.tags
+          : [...(cv.description || '').matchAll(hashtagRe)].map((m) => m[1]);
         return {
           id: cv.id,
           title: cv.title,
           description: cv.description,
-          tags: cv.tags || [],
-          duration_sec: cv.duration_sec,
+          tags,
+          duration_sec: cv.duration_sec ?? 0,
           thumbnail_url: cv.thumbnail_url,
           gif_url: cv.gif_url,
           directus_file_id: cv.directus_file_id ?? null,
@@ -10745,8 +10774,16 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           created_at: cv.created_at,
           view_count: cv.view_count ?? 0,
           promo_post_id: cv.promo_post_id ?? null,
+          is_mirrored: cv.is_mirrored === true,
+          ai_generated_meta: cv.ai_generated_meta ?? {},
           tagged_creator_ids: taggedIds,
           tagged_creators: taggedIds.map((id) => taggedCreatorMap[id]).filter(Boolean),
+          uploader_username: cv.uploader_username ?? null,
+          uploader_display_name: cv.uploader_display_name ?? null,
+          likes_count: cv.likes_count ?? 0,
+          hype_score: cv.hype_score ?? 0,
+          liked_by_me: cv.liked_by_me === true,
+          hype_posted_by_me: cv.hype_posted_by_me === true,
         };
       });
     }

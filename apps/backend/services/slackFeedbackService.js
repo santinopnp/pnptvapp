@@ -68,6 +68,7 @@ async function slackPost(method, body) {
       Authorization: `Bearer ${c.botToken}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
   });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) {

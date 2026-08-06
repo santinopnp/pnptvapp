@@ -19,6 +19,17 @@ const emailService = require('./emailservice');
 const logger = require('../utils/logger');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, EARNINGS_HOLD_HOURS_EFIPAY } = require('../config/monetizationConfig');
 const PaymentSecurityService = require('./paymentSecurityService');
+
+// Performers eligible for Gifted Ru$h partial payment on private calls.
+// Values are users.id (= call_packages.creator_id) for Santino and Lex.
+// Never expand this list without explicit approval.
+const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
+  '8599671840',  // Santino (display_name "Santino", performer user_id)
+  '7246621722',  // PNPLatinoBoy / Lex (display_name "PNPLatinoBoy")
+]);
+
+const TOKENS_PER_USD = 6;
+const GIFTED_CALL_MIN_CHARGE_USD = 0.50; // NowPayments minimum; never create a $0 invoice
 function getCallNotificationService() {
   return require('./callNotificationService');
 }
@@ -301,13 +312,27 @@ async function onCallPaymentSuccess(paymentId) {
         }
       }
     } else {
-      // Dash path: confirm the pre-created booking row and link the credit
-      await client.query(
-        `UPDATE bookings
-         SET status = 'confirmed', credit_id = $2, updated_at = NOW()
-         WHERE id = $1 AND payment_id = $3 AND status = 'awaiting_payment'`,
-        [confirmedBookingId, credit.id, paymentId]
-      );
+      // NowPayments path: confirm the pre-created booking row and link the credit.
+      // Also stamp gifted fields from payment metadata onto the booking row.
+      const giftedMeta = meta.giftedTokensApplied > 0 ? {
+        gifted_tokens_applied: Number(meta.giftedTokensApplied),
+        gifted_discount_usd: Number(meta.giftedDiscountUsd || 0),
+      } : null;
+      if (giftedMeta) {
+        await client.query(
+          `UPDATE bookings
+           SET status = 'confirmed', credit_id = $2, gifted_tokens_applied = $4, gifted_discount_usd = $5, updated_at = NOW()
+           WHERE id = $1 AND payment_id = $3 AND status = 'awaiting_payment'`,
+          [confirmedBookingId, credit.id, paymentId, giftedMeta.gifted_tokens_applied, giftedMeta.gifted_discount_usd]
+        );
+      } else {
+        await client.query(
+          `UPDATE bookings
+           SET status = 'confirmed', credit_id = $2, updated_at = NOW()
+           WHERE id = $1 AND payment_id = $3 AND status = 'awaiting_payment'`,
+          [confirmedBookingId, credit.id, paymentId]
+        );
+      }
     }
 
     // Record 70/30 earnings split inside the transaction — failure rolls back the
@@ -780,8 +805,40 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     }
   }
 
-  // 2. Use full package price
-  const amountUsd = parseFloat(pkg.price_usd);
+  // 2. Compute gifted Ru$h discount (Santino + Lex only)
+  const fullAmountUsd = parseFloat(pkg.price_usd);
+  let giftedTokensApplied = 0;
+  let giftedDiscountUsd = 0;
+  const isGiftedEligible = GIFTED_ELIGIBLE_PERFORMER_USER_IDS.has(String(pkg.creator_id));
+
+  if (isGiftedEligible) {
+    try {
+      const walletRow = await query(
+        `SELECT gifted_balance FROM user_token_wallets WHERE user_id = $1`,
+        [String(userId)]
+      );
+      const rawGifted = walletRow.rows[0] ? Number(walletRow.rows[0].gifted_balance) : 0;
+      if (rawGifted > 0) {
+        // Floor to cent: discount = floor(gifted / 6 * 100) / 100
+        const rawDiscount = Math.floor(rawGifted / TOKENS_PER_USD * 100) / 100;
+        // Cap so minimum $0.50 goes through NowPayments
+        const cappedDiscount = Math.min(rawDiscount, fullAmountUsd - GIFTED_CALL_MIN_CHARGE_USD);
+        if (cappedDiscount > 0) {
+          giftedDiscountUsd = Math.round(cappedDiscount * 100) / 100;
+          giftedTokensApplied = Math.round(giftedDiscountUsd * TOKENS_PER_USD);
+        }
+      }
+    } catch (walletReadErr) {
+      // Non-fatal: proceed without discount if wallet read fails
+      logger.warn('[callCheckoutService] gifted wallet read failed, skipping discount', {
+        userId, creatorId: pkg.creator_id, error: walletReadErr.message,
+      });
+      giftedTokensApplied = 0;
+      giftedDiscountUsd = 0;
+    }
+  }
+
+  const amountUsd = Math.round((fullAmountUsd - giftedDiscountUsd) * 100) / 100;
 
   // 3. Create pending payment record
   const payment = await PaymentModel.create({
@@ -801,10 +858,11 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
       endTimeUtc: endTimeUtc || null,
       provider: 'nowpayments',
       email: email && typeof email === 'string' ? email.trim().slice(0, 254) : null,
+      ...(giftedTokensApplied > 0 ? { giftedTokensApplied, giftedDiscountUsd } : {}),
     },
   });
 
-  // 4. Slot-lock + insert booking row when times are provided
+  // 4. Slot-lock + insert booking row + debit gifted tokens — all in one transaction
   const pool = getPool();
   const client = await pool.connect();
   let booking;
@@ -829,6 +887,36 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
         clientNotes,
       });
     }
+
+    // Debit gifted tokens inside the booking transaction. COMMIT runs at line ~920;
+    // if NowPayments invoice creation fails after that, the explicit credit() call
+    // in the catch block below acts as the compensating transaction.
+    if (giftedTokensApplied > 0) {
+      const tokenLedger = require('./tokenLedgerService');
+      await tokenLedger.debit({
+        userId,
+        amount: giftedTokensApplied,
+        reason: 'call_book',
+        sourceType: 'booking',
+        sourceId: payment.id,
+        actorId: userId,
+        metadata: {
+          giftedDiscountUsd,
+          creatorId: pkg.creator_id,
+          packageId: pkg.id,
+        },
+        allowGifted: true,
+        externalClient: client,
+      });
+      // Stamp gifted fields on booking row (if slot booking was created)
+      if (booking?.id) {
+        await client.query(
+          `UPDATE bookings SET gifted_tokens_applied = $2, gifted_discount_usd = $3, updated_at = NOW() WHERE id = $1`,
+          [booking.id, giftedTokensApplied, giftedDiscountUsd]
+        );
+      }
+    }
+
     await client.query('COMMIT');
   } catch (txErr) {
     await client.query('ROLLBACK');
@@ -874,6 +962,29 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
       });
     }
     await query(`UPDATE payments SET status = 'failed', updated_at = NOW() WHERE id = $1`, [payment.id]).catch(() => {});
+    // Refund any gifted tokens that were debited before the invoice call — the DB
+    // transaction already committed so we must credit them back explicitly.
+    if (giftedTokensApplied > 0) {
+      try {
+        const tokenLedger = require('./tokenLedgerService');
+        await tokenLedger.credit({
+          userId,
+          giftedDelta: giftedTokensApplied,
+          reason: 'call_refund',
+          sourceType: 'booking',
+          sourceId: payment.id,
+          actorId: 'system',
+          metadata: { refundReason: 'nowpayments_invoice_failed', giftedDiscountUsd },
+        });
+        logger.info('[callCheckoutService] gifted tokens refunded after NP invoice failure', {
+          userId, giftedTokensApplied, paymentId: payment.id,
+        });
+      } catch (refundErr) {
+        logger.error('[callCheckoutService] CRITICAL: gifted token refund failed after NP invoice failure', {
+          userId, giftedTokensApplied, paymentId: payment.id, error: refundErr.message,
+        });
+      }
+    }
     logger.error('[callCheckoutService] NowPayments invoice creation failed', {
       paymentId: payment.id, bookingId: booking?.id ?? null,
       error: invoiceErr.response?.data?.message || invoiceErr.message,
@@ -917,7 +1028,8 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
   logger.info('[callCheckoutService] NowPayments call checkout created', {
-    paymentId: payment.id, bookingId: booking?.id ?? null, orderId, packageId: pkg.id, amountUsd,
+    paymentId: payment.id, bookingId: booking?.id ?? null, orderId, packageId: pkg.id,
+    amountUsd, giftedTokensApplied, giftedDiscountUsd,
   });
 
   return {
@@ -925,6 +1037,9 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     paymentId: payment.id,
     bookingId: booking?.id ?? null,
     amountUsd,
+    fullAmountUsd,
+    giftedTokensApplied,
+    giftedDiscountUsd,
     expiresAt,
     orderId,
     ...npPayInfo,

@@ -25,7 +25,7 @@ const roleGuard = (...allowedRoles) => {
 
     try {
       const result = await getPool().query(
-        'SELECT role, pnptv_id FROM users WHERE id = $1',
+        'SELECT role, pnptv_id, creator_status FROM users WHERE id = $1',
         [sessionUser.id]
       );
 
@@ -41,6 +41,7 @@ const roleGuard = (...allowedRoles) => {
 
       let userRole = result.rows[0].role || 'user';
       const pnptvId = result.rows[0].pnptv_id || sessionUser.pnptvId || sessionUser.pnptv_id || null;
+      const creatorStatus = result.rows[0].creator_status || null;
 
       if (pnptvId && userRole !== 'superadmin' && (userRole === 'admin' || allowedRoles.includes('admin'))) {
         try {
@@ -66,11 +67,14 @@ const roleGuard = (...allowedRoles) => {
       // God-Mode toggle: a super-god who's flipped their badge OFF wants to
       // behave as a normal user for the duration — even if the route allows
       // admin/superadmin, downgrade the effective role for gating.
+      // Exception: preserve 'creator' access if the user has an active creator_status,
+      // so admins who are also creators can still access their own payout endpoints.
       const isDisabledSuperGod =
         EntitlementAccessService.isSuperGodEligible(sessionUser.id)
         && EntitlementAccessService.isSuperGodDisabled(sessionUser.id);
+      const isActiveCreator = creatorStatus === 'approved' || creatorStatus === 'active';
       const effectiveRole = (isDisabledSuperGod && (userRole === 'admin' || userRole === 'superadmin'))
-        ? 'user'
+        ? (isActiveCreator ? 'creator' : 'user')
         : userRole;
 
       if (!allowedRoles.includes(effectiveRole)) {

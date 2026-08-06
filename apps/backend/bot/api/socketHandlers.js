@@ -2523,6 +2523,39 @@ function initSocketIO(io) {
 
         io.to(`live:${streamId}`).emit('live:viewer_count', { streamId, count });
 
+        // Notify creator on their personal Slack channel — first viewer + every 5 after.
+        if (!viewerIsSuperGod && firstJoin === 'OK') {
+          (async () => {
+            try {
+              const notifyKey = `live:viewer_notify:${streamId}`;
+              const lastNotified = parseInt(await redis.get(notifyKey) || '0', 10);
+              const isFirst = count === 1;
+              if (!isFirst && count - lastNotified < 5) return;
+
+              const isSlug = /^[a-z][a-z0-9_-]{2,}$/.test(String(streamId)) && !/^\d+$/.test(String(streamId));
+              let creatorRow = null;
+              if (isSlug) {
+                const { rows } = await query('SELECT id FROM users WHERE live_channel = $1 LIMIT 1', [streamId]);
+                creatorRow = rows[0];
+              } else {
+                const { rows } = await query(
+                  `SELECT u.id FROM users u JOIN performers p ON p.user_id = u.id WHERE p.id::text = $1 OR u.id = $1 LIMIT 1`,
+                  [String(streamId)]
+                );
+                creatorRow = rows[0];
+              }
+              if (!creatorRow) return;
+
+              await redis.set(notifyKey, String(count), 'EX', 28800);
+              require('../../services/slackCreatorNotifyService').notifyNewViewer(creatorRow.id, {
+                viewerUsername: user.username || user.first_name || 'Someone',
+                viewerCount: count,
+                isFirst,
+              }).catch(() => {});
+            } catch (_) {}
+          })();
+        }
+
         // Slug streams (Restreamer channel refs, e.g. "pnptv-santino") have no row
         // in live_streams — getComments() returns [] instead of throwing, so the
         // original try/catch never triggered the Redis fallback. Detect slugs first.

@@ -472,6 +472,106 @@ async function notifyActivationReminder(creatorUserId, opts) {
   } catch (_) {}
 }
 
+// ── Stream: going live ───────────────────────────────────────────────────────
+async function notifyGoingLive(creatorUserId, opts) {
+  try {
+    const { channelRef = '' } = opts || {};
+    const streamUrl = 'https://pnptv.app/live';
+    const text = `🔴 You're LIVE! Go get 'em — the stage is yours.`;
+    const blocks = [
+      { type: 'header', text: { type: 'plain_text', text: '🔴 You\'re LIVE!', emoji: true } },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `Your stream *${channelRef || 'PNP Live'}* is live on PNPtv!\n<${streamUrl}|Open stream> — share the link with your audience!`,
+        },
+      },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `PNPtv! • ${_nowTs()}` }] },
+    ];
+    await _postToCreator(creatorUserId, text, blocks);
+  } catch (_) {}
+}
+
+// ── Stream: new viewer joined ────────────────────────────────────────────────
+async function notifyNewViewer(creatorUserId, opts) {
+  try {
+    const { viewerUsername = 'Someone', viewerCount = 1, isFirst = false } = opts || {};
+    const headerText = isFirst ? '🎉 First Viewer!' : `👥 ${viewerCount} Viewers Live`;
+    const bodyText = isFirst
+      ? `*${viewerUsername}* is your *first viewer* — they showed up for you! 🙌`
+      : `*${viewerUsername}* just joined. You now have *${viewerCount} viewers* watching live!`;
+    const text = isFirst ? `🎉 ${viewerUsername} is your first viewer!` : `👥 ${viewerCount} viewers live — ${viewerUsername} just joined.`;
+    const blocks = [
+      { type: 'header', text: { type: 'plain_text', text: headerText, emoji: true } },
+      { type: 'section', text: { type: 'mrkdwn', text: bodyText } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `PNPtv! • ${_nowTs()}` }] },
+    ];
+    await _postToCreator(creatorUserId, text, blocks);
+  } catch (_) {}
+}
+
+// ── Stream: end-of-session report with comparison ────────────────────────────
+async function notifyStreamEndStats(creatorUserId, opts) {
+  try {
+    const { current = {}, previous = null } = opts || {};
+
+    const durSec = Number(current.duration_seconds) || 0;
+    const durMin = Math.round(durSec / 60);
+    const durH   = Math.floor(durMin / 60);
+    const durMrem = durMin % 60;
+    const durLabel = durH > 0 ? `${durH}h ${durMrem}m` : `${durMrem}m`;
+
+    const peak     = Number(current.peak_viewers) || 0;
+    const unique   = Number(current.unique_viewers) || peak;
+    const tipsUsd  = parseFloat(current.total_tips_usd || 0);
+    const tipsRush = Number(current.total_tips_tokens) || 0;
+
+    const prevDurMin  = previous ? Math.round((Number(previous.duration_seconds) || 0) / 60) : null;
+    const prevPeak    = previous ? Number(previous.peak_viewers) || 0 : null;
+    const prevTipsUsd = previous ? parseFloat(previous.total_tips_usd || 0) : null;
+
+    function fmt(val, prev, unit = '') {
+      if (prev === null) return '';
+      const d = val - prev;
+      const sign = d >= 0 ? '+' : '';
+      const arrow = d > 0 ? ' ↑' : (d < 0 ? ' ↓' : '');
+      return ` _(${sign}${unit}${Math.abs(d)}${arrow} vs last)_`;
+    }
+
+    const deltaDur  = prevDurMin  !== null ? durMin - prevDurMin   : null;
+    const deltaPeak = prevPeak    !== null ? peak   - prevPeak     : null;
+    const deltaTips = prevTipsUsd !== null ? tipsUsd - prevTipsUsd : null;
+
+    // Motivational line
+    const ups = [deltaDur > 0, deltaPeak > 0, deltaTips > 0].filter(Boolean).length;
+    let motivation;
+    if (ups === 3)            motivation = '🏆 *Triple win* — duration, viewers AND tips all up. You\'re on fire!';
+    else if (ups === 2)       motivation = '📈 Two metrics up vs last session — momentum is building!';
+    else if (tipsUsd > 20)   motivation = '💰 Great tip session — your audience loves what you do!';
+    else if (peak >= 10 && !previous) motivation = '🎉 Solid start! Every legend builds their audience one show at a time.';
+    else if (deltaPeak > 5)  motivation = '👥 Your audience is growing fast — keep showing up!';
+    else if (ups === 0 && previous) motivation = '💪 Not every show peaks — the ones who stay consistent win. See you next time!';
+    else                      motivation = '✨ Another show done. Your community is watching — keep going!';
+
+    const statsLines = [
+      `⏱ *Duration:* ${durLabel}${fmt(durMin, prevDurMin, '')}`,
+      `👥 *Peak viewers:* ${peak} (${unique} unique)${fmt(peak, prevPeak, '')}`,
+      `💰 *Tips:* ${tipsRush} Ru$h (~$${tipsUsd.toFixed(2)})${deltaTips !== null ? ` _(${deltaTips >= 0 ? '+' : ''}$${deltaTips.toFixed(2)} vs last)_` : ''}`,
+    ].join('\n');
+
+    const text = `📊 Session ended — ${durLabel}, ${peak} peak viewers, $${tipsUsd.toFixed(2)} in tips`;
+    const blocks = [
+      { type: 'header', text: { type: 'plain_text', text: '📊 Session Report', emoji: true } },
+      { type: 'section', text: { type: 'mrkdwn', text: statsLines } },
+      { type: 'divider' },
+      { type: 'section', text: { type: 'mrkdwn', text: motivation } },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `PNPtv! • ${_nowTs()}` }] },
+    ];
+    await _postToCreator(creatorUserId, text, blocks);
+  } catch (_) {}
+}
+
 module.exports = {
   getCreatorChannel, // not queued — used for DB lookup, not Slack posting
   notifyActivationReminder,
@@ -485,6 +585,9 @@ module.exports = {
   notify2257Expiring: _wrap('notify2257Expiring', notify2257Expiring),
   notifyPayoutProcessed: _wrap('notifyPayoutProcessed', notifyPayoutProcessed),
   notifyNewVideoComment: _wrap('notifyNewVideoComment', notifyNewVideoComment),
+  notifyGoingLive: _wrap('notifyGoingLive', notifyGoingLive),
+  notifyNewViewer: _wrap('notifyNewViewer', notifyNewViewer),
+  notifyStreamEndStats: _wrap('notifyStreamEndStats', notifyStreamEndStats),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyNewBooking: notifyNewBooking,
   _direct_notifyBookingCancelled: notifyBookingCancelled,
@@ -495,4 +598,7 @@ module.exports = {
   _direct_notify2257Expiring: notify2257Expiring,
   _direct_notifyPayoutProcessed: notifyPayoutProcessed,
   _direct_notifyNewVideoComment: notifyNewVideoComment,
+  _direct_notifyGoingLive: notifyGoingLive,
+  _direct_notifyNewViewer: notifyNewViewer,
+  _direct_notifyStreamEndStats: notifyStreamEndStats,
 };

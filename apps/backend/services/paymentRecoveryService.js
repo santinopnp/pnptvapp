@@ -230,6 +230,8 @@ class PaymentRecoveryService {
       // NOWPayments subscription orders use a 'pnptv-nowp-' prefix and call-package
       // NowPayments orders use a 'call-' prefix — exclude both so BTCPay 404
       // responses don't falsely expire legitimate NP orders.
+      // Also exclude records where metadata explicitly marks provider as 'nowpayments'
+      // (e.g. admin-manual grants that use a non-standard btcpay_invoice_id prefix).
       const stuck = await query(`
         SELECT btcpay_invoice_id AS invoice_id, 'dash_subscription_orders' AS source, created_at
         FROM dash_subscription_orders
@@ -239,6 +241,7 @@ class PaymentRecoveryService {
           AND btcpay_invoice_id NOT LIKE 'pnptv-tokens-%'
           AND btcpay_invoice_id NOT LIKE 'call-%'
           AND btcpay_invoice_id NOT LIKE 'pnptv-banxa-%'
+          AND COALESCE(metadata->>'provider', '') != 'nowpayments'
           AND created_at < NOW() - INTERVAL '10 minutes'
           AND created_at > NOW() - INTERVAL '7 days'
         UNION ALL
@@ -885,7 +888,8 @@ class PaymentRecoveryService {
          WHERE (btcpay_invoice_id LIKE 'pnptv-nowp-%'
              OR btcpay_invoice_id LIKE 'pnptv-tokens-nowp-%'
              OR btcpay_invoice_id LIKE 'call-%'
-             OR (btcpay_invoice_id LIKE 'pnptv-banxa-%' AND metadata->>'provider' = 'nowpayments'))
+             OR (btcpay_invoice_id LIKE 'pnptv-banxa-%' AND metadata->>'provider' = 'nowpayments')
+             OR (metadata->>'provider' = 'nowpayments' AND metadata->>'nowpaymentsInvoiceId' IS NOT NULL))
            AND created_at < NOW() - INTERVAL '15 minutes'
            AND (
              (status IN ('pending', 'confirming', 'confirmed', 'partially_paid') AND created_at > NOW() - INTERVAL '24 hours')
@@ -906,7 +910,8 @@ class PaymentRecoveryService {
          WHERE (btcpay_invoice_id LIKE 'pnptv-nowp-%'
              OR btcpay_invoice_id LIKE 'pnptv-tokens-nowp-%'
              OR btcpay_invoice_id LIKE 'call-%'
-             OR (btcpay_invoice_id LIKE 'pnptv-banxa-%' AND metadata->>'provider' = 'nowpayments'))
+             OR (btcpay_invoice_id LIKE 'pnptv-banxa-%' AND metadata->>'provider' = 'nowpayments')
+             OR (metadata->>'provider' = 'nowpayments' AND metadata->>'nowpaymentsInvoiceId' IS NOT NULL))
            AND status = 'processing'
            AND completed_at IS NULL
            AND created_at < NOW() - INTERVAL '5 minutes'

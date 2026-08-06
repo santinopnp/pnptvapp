@@ -6,9 +6,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 import { useTutorial } from "@/hooks/useTutorial";
 
-// Creators whose free channel videos get a PRIME upsell banner below the player.
-// Add IDs here to promote additional creators.
-const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840"]); // Santino
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import {
@@ -30,12 +27,21 @@ import {
   updateVideoTaggedCreators,
   searchCreators,
   createSocialPost,
+  togglePostLike,
+  togglePostHype,
+  sharePostToHangouts,
+  sharePostToDm,
+  getPostReactions,
+  reactToSocialPost,
+  getHangoutGroups,
   type Channel,
   type ChannelVideo,
   type ChannelVideoComment,
   type CreatorChannel,
   type MentionUser,
   type SocialPostItem,
+  type HangoutGroup,
+  type ContentReaction,
 } from "@/lib/api";
 import { connectSocket } from "@/lib/socket";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
@@ -67,6 +73,22 @@ function formatRelativeTime(date: string): string {
   if (days < 30) return `${days}d ago`;
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
+}
+
+/** Format a duration in seconds as M:SS or H:MM:SS. Returns null when duration is 0 or null. */
+function formatDuration(sec: number | null | undefined): string | null {
+  if (!sec || sec <= 0) return null;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const mm = String(m).padStart(h > 0 ? 2 : 1, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** Format a raw view count into compact form: 1234 → 1.2K, 1200000 → 1.2M. */
+function formatViewCount(count: number): string {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(count);
 }
 
 // ── Creator Channel Card ─────────────────────────────────────────────────────
@@ -219,7 +241,9 @@ function ChannelDetailView({
   const [locked, setLocked] = useState(false);
   const [lockReason, setLockReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const showPrimeUpsell = !!channel?.creatorId && PRIME_UPSELL_CREATOR_IDS.has(String(channel.creatorId)) && !isPrime;
+  // requiresPrime: backend returns requires_prime:true when access_type === 'prime'. No hardcoded IDs.
+  const channelIsPrime = channel?.requires_prime === true || channel?.accessType === 'prime';
+  const showPrimeUpsell = channelIsPrime && !isPrime;
   const upsellKey = channel?.creatorId ? `pnp_prime_upsell_dismissed_${channel.creatorId}` : "";
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(false);
   useEffect(() => {
@@ -231,10 +255,10 @@ function ChannelDetailView({
     try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
     setPrimeUpsellDismissed(true);
   };
-  // Creator subscribe upsell — inside FREE channel modal, not the channel owner, not a PRIME-upsell creator
+  // Creator subscribe upsell — inside FREE channel, not the channel owner, not a PRIME channel
   const showCreatorSubscribeUpsell =
     !!channel?.creatorId &&
-    !PRIME_UPSELL_CREATOR_IDS.has(String(channel.creatorId)) &&
+    !channelIsPrime &&
     (channel.accessType ?? "free") === "free" &&
     String(user?.id ?? "") !== String(channel.creatorId);
   const subscribeUpsellKey = channel?.creatorId ? `pnp_creator_subscribe_dismissed_${channel.creatorId}` : "";
@@ -285,6 +309,28 @@ function ChannelDetailView({
   const [modalHypeOpen, setModalHypeOpen] = useState(false);
   const [hypeError, setHypeError] = useState<string | null>(null);
   const hypeInFlight = useRef(false);
+
+  // Per-video like state (optimistic)
+  const [videoLikes, setVideoLikes] = useState<Record<number, { liked: boolean; count: number }>>({});
+
+  // Per-video hype toggle state (optimistic, for promo_post_id hype)
+  const [videoHypeToggles, setVideoHypeToggles] = useState<Record<number, boolean>>({});
+  const hypeToggleInFlight = useRef<Record<number, boolean>>({});
+
+  // Share sheet
+  const [shareTarget, setShareTarget] = useState<{ promoPostId: number; videoTitle: string } | null>(null);
+  const [shareHangouts, setShareHangouts] = useState<HangoutGroup[]>([]);
+  const [shareHangoutsLoaded, setShareHangoutsLoaded] = useState(false);
+  const [shareStep, setShareStep] = useState<"main" | "hangout" | "dm">("main");
+  const [shareDmInput, setShareDmInput] = useState("");
+  const [shareSending, setShareSending] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState<string | null>(null);
+
+  // Comment reactions
+  const [commentReactions, setCommentReactions] = useState<Record<number, ContentReaction[]>>({});
+  const [commentReactionPickerOpen, setCommentReactionPickerOpen] = useState<number | null>(null);
+  const commentReactionsFetched = useRef<Set<number>>(new Set());
+  const REACTION_EMOJIS = ['😈','❤️','😆','🔝','🐷','🍆','🍑','💨','🚀'];
 
   const openVideoEdit = (v: ChannelVideo) => {
     setEditingVideoId(v.id);
@@ -465,7 +511,6 @@ function ChannelDetailView({
       setModalHypeOpen(false);
       setHypeText("");
     } catch (err: unknown) {
-      console.error('Hype post failed', err);
       const msg = err instanceof Error ? err.message : '';
       setHypeError(msg.toLowerCase().includes('already hyped') ? 'You already hyped this.' : 'Failed to post. Try again.');
     } finally {
@@ -473,6 +518,104 @@ function ChannelDetailView({
       hypeInFlight.current = false;
     }
   }, [hypeText, hypePosting, videos, channel]);
+
+  const handleVideoLike = useCallback(async (v: ChannelVideo) => {
+    if (!v.promo_post_id) return;
+    const current = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
+    const next = { liked: !current.liked, count: Math.max(0, current.count + (current.liked ? -1 : 1)) };
+    setVideoLikes((prev) => ({ ...prev, [v.id]: next }));
+    try {
+      await togglePostLike(v.promo_post_id);
+    } catch {
+      setVideoLikes((prev) => ({ ...prev, [v.id]: current }));
+    }
+  }, [videoLikes]);
+
+  const handleVideoHypeToggle = useCallback(async (v: ChannelVideo) => {
+    if (!v.promo_post_id || hypeToggleInFlight.current[v.id]) return;
+    hypeToggleInFlight.current[v.id] = true;
+    const prevPosted = videoHypeToggles[v.id] ?? v.hype_posted_by_me ?? false;
+    setVideoHypeToggles((prev) => ({ ...prev, [v.id]: !prevPosted }));
+    try {
+      await togglePostHype(v.promo_post_id);
+    } catch {
+      setVideoHypeToggles((prev) => ({ ...prev, [v.id]: prevPosted }));
+    } finally {
+      hypeToggleInFlight.current[v.id] = false;
+    }
+  }, [videoHypeToggles]);
+
+  const openShareSheet = useCallback(async (promoPostId: number, videoTitle: string) => {
+    setShareTarget({ promoPostId, videoTitle });
+    setShareStep("main");
+    setShareSuccess(null);
+    setShareDmInput("");
+    if (!shareHangoutsLoaded) {
+      try {
+        const res = await getHangoutGroups();
+        setShareHangouts(res.groups ?? []);
+        setShareHangoutsLoaded(true);
+      } catch { setShareHangouts([]); }
+    }
+  }, [shareHangoutsLoaded]);
+
+  const closeShareSheet = useCallback(() => {
+    setShareTarget(null);
+    setShareStep("main");
+    setShareSuccess(null);
+    setShareDmInput("");
+    setShareSending(false);
+  }, []);
+
+  const handleShareToHangout = useCallback(async (groupId: number) => {
+    if (!shareTarget || shareSending) return;
+    setShareSending(true);
+    try {
+      await sharePostToHangouts(shareTarget.promoPostId, [groupId]);
+      setShareSuccess("Shared to hangout!");
+      setTimeout(closeShareSheet, 1200);
+    } catch { setShareSending(false); }
+  }, [shareTarget, shareSending, closeShareSheet]);
+
+  const handleShareToDm = useCallback(async () => {
+    if (!shareTarget || !shareDmInput.trim() || shareSending) return;
+    setShareSending(true);
+    try {
+      await sharePostToDm(shareDmInput.trim(), shareTarget.promoPostId);
+      setShareSuccess("Sent via DM!");
+      setTimeout(closeShareSheet, 1200);
+    } catch { setShareSending(false); }
+  }, [shareTarget, shareDmInput, shareSending, closeShareSheet]);
+
+  const loadCommentReactions = useCallback(async (commentId: number) => {
+    if (commentReactionsFetched.current.has(commentId)) return;
+    commentReactionsFetched.current.add(commentId);
+    try {
+      const res = await getPostReactions(commentId);
+      setCommentReactions((prev) => ({ ...prev, [commentId]: res.reactions ?? [] }));
+    } catch { /* silent */ }
+  }, []);
+
+  const handleCommentReaction = useCallback(async (commentId: number, emoji: string) => {
+    const prevReactions = commentReactions[commentId] ?? [];
+    const existing = prevReactions.find((r) => r.emoji === emoji);
+    const wasReacted = existing?.reactedByMe ?? false;
+    const optimistic = prevReactions.map((r) => {
+      if (r.emoji !== emoji) return r;
+      return { ...r, count: Math.max(0, r.count + (wasReacted ? -1 : 1)), reactedByMe: !wasReacted };
+    });
+    if (!existing && !wasReacted) {
+      optimistic.push({ emoji, count: 1, users: [], reactedByMe: true });
+    }
+    setCommentReactions((prev) => ({ ...prev, [commentId]: optimistic }));
+    setCommentReactionPickerOpen(null);
+    try {
+      const res = await reactToSocialPost(commentId, emoji);
+      if (res.reactions) setCommentReactions((prev) => ({ ...prev, [commentId]: res.reactions }));
+    } catch {
+      setCommentReactions((prev) => ({ ...prev, [commentId]: prevReactions }));
+    }
+  }, [commentReactions]);
 
   // ── Edit channel ─────────────────────────────────────────────────────────
   const [showEditForm, setShowEditForm] = useState(false);
@@ -561,7 +704,20 @@ function ChannelDetailView({
         .then((res) => {
           if (res.success) {
             setChannel(res.channel);
-            setVideos(res.videos ?? []);
+            const fetchedVideos = res.videos ?? [];
+            setVideos(fetchedVideos);
+            setVideoLikes(
+              fetchedVideos.reduce<Record<number, { liked: boolean; count: number }>>((acc, v) => {
+                acc[v.id] = { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
+                return acc;
+              }, {})
+            );
+            setVideoHypeToggles(
+              fetchedVideos.reduce<Record<number, boolean>>((acc, v) => {
+                acc[v.id] = v.hype_posted_by_me ?? false;
+                return acc;
+              }, {})
+            );
             setPosts(res.posts ?? []);
             setLocked(res.locked);
             setLockReason(res.lockReason ?? null);
@@ -604,6 +760,395 @@ function ChannelDetailView({
       taggedCreators: v.tagged_creators || [],
     });
   }, [videos, searchParams, playingVideo, channel]);
+
+  // ── Video card renderer ──────────────────────────────────────────────────
+  // Extracted from inline JSX so the thumbnail logic, badge overlays, and
+  // metadata row are defined in one place only. Called from the videos.map
+  // below and not duplicated anywhere else in this file.
+  const renderVideoCard = (v: ChannelVideo) => {
+    const isEditing = editingVideoId === v.id;
+    const isDeleting = deletingVideoId === v.id;
+    const isProcessing = v.status === "processing" || v.mux_status === "preparing" || v.mux_status === "waiting";
+    const duration = formatDuration(v.duration_sec);
+
+    // Thumbnail fallback chain: gif_url (hover only) → thumbnail_url → placeholder
+    const staticThumb = v.thumbnail_url || null;
+    const animatedThumb = v.gif_url || null;
+    const hasThumb = !!staticThumb || !!animatedThumb;
+
+    // Uploader chip: show only when this channel has a different owner than the video uploader
+    const channelOwnerIds = new Set<string>();
+    if (channel?.creatorId) channelOwnerIds.add(String(channel.creatorId));
+    if (channel?.owner_id) channelOwnerIds.add(String(channel.owner_id));
+    const showUploaderChip =
+      !!v.uploader_id &&
+      !channelOwnerIds.has(String(v.uploader_id)) &&
+      (!!v.uploader_display_name || !!v.uploader_username);
+
+    // Tag display: up to 5 pills, then a "+N" overflow badge
+    const MAX_TAGS = 5;
+    const visibleTags = (v.tags || []).slice(0, MAX_TAGS);
+    const overflowTagCount = (v.tags || []).length - MAX_TAGS;
+
+    return (
+      <div key={`cv-${v.id}`} className="bg-pnp-surface">
+        {/* ── Thumbnail — full device width, 16:9 ── */}
+        <div
+          className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer overflow-hidden"
+          onClick={() => {
+            if (isProcessing) return;
+            setVideoPlayerError(false);
+            setPlayingVideo({
+              url: v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : v.video_url,
+              title: v.title,
+              videoId: v.id,
+              channelId: channel!.id,
+              promoPostId: v.promo_post_id ?? null,
+              taggedCreators: v.tagged_creators || [],
+            });
+          }}
+        >
+          {/* Thumbnail image with hover-to-gif swap */}
+          {hasThumb ? (
+            <img
+              src={staticThumb || animatedThumb!}
+              alt={v.title}
+              className={[
+                "w-full h-full object-cover transition-transform duration-200",
+                isProcessing ? "saturate-0 opacity-60" : "group-hover:scale-105",
+              ].join(" ")}
+              onMouseEnter={(e) => { if (animatedThumb && !isProcessing) (e.currentTarget as HTMLImageElement).src = animatedThumb; }}
+              onMouseLeave={(e) => { if (staticThumb && animatedThumb && !isProcessing) (e.currentTarget as HTMLImageElement).src = staticThumb; }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            // Film-icon placeholder when both thumbnail and gif are null
+            <div className="w-full h-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.04)" }}>
+              <svg className="w-10 h-10 opacity-20 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
+              </svg>
+            </div>
+          )}
+
+          {/* Play overlay — hidden during processing */}
+          {!isProcessing && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors pointer-events-none">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
+                <svg className="w-6 h-6 text-white drop-shadow ml-1" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Duration badge — bottom-right */}
+          {duration && !isProcessing && (
+            <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[11px] font-semibold text-white tabular-nums pointer-events-none" style={{ background: "rgba(0,0,0,0.72)" }}>
+              {duration}
+            </span>
+          )}
+
+          {/* Processing badge — bottom-left (amber, pulsing) */}
+          {isProcessing && (
+            <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white animate-pulse pointer-events-none" style={{ background: "rgba(234,179,8,0.85)" }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-white" />
+              Processing…
+            </span>
+          )}
+
+          {/* Mirrored badge — top-left */}
+          {v.is_mirrored && (
+            <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white pointer-events-none" style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.15)" }}>
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+              </svg>
+              From feed
+            </span>
+          )}
+        </div>
+
+        {/* ── Info row ── */}
+        <div className="px-4 py-2.5 flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-pnp-textPrimary line-clamp-1">{v.title || "Untitled"}</p>
+            {v.description && (
+              <p className="text-xs text-pnp-textSecondary mt-0.5 line-clamp-2">{v.description}</p>
+            )}
+
+            {/* Uploader chip — only when a different person uploaded this video */}
+            {showUploaderChip && (
+              <p className="text-[10px] text-pnp-textSecondary mt-0.5">
+                by{" "}
+                <span className="text-pnp-textPrimary font-medium">
+                  {v.uploader_display_name || (v.uploader_username ? `@${v.uploader_username}` : "unknown")}
+                </span>
+              </p>
+            )}
+
+            {/* Meta row: view count + tags + overflow */}
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              {v.view_count > 0 && (
+                <span className="flex items-center gap-0.5 text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  {formatViewCount(v.view_count)}
+                </span>
+              )}
+              {visibleTags.map((t) => (
+                <span key={t} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>
+                  {t}
+                </span>
+              ))}
+              {overflowTagCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}>
+                  +{overflowTagCount}
+                </span>
+              )}
+            </div>
+
+            {/* Tagged creators */}
+            {v.tagged_creators && v.tagged_creators.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>with</span>
+                {v.tagged_creators.map((c) => (
+                  <a
+                    key={c.id}
+                    href={`/profile/${c.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-1 text-[10px] font-medium hover:underline"
+                    style={{ color: "#D4007A" }}
+                  >
+                    {c.avatar_url && (
+                      <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    )}
+                    @{c.username}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {user && v.promo_post_id && (() => {
+              const likeState = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
+              const hyped = videoHypeToggles[v.id] ?? v.hype_posted_by_me ?? false;
+              return (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleVideoLike(v); }}
+                    title={likeState.liked ? "Unlike" : "Like"}
+                    aria-label={likeState.liked ? "Unlike" : "Like"}
+                    className="flex items-center gap-0.5 p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] justify-center"
+                    style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.1)" : "transparent" }}
+                  >
+                    <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                    </svg>
+                    {likeState.count > 0 && <span className="text-[10px] tabular-nums">{likeState.count}</span>}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleVideoHypeToggle(v); }}
+                    title={hyped ? "Hyped!" : "Hype this video"}
+                    aria-label={hyped ? "Hyped!" : "Hype this video"}
+                    className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={hyped ? { color: "#FF9500", background: "rgba(255,149,0,0.12)" } : { color: "rgba(255,255,255,0.35)", background: "transparent" }}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); openShareSheet(v.promo_post_id!, v.title); }}
+                    title="Share"
+                    aria-label="Share"
+                    className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                    style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                    </svg>
+                  </button>
+                </>
+              );
+            })()}
+            {(channel?.isOwner || channel?.isCollaborator) && (
+              <>
+                <button
+                  onClick={() => openVideoEdit(v)}
+                  className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  title="Edit video"
+                  aria-label="Edit video"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setDeletingVideoId(v.id)}
+                  className="p-1.5 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                  title="Delete video"
+                  aria-label="Delete video"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                  </svg>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Inline edit form */}
+        {isEditing && (
+          <div className="px-3 pb-3 space-y-2 border-t border-white/8 pt-2">
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Title</label>
+                <button type="button" onClick={() => saveAndRunAi("title")} disabled={videoAiBusy !== null}
+                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "title" ? "…" : "✨ AI title"}
+                </button>
+              </div>
+              <input
+                value={videoEditForm.title}
+                onChange={(e) => setVideoEditForm((p) => ({ ...p, title: e.target.value }))}
+                maxLength={255}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Description</label>
+                <button type="button" onClick={() => saveAndRunAi("description")} disabled={videoAiBusy !== null}
+                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "description" ? "…" : "✨ AI description"}
+                </button>
+              </div>
+              <textarea
+                rows={2}
+                value={videoEditForm.description}
+                onChange={(e) => setVideoEditForm((p) => ({ ...p, description: e.target.value }))}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="text-[10px] text-white/40">Tags (comma-separated)</label>
+                <button type="button" onClick={() => saveAndRunAi("tags")} disabled={videoAiBusy !== null}
+                  className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
+                  {videoAiBusy === "tags" ? "…" : "✨ AI tags"}
+                </button>
+              </div>
+              <input
+                value={videoEditForm.tags}
+                onChange={(e) => setVideoEditForm((p) => ({ ...p, tags: e.target.value }))}
+                className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+            {/* Tag Creators */}
+            <div>
+              <label className="block text-[10px] text-white/40 mb-1">Tag Creators (max 5)</label>
+              {taggedCreators.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {taggedCreators.map((c) => (
+                    <span key={c.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/80">
+                      @{c.username}
+                      <button
+                        type="button"
+                        onClick={() => setTaggedCreators((prev) => prev.filter((x) => x.id !== c.id))}
+                        className="text-white/40 hover:text-white ml-0.5"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {taggedCreators.length < 5 && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={creatorTagSearch}
+                    onChange={async (e) => {
+                      setCreatorTagSearch(e.target.value);
+                      if (e.target.value.trim().length < 2) { setCreatorTagResults([]); return; }
+                      setCreatorTagSearching(true);
+                      try {
+                        const res = await searchCreators(e.target.value.trim());
+                        setCreatorTagResults((res.users || []).filter((c) => !taggedCreators.some((t) => t.id === c.id)));
+                      } catch { /* ignore */ } finally { setCreatorTagSearching(false); }
+                    }}
+                    placeholder={creatorTagSearching ? "Searching…" : "Search creators to tag…"}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25"
+                  />
+                  {creatorTagResults.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-lg border border-white/10 bg-pnp-surface overflow-hidden">
+                      {creatorTagResults.slice(0, 5).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setTaggedCreators((prev) => [...prev, c]);
+                            setCreatorTagSearch("");
+                            setCreatorTagResults([]);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
+                        >
+                          <span className="text-xs text-white/80">@{c.username}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {videoEditError && <p className="text-xs text-red-400">{videoEditError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={saveVideoEdit}
+                disabled={videoEditSaving}
+                className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+              >
+                {videoEditSaving ? "Saving…" : "Save"}
+              </button>
+              <button
+                onClick={() => setEditingVideoId(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {isDeleting && (
+          <div className="px-3 pb-3 pt-2 border-t border-red-500/20 space-y-2">
+            <p className="text-xs text-red-300">Delete this video? This cannot be undone.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmVideoDelete}
+                disabled={videoDeleteLoading}
+                className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {videoDeleteLoading ? "Deleting…" : "Yes, Delete"}
+              </button>
+              <button
+                onClick={() => setDeletingVideoId(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -1080,299 +1625,11 @@ function ChannelDetailView({
         </div>
       ) : (
         <>
-        {videos.length > 0 && <div className="space-y-2">
-          {videos.map((v) => {
-            const previewSrc = v.gif_url || v.thumbnail_url;
-            const isEditing = editingVideoId === v.id;
-            const isDeleting = deletingVideoId === v.id;
-            return (
-              <div key={`cv-${v.id}`} className="rounded-xl overflow-hidden border border-pnp-border bg-pnp-surface">
-                {/* Thumbnail row */}
-                <div
-                  className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer"
-                  onClick={() => { setVideoPlayerError(false); setPlayingVideo({ url: v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : v.video_url, title: v.title, videoId: v.id, channelId: channel.id, promoPostId: v.promo_post_id ?? null, taggedCreators: v.tagged_creators || [] }); }}
-                >
-                  {previewSrc ? (
-                    <img
-                      src={previewSrc}
-                      alt={v.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-pnp-surfaceHover" />
-                  )}
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors pointer-events-none">
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)" }}>
-                      <svg className="w-5 h-5 text-white drop-shadow ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Info row */}
-                <div className="px-3 py-2 flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-pnp-textPrimary line-clamp-1">{v.title || "Untitled"}</p>
-                    {v.description && <p className="text-xs text-pnp-textSecondary mt-0.5 line-clamp-2">{v.description}</p>}
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {v.view_count > 0 && (
-                        <span className="flex items-center gap-0.5 text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          {v.view_count >= 1000 ? `${(v.view_count / 1000).toFixed(1)}k` : v.view_count}
-                        </span>
-                      )}
-                      {v.tags && v.tags.length > 0 && v.tags.slice(0, 3).map((t) => (
-                        <span key={t} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>{t}</span>
-                      ))}
-                    </div>
-                    {v.tagged_creators && v.tagged_creators.length > 0 && (
-                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>with</span>
-                        {v.tagged_creators.map((c) => (
-                          <a
-                            key={c.id}
-                            href={`/profile/${c.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-1 text-[10px] font-medium hover:underline"
-                            style={{ color: "#D4007A" }}
-                          >
-                            {c.avatar_url && (
-                              <img src={c.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                            )}
-                            @{c.username}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {/* Hype — all authenticated users */}
-                    {user && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openHypeCard(v); }}
-                        title={hypePosted.has(v.id) ? "Hyped!" : "Hype this video"}
-                        className="p-1.5 rounded-lg transition-colors"
-                        style={hypePosted.has(v.id) || hypingVideoId === v.id
-                          ? { color: "#FF9500", background: "rgba(255,149,0,0.12)" }
-                          : { color: "rgba(255,255,255,0.35)", background: "transparent" }
-                        }
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
-                        </svg>
-                      </button>
-                    )}
-                    {(channel.isOwner || channel.isCollaborator) && (
-                      <>
-                        <button
-                          onClick={() => openVideoEdit(v)}
-                          className="p-1.5 rounded-lg text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-white/8 transition-colors"
-                          title="Edit video"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => setDeletingVideoId(v.id)}
-                          className="p-1.5 rounded-lg text-red-400/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                          title="Delete video"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                          </svg>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Inline hype compose */}
-                {hypingVideoId === v.id && !isEditing && !isDeleting && (
-                  <div className="px-3 pb-3 pt-2 border-t border-white/8 space-y-2">
-                    <p className="text-[10px] text-white/40 font-medium tracking-wide uppercase">Hype Post</p>
-                    <textarea
-                      rows={2}
-                      value={hypeText}
-                      onChange={(e) => setHypeText(e.target.value)}
-                      maxLength={280}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none placeholder-white/25"
-                      placeholder="Write your hype post…"
-                    />
-                    {hypeError && <p className="text-xs text-red-400">{hypeError}</p>}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => submitHype(v.id)}
-                        disabled={hypePosting || !hypeText.trim()}
-                        className="flex-1 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity min-h-[44px]"
-                        style={{ background: "linear-gradient(135deg,#FF9500,#E69138)" }}
-                      >
-                        {hypePosting ? "Posting…" : "🔥 Post Hype"}
-                      </button>
-                      <button
-                        onClick={() => { setHypingVideoId(null); setHypeText(""); setHypeError(null); }}
-                        className="px-3 py-2.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5 min-h-[44px]"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Inline edit form */}
-                {isEditing && (
-                  <div className="px-3 pb-3 space-y-2 border-t border-white/8 pt-2">
-                    <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] text-white/40">Title</label>
-                        <button type="button" onClick={() => saveAndRunAi("title")} disabled={videoAiBusy !== null}
-                          className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                          {videoAiBusy === "title" ? "…" : "✨ AI title"}
-                        </button>
-                      </div>
-                      <input
-                        value={videoEditForm.title}
-                        onChange={(e) => setVideoEditForm((p) => ({ ...p, title: e.target.value }))}
-                        maxLength={255}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] text-white/40">Description</label>
-                        <button type="button" onClick={() => saveAndRunAi("description")} disabled={videoAiBusy !== null}
-                          className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                          {videoAiBusy === "description" ? "…" : "✨ AI description"}
-                        </button>
-                      </div>
-                      <textarea
-                        rows={2}
-                        value={videoEditForm.description}
-                        onChange={(e) => setVideoEditForm((p) => ({ ...p, description: e.target.value }))}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent resize-none"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] text-white/40">Tags (comma-separated)</label>
-                        <button type="button" onClick={() => saveAndRunAi("tags")} disabled={videoAiBusy !== null}
-                          className="text-[10px] text-white/50 hover:text-white disabled:opacity-40 transition-colors">
-                          {videoAiBusy === "tags" ? "…" : "✨ AI tags"}
-                        </button>
-                      </div>
-                      <input
-                        value={videoEditForm.tags}
-                        onChange={(e) => setVideoEditForm((p) => ({ ...p, tags: e.target.value }))}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
-                      />
-                    </div>
-                    {/* Tag Creators */}
-                    <div>
-                      <label className="block text-[10px] text-white/40 mb-1">Tag Creators (max 5)</label>
-                      {taggedCreators.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {taggedCreators.map((c) => (
-                            <span key={c.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-xs text-white/80">
-                              @{c.username}
-                              <button
-                                type="button"
-                                onClick={() => setTaggedCreators((prev) => prev.filter((x) => x.id !== c.id))}
-                                className="text-white/40 hover:text-white ml-0.5"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {taggedCreators.length < 5 && (
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={creatorTagSearch}
-                            onChange={async (e) => {
-                              setCreatorTagSearch(e.target.value);
-                              if (e.target.value.trim().length < 2) { setCreatorTagResults([]); return; }
-                              setCreatorTagSearching(true);
-                              try {
-                                const res = await searchCreators(e.target.value.trim());
-                                setCreatorTagResults((res.users || []).filter((c) => !taggedCreators.some((t) => t.id === c.id)));
-                              } catch { /* ignore */ } finally { setCreatorTagSearching(false); }
-                            }}
-                            placeholder={creatorTagSearching ? "Searching…" : "Search creators to tag…"}
-                            className="w-full px-3 py-1.5 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25"
-                          />
-                          {creatorTagResults.length > 0 && (
-                            <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-lg border border-white/10 bg-pnp-surface overflow-hidden">
-                              {creatorTagResults.slice(0, 5).map((c) => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setTaggedCreators((prev) => [...prev, c]);
-                                    setCreatorTagSearch("");
-                                    setCreatorTagResults([]);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
-                                >
-                                  <span className="text-xs text-white/80">@{c.username}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {videoEditError && <p className="text-xs text-red-400">{videoEditError}</p>}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveVideoEdit}
-                        disabled={videoEditSaving}
-                        className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
-                        style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-                      >
-                        {videoEditSaving ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        onClick={() => setEditingVideoId(null)}
-                        className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Delete confirm */}
-                {isDeleting && (
-                  <div className="px-3 pb-3 pt-2 border-t border-red-500/20 space-y-2">
-                    <p className="text-xs text-red-300">Delete this video? This cannot be undone.</p>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={confirmVideoDelete}
-                        disabled={videoDeleteLoading}
-                        className="flex-1 py-1.5 rounded-lg text-xs font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
-                      >
-                        {videoDeleteLoading ? "Deleting…" : "Yes, Delete"}
-                      </button>
-                      <button
-                        onClick={() => setDeletingVideoId(null)}
-                        className="px-3 py-1.5 rounded-lg text-xs text-white/50 border border-white/10 hover:bg-white/5"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>}
+        {videos.length > 0 && (
+          <div className="-mx-4 divide-y divide-pnp-border/40">
+            {videos.map((v) => renderVideoCard(v))}
+          </div>
+        )}
         {/* Posts section */}
         {posts.length > 0 && (
           <div className="mt-4 space-y-3">
@@ -1463,21 +1720,51 @@ function ChannelDetailView({
               <p className="text-sm font-semibold text-white truncate flex-1 mr-2">
                 {playingVideo.title || "Video"}
               </p>
-              {user && (
-                <button
-                  onClick={() => { const v = videos.find(x => x.id === playingVideo.videoId); if (v) openHypeModal(v); }}
-                  title={hypePosted.has(playingVideo.videoId) ? "Hyped!" : "Hype this video"}
-                  className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0 mr-1"
-                  style={hypePosted.has(playingVideo.videoId) || modalHypeOpen
-                    ? { color: "#FF9500", background: "rgba(255,149,0,0.15)" }
-                    : { color: "rgba(255,255,255,0.35)", background: "transparent" }
-                  }
-                >
-                  <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
-                  </svg>
-                </button>
-              )}
+              {user && (() => {
+                const pv = videos.find(x => x.id === playingVideo.videoId);
+                const likeState = pv ? (videoLikes[pv.id] ?? { liked: pv.liked_by_me ?? false, count: pv.likes_count ?? 0 }) : { liked: false, count: 0 };
+                return (
+                  <>
+                    {pv?.promo_post_id && (
+                      <button
+                        onClick={() => handleVideoLike(pv)}
+                        title={likeState.liked ? "Unlike" : "Like"}
+                        className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
+                        style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.12)" : "transparent" }}
+                      >
+                        <svg className="w-4 h-4" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { if (pv) openHypeModal(pv); }}
+                      title={hypePosted.has(playingVideo.videoId) || videoHypeToggles[playingVideo.videoId] ? "Hyped!" : "Hype this video"}
+                      className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
+                      style={hypePosted.has(playingVideo.videoId) || videoHypeToggles[playingVideo.videoId] || modalHypeOpen
+                        ? { color: "#FF9500", background: "rgba(255,149,0,0.15)" }
+                        : { color: "rgba(255,255,255,0.35)", background: "transparent" }
+                      }
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
+                      </svg>
+                    </button>
+                    {pv?.promo_post_id && (
+                      <button
+                        onClick={() => openShareSheet(pv.promo_post_id!, pv.title)}
+                        title="Share"
+                        className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
+                        style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                        </svg>
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
               <button
                 onClick={() => setPlayingVideo(null)}
                 className="w-11 h-11 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all flex-shrink-0"
@@ -1489,26 +1776,51 @@ function ChannelDetailView({
             </div>
             {/* Video */}
             {!playingVideo.url ? (
-              <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center bg-black" style={{ minHeight: 200 }}>
-                <svg className="w-10 h-10 opacity-30 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
-                </svg>
-                <p className="text-sm text-white/60 max-w-xs">Subscribe to this channel to watch this video</p>
-                <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
-                  💎 Incluye canal + perfil exclusivo — 2x1
-                </p>
-                <button
-                  onClick={() => {
-                    setPlayingVideo(null);
-                    if (channel.creatorId) setShowSubscribeWizard(true);
-                    else window.location.href = '/subscribe';
-                  }}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
-                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                >
-                  Subscribe to Access
-                </button>
+              /* Per-video paywall — same lock card pattern as the full-channel overlay */
+              <div className="w-full flex flex-col items-center justify-center gap-3 py-10 px-6 text-center" style={{ minHeight: 200, background: "#0A0A14" }}>
+                <div className="w-14 h-14 rounded-full flex items-center justify-center"
+                  style={channelIsPrime
+                    ? { background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)" }
+                    : { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.3)" }
+                  }>
+                  <svg className="w-7 h-7" style={{ color: channelIsPrime ? "#A78BFA" : "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                </div>
+                {channelIsPrime ? (
+                  <>
+                    <p className="text-white font-semibold text-base">PRIME Members Only</p>
+                    <p className="text-sm text-pnp-textSecondary max-w-xs">Upgrade to PRIME to watch this video.</p>
+                    <button
+                      onClick={() => { setPlayingVideo(null); window.location.href = '/subscribe'; }}
+                      className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                      style={{ background: "linear-gradient(135deg, #A78BFA, #D4007A)" }}
+                    >
+                      Upgrade to PRIME
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-white font-semibold text-base">Premium Channel</p>
+                    <p className="text-sm text-pnp-textSecondary max-w-xs">Subscribe to {channel.creatorName || "this creator"} to watch this video.</p>
+                    <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
+                      &#128142; Incluye canal + perfil exclusivo — 2x1
+                    </p>
+                    <button
+                      onClick={() => {
+                        setPlayingVideo(null);
+                        if (channel.creatorId) setShowSubscribeWizard(true);
+                        else window.location.href = '/subscribe';
+                      }}
+                      className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      Subscribe to Access
+                    </button>
+                  </>
+                )}
               </div>
+
             ) : videoPlayerError ? (
               <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 200 }}>
                 <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -1654,23 +1966,69 @@ function ChannelDetailView({
                   ) : videoComments.length === 0 ? (
                     <div className="py-4 text-center text-xs text-white/30">No comments yet — be the first!</div>
                   ) : (
-                    videoComments.map((c) => (
-                      <div key={c.id} className="flex gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0 overflow-hidden">
-                          {isValidPhotoUrl(c.author_photo) ? (
-                            <img src={c.author_photo} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
-                              {(c.author_first_name || c.author_username || "?")[0].toUpperCase()}
+                    videoComments.map((c) => {
+                      const cReactions = commentReactions[c.id] ?? [];
+                      const visibleReactions = cReactions.filter((r) => r.count > 0);
+                      return (
+                        <div key={c.id} className="flex gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0 overflow-hidden">
+                            {isValidPhotoUrl(c.author_photo) ? (
+                              <img src={c.author_photo} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
+                                {(c.author_first_name || c.author_username || "?")[0].toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-white/70">{c.author_first_name || c.author_username || "User"}</p>
+                            <p className="text-sm text-white/90 mt-0.5 break-words">{c.content}</p>
+                            {visibleReactions.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {visibleReactions.map((r) => (
+                                  <button
+                                    key={r.emoji}
+                                    onClick={() => handleCommentReaction(c.id, r.emoji)}
+                                    className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] transition-colors"
+                                    style={r.reactedByMe ? { background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.35)", color: "#D4007A" } : { background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)" }}
+                                  >
+                                    {r.emoji} {r.count}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            <div className="relative mt-1">
+                              <button
+                                onClick={() => {
+                                  if (commentReactionPickerOpen === c.id) {
+                                    setCommentReactionPickerOpen(null);
+                                  } else {
+                                    loadCommentReactions(c.id);
+                                    setCommentReactionPickerOpen(c.id);
+                                  }
+                                }}
+                                className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+                              >
+                                {commentReactionPickerOpen === c.id ? "✕" : "😀"}
+                              </button>
+                              {commentReactionPickerOpen === c.id && (
+                                <div className="absolute left-0 top-5 z-10 flex flex-wrap gap-1 p-2 rounded-xl border border-white/10 shadow-xl" style={{ background: "#111118", minWidth: 220 }}>
+                                  {REACTION_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      onClick={() => handleCommentReaction(c.id, emoji)}
+                                      className="text-lg p-1 rounded-lg hover:bg-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-white/70">{c.author_first_name || c.author_username || "User"}</p>
-                          <p className="text-sm text-white/90 mt-0.5 break-words">{c.content}</p>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                   {commentsHasMore && (
                     <button
@@ -1683,6 +2041,110 @@ function ChannelDetailView({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {shareTarget && (
+        <div
+          className="fixed inset-0 z-[110] flex items-end justify-center bg-black/60 backdrop-blur-sm"
+          onClick={closeShareSheet}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-lg rounded-t-2xl overflow-hidden"
+            style={{ background: "#111118", border: "1px solid rgba(255,255,255,0.1)", borderBottom: "none" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <p className="text-sm font-semibold text-white truncate mr-2">{shareTarget.videoTitle}</p>
+              <button onClick={closeShareSheet} className="w-8 h-8 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 flex-shrink-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            {shareSuccess ? (
+              <div className="px-4 py-8 text-center text-sm font-semibold text-green-400">{shareSuccess}</div>
+            ) : shareStep === "main" ? (
+              <div className="p-4 space-y-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`https://pnptv.app/channels`).catch(() => {});
+                    setShareSuccess("Link copied!");
+                    setTimeout(closeShareSheet, 1000);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" /></svg>
+                  Copy link
+                </button>
+                <button
+                  onClick={() => setShareStep("hangout")}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg>
+                  Share to Hangout
+                </button>
+                <button
+                  onClick={() => setShareStep("dm")}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-white hover:bg-white/8 transition-colors min-h-[44px]"
+                  style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                  Send via DM
+                </button>
+              </div>
+            ) : shareStep === "hangout" ? (
+              <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
+                <button onClick={() => setShareStep("main")} className="text-xs text-white/50 hover:text-white/80 mb-2 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  Back
+                </button>
+                {shareHangouts.length === 0 ? (
+                  <p className="text-xs text-white/40 text-center py-4">No hangouts joined yet</p>
+                ) : (
+                  shareHangouts.map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() => handleShareToHangout(g.id)}
+                      disabled={shareSending}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/8 transition-colors disabled:opacity-50 text-left min-h-[44px]"
+                      style={{ border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-white/10 flex-shrink-0 flex items-center justify-center text-xs font-semibold text-white/60">
+                        {g.name.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="truncate">{g.name}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="p-4 space-y-3">
+                <button onClick={() => setShareStep("main")} className="text-xs text-white/50 hover:text-white/80 mb-1 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  Back
+                </button>
+                <input
+                  type="text"
+                  value={shareDmInput}
+                  onChange={(e) => setShareDmInput(e.target.value)}
+                  placeholder="Enter username or user ID…"
+                  className="w-full px-3 py-2.5 rounded-xl text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent placeholder-white/25 min-h-[44px]"
+                />
+                <button
+                  onClick={handleShareToDm}
+                  disabled={shareSending || !shareDmInput.trim()}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity min-h-[44px]"
+                  style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                >
+                  {shareSending ? "Sending…" : "Send"}
+                </button>
+              </div>
+            )}
+            <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
           </div>
         </div>
       )}

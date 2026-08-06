@@ -1506,20 +1506,23 @@ export default function SocialPostCard({
                 <div className="mt-3">
                   {post.media_type === "video" ? (
                     <>
-                      {((localVideoTitle ?? post.video_title) || (localVideoDescription ?? post.video_description)) && (
-                        <div className="mb-2 px-1">
-                          {(localVideoTitle ?? post.video_title) && (
-                            <h4 className="text-sm font-semibold text-white">
-                              {localVideoTitle ?? post.video_title}
-                            </h4>
-                          )}
-                          {(localVideoDescription ?? post.video_description) && (
-                            <p className="text-xs text-white/60 mt-0.5 line-clamp-2">
-                              {localVideoDescription ?? post.video_description}
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      {(() => {
+                        const vt = localVideoTitle ?? post.video_title;
+                        const vd = localVideoDescription ?? post.video_description;
+                        const safeTitle = vt && vt !== '[object Object]' ? vt : null;
+                        const safeDesc = vd && vd !== '[object Object]' ? vd : null;
+                        if (!safeTitle && !safeDesc) return null;
+                        return (
+                          <div className="mb-2 px-1">
+                            {safeTitle && (
+                              <h4 className="text-sm font-semibold text-white">{safeTitle}</h4>
+                            )}
+                            {safeDesc && (
+                              <p className="text-xs text-white/60 mt-0.5 line-clamp-2">{safeDesc}</p>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {videoError ? (
                         <div className="w-full rounded-lg bg-white/5 flex flex-col items-center justify-center gap-2 py-10 text-white/40">
                           <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
