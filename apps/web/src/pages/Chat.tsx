@@ -501,8 +501,9 @@ function HangoutChatPanel({
     getGroupMessages(groupId)
       .then((data) => {
         if (data.success) {
-          setMessages(data.messages || []);
-          setHasMore((data.messages || []).length >= 30);
+          const sorted = (data.messages || []).slice().sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          setMessages(sorted);
+          setHasMore((data.messages || []).length >= 50);
         }
       })
       .catch((err: any) => {
@@ -542,8 +543,11 @@ function HangoutChatPanel({
     const room = `hangout:${groupId}`;
 
     const onChatMessage = (msg: GroupMessage) => {
-      if (msg.room && msg.room !== room) return;
-      setMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+      if (!msg.room || msg.room !== room) return;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      });
       if (isNearBottom.current) {
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       } else {
@@ -796,8 +800,13 @@ function HangoutChatPanel({
       const oldest = messages[0];
       const data = await getGroupMessages(groupId, oldest.created_at);
       if (data.success) {
-        setMessages((prev) => [...(data.messages || []), ...prev]);
-        setHasMore((data.messages || []).length >= 30);
+        const incoming = data.messages || [];
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const newMsgs = incoming.filter((m: any) => !existingIds.has(m.id));
+          return [...newMsgs, ...prev].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        });
+        setHasMore(incoming.length >= 50);
       }
     } catch { /* silent */ }
     finally { setLoadingMore(false); }
@@ -1675,8 +1684,8 @@ function HangoutChatPanel({
           </div>
           <p className="text-[10px] text-pnp-textSecondary mt-0.5">
             {mediaFiles.length === 1
-              ? "Tap 📎 again to add more"
-              : `${mediaFiles.length} files — tap 📎 to add more`}
+              ? "Type a caption below, then tap send"
+              : `${mediaFiles.length} files — type a caption below, then tap send`}
           </p>
         </div>
       )}
@@ -1712,7 +1721,7 @@ function HangoutChatPanel({
               if (e.key === "Escape" && replyTo) setReplyTo(null);
             }}
             onPaste={handlePasteImage}
-            placeholder={editingMsg ? "Edit message..." : "Type a message..."}
+            placeholder={editingMsg ? "Edit message..." : mediaFiles.length > 0 ? "Add a caption... (optional)" : "Type a message..."}
             className="flex-1 bg-white/5 text-white placeholder-pnp-textSecondary/50 rounded-2xl px-4 py-2 resize-none outline-none focus:ring-1 focus:ring-pnp-accent/40 transition-shadow leading-snug"
             rows={1}
             style={{ fontSize: "16px", minHeight: "40px", maxHeight: "120px" }}
@@ -3361,13 +3370,13 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   aria-label={t.chat.topicsLabel}
                   className="flex items-center gap-1 px-3 pb-2 overflow-x-auto no-scrollbar"
                 >
-                  {/* Main pill — always first; navigates back to the parent room */}
+                  {/* General pill — always first; navigates back to the parent room */}
                   <div className="relative flex-shrink-0 flex items-center min-h-[44px]">
                     <button
                       role="tab"
                       aria-selected={!activeTopic}
                       onClick={() => setActiveTopic(null)}
-                      title="Main channel"
+                      title="General channel"
                       className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-1"
                       style={
                         !activeTopic
@@ -3375,10 +3384,10 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                           : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }
                       }
                     >
-                      # Main
+                      # General
                     </button>
                   </div>
-                  {(activeGroup.topics ?? []).map(topic => (
+                  {(activeGroup.topics ?? []).filter(t => t.name.toLowerCase() !== 'general').map(topic => (
                     <div
                       key={topic.id}
                       ref={el => {
