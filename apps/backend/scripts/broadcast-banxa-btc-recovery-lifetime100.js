@@ -362,9 +362,13 @@ function tgTextAnnual(name, invoiceUrl, lang) {
 
 function dmTextDual(lifetimeUrl, annualUrl, lang) {
   if (isEs(lang)) {
-    return `🌟 *Dos ofertas especiales — elige la que más te convenga*
+    return `🎥 *Esta noche Santino está en webcam — solo para miembros PRIME*
 
-Hola, tenemos dos opciones para que te unas como miembro PRIME con tu tarjeta de crédito o débito usando Banxa — sin necesidad de tener criptomonedas propias.
+Santino estará en vivo esta noche en el hangout exclusivo *Santino's Cult*, en cámara con los miembros PRIME. Si no eres PRIME, te lo vas a perder.
+
+🌟 *Dos ofertas especiales — únete ahora y entra esta noche*
+
+Paga con tu tarjeta de crédito o débito usando Banxa — sin necesidad de tener criptomonedas propias.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔱 *OPCIÓN 1 — Lifetime PRIME: $100 (pago único para siempre)*
@@ -402,9 +406,13 @@ Una vez que Banxa confirme tu pago, tu cuenta se activa automáticamente en minu
 
 — PNPtv`;
   }
-  return `🌟 *Two special offers — pick the one that works best for you*
+  return `🎥 *Santino is on webcam tonight — PRIME members only*
 
-Hey! We have two ways to join as a PRIME member, paying with your credit or debit card via Banxa — no crypto wallet needed.
+Santino will be live tonight in the exclusive *Santino's Cult* hangout, on cam with PRIME members. If you're not PRIME, you'll miss it.
+
+🌟 *Two special offers — join now and get in tonight*
+
+Pay with your credit or debit card via Banxa — no crypto wallet needed.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔱 *OPTION 1 — Lifetime PRIME: $100 (one payment, forever)*
@@ -447,8 +455,8 @@ function tgTextDual(name, lifetimeUrl, annualUrl, lang) {
   const n = name ? ` ${name}` : '';
   if (isEs(lang)) {
     return (
-      `🌟 <b>Dos ofertas PRIME — paga con tarjeta vía Banxa</b>\n\n` +
-      `Hola${n}! Dos opciones, una sola página de pago:\n\n` +
+      `🎥 <b>Santino está en webcam esta noche — solo PRIME</b>\n\n` +
+      `Hola${n}! Santino estará en vivo esta noche en <b>Santino's Cult</b>, en cámara con los miembros PRIME. Únete ahora con tu tarjeta:\n\n` +
       `🔱 <b>Lifetime PRIME — $100 (para siempre)</b>\n` +
       `👉 <a href="${lifetimeUrl}">${lifetimeUrl}</a>\n` +
       `Copia la dirección BTC → ve a <a href="https://checkout.banxa.com/">checkout.banxa.com</a> → pega y paga $100\n\n` +
@@ -459,8 +467,8 @@ function tgTextDual(name, lifetimeUrl, annualUrl, lang) {
     );
   }
   return (
-    `🌟 <b>Two PRIME offers — pay with your card via Banxa</b>\n\n` +
-    `Hi${n}! Two options, one payment page:\n\n` +
+    `🎥 <b>Santino is on webcam tonight — PRIME only</b>\n\n` +
+    `Hi${n}! Santino will be live tonight in <b>Santino's Cult</b>, on cam with PRIME members. Join now with your card:\n\n` +
     `🔱 <b>Lifetime PRIME — $100 (forever)</b>\n` +
     `👉 <a href="${lifetimeUrl}">${lifetimeUrl}</a>\n` +
     `Copy the BTC address → go to <a href="https://checkout.banxa.com/">checkout.banxa.com</a> → paste and pay $100\n\n` +
