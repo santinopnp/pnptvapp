@@ -3005,8 +3005,8 @@ app.post('/api/webapp/auth/magic/verify', magicLinkVerifyLimiter, asyncHandler(w
 app.get('/api/webapp/auth/passkey/begin', authLimiter, asyncHandler(webAppController.passkeyBegin));
 app.post('/api/webapp/auth/passkey/finish', passkeyFinishLimiter, asyncHandler(webAppController.passkeyFinish));
 // Passkey management (for authenticated users adding/removing passkeys)
-app.get('/api/webapp/auth/passkey/register/begin', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterBegin));
-app.post('/api/webapp/auth/passkey/register/finish', requireSessionAuth, authLimiter, asyncHandler(webAppController.passkeyRegisterFinish));
+app.get('/api/webapp/auth/passkey/register/begin', requireSessionAuthNoConsent, authLimiter, asyncHandler(webAppController.passkeyRegisterBegin));
+app.post('/api/webapp/auth/passkey/register/finish', requireSessionAuthNoConsent, authLimiter, asyncHandler(webAppController.passkeyRegisterFinish));
 app.get('/api/webapp/auth/passkeys', requireSessionAuth, asyncHandler(webAppController.passkeyListDevices));
 app.delete('/api/webapp/auth/passkeys/:devicePk', requireSessionAuth, asyncHandler(webAppController.passkeyDeleteDevice));
 
@@ -3169,6 +3169,7 @@ app.post('/api/webapp/auth/resend-verification', authLimiter, asyncHandler(webAp
 app.get('/api/webapp/auth/x/start', asyncHandler(webAppController.xLoginStart));
 app.get('/api/webapp/auth/x/callback', asyncHandler(webAppController.xLoginCallback));
 app.post('/api/webapp/auth/x/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkX));
+app.post('/api/webapp/auth/add-recovery-email', authLimiter, requireSessionAuthNoConsent, asyncHandler(webAppController.addRecoveryEmail));
 app.get('/api/webapp/settings/x-auto-post', requireSessionAuth, asyncHandler(webAppController.getXAutoPostSettings));
 app.put('/api/webapp/settings/x-auto-post', requireSessionAuth, asyncHandler(webAppController.updateXAutoPostSettings));
 app.get('/api/me', asyncHandler(webAppController.authStatus));

@@ -383,12 +383,16 @@ export function telegramGenerateLoginToken(): Promise<{ success: boolean; token:
   return request("/api/webapp/auth/telegram/token", { method: "POST" });
 }
 
-export function telegramCheckLoginToken(token: string): Promise<{ authenticated: boolean; user?: { id: string; username: string }; error?: string }> {
+export function telegramCheckLoginToken(token: string): Promise<{ authenticated: boolean; user?: { id: string; username: string }; emailNeeded?: boolean; error?: string }> {
   return request(`/api/webapp/auth/telegram/check?token=${encodeURIComponent(token)}`);
 }
 
 export function magicLinkStart(email: string): Promise<{ success: boolean; error?: string }> {
   return request("/api/webapp/auth/magic/start", { method: "POST", body: { email } });
+}
+
+export function addRecoveryEmail(email: string): Promise<{ success: boolean; error?: string }> {
+  return request("/api/webapp/auth/add-recovery-email", { method: "POST", body: { email } });
 }
 
 export interface PublicKeyCredentialRequestOptionsJSON {

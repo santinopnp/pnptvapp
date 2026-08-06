@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { LanguageSelector } from "@/components/LanguageSelector";
-import { magicLinkStart, passkeyBegin, passkeyFinish, checkAuthStatus, passkeyRegisterBegin, passkeyRegisterFinish } from "@/lib/api";
+import { magicLinkStart, passkeyBegin, passkeyFinish, checkAuthStatus, passkeyRegisterBegin, passkeyRegisterFinish, addRecoveryEmail } from "@/lib/api";
 import { sanitizeReturnTo } from "@/lib/auth";
 
 // ── WebAuthn helpers ──────────────────────────────────────────────────────────
@@ -277,6 +277,28 @@ export function LandingPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingTokenRef = useRef<string | null>(null);
 
+  // Post-X-login sequence. Triggered by the X callback appending
+  // ?post_login=x[&add_email=1] so we can chain: recovery-email → passkey → app.
+  type RecoveryState = "hidden" | "form" | "sending" | "sent";
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("add_email") === "1" ? "form" : "hidden";
+  });
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  // Which auth flow just landed the user on this page — drives copy in the
+  // email-step + passkey-prompt overlays. "magic" keeps the legacy "Your email
+  // link worked" hint; X/Telegram show a generic welcome.
+  const [postLoginSource, setPostLoginSource] = useState<"none" | "magic" | "x" | "telegram">(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("magic_verified") === "1") return "magic";
+      if (p.get("post_login") === "x") return "x";
+    } catch { /* ignore */ }
+    return "none";
+  });
+  const isThirdPartyPostLogin = postLoginSource === "x" || postLoginSource === "telegram";
+
   // Returning-user personalization. `pnptv_last_auth` reflects the most recent
   // method; `pnptv_last_telegram_*` persist across other logins so the Telegram
   // button stays personalized even after the user later signs in via PNPtv ID.
@@ -335,6 +357,21 @@ export function LandingPage() {
     }
   }, []);
 
+  // After a successful Telegram poll, decide whether to gate on the
+  // recovery-email step (new/existing account with no email on file) or go
+  // straight to the passkey prompt. Mirrors the /login?post_login=x flow.
+  const finishTelegramAuth = useCallback((emailNeeded: boolean, redirectTo: string) => {
+    setPostLoginSource("telegram");
+    if (emailNeeded) {
+      pendingRedirectRef.current = redirectTo;
+      setRecoveryState("form");
+      return;
+    }
+    offerPasskeyOrRedirect(redirectTo);
+  // offerPasskeyOrRedirect is stable via its own useCallback; safe to omit
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // iOS Safari freezes setInterval when the page is backgrounded (e.g. user switches
   // to Telegram app). On return, fire an immediate poll so the confirmed token is
   // picked up without waiting for the next interval tick.
@@ -357,14 +394,14 @@ export function LandingPage() {
               }
             } catch { /* ignore quota */ }
             const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-            offerPasskeyOrRedirect(sanitizeReturnTo(returnTo) ?? "/");
+            finishTelegramAuth(!!result.emailNeeded, sanitizeReturnTo(returnTo) ?? "/");
           }
         })
         .catch(() => { /* interval will retry */ });
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+  }, [finishTelegramAuth]);
 
   // Auto-redirect already-authenticated users so they don't have to log in again.
   // Runs once on mount; skipped if there is no returnTo (user landed on /login directly).
@@ -388,13 +425,18 @@ export function LandingPage() {
     };
   }, [activeSheet]);
 
-  // Detect magic-link verified redirect. Browser supports WebAuthn → show prompt;
-  // otherwise proceed immediately to the app.
+  // Detect post-login redirects that should offer a passkey. Fires for:
+  //   - magic-link verify (?magic_verified=1)
+  //   - X OAuth login (?post_login=x)  — but only when no email step is pending,
+  //     otherwise the passkey prompt runs after the email is saved.
+  // Browser supports WebAuthn → show prompt; otherwise proceed to the app.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("magic_verified") !== "1") return;
+    const fromMagic = params.get("magic_verified") === "1";
+    const fromXNoEmail = params.get("post_login") === "x" && params.get("add_email") !== "1";
+    if (!fromMagic && !fromXNoEmail) return;
 
-    // Clean up the query param from the URL without a reload.
+    // Clean up the query params from the URL without a reload.
     const clean = window.location.pathname;
     window.history.replaceState(null, "", clean);
 
@@ -677,6 +719,54 @@ export function LandingPage() {
     }
   };
 
+  // ── X (Twitter) OAuth ──────────────────────────────────────────────────
+  // Delegates to the existing /api/webapp/auth/x/start?redirect=true flow which
+  // stores PKCE state in the session and 302s to X's authorize page. On
+  // successful callback the backend session is set and the user lands back on
+  // `/` — with ?add_recovery_email=1 appended if this was a new signup so the
+  // recovery-email step below intercepts before the app.
+  const handleXLogin = () => {
+    try { localStorage.setItem("pnptv_last_auth", "x"); } catch { /* ignore */ }
+    window.location.href = `${API_BASE}/api/webapp/auth/x/start?redirect=true`;
+  };
+
+  // ── Recovery email (post-X-signup) ─────────────────────────────────────
+  // On success we chain into the passkey prompt so the user gets both offers
+  // in one sitting: email captured for magic-link/marketing, passkey saved
+  // for next-time sign-in.
+  const handleSubmitRecoveryEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = recoveryEmail.trim();
+    setRecoveryError(null);
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setRecoveryError("Please enter a valid email address.");
+      return;
+    }
+    setRecoveryState("sending");
+    try {
+      const res = await addRecoveryEmail(email);
+      if (!res.success) {
+        setRecoveryError(res.error || "Couldn't save your email. Please try again.");
+        setRecoveryState("form");
+        return;
+      }
+      setRecoveryState("hidden");
+      // Clean the URL and hand off to the passkey prompt.
+      try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
+      offerPasskeyOrRedirect("/");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "";
+      setRecoveryError(message || "Couldn't save your email. Please try again.");
+      setRecoveryState("form");
+    }
+  };
+
+  const skipRecoveryEmail = () => {
+    setRecoveryState("hidden");
+    try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
+    offerPasskeyOrRedirect("/");
+  };
+
   // ── Telegram deep-link ──────────────────────────────────────────────────
   // Set "waiting" state immediately so the button changes the moment it's
   // tapped, then fetch a one-shot token, open the bot in a new tab. If the
@@ -761,7 +851,7 @@ export function LandingPage() {
               }
             } catch { /* ignore quota */ }
             const returnTo = new URLSearchParams(window.location.search).get("returnTo");
-            offerPasskeyOrRedirect(sanitizeReturnTo(returnTo) ?? "/");
+            finishTelegramAuth(!!result.emailNeeded, sanitizeReturnTo(returnTo) ?? "/");
           }
         } catch { /* keep polling */ }
       }, 3000);
@@ -772,9 +862,10 @@ export function LandingPage() {
   };
 
   const sheet = activeSheet ? sheets[activeSheet] : null;
-  const showLastAuth = lastAuth === "pnptv_id" || lastAuth === "telegram";
+  const showLastAuth = lastAuth === "pnptv_id" || lastAuth === "telegram" || lastAuth === "x";
   const lastAuthLabel = lastAuth === "pnptv_id" ? "Last signed in with PNPtv ID"
     : lastAuth === "telegram" ? "Last signed in with Telegram"
+    : lastAuth === "x" ? "Last signed in with X"
     : null;
   const tgButtonLabel = lastTgUsername ? `Log in as ${lastTgUsername}` : "Continue with Telegram";
 
@@ -816,7 +907,9 @@ export function LandingPage() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-white">Signed in!</p>
-                    <p className="text-[11px]" style={{ color: "#4ade80" }}>Your email link worked.</p>
+                    <p className="text-[11px]" style={{ color: "#4ade80" }}>
+                      {isThirdPartyPostLogin ? "Welcome to PNPtv." : "Your email link worked."}
+                    </p>
                   </div>
                 </div>
 
@@ -867,8 +960,65 @@ export function LandingPage() {
             </div>
           )}
 
+          {/* Recovery-email step — shown right after a brand-new X signup
+              (which doesn't return an email in scope) so the user keeps a
+              recovery method if X access is ever revoked. */}
+          {!showPasskeyPrompt && recoveryState !== "hidden" && (
+            <div className="w-full flex flex-col items-center gap-5">
+              <img src="/logo-login-800.webp" alt="PNPtv!" className="w-48 h-auto object-contain" style={{ aspectRatio: "6581 / 2141" }} />
+
+              <div className="w-full rounded-2xl p-5 text-left space-y-4" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div className="space-y-1">
+                  <p className="text-sm font-bold text-white">Add your email</p>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--pnp-text-secondary)" }}>
+                    {postLoginSource === "telegram" ? "You signed in with Telegram" : "You signed in with X"} —
+                    we don't have your email yet. Add it so you can sign in via
+                    magic-link if that ever disconnects, and get launch news +
+                    creator drops. We won't spam.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSubmitRecoveryEmail} className="space-y-2" noValidate>
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={recoveryEmail}
+                    onChange={(e) => { setRecoveryEmail(e.target.value); setRecoveryError(null); }}
+                    placeholder="your@email.com"
+                    aria-label="Email"
+                    aria-invalid={!!recoveryError}
+                    disabled={recoveryState === "sending"}
+                    autoFocus
+                    className="w-full py-3 px-4 rounded-xl text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 transition-all disabled:opacity-60"
+                    style={{ background: "rgba(255,255,255,0.06)", border: recoveryError ? "1px solid #ef4444" : "1px solid rgba(255,255,255,0.1)", fontSize: "16px" }}
+                  />
+                  {recoveryError && <p className="text-xs text-red-400 px-1 text-left">{recoveryError}</p>}
+                  <button
+                    type="submit"
+                    disabled={recoveryState === "sending" || !recoveryEmail.trim()}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >
+                    {recoveryState === "sending" ? <Spinner /> : "Save & continue"}
+                  </button>
+                </form>
+
+                <button
+                  type="button"
+                  onClick={skipRecoveryEmail}
+                  disabled={recoveryState === "sending"}
+                  className="w-full py-2.5 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
+                  style={{ color: "var(--pnp-text-secondary)", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  Skip for now
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* All login UI is hidden while the passkey prompt is shown */}
-          {!showPasskeyPrompt && (<>
+          {!showPasskeyPrompt && recoveryState === "hidden" && (<>
 
           {/* Logo */}
           <img src="/logo-login.png" alt="PNPtv!" className="w-56 h-auto" />
@@ -1135,6 +1285,21 @@ export function LandingPage() {
               <span>Open Telegram to finish sign-in →</span>
             </a>
           )}
+
+          {/* TERTIARY: Continue with X — reuses existing /api/webapp/auth/x/start
+              flow. Backend auto-creates the user on first sign-in and, when a
+              recovery email is missing, redirects to /login?add_recovery_email=1
+              which triggers the mini-step above before letting them enter. */}
+          <button
+            onClick={handleXLogin}
+            className="w-full flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all hover:brightness-110 active:scale-[0.98]"
+            style={{ background: "#000", border: "1px solid rgba(255,255,255,0.15)" }}
+          >
+            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+            <span>Continue with X</span>
+          </button>
 
           {/* No account → inline registration form */}
           {regState === "hidden" && (

@@ -487,7 +487,14 @@ const telegramCheckToken = async (req, res) => {
     provisionAllServices(user);
 
     logger.info(`Telegram deep link login: user ${user.id}`);
-    return res.json({ authenticated: true, user: { id: user.id, username: user.username } });
+    return res.json({
+      authenticated: true,
+      user: { id: user.id, username: user.username },
+      // Frontend uses this to route new/existing Telegram users without an
+      // email through the same recovery-email step used for X (magic-link
+      // recovery + marketing capture).
+      emailNeeded: !user.email,
+    });
   } catch (error) {
     logger.error('Telegram check token error:', error);
     return res.status(500).json({ authenticated: false, error: 'Server error' });
@@ -2136,7 +2143,11 @@ const xLoginCallback = async (req, res) => {
       // Provision all services — fire-and-forget
       provisionAllServices(user);
       logger.info(`Linked X @${xHandle} to existing session user ${user.id}`);
-      return redirectToCanonicalApp(res);
+      // Same post-login sequence (email if missing → passkey → app) as fresh
+      // X sign-ins. Users who linked X to an existing session may still lack
+      // an email (e.g. an incognito test session created by a prior X login).
+      const linkedAddEmailFlag = user.email ? '' : '&add_email=1';
+      return res.redirect(`https://pnptv.app/login?post_login=x${linkedAddEmailFlag}`);
     }
 
     const [firstName, ...nameParts] = (xName || xHandle).split(' ');
@@ -2202,8 +2213,17 @@ const xLoginCallback = async (req, res) => {
     );
     // Provision all services (Matrix, default follows) — fire-and-forget
     provisionAllServices(user);
+    if (isNew) {
+      logger.info('[X Signup] new user via X', { userId: user.id, xHandle, hasEmail: !!user.email });
+    }
     logger.info(`Web app X login: user ${user.id} via @${xHandle}`);
-    return redirectToCanonicalApp(res);
+    // Route every X login through the post-login flow on /login so that:
+    //   1. Users missing an email get prompted (recovery + magic-link + marketing).
+    //   2. Users without a passkey get offered one for next-time convenience.
+    // The X OAuth scope doesn't return email, so many linked accounts never had
+    // one on file. `add_email=1` gates the email step; passkey prompt runs after.
+    const addEmailFlag = user.email ? '' : '&add_email=1';
+    return res.redirect(`https://pnptv.app/login?post_login=x${addEmailFlag}`);
   } catch (error) {
     const status = error.response?.status;
     const logLevel = [401, 403].includes(status) ? 'warn' : 'error';
@@ -3335,6 +3355,74 @@ const updateXAutoPostSettings = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/webapp/auth/add-recovery-email
+ * Attach a recovery email to the current session user. Intended for accounts
+ * created via X OAuth (which does not return an email in scope) so users can
+ * recover access if the X integration is ever revoked. Sends a verification
+ * link — the email is stored immediately but flagged unverified until clicked.
+ */
+const addRecoveryEmail = async (req, res) => {
+  const sessionUser = req.session?.user;
+  if (!sessionUser) return res.status(401).json({ error: 'Not authenticated' });
+
+  const raw = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!raw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  try {
+    const conflict = await query(
+      `SELECT id FROM users WHERE LOWER(email) = $1 AND id != $2 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+      [raw, sessionUser.id]
+    );
+    if (conflict.rows.length > 0) {
+      return res.status(409).json({ error: 'That email is already in use by another account.' });
+    }
+
+    await query(
+      `UPDATE users SET email = $1, email_verified = false, updated_at = NOW() WHERE id = $2`,
+      [raw, sessionUser.id]
+    );
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS email_verification_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await query('UPDATE email_verification_tokens SET used = TRUE WHERE user_id = $1 AND used = FALSE', [sessionUser.id]);
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await query(
+      'INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [sessionUser.id, token, expiresAt.toISOString()]
+    );
+
+    const verifyUrl = `${process.env.WEBAPP_URL || 'https://pnptv.app'}/verify-email.html?token=${token}`;
+    emailService.send({
+      to: raw,
+      subject: 'PNPtv – Verifica tu correo de recuperación',
+      html: `
+        <p>Hola ${sessionUser.firstName || sessionUser.username || 'miembro'},</p>
+        <p>Agregaste este correo como recuperación para tu cuenta PNPtv. Confirma que es tuyo:</p>
+        <p><a href="${verifyUrl}" style="background:#FF00CC;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Verificar correo</a></p>
+        <p>Este enlace expira en 24 horas. Si no realizaste esto, ignora este correo.</p>
+      `,
+    }).catch(err => logger.warn('[addRecoveryEmail] email send failed', { userId: sessionUser.id, error: err.message }));
+
+    logger.info(`[addRecoveryEmail] user ${sessionUser.id} attached ${raw} (unverified)`);
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('[addRecoveryEmail]', { userId: sessionUser.id, error: err.message });
+    return res.status(500).json({ error: 'Failed to save email. Please try again.' });
+  }
+};
+
 module.exports = {
   telegramStart,
   telegramCallback,
@@ -3364,6 +3452,7 @@ module.exports = {
   logout,
   getProfile,
   updateProfile,
+  addRecoveryEmail,
   linkTelegram,
   unlinkTelegram,
   forgotPassword,
