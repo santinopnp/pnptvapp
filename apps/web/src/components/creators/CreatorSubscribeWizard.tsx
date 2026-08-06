@@ -42,6 +42,8 @@ export interface CreatorSubscribeWizardProps {
   storageKey?: string;
   /** Where to return after checkout (deep-link back). */
   returnUrl?: string;
+  /** Channel access type — controls whether the launch-offer banner is shown. */
+  accessType?: "free" | "prime" | "subscription" | "paid";
 }
 
 const BENEFITS_EN = [
@@ -68,6 +70,7 @@ export default function CreatorSubscribeWizard({
   compact = false,
   storageKey,
   returnUrl,
+  accessType = "subscription",
 }: CreatorSubscribeWizardProps) {
   const key = storageKey || `pnp_creator_sub_${creatorId}`;
 
@@ -307,6 +310,18 @@ export default function CreatorSubscribeWizard({
             </li>
           ))}
         </ul>
+
+        {(accessType === "paid" || accessType === "subscription") && (
+          <div
+            className="rounded-xl px-3 py-2.5 flex items-start gap-2"
+            style={{ background: "rgba(230,145,56,0.12)", border: "1px solid rgba(230,145,56,0.3)" }}
+          >
+            <span className="text-base leading-none flex-shrink-0" aria-hidden="true">🔥</span>
+            <p className="text-[11px] leading-relaxed" style={{ color: "#E69138" }}>
+              Oferta de lanzamiento: al suscribirte accedes a TODO el contenido exclusivo del creador — canal + perfil, incluidos en un solo pago
+            </p>
+          </div>
+        )}
 
         <button
           onClick={() => setConfirmed(true)}

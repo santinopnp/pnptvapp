@@ -1061,6 +1061,9 @@ function ChannelDetailView({
               <p className="text-sm max-w-xs" style={{ color: "var(--pnp-text-secondary)" }}>
                 Subscribe to {channel.creatorName || "this creator"} to access this channel.
               </p>
+              <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
+                💎 Incluye canal + perfil exclusivo — 2x1
+              </p>
               <button
                 className="mt-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
                 style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
@@ -1491,6 +1494,9 @@ function ChannelDetailView({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                 </svg>
                 <p className="text-sm text-white/60 max-w-xs">Subscribe to this channel to watch this video</p>
+                <p className="text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(230,145,56,0.15)", color: "#E69138", border: "1px solid rgba(230,145,56,0.3)" }}>
+                  💎 Incluye canal + perfil exclusivo — 2x1
+                </p>
                 <button
                   onClick={() => {
                     setPlayingVideo(null);
@@ -1715,6 +1721,7 @@ function ChannelDetailView({
               username={channel.creatorUsername ?? undefined}
               priceUsd={Number(channel.priceUsd || 0)}
               lang={"en"}
+              accessType={(channel.accessType as "free" | "prime" | "subscription" | "paid") || "subscription"}
               storageKey={`pnp_creator_sub_${channel.creatorId}`}
               onSuccess={() => {
                 setShowSubscribeWizard(false);

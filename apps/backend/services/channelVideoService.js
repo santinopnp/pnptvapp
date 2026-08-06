@@ -793,11 +793,16 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     [v.channel_id]
   )).rows[0];
 
+  const creatorUser = (await query(
+    `SELECT profile_photo FROM users WHERE id = $1`,
+    [ch.creator_id]
+  )).rows[0];
+
   let gifUrl = null;
   if (v.directus_file_id) {
     try {
       gifUrl = await Promise.race([
-        generateGifFromVideo(v.directus_file_id),
+        generateGifFromVideo(v.directus_file_id, v.duration_sec),
         new Promise((_, reject) => setTimeout(() => reject(new Error('GIF generation timed out')), 60_000)),
       ]);
     } catch (err) {
@@ -829,24 +834,21 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     if (shouldAnnounce && previewUrl && !final.promo_post_id) {
       const appUrl = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
       const directusBase = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
-      // Only include description snippet if it adds something beyond the title
-      const rawDesc = (final.description || '').trim();
-      const titleNorm = (final.title || '').trim().toLowerCase();
-      const descNorm = rawDesc.toLowerCase();
-      const descDifferent = rawDesc && !descNorm.startsWith(titleNorm) && descNorm !== titleNorm;
-      const descSnippet = descDifferent
-        ? rawDesc.slice(0, 140) + (rawDesc.length > 140 ? '…' : '')
-        : '';
-      // Deep-link to creator profile /c/{username} (canonical). Falls back to
-      // /channels when the creator username is missing (rare — legacy rows).
-      const creatorProfileUrl = ch.creator_username
-        ? `${appUrl}/c/${encodeURIComponent(ch.creator_username)}`
-        : `${appUrl}/channels`;
+      const statsRow = (await query(
+        `SELECT
+           (SELECT COUNT(*) FROM channel_videos cv2
+              JOIN creator_channels cc2 ON cv2.channel_id = cc2.id
+              WHERE cc2.creator_id = $1 AND cv2.status = 'published') AS video_count,
+           (SELECT COUNT(*) FROM social_posts
+              WHERE user_id = $1 AND is_exclusive = true AND is_deleted = false) AS exclusive_photo_count`,
+        [ch.creator_id]
+      )).rows[0] || { video_count: 0, exclusive_photo_count: 0 };
       const promoContent = [
-        `🎬 NEW on PNP Channels: ${final.title}`,
-        descSnippet,
-        `🔒 Subscribe to watch → ${creatorProfileUrl}`,
-      ].filter(Boolean).join('\n\n').slice(0, 1000);
+        `🔥 @${ch.creator_username} acaba de subir contenido exclusivo`,
+        `📹 ${statsRow.video_count} videos · 📸 ${statsRow.exclusive_photo_count} fotos exclusivas`,
+        `💎 Suscríbete y accede a TODO — canal + perfil incluidos (Oferta de lanzamiento 2x1)`,
+        `→ pnptv.app/c/${encodeURIComponent(ch.creator_username || '')}`,
+      ].filter(Boolean).join('\n').slice(0, 1000);
       const metadata = {
         kind: 'channel_promo',
         channel_id: ch.id,
@@ -876,7 +878,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
          VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, $6, $7, $8, NOW())
          RETURNING id`,
         [
-          OFFICIAL_USER_ID, promoContent, previewUrl, JSON.stringify(metadata),
+          OFFICIAL_USER_ID, promoContent, creatorUser?.profile_photo || previewUrl, JSON.stringify(metadata),
           ch.id,
           (final.title || '').toString().slice(0, 200) || null,
           (final.description || '').toString().slice(0, 2000) || null,
@@ -945,6 +947,69 @@ async function publishVideo({ videoId, userId, isAdmin }) {
     }
   } catch (err) {
     logger.warn('channel_videos: promo post creation failed (non-fatal)', { videoId, error: err.message });
+  }
+
+  // Creator's own promo post — from creator's @username with the animated GIF preview
+  if (gifUrl && !final.creator_promo_post_id) {
+    try {
+      const appUrl2 = (process.env.APP_PUBLIC_URL || 'https://pnptv.app').replace(/\/$/, '');
+      const directusBase2 = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
+      const rawDesc2 = (final.description || '').trim();
+      const creatorContent = [
+        `🎬 ${final.title}`,
+        rawDesc2 ? rawDesc2.slice(0, 120) + (rawDesc2.length > 120 ? '…' : '') : null,
+        `🔒 Exclusivo para suscriptores`,
+      ].filter(Boolean).join('\n\n').slice(0, 800);
+
+      const creatorMetadata = {
+        kind: 'channel_promo',
+        channel_id: ch.id,
+        channel_slug: ch.slug ?? '',
+        channel_name: ch.name ?? '',
+        creator_id: ch.creator_id ?? '',
+        creator_username: ch.creator_username ?? null,
+        access_type: ch.access_type ?? 'subscription',
+        price_usd: null,
+        video_id: videoId,
+        video_directus_id: final.directus_file_id ?? '',
+        video_url: final.mux_playback_id
+          ? `https://stream.mux.com/${final.mux_playback_id}.m3u8`
+          : (final.directus_file_id ? `${directusBase2}/assets/${final.directus_file_id}` : ''),
+        has_animated_gif: true,
+        is_creator_post: true,
+      };
+
+      const creatorPromoInsert = await query(
+        `INSERT INTO social_posts
+           (user_id, content, media_url, media_type, metadata, is_exclusive,
+            content_tier, channel_id, video_title, video_description, video_thumbnail_url, created_at)
+         VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, $6, $7, $8, NOW())
+         RETURNING id`,
+        [
+          String(ch.creator_id), creatorContent, gifUrl, JSON.stringify(creatorMetadata),
+          ch.id,
+          (final.title || '').toString().slice(0, 200) || null,
+          (final.description || '').toString().slice(0, 2000) || null,
+          final.thumbnail_url || null,
+        ]
+      );
+      const creatorPromoPostId = creatorPromoInsert.rows[0]?.id ?? null;
+      if (creatorPromoPostId) {
+        await query(
+          `UPDATE channel_videos SET creator_promo_post_id = $2 WHERE id = $1`,
+          [videoId, creatorPromoPostId]
+        );
+        // Update creator_channels post_count (covers both @pnptv and creator posts)
+        await query(
+          `UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1`,
+          [ch.id]
+        ).catch(() => {});
+      }
+    } catch (creatorPromoErr) {
+      logger.warn('channel_videos: creator promo post creation failed (non-fatal)', {
+        videoId, error: creatorPromoErr.message,
+      });
+    }
   }
 
   // ── Hangout announcement — post system message to linked hangout ──────────
@@ -1184,25 +1249,45 @@ async function listChannelVideos({ channelId, viewerId, includeDrafts = false })
  * Directus, writes GIF to a tmp file, uploads it back to Directus, returns
  * the public URL. Resolves on success; rejects on error/timeout.
  */
-async function generateGifFromVideo(directusFileId) {
+async function generateGifFromVideo(directusFileId, durationSec = null) {
   const inputUrl = `${directusBaseUrl()}/assets/${directusFileId}?download&access_token=${process.env.DIRECTUS_ADMIN_TOKEN}`;
   const tmpDir = os.tmpdir();
   const tmpName = `cv-gif-${crypto.randomBytes(6).toString('hex')}.gif`;
   const tmpPath = path.join(tmpDir, tmpName);
 
-  // 3 seconds of 15 fps GIF, 480px wide, lanczos scale, infinite loop. We seek
-  // to t=2s so we skip black frames / leader. nice -19 keeps the bot's event
-  // loop responsive when ffmpeg consumes a CPU.
-  const args = [
-    '-loglevel', 'error',
-    '-y',
-    '-ss', '2',
-    '-i', inputUrl,
-    '-t', '3',
-    '-vf', 'fps=15,scale=480:-1:flags=lanczos',
-    '-loop', '0',
-    tmpPath,
-  ];
+  let args;
+  if (durationSec != null && durationSec >= 15) {
+    // 6-frame slideshow GIF sampled evenly across the video's runtime.
+    // Skips the first 5% to avoid black leader; one frame every `interval`
+    // seconds; 480px wide lanczos; 1.5 s per frame; infinite loop.
+    const interval = Math.max(3, Math.floor(durationSec / 7));
+    const skipSec = Math.floor(durationSec * 0.05);
+    args = [
+      '-loglevel', 'error',
+      '-y',
+      '-ss', String(skipSec),
+      '-i', inputUrl,
+      '-vf', `fps=1/${interval},scale=480:-1:flags=lanczos`,
+      '-frames:v', '6',
+      '-delay', '150',
+      '-loop', '0',
+      tmpPath,
+    ];
+  } else {
+    // Fallback: 3 seconds of 15 fps GIF, 480px wide, lanczos scale, infinite
+    // loop. Seek to t=2s to skip black frames / leader. nice -19 keeps the
+    // bot's event loop responsive when ffmpeg consumes a CPU.
+    args = [
+      '-loglevel', 'error',
+      '-y',
+      '-ss', '2',
+      '-i', inputUrl,
+      '-t', '3',
+      '-vf', 'fps=15,scale=480:-1:flags=lanczos',
+      '-loop', '0',
+      tmpPath,
+    ];
+  }
 
   await new Promise((resolve, reject) => {
     const ff = spawn('nice', ['-n', '19', 'ffmpeg', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -1431,6 +1516,99 @@ async function failStuckVideoUploads() {
   return count;
 }
 
+// ── Backfill: creator promo posts for existing published videos ───────────────
+// Idempotent — only processes videos where creator_promo_post_id IS NULL.
+// Call via POST /api/admin/backfill-creator-promo-posts { limit, dryRun }.
+async function backfillCreatorPromoPosts({ limit = 10, dryRun = false } = {}) {
+  const rows = (await query(
+    `SELECT cv.id, cv.title, cv.description, cv.directus_file_id, cv.duration_sec,
+            cv.gif_url, cv.thumbnail_url, cv.mux_playback_id, cv.channel_id,
+            cc.creator_id, cc.name AS channel_name, cc.slug AS channel_slug,
+            cc.access_type, u.username AS creator_username
+       FROM channel_videos cv
+       JOIN creator_channels cc ON cv.channel_id = cc.id
+       JOIN users u ON u.id = cc.creator_id
+      WHERE cv.status = 'published'
+        AND cv.creator_promo_post_id IS NULL
+      ORDER BY cv.created_at ASC
+      LIMIT $1`,
+    [limit]
+  )).rows;
+
+  const results = [];
+  for (const v of rows) {
+    if (dryRun) {
+      results.push({ videoId: v.id, creatorUsername: v.creator_username, status: 'dry_run' });
+      continue;
+    }
+    try {
+      let gifUrl = v.gif_url;
+      if (!gifUrl && v.directus_file_id) {
+        try {
+          gifUrl = await generateGifFromVideo(v.directus_file_id, v.duration_sec);
+          await query(`UPDATE channel_videos SET gif_url = $2 WHERE id = $1`, [v.id, gifUrl]);
+        } catch (gifErr) {
+          logger.warn('backfill: gif generation failed', { videoId: v.id, error: gifErr.message });
+        }
+      }
+      if (!gifUrl) {
+        results.push({ videoId: v.id, status: 'skipped_no_gif' });
+        continue;
+      }
+
+      const directusBase = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
+      const rawDesc = (v.description || '').trim();
+      const creatorContent = [
+        `🎬 ${v.title}`,
+        rawDesc ? rawDesc.slice(0, 120) + (rawDesc.length > 120 ? '…' : '') : null,
+        `🔒 Exclusivo para suscriptores`,
+      ].filter(Boolean).join('\n\n').slice(0, 800);
+
+      const creatorMetadata = {
+        kind: 'channel_promo',
+        channel_id: v.channel_id,
+        channel_slug: v.channel_slug ?? '',
+        channel_name: v.channel_name ?? '',
+        creator_id: v.creator_id ?? '',
+        creator_username: v.creator_username ?? null,
+        access_type: v.access_type ?? 'subscription',
+        price_usd: null,
+        video_id: v.id,
+        video_directus_id: v.directus_file_id ?? '',
+        video_url: v.mux_playback_id
+          ? `https://stream.mux.com/${v.mux_playback_id}.m3u8`
+          : (v.directus_file_id ? `${directusBase}/assets/${v.directus_file_id}` : ''),
+        has_animated_gif: true,
+        is_creator_post: true,
+      };
+
+      const insert = await query(
+        `INSERT INTO social_posts
+           (user_id, content, media_url, media_type, metadata, is_exclusive,
+            content_tier, channel_id, video_title, video_description, video_thumbnail_url, created_at)
+         VALUES ($1, $2, $3, 'gif', $4, false, 'free', $5, $6, $7, $8, NOW())
+         RETURNING id`,
+        [
+          String(v.creator_id), creatorContent, gifUrl, JSON.stringify(creatorMetadata),
+          v.channel_id,
+          (v.title || '').toString().slice(0, 200) || null,
+          (v.description || '').toString().slice(0, 2000) || null,
+          v.thumbnail_url || null,
+        ]
+      );
+      const newPostId = insert.rows[0]?.id;
+      if (newPostId) {
+        await query(`UPDATE channel_videos SET creator_promo_post_id = $2 WHERE id = $1`, [v.id, newPostId]);
+        results.push({ videoId: v.id, creatorUsername: v.creator_username, newPostId, status: 'created' });
+      }
+    } catch (err) {
+      results.push({ videoId: v.id, status: 'error', error: err.message });
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return results;
+}
+
 module.exports = {
   loadOwnedChannel,
   getStorageQuota,
@@ -1449,4 +1627,5 @@ module.exports = {
   aiMetadataAll,
   getMuxThumbnails,
   handleMuxWebhook,
+  backfillCreatorPromoPosts,
 };

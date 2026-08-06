@@ -774,10 +774,12 @@ export default function SocialPostCard({
             className="w-10 h-10 rounded-full object-cover ring-2 ring-[#1C1C1E]"
             style={{ background: "#1a1a2e" }}
           />
-        ) : post.author_id === "8552451957" && channelPromoCta ? (
+        ) : post.author_id === "8552451957" && channelPromoCta && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
           // Channel-promo post from the system account — show channel branding
           // instead of the Cristina AI indicator so the feed card feels like it
           // belongs to the creator, not the platform system.
+          // Creator-authored promos (is_creator_post=true) skip this and fall
+          // through to the standard UserAvatar below.
           <div
             className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
@@ -785,7 +787,7 @@ export default function SocialPostCard({
           >
             {((post.metadata as { channel_name?: string } | undefined)?.channel_name ?? "C").charAt(0).toUpperCase()}
           </div>
-        ) : post.author_id === "8552451957" ? (
+        ) : post.author_id === "8552451957" && !channelPromoCta ? (
           <img
             src="/logo-final.png"
             alt="PNPtv!"
@@ -809,9 +811,10 @@ export default function SocialPostCard({
               <span className="font-semibold text-white text-sm truncate">
                 {post.author_first_name || post.author_username || "Anonymous"}
               </span>
-            ) : channelPromoCta && post.author_id === "8552451957" ? (
+            ) : channelPromoCta && post.author_id === "8552451957" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
               // Channel-promo from system account: show channel name as author label
               // so the card reads as belonging to the creator's channel, not the bot.
+              // Creator-authored promos (is_creator_post=true) show the real author name.
               <span className="font-semibold text-white text-sm truncate">
                 {(post.metadata as { channel_name?: string } | undefined)?.channel_name || "PNP Channels"}
               </span>
@@ -823,7 +826,7 @@ export default function SocialPostCard({
                 {post.author_first_name || post.author_username || "Anonymous"}
               </button>
             )}
-            {post.author_username && !post.is_carousel && !(channelPromoCta && post.author_id === "8552451957") && (
+            {post.author_username && !post.is_carousel && !(channelPromoCta && post.author_id === "8552451957" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post) && (
               <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{post.author_username}
               </span>

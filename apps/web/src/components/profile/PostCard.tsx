@@ -723,8 +723,9 @@ export default function PostCard({
       )}
 
       <div className="flex gap-3">
-        {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
-          // Channel-promo from system account — show channel initial, not Cristina emoji
+        {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+          // Channel-promo from system account — show channel initial, not Cristina emoji.
+          // Creator-authored promos (is_creator_post=true) fall through to UserAvatar.
           <div
             className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
             style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
@@ -750,8 +751,9 @@ export default function PostCard({
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" ? (
-              // Channel-promo from system account: show channel name as author label
+            {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+              // Channel-promo from system account: show channel name as author label.
+              // Creator-authored promos (is_creator_post=true) show the real author name.
               <span className="font-semibold text-white text-sm truncate">
                 {((post.metadata as Record<string, unknown>).channel_name as string | undefined) || "PNP Channels"}
               </span>
@@ -763,7 +765,7 @@ export default function PostCard({
                 {post.author_first_name || post.author_username || p.anonymous}
               </button>
             )}
-            {post.author_username && post.author_id !== "8552451957" && (
+            {post.author_username && (post.author_id !== "8552451957" || (post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post) && (
               <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{post.author_username}
               </span>

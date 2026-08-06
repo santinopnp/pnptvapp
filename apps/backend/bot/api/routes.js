@@ -9232,6 +9232,17 @@ app.get('/api/webapp/social/hangout-activity/:userId', requireSessionAuth, async
 app.post('/api/admin/social/sync-promoted', adminGuard, asyncHandler(promotedPostController.handleSyncPromoted));
 app.post('/api/admin/social/sync-content', adminGuard, asyncHandler(contentFeedSyncController.handleSyncContent));
 
+// One-shot backfill: create creator promo posts for existing published channel videos
+app.post('/api/admin/backfill-creator-promo-posts', superadminGuard, express.json(), asyncHandler(async (req, res) => {
+  const { limit = 10, dryRun = false } = req.body || {};
+  const channelVideoSvc = require('../../services/channelVideoService');
+  const results = await channelVideoSvc.backfillCreatorPromoPosts({
+    limit: Math.min(Number(limit) || 10, 50),
+    dryRun: Boolean(dryRun),
+  });
+  res.json({ ok: true, count: results.length, results });
+}));
+
 // Users search
 app.get('/api/webapp/users/search', asyncHandler(usersController.searchUsers));
 app.get('/api/webapp/users/new', requireSessionAuth, asyncHandler(usersController.getNewMembers));

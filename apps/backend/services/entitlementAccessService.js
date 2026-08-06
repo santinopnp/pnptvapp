@@ -703,6 +703,12 @@ class EntitlementAccessService {
           return { allowed: true, reason: 'creator_subscriber', scoped: true };
         }
       }
+      if (resource.access_type === 'paid') {
+        const creatorId = resource.creator_id ? String(resource.creator_id) : String(resource.id);
+        if (await EntitlementAccessService.hasEntitlement(userId, 'creator-subscription', { creatorId })) {
+          return { allowed: true, reason: 'phase1_bundle_via_creator_sub', scoped: true };
+        }
+      }
     }
     if (kind === 'hangout') {
       // Standalone paid hangout
@@ -747,6 +753,23 @@ class EntitlementAccessService {
     if (kind === 'creator') {
       if (await EntitlementAccessService.hasEntitlement(userId, 'creator-subscription', { creatorId: String(resource.id) })) {
         return { allowed: true, reason: 'scoped_creator_subscription', scoped: true };
+      }
+      // Phase 1 2x1 launch bundle: having channel-access for this creator's paid channel
+      // also unlocks their profile exclusive content.
+      try {
+        const creatorChannelRows = await query(
+          `SELECT id FROM creator_channels WHERE creator_id = $1 AND access_type IN ('paid', 'subscription') LIMIT 5`,
+          [String(resource.id)]
+        );
+        for (const ch of creatorChannelRows.rows) {
+          if (await EntitlementAccessService.hasEntitlement(userId, 'channel-access', { creatorId: String(ch.id) })) {
+            return { allowed: true, reason: 'phase1_bundle_via_channel', scoped: true };
+          }
+        }
+      } catch (bundleErr) {
+        logger.warn('hasResourceAccess: phase1 bundle check failed (non-fatal)', {
+          userId, kind, resourceId, error: bundleErr.message,
+        });
       }
     }
 
