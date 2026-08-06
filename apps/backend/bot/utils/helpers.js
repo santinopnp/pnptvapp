@@ -342,7 +342,10 @@ async function resolveUserId(userId) {
     return r.rows.length ? r.rows[0].id : null;
   }
   if (isHyphenatedId) return userId; // non-UUID hyphenated strings are treated as canonical user IDs
-  // username lookup
-  const r = await query('SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1', [userId]);
+  // username lookup — prefer active accounts; fall back to deleted only if no active match
+  const r = await query(
+    'SELECT id FROM users WHERE lower(username) = lower($1) ORDER BY (is_deleted = false) DESC LIMIT 1',
+    [userId]
+  );
   return r.rows.length ? r.rows[0].id : null;
 }
