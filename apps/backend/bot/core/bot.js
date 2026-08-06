@@ -1234,7 +1234,7 @@ const startBot = async () => {
         let mediaThumbUrl = null;
         let mediaWidth = null;
         let mediaHeight = null;
-        let msgType = null; // message_type column (e.g. 'video_note'); null = plain text/media
+        let msgType = 'text'; // message_type column (e.g. 'video_note')
         let mediaDuration = null; // duration in seconds (video notes, voice, video)
 
         const msg = ctx.message;

@@ -175,7 +175,7 @@ const uploadHangoutMedia = async (req, res) => {
     const photoUrl = isValidPhoto(rawPhoto) ? rawPhoto : null;
 
     const room = `hangout:${groupId}`;
-    const msgType = (req.body?.messageType === 'video_note' ? 'video_note' : null);
+    const msgType = (req.body?.messageType === 'video_note' ? 'video_note' : 'text');
     const { rows: insertedRows } = await query(
       `INSERT INTO chat_messages (room, user_id, username, first_name, photo_url, content,
          media_url, media_type, media_mime, media_thumb_url, media_width, media_height, media_metadata, message_type)

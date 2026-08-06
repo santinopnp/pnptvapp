@@ -229,7 +229,7 @@ export default function SocialFeedTabs({
   // in a private room, the community-wide spotlight would be off-topic).
   const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
   const [onlinePerformers, setOnlinePerformers] = useState<FeaturedPerformer[]>([]);
-  const showRails = !hashtagFilter && !hangoutGroupId && feedMode === 'hot';
+  const showRails = !hashtagFilter && !hangoutGroupId;
 
   // Custom hashtag filter input. Types a tag → navigates to /?tag=xxx. When
   // ?tag= is active the input pre-fills; a clear button drops the filter.

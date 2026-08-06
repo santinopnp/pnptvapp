@@ -794,7 +794,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
   )).rows[0];
 
   const creatorUser = (await query(
-    `SELECT profile_photo FROM users WHERE id = $1`,
+    `SELECT photo_file_id FROM users WHERE id = $1`,
     [ch.creator_id]
   )).rows[0];
 
@@ -878,7 +878,7 @@ async function publishVideo({ videoId, userId, isAdmin }) {
          VALUES ($1, $2, $3, 'image', $4, false, 'free', $5, $6, $7, $8, NOW())
          RETURNING id`,
         [
-          OFFICIAL_USER_ID, promoContent, creatorUser?.profile_photo || previewUrl, JSON.stringify(metadata),
+          OFFICIAL_USER_ID, promoContent, creatorUser?.photo_file_id || previewUrl, JSON.stringify(metadata),
           ch.id,
           (final.title || '').toString().slice(0, 200) || null,
           (final.description || '').toString().slice(0, 2000) || null,
