@@ -7945,6 +7945,7 @@ export interface CastingApplication {
   tier: string;
   post_count: number;
   status: string;
+  creator_status: string | null;
   admin_notes: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -9925,4 +9926,19 @@ export async function completeCryptoGuide(): Promise<{ success: boolean; rewarde
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// ── Admin Creator Triage ──────────────────────────────────────────────────────
+
+export interface CreatorTriageSummary {
+  pendingCasting: number;
+  pendingEnrollments: number;
+  pendingModelApps: number;
+  pending2257: number;
+  approvedHoldPast48h: number;
+  total: number;
+}
+
+export function getCreatorTriageSummary(): Promise<CreatorTriageSummary> {
+  return request("/api/webapp/admin/creator-triage");
 }

@@ -48,16 +48,28 @@ class IdentityVerificationService {
       throw new Error('Invalid date of birth');
     }
 
-    // Check if user is currently banned from resubmitting
+    // Check if user is currently banned from resubmitting, and skip the upsert
+    // entirely when an approved record already exists — enrollment auto-creates
+    // pending records but must never downgrade an already-approved one.
     const { rows: banCheck } = await query(
-      `SELECT banned_from_applying_until FROM creator_2257_records WHERE user_id = $1`,
+      `SELECT verification_status, banned_from_applying_until FROM creator_2257_records WHERE user_id = $1`,
       [userId]
     );
-    if (banCheck.length && banCheck[0].banned_from_applying_until) {
-      const banUntil = new Date(banCheck[0].banned_from_applying_until);
-      if (banUntil > new Date()) {
-        const formatted = banUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-        throw new Error(`You are not allowed to resubmit until ${formatted}. Contact support if you believe this is an error.`);
+    if (banCheck.length) {
+      if (banCheck[0].verification_status === 'approved') {
+        // Return the existing approved row without touching it.
+        const { rows: existing } = await query(
+          `SELECT * FROM creator_2257_records WHERE user_id = $1`,
+          [userId]
+        );
+        return existing[0];
+      }
+      if (banCheck[0].banned_from_applying_until) {
+        const banUntil = new Date(banCheck[0].banned_from_applying_until);
+        if (banUntil > new Date()) {
+          const formatted = banUntil.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+          throw new Error(`You are not allowed to resubmit until ${formatted}. Contact support if you believe this is an error.`);
+        }
       }
     }
 

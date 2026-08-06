@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from "react";
+
+// ── Feature flag — set to false to re-enable live streaming ──────────────────
+const STREAMS_DEPRECATED = false;
 import { Outlet, NavLink, Navigate, useNavigate, useLocation } from "react-router-dom";
 import {
   TIER_UPGRADE_THRESHOLDS,
@@ -80,13 +83,13 @@ const navItems: Array<{
     labelKey: "navDocumentation",
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
-  {
-    // PNP Live streaming — only roles that include Performer can broadcast.
+  // PNP Live streaming — hidden while STREAMS_DEPRECATED is true.
+  ...(!STREAMS_DEPRECATED ? [{
     to: "/creators/live",
     labelKey: "navStartWebcamming",
     icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
     roles: ["performer", "both"],
-  },
+  }] : []),
   {
     to: "/creators/availability",
     labelKey: "navPrivateCalls",

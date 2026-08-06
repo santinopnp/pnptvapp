@@ -380,10 +380,26 @@ export default function CreatorLive() {
           setPhase("ready");
           loadingRef.current = false;
         } catch {
-          setError("Could not load stream credentials. Please refresh the page or contact support.");
+          setError("Could not set up your stream channel. Please contact support.");
           setPhase("error");
           loadingRef.current = false;
         }
+      } else if (apiErr?.status === 403 && apiErr?.code === 'identity_verification_required') {
+        setError("You need to complete identity verification (2257) before going live. Go to Creator Studio → Verification to submit your ID.");
+        setPhase("error");
+        loadingRef.current = false;
+      } else if (apiErr?.status === 403 && apiErr?.code === 'PERFORMER_ROLE_REQUIRED') {
+        setError("Your account doesn't have performer access yet. Contact support to enable live streaming.");
+        setPhase("error");
+        loadingRef.current = false;
+      } else if (apiErr?.status === 403 && apiErr?.code === 'CREATOR_AWAITING_ACTIVATION') {
+        setError("Your creator account is approved and waiting for admin activation. You'll be able to go live once activated.");
+        setPhase("error");
+        loadingRef.current = false;
+      } else if (apiErr?.status === 403) {
+        setError(apiErr.message || "You don't have permission to stream. Contact support.");
+        setPhase("error");
+        loadingRef.current = false;
       } else {
         setError("Could not load stream credentials. Please refresh the page or contact support.");
         setPhase("error");

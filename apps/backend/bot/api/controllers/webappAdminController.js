@@ -2247,6 +2247,24 @@ const activateCreator = async (req, res) => {
       [userId]
     );
 
+    // Close any open applications in the other two tables so the admin
+    // dashboard doesn't show orphaned "pending" rows for this creator.
+    await query(
+      `UPDATE casting_applications
+          SET status = 'approved',
+              admin_notes = 'auto-closed: creator approved via model application',
+              reviewed_at = NOW()
+        WHERE user_id = $1 AND status = 'pending'`,
+      [userId]
+    );
+    await query(
+      `UPDATE creator_enrollments
+          SET status = 'approved',
+              admin_notes = 'auto-closed: creator approved via model application'
+        WHERE user_id = $1 AND status = 'pending_review'`,
+      [userId]
+    );
+
     await EntitlementModel._auditLog({
       userId: String(userId),
       action: 'grant',

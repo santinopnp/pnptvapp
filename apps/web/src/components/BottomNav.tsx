@@ -4,6 +4,9 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 
+// ── Feature flag — set to false to re-enable live streaming ──────────────────
+const STREAMS_DEPRECATED = false;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Classic nav — unchanged, shown to all users except the preview account
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,10 +79,14 @@ function ClassicNav() {
     return location.pathname === item.to || location.pathname.startsWith(item.to + "/");
   };
 
+  const visibleNavItems = STREAMS_DEPRECATED
+    ? classicNavItems.filter((item) => item.id !== "live")
+    : classicNavItems;
+
   return (
     <nav className="glass-nav border-t border-pnp-border safe-area-bottom">
       <div className="flex items-center justify-around h-16 w-full max-w-lg mx-auto px-1">
-        {classicNavItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const active = getIsActive(item);
           const label = item.id === "feed" ? nav.feed
             : item.id === "hangouts" ? nav.hangouts
@@ -275,7 +282,7 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
   const go = useCallback((to: string) => { onClose(); navigate(to); }, [onClose, navigate]);
 
   const cards = [
-    {
+    ...(!STREAMS_DEPRECATED ? [{
       icon: "📺",
       title: nav.sheetCardLiveShowsTitle || "Live Shows",
       desc: nav.sheetCardLiveShowsDesc || "Watch active PNP streams happening right now",
@@ -286,7 +293,7 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
       border: "rgba(212,0,122,.3)",
       iconBg: "rgba(212,0,122,.15)",
       badge: <span className="flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(212,0,122,.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,.3)" }}><span className="w-1.5 h-1.5 rounded-full bg-[#D4007A] inline-block" />{nav.sheetBadgeLive || "LIVE"}</span>,
-    },
+    }] : []),
     {
       icon: "📞",
       title: nav.sheetCardPrivateCallsTitle || "Private Calls",
@@ -335,32 +342,36 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
           {nav.sheetContentSubtitle || "Tune in live or explore content at your own pace"}
         </p>
 
-        {/* Live section */}
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">{nav.sheetContentSectionLive || "🔴 Live"}</span>
-          <div className="flex-1 h-px bg-white/8" />
-        </div>
-        <div className="grid grid-cols-2 gap-3 mb-4 min-[340px]:grid-cols-2 grid-cols-1">
-          {cards.slice(0, 2).map((c) => (
-            <button key={c.title} onClick={() => go(c.to)}
-              className="text-left rounded-[18px] border p-4 transition-all active:scale-[.97] flex flex-col gap-3"
-              style={{ background: `linear-gradient(135deg,${c.bg},transparent)`, borderColor: c.border }}>
-              <div className="flex items-start justify-between">
-                <div className="w-11 h-11 rounded-[13px] flex items-center justify-center text-[22px]" style={{ background: c.iconBg }}>{c.icon}</div>
-                {c.badge}
-              </div>
-              <div>
-                <p className="text-[14px] font-black mb-0.5" style={{ color: c.accentColor }}>{c.title}</p>
-                <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{c.desc}</p>
-              </div>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full self-start"
-                style={{ background: `${c.iconBg}`, color: c.accentColor }}>
-                {c.cta}
-                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-              </span>
-            </button>
-          ))}
-        </div>
+        {/* Live section — hidden when streams are deprecated */}
+        {!STREAMS_DEPRECATED && (
+          <>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-[10px] font-black uppercase tracking-[.8px] text-pnp-textSecondary">{nav.sheetContentSectionLive || "🔴 Live"}</span>
+              <div className="flex-1 h-px bg-white/8" />
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4 min-[340px]:grid-cols-2 grid-cols-1">
+              {cards.slice(0, 2).map((c) => (
+                <button key={c.title} onClick={() => go(c.to)}
+                  className="text-left rounded-[18px] border p-4 transition-all active:scale-[.97] flex flex-col gap-3"
+                  style={{ background: `linear-gradient(135deg,${c.bg},transparent)`, borderColor: c.border }}>
+                  <div className="flex items-start justify-between">
+                    <div className="w-11 h-11 rounded-[13px] flex items-center justify-center text-[22px]" style={{ background: c.iconBg }}>{c.icon}</div>
+                    {c.badge}
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-black mb-0.5" style={{ color: c.accentColor }}>{c.title}</p>
+                    <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{c.desc}</p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full self-start"
+                    style={{ background: `${c.iconBg}`, color: c.accentColor }}>
+                    {c.cta}
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Content section */}
         <div className="flex items-center gap-2 mb-3">
@@ -368,7 +379,7 @@ function ContentSheet({ onClose }: { onClose: () => void }) {
           <div className="flex-1 h-px bg-white/8" />
         </div>
         <div className="grid grid-cols-2 gap-3 min-[340px]:grid-cols-2 grid-cols-1">
-          {cards.slice(2).map((c) => (
+          {(STREAMS_DEPRECATED ? cards : cards.slice(2)).map((c) => (
             <button key={c.title} onClick={() => go(c.to)}
               className="text-left rounded-[18px] border p-4 transition-all active:scale-[.97] flex flex-col gap-3"
               style={{ background: `linear-gradient(135deg,${c.bg},transparent)`, borderColor: c.border }}>

@@ -4513,6 +4513,27 @@ app.get('/api/webapp/admin/monitoring', adminGuard, asyncHandler(async (_req, re
   });
 }));
 
+// GET /api/webapp/admin/creator-triage — "Needs Action" badge counts for the admin dashboard
+app.get('/api/webapp/admin/creator-triage', adminGuard, asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM casting_applications  WHERE status = 'pending')          AS "pendingCasting",
+      (SELECT COUNT(*)::int FROM creator_enrollments   WHERE status = 'pending_review')   AS "pendingEnrollments",
+      (SELECT COUNT(*)::int FROM model_applications    WHERE status = 'pending')          AS "pendingModelApps",
+      (SELECT COUNT(*)::int FROM creator_2257_records  WHERE verification_status = 'pending') AS "pending2257",
+      (SELECT COUNT(*)::int
+         FROM users u
+         JOIN model_applications ma ON ma.user_id = u.id AND ma.status = 'approved'
+        WHERE u.creator_status = 'approved_hold'
+          AND ma.reviewed_at > NOW() - INTERVAL '48 hours')                              AS "approvedHoldPast48h"
+  `);
+  const counts = rows[0];
+  const total = (counts.pendingCasting || 0) + (counts.pendingEnrollments || 0) +
+                (counts.pendingModelApps || 0) + (counts.pending2257 || 0) +
+                (counts.approvedHoldPast48h || 0);
+  return res.json({ success: true, ...counts, total });
+}));
+
 // GET /api/webapp/admin/reports — admin list
 app.get('/api/webapp/admin/reports', adminGuard, asyncHandler(async (req, res) => {
   const { status, limit, offset } = req.query || {};

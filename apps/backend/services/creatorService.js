@@ -2058,6 +2058,24 @@ class CreatorService {
       [enrollment.user_id]
     );
 
+    // Close any open applications in the other two tables so the admin
+    // dashboard doesn't show orphaned "pending" rows for this creator.
+    await query(
+      `UPDATE casting_applications
+          SET status = 'approved',
+              admin_notes = 'auto-closed: creator approved via enrollment',
+              reviewed_at = NOW()
+        WHERE user_id = $1 AND status = 'pending'`,
+      [enrollment.user_id]
+    );
+    await query(
+      `UPDATE model_applications
+          SET status = 'withdrawn',
+              admin_notes = 'auto-closed: creator approved via enrollment'
+        WHERE user_id = $1 AND status = 'pending'`,
+      [enrollment.user_id]
+    );
+
     // Copy payout target from the enrollment into the canonical user columns so
     // the creator-setup checklist sees the "Payout Method" item as done. The
     // wizard only writes to creator_enrollments; without this copy the checker

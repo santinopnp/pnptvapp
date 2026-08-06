@@ -11,9 +11,46 @@ import {
   startPersonaInquiry,
   getPersonaStatus,
   getCreatorSetupStatus,
+  getCreatorEnrollment,
+  getCastingStatus,
   type CreatorSetupStatus,
   type CreatorSetupItem,
+  type CreatorEnrollment,
+  type CastingStatus,
 } from "@/lib/api";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatRelative(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffDays === 0) return diffHours <= 1 ? "just now" : `${diffHours} hours ago`;
+  if (diffDays === 1) return "1 day ago";
+  if (diffDays < 30) return `${diffDays} days ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function daysSince(dateStr: string | null | undefined): number {
+  if (!dateStr) return 0;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+}
+
+const SUPPORT_EMAIL = "mailto:support@pnptv.app";
+
+function SupportLink({ prefix = "Need help?" }: { prefix?: string }) {
+  return (
+    <p className="text-xs mt-4 text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+      {prefix}{" "}
+      <a href={SUPPORT_EMAIL} className="underline" style={{ color: "#D4007A" }}>
+        support@pnptv.app
+      </a>
+    </p>
+  );
+}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -165,6 +202,13 @@ export default function CreatorApply() {
   // Enrollment wizard (replaces activation modal)
   const [showWizard, setShowWizard] = useState(false);
 
+  // Enrollment record (for pending_review / eligible date display)
+  const [enrollment, setEnrollment] = useState<CreatorEnrollment | null>(null);
+
+  // Casting status (for none-status users who already applied via casting)
+  const [castingStatus, setCastingStatus] = useState<CastingStatus | null>(null);
+  const [castingLoading, setCastingLoading] = useState(false);
+
   const isActive        = dashboard?.creatorStatus === "active";
   const isEligible      = dashboard?.creatorStatus === "eligible";
   const isPending       = dashboard?.creatorStatus === "pending_review";
@@ -244,6 +288,28 @@ export default function CreatorApply() {
       .catch(() => {})
       .finally(() => setSetupLoading(false));
   }, [isActive]);
+
+  // Fetch enrollment record for pending_review and eligible states (provides submitted_at / reviewed_at)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (isPending || isEligible || isApprovedHold) {
+      getCreatorEnrollment()
+        .then((res) => { if (res.enrollment) setEnrollment(res.enrollment); })
+        .catch(() => {});
+    }
+  }, [isAuthenticated, isPending, isEligible, isApprovedHold]);
+
+  // Fetch casting status for users with no creator status — they may have a pending casting application
+  useEffect(() => {
+    if (!isAuthenticated || loading) return;
+    const isNoneStatus = !isActive && !isPending && !isApprovedHold && !isEligible;
+    if (!isNoneStatus) return;
+    setCastingLoading(true);
+    getCastingStatus()
+      .then((res) => setCastingStatus(res))
+      .catch(() => {})
+      .finally(() => setCastingLoading(false));
+  }, [isAuthenticated, loading, isActive, isPending, isApprovedHold, isEligible]);
 
   const refreshSetup = useCallback(async () => {
     if (!isActive) return;
@@ -541,9 +607,13 @@ export default function CreatorApply() {
                         </div>
                         <div className="shrink-0">
                           {item.done ? (
-                            <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>Done</span>
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>
+                              {item.key === "identity" ? "Verified" : "Done"}
+                            </span>
                           ) : item.status === "pending" ? (
                             <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "rgba(94,140,209,0.15)", color: "#5E8CD1" }}>In Review</span>
+                          ) : item.status === "rejected" ? (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "rgba(239,68,68,0.12)", color: "#FCA5A5" }}>Rejected</span>
                           ) : item.required ? (
                             <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "rgba(212,0,122,0.12)", color: "#F472B6" }}>Required</span>
                           ) : (
@@ -605,9 +675,18 @@ export default function CreatorApply() {
                       {/* Pending in-review notice */}
                       {!item.done && item.status === "pending" && (
                         <div className="px-4 pb-4">
-                          <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                            Under review by our team — typically 24–48 hours.
-                          </p>
+                          <div className="rounded-lg px-3 py-2.5 text-xs" style={{ background: "rgba(94,140,209,0.08)", border: "1px solid rgba(94,140,209,0.25)" }}>
+                            <p className="font-semibold text-white mb-0.5">Under review</p>
+                            {idRecord?.submitted_at ? (
+                              <p style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                Submitted {formatRelative(idRecord.submitted_at)} — typically 24–48 hours.
+                              </p>
+                            ) : (
+                              <p style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                Our team is reviewing your identity documents — typically 24–48 hours.
+                              </p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -663,6 +742,7 @@ export default function CreatorApply() {
                     ← Back to Dashboard
                   </button>
                 </div>
+                <SupportLink prefix="Need help with setup?" />
               </div>
             ) : null}
           </>
@@ -682,52 +762,193 @@ export default function CreatorApply() {
 
         {/* Approved-hold — application approved, waiting for operator activation */}
         {!loading && isApprovedHold && (
-          <div className="text-center py-12 px-4">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5" style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.2), rgba(230,145,56,0.2))", border: "1px solid rgba(212,0,122,0.4)" }}>
-              <svg className="w-8 h-8" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+          <div className="py-8 px-2">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5" style={{ background: "linear-gradient(135deg, rgba(94,209,196,0.2), rgba(94,209,196,0.1))", border: "1px solid rgba(94,209,196,0.4)" }}>
+                <svg className="w-8 h-8" style={{ color: "#5ED1C4" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">You're Approved — Activation Pending</h2>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Your application was approved. An admin is activating your creator account — this usually takes a few hours.
+                You'll receive a notification the moment your studio is live.
+              </p>
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">You're approved — almost there!</h2>
-            <p className="text-sm leading-relaxed mb-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              Your creator application was approved. The team is doing a final check before activating your studio.
-              You'll receive a notification the moment it's live.
-            </p>
+
+            {/* Approval date + over-threshold prompt */}
+            {(() => {
+              const reviewedAt = enrollment?.reviewed_at;
+              const days = daysSince(reviewedAt);
+              return (
+                <div className="glass-card-sm p-4 mb-4 space-y-2">
+                  {reviewedAt && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Approved</span>
+                      <span className="font-medium text-white">{formatRelative(reviewedAt)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-xs">
+                    <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Status</span>
+                    <span className="font-bold px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>
+                      Approved
+                    </span>
+                  </div>
+                  {days > 2 && (
+                    <div className="rounded-lg px-3 py-2.5 mt-2 text-xs leading-relaxed" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.25)", color: "#F9A8D4" }}>
+                      It's been more than 48 hours since approval.{" "}
+                      <a href={SUPPORT_EMAIL} className="underline font-semibold text-white">
+                        Contact support
+                      </a>
+                      {" "}so we can activate your account right away.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <button
               onClick={() => navigate("/")}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
+              className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
               style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
             >
               Back to PNPtv
             </button>
+            <SupportLink prefix="Questions about activation?" />
           </div>
         )}
 
-        {/* Pending review — show focused waiting state, skip the full join flow */}
+        {/* Pending review — application submitted, waiting for admin decision */}
         {!loading && isPending && (
-          <div className="text-center py-12 px-4">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5" style={{ background: "linear-gradient(135deg, rgba(255,180,84,0.2), rgba(230,145,56,0.2))", border: "1px solid rgba(255,180,84,0.4)" }}>
-              <svg className="w-8 h-8" style={{ color: "#FFB454" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+          <div className="py-8 px-2">
+            <div className="flex flex-col items-center text-center mb-6">
+              <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5" style={{ background: "linear-gradient(135deg, rgba(255,180,84,0.2), rgba(230,145,56,0.2))", border: "1px solid rgba(255,180,84,0.4)" }}>
+                <svg className="w-8 h-8" style={{ color: "#FFB454" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Application Under Review</h2>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Your application was received and is being reviewed by our team. This typically takes 24–48 hours.
+                You'll receive a notification the moment a decision is made.
+              </p>
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Application Received</h2>
-            <p className="text-sm leading-relaxed mb-6" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              Your creator application is under review. We typically respond within 24–48 hours.
-              You'll receive a notification the moment a decision is made.
-            </p>
-            <button
-              onClick={() => navigate("/")}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
-              style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-            >
-              Back to PNPtv
-            </button>
+
+            {/* Submitted date + over-threshold prompt */}
+            {(() => {
+              const submittedAt = enrollment?.submitted_at || dashboard?.application?.created_at;
+              const days = daysSince(submittedAt);
+              return (
+                <div className="glass-card-sm p-4 mb-4 space-y-2">
+                  {submittedAt && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Submitted</span>
+                      <span className="font-medium text-white">{formatRelative(submittedAt)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-xs">
+                    <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Status</span>
+                    <span className="font-bold px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(255,180,84,0.15)", color: "#FFB454" }}>
+                      Under Review
+                    </span>
+                  </div>
+                  {days > 3 && (
+                    <div className="rounded-lg px-3 py-2.5 mt-2 text-xs leading-relaxed" style={{ background: "rgba(255,180,84,0.08)", border: "1px solid rgba(255,180,84,0.25)", color: "#FFB454" }}>
+                      Taking longer than expected?{" "}
+                      <a href={SUPPORT_EMAIL} className="underline font-semibold text-white">
+                        Contact support
+                      </a>
+                      {" "}and include your username.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => navigate("/")}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                Back to PNPtv
+              </button>
+            </div>
+            <SupportLink prefix="Questions about your application?" />
           </div>
         )}
 
         {!loading && !isActive && !isPending && !isApprovedHold && (
           <>
+            {/* Casting application pending — show this instead of the generic join flow */}
+            {castingLoading && (
+              <div className="animate-pulse space-y-3 mt-4">
+                <div className="h-20 rounded-xl bg-white/5" />
+                <div className="h-12 rounded-xl bg-white/5" />
+              </div>
+            )}
+
+            {!castingLoading && castingStatus?.application && (
+              <div className="py-8 px-2">
+                <div className="flex flex-col items-center text-center mb-6">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5" style={{ background: "linear-gradient(135deg, rgba(94,140,209,0.2), rgba(94,140,209,0.1))", border: "1px solid rgba(94,140,209,0.4)" }}>
+                    <svg className="w-8 h-8" style={{ color: "#5E8CD1" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h2 className="text-xl font-bold text-white mb-2">Application Submitted</h2>
+                  <p className="text-sm leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    Your application to join PNPtv! as a creator is being reviewed by our team.
+                    We'll notify you when a decision has been made.
+                  </p>
+                </div>
+
+                <div className="glass-card-sm p-4 mb-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Submitted</span>
+                    <span className="font-medium text-white">{formatRelative(castingStatus.application.createdAt)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Status</span>
+                    {castingStatus.application.status === "pending" ? (
+                      <span className="font-bold px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(255,180,84,0.15)", color: "#FFB454" }}>
+                        Pending Review
+                      </span>
+                    ) : castingStatus.application.status === "approved" ? (
+                      <span className="font-bold px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>
+                        Approved
+                      </span>
+                    ) : (
+                      <span className="font-bold px-2 py-0.5 rounded-full text-[11px] capitalize" style={{ background: "rgba(255,255,255,0.07)", color: "#8E8E93" }}>
+                        {castingStatus.application.status}
+                      </span>
+                    )}
+                  </div>
+                  {daysSince(castingStatus.application.createdAt) > 3 && castingStatus.application.status === "pending" && (
+                    <div className="rounded-lg px-3 py-2.5 mt-2 text-xs leading-relaxed" style={{ background: "rgba(255,180,84,0.08)", border: "1px solid rgba(255,180,84,0.25)", color: "#FFB454" }}>
+                      Taking longer than expected?{" "}
+                      <a href={SUPPORT_EMAIL} className="underline font-semibold text-white">
+                        Contact support
+                      </a>
+                      {" "}and include your username.
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => navigate("/")}
+                  className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-80"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >
+                  Back to PNPtv
+                </button>
+                <SupportLink prefix="Questions about your application?" />
+              </div>
+            )}
+
+            {/* Only show the full join flow if there's no pending casting application */}
+            {!castingLoading && !castingStatus?.application && <>
+
             {/* Hero */}
             <div className="text-center mb-8">
               <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4" style={{ background: "linear-gradient(135deg, rgba(212,0,122,0.2), rgba(230,145,56,0.2))", border: "1px solid rgba(212,0,122,0.3)" }}>
@@ -824,49 +1045,109 @@ export default function CreatorApply() {
               </>
             )}
 
-            {/* Eligible — Activate */}
+            {/* Eligible — show enrollment status if submitted, otherwise show activation options */}
             {!loading && isEligible && (
-              <div className="glass-card-sm p-5 mb-4" style={{ borderColor: "rgba(94,209,196,0.3)" }}>
-                <p className="text-lg font-bold text-white mb-2">{t.eligibleTitle}</p>
-                <p className="text-sm text-white/70 mb-4">{t.eligibleSubtitle}</p>
-                {enrollBlocked && (
-                  <div className="rounded-lg px-4 py-3 mb-4 text-xs" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.25)", color: "#F9A8D4" }}>
-                    Complete identity verification above before activating your creator account.
+              <>
+                {enrollment ? (
+                  /* Enrollment already submitted — show status screen */
+                  <div className="glass-card-sm p-5 mb-4" style={{ borderColor: "rgba(94,140,209,0.3)" }}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(94,140,209,0.12)", border: "1.5px solid rgba(94,140,209,0.4)" }}>
+                        <svg className="w-5 h-5" style={{ color: "#5E8CD1" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-base font-bold text-white">Enrollment Submitted</p>
+                        <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                          Your creator enrollment is being reviewed by our team.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 mb-4">
+                      <div className="flex items-center justify-between text-xs">
+                        <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Submitted</span>
+                        <span className="font-medium text-white">{formatRelative(enrollment.submitted_at)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Tier requested</span>
+                        <span className="font-medium text-white capitalize">{enrollment.tier}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Status</span>
+                        <span className="font-bold px-2 py-0.5 rounded-full text-[11px]" style={{ background: "rgba(94,140,209,0.15)", color: "#5E8CD1" }}>
+                          Under Review
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 2257 inline status */}
+                    {identityStatus && !identityStatus.identity_verified && (
+                      <div className="rounded-lg px-4 py-3 text-xs" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.25)", color: "#F9A8D4" }}>
+                        {identityStatus.record?.verification_status === "pending" ? (
+                          <>
+                            <span className="font-semibold">Identity verification:</span> Under review — your ID was submitted and is being processed alongside your enrollment.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-semibold">Identity verification required.</span>{" "}
+                            <a href="/creators/apply#identity-verification" className="underline font-semibold text-white">
+                              Verify now
+                            </a>{" "}
+                            to avoid delays in activating your account.
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    <SupportLink prefix="Questions about your enrollment?" />
+                  </div>
+                ) : (
+                  /* No enrollment yet — show the activation options */
+                  <div className="glass-card-sm p-5 mb-4" style={{ borderColor: "rgba(94,209,196,0.3)" }}>
+                    <p className="text-lg font-bold text-white mb-2">{t.eligibleTitle}</p>
+                    <p className="text-sm text-white/70 mb-4">{t.eligibleSubtitle}</p>
+                    {enrollBlocked && (
+                      <div className="rounded-lg px-4 py-3 mb-4 text-xs" style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.25)", color: "#F9A8D4" }}>
+                        Complete identity verification above before activating your creator account.
+                      </div>
+                    )}
+                    <div className="space-y-3">
+                      {/* Self-service enrollment — wizard opens on tier-selection step */}
+                      <div className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(94,209,196,0.2)" }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-semibold text-white">Self-Service Creator</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>Ice · Crystal · Diamond</span>
+                        </div>
+                        <p className="text-xs mt-1 mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                          Choose your tier ($5 · $10 · $15/mo), complete setup, and start earning immediately. You will upgrade automatically as your subscriber count grows.
+                        </p>
+                        <button
+                          onClick={() => { if (!enrollBlocked) setShowWizard(true); }}
+                          disabled={enrollBlocked || idPending}
+                          className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
+                        >
+                          {t.activateAsCreatorBtn}
+                        </button>
+                      </div>
+                      <div className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <p className="text-sm font-semibold text-white">{t.fullTimeCreatorLabel}</p>
+                        <p className="text-xs mt-1 mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.fullTimeDesc}</p>
+                        <button
+                          onClick={() => { if (!enrollBlocked) navigate("/apply"); }}
+                          disabled={enrollBlocked || idPending}
+                          className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{ background: "rgba(255,255,255,0.08)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }}
+                        >
+                          {t.applyFullTimeBtn}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
-                <div className="space-y-3">
-                  {/* Self-service enrollment — wizard opens on tier-selection step */}
-                  <div className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(94,209,196,0.2)" }}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-semibold text-white">Self-Service Creator</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>Ice · Crystal · Diamond</span>
-                    </div>
-                    <p className="text-xs mt-1 mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                      Choose your tier ($5 · $10 · $15/mo), complete setup, and start earning immediately. You will upgrade automatically as your subscriber count grows.
-                    </p>
-                    <button
-                      onClick={() => { if (!enrollBlocked) setShowWizard(true); }}
-                      disabled={enrollBlocked || idPending}
-                      className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
-                    >
-                      {t.activateAsCreatorBtn}
-                    </button>
-                  </div>
-                  <div className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <p className="text-sm font-semibold text-white">{t.fullTimeCreatorLabel}</p>
-                    <p className="text-xs mt-1 mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.fullTimeDesc}</p>
-                    <button
-                      onClick={() => { if (!enrollBlocked) navigate("/apply"); }}
-                      disabled={enrollBlocked || idPending}
-                      className="text-xs font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      style={{ background: "rgba(255,255,255,0.08)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)" }}
-                    >
-                      {t.applyFullTimeBtn}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              </>
             )}
 
             {/* Not yet eligible */}
@@ -933,6 +1214,7 @@ export default function CreatorApply() {
                 </button>
               </div>
             )}
+            </>} {/* end: no casting application guard */}
           </>
         )}
 

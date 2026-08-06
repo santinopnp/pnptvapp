@@ -236,6 +236,9 @@ function HangoutInviteRedirect() {
   return <Navigate to={target} replace />;
 }
 
+// ── Feature flag — set to false to re-enable live streaming ──────────────────
+const STREAMS_DEPRECATED = false;
+
 import { Layout } from "@/components/Layout";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { ModuleLoader } from "@/components/ModuleLoader";
@@ -415,7 +418,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "live",
-        element: (
+        element: STREAMS_DEPRECATED ? <Navigate to="/" replace /> : (
           <ModuleLoader>
             <VerificationGate>
               <Live />
@@ -425,7 +428,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "live/:streamId",
-        element: (
+        element: STREAMS_DEPRECATED ? <Navigate to="/" replace /> : (
           <ModuleLoader>
             <VerificationGate>
               <Stream />
@@ -1128,7 +1131,7 @@ export const router = createBrowserRouter([
       { path: "content", element: <Navigate to="/creators/channels-hub" replace /> },
       { path: "earnings", element: <ModuleLoader><CreatorEarnings /></ModuleLoader> },
       { path: "payouts", element: <ModuleLoader><CreatorPayouts /></ModuleLoader> },
-      { path: "live", element: <PreLiveConsentGate><ModuleLoader><CreatorLive /></ModuleLoader></PreLiveConsentGate> },
+      { path: "live", element: STREAMS_DEPRECATED ? <Navigate to="/creators" replace /> : <PreLiveConsentGate><ModuleLoader><CreatorLive /></ModuleLoader></PreLiveConsentGate> },
       { path: "availability", element: <ModuleLoader><CreatorAvailability /></ModuleLoader> },
       { path: "analytics", element: <ModuleLoader><CreatorAnalytics /></ModuleLoader> },
       { path: "settings", element: <ModuleLoader><CreatorSettings /></ModuleLoader> },

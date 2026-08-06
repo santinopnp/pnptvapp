@@ -231,6 +231,23 @@ router.post('/review', roleGuard('admin', 'superadmin'), async (req, res) => {
         // Grant lifetime pnp-member so the creator immediately has full platform access
         await CreatorService._grantCreatorMembership(app.user_id);
 
+        // Close any open applications in the other two tables so the admin
+        // dashboard doesn't show orphaned "pending" rows for this creator.
+        await query(
+          `UPDATE model_applications
+              SET status = 'withdrawn',
+                  admin_notes = 'auto-closed: creator approved via casting'
+            WHERE user_id = $1 AND status = 'pending'`,
+          [app.user_id]
+        );
+        await query(
+          `UPDATE creator_enrollments
+              SET status = 'approved',
+                  admin_notes = 'auto-closed: creator approved via casting'
+            WHERE user_id = $1 AND status = 'pending_review'`,
+          [app.user_id]
+        );
+
         logger.info(`User ${app.user_id} promoted to creator/performer via casting approval`);
       }
     }

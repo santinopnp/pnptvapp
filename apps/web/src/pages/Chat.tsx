@@ -2125,6 +2125,8 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
   const [detailEvent, setDetailEvent] = useState<EventItem | null>(null);
   const [eventKey, setEventKey] = useState(0);
 
+  const [showAboutPanel, setShowAboutPanel] = useState(false);
+
   // Topics — sub-channels within a hangout group
   const [activeTopic, setActiveTopic] = useState<TopicLite | null>(null);
   const [showCreateTopic, setShowCreateTopic] = useState(false);
@@ -3090,9 +3092,27 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
             {/* Name + member count + setting badges */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1 min-w-0">
-                <h2 className="text-xs sm:text-sm font-bold text-pnp-textPrimary truncate leading-tight" title={activeGroup.name}>{activeGroup.name}</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAboutPanel(true)}
+                  className="text-xs sm:text-sm font-bold text-pnp-textPrimary truncate leading-tight hover:underline text-left"
+                  title={activeGroup.description || activeGroup.name}
+                >
+                  {activeGroup.name}
+                </button>
                 {activeTopic && (
                   <span className="text-xs text-pnp-textSecondary max-w-[35%] sm:max-w-[45%] truncate" title={`#${activeTopic.name}`}>/ #{activeTopic.name}</span>
+                )}
+                {activeGroup.description && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAboutPanel(true)}
+                    className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-pnp-textSecondary/60 hover:text-pnp-textSecondary transition-colors"
+                    style={{ border: '1px solid rgba(255,255,255,0.2)' }}
+                    aria-label={t.chat.aboutTitle}
+                  >
+                    i
+                  </button>
                 )}
               </div>
               <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
@@ -3323,6 +3343,68 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           {activeTopic ? `Now viewing topic: ${activeTopic.name}` : ''}
         </span>
 
+        {/* About this Hangout — bottom sheet */}
+        {showAboutPanel && (
+          <div
+            className="fixed inset-0 z-[300] flex items-end justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowAboutPanel(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t.chat.aboutTitle}
+          >
+            <div
+              className="w-full max-w-lg rounded-t-2xl overflow-hidden"
+              style={{ background: '#111118', border: '1px solid rgba(255,255,255,0.1)', borderBottom: 'none' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <p className="text-sm font-semibold text-white">{t.chat.aboutTitle}</p>
+                <button
+                  onClick={() => setShowAboutPanel(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="px-4 py-4 space-y-4 max-h-[60vh] overflow-y-auto">
+                <div className="flex items-center gap-2">
+                  <p className="text-base font-bold text-white leading-tight">{activeGroup.name}</p>
+                  <span className="text-xs text-pnp-textSecondary">· {activeGroup.memberCount} {activeGroup.memberCount === 1 ? t.chat.membersSingular : t.chat.membersPlural}</span>
+                </div>
+                {activeGroup.description && (
+                  <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{activeGroup.description}</p>
+                )}
+                {(activeGroup.tags ?? []).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 mb-2">{t.chat.aboutVibes}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(activeGroup.tags ?? []).map((tag) => (
+                        <span
+                          key={tag}
+                          className="text-xs px-2.5 py-1 rounded-full font-medium"
+                          style={{ background: 'rgba(212,0,122,0.15)', color: '#D4007A', border: '1px solid rgba(212,0,122,0.25)' }}
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(groupDetail?.rules ?? activeGroup.rules) && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 mb-2">{t.chat.aboutRules}</p>
+                    <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{groupDetail?.rules ?? activeGroup.rules}</p>
+                  </div>
+                )}
+              </div>
+              <div style={{ height: 'env(safe-area-inset-bottom, 0px)' }} />
+            </div>
+          </div>
+        )}
+
         {/* Topic bar — shown when there are topics OR the user can manage them */}
         {((activeGroup.topics?.length ?? 0) > 0 || canManageTopics) && (
           <div
@@ -3443,6 +3525,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 {/* Right-edge fade — scroll affordance */}
                 <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12" style={{ background: 'linear-gradient(to left, var(--pnp-surface), transparent)' }} />
               </div>
+            )}
+            {activeTopic?.description && (
+              <p className="px-3 pb-2 text-[11px] leading-snug" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                {activeTopic.description}
+              </p>
             )}
           </div>
         )}

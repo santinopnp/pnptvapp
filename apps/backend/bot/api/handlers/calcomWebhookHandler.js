@@ -124,6 +124,31 @@ async function handleCalcomWebhook(req, res) {
           );
         }
 
+        // Notify creator (organizer) in their personal Slack channel — best-effort
+        try {
+          const organizerEmail = bookingPayload?.organizer?.email || null;
+          const bookerName = (bookingPayload?.attendees?.find(a => !a.organizer))?.name
+            || (bookingPayload?.attendees?.[0])?.name
+            || (email ? email.split('@')[0] : 'Someone');
+          const bookingTime = bookingPayload?.startTime
+            ? new Date(bookingPayload.startTime).toLocaleString('en-US', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
+            : 'TBD';
+          const calLink = bookingPayload?.metadata?.videoCallUrl
+            || `https://booking.pnptv.app/booking/${bookingPayload?.uid || ''}`;
+
+          if (organizerEmail) {
+            const { rows: orgRows } = await query(
+              'SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+              [organizerEmail]
+            );
+            const creatorId = orgRows[0]?.id;
+            if (creatorId) {
+              const slackCreator = require('../../../services/slackCreatorNotifyService');
+              slackCreator.notifyNewBooking(creatorId, { bookerName, bookingTime, calLink }).catch(() => {});
+            }
+          }
+        } catch (_) { /* non-fatal */ }
+
         return res.json({ success: true, event: 'BOOKING_CREATED' });
       }
 
@@ -157,6 +182,29 @@ async function handleCalcomWebhook(req, res) {
             logger.warn('[calcomWebhookHandler] BOOKING_CANCELLED model_applications update failed (non-fatal)', { error: err.message })
           );
         }
+
+        // Notify creator (organizer) in their personal Slack channel — best-effort
+        try {
+          const organizerEmail = bookingPayload?.organizer?.email || null;
+          const bookerName = (bookingPayload?.attendees?.find(a => !a.organizer))?.name
+            || (bookingPayload?.attendees?.[0])?.name
+            || (email ? email.split('@')[0] : 'Someone');
+          const bookingTime = bookingPayload?.startTime
+            ? new Date(bookingPayload.startTime).toLocaleString('en-US', { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'short' })
+            : 'TBD';
+
+          if (organizerEmail) {
+            const { rows: orgRows } = await query(
+              'SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+              [organizerEmail]
+            );
+            const creatorId = orgRows[0]?.id;
+            if (creatorId) {
+              const slackCreator = require('../../../services/slackCreatorNotifyService');
+              slackCreator.notifyBookingCancelled(creatorId, { bookerName, bookingTime }).catch(() => {});
+            }
+          }
+        } catch (_) { /* non-fatal */ }
 
         return res.json({ success: true, event: 'BOOKING_CANCELLED' });
       }
