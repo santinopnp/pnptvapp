@@ -13,6 +13,7 @@ interface Props {
   linkToProfile?: boolean;
   className?: string;
   onClick?: (e: React.MouseEvent) => void;
+  partnerBadgeColor?: string | null;
 }
 
 const SIZE_PX: Record<AvatarSize, number> = {
@@ -44,6 +45,7 @@ export function UserAvatar({
   linkToProfile = true,
   className = "",
   onClick,
+  partnerBadgeColor = null,
 }: Props) {
   const id = userId != null ? String(userId) : "";
   const online = usePresence(showOnline ? id : null);
@@ -78,7 +80,16 @@ export function UserAvatar({
   const inner = (
     <span
       className={`relative inline-block flex-shrink-0 ${className}`}
-      style={{ width: px, height: px }}
+      style={{
+        width: px,
+        height: px,
+        ...(partnerBadgeColor
+          ? {
+              boxShadow: `0 0 0 2px ${partnerBadgeColor}, 0 0 0 4px rgba(0,0,0,0.6)`,
+              borderRadius: "50%",
+            }
+          : {}),
+      }}
     >
       {img}
       <span

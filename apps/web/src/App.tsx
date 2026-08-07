@@ -16,7 +16,7 @@ import { PushNotificationPill } from "@/components/PushNotificationPill";
 import { UpdateAvailableModal } from "@/components/UpdateAvailableModal";
 import { useAuth } from "@/hooks/useAuth";
 import { getSocket, connectSocket, disconnectSocket } from "@/lib/socket";
-import { redeemReferralCode, checkAuthStatus, ApiError } from "@/lib/api";
+import { redeemReferralCode, checkAuthStatus, attributePartnerGroup, ApiError } from "@/lib/api";
 
 const REFERRAL_STORAGE_KEY = "pnptv:pendingRef";
 
@@ -76,6 +76,20 @@ function useReferralCapture() {
   return { primeGranted, dismissPrime: () => setPrimeGranted(false) };
 }
 
+
+// Attribute the current user to a partner group once after login.
+// The backend sets a short-lived cookie when they land on /join/{slug}.
+// This call is completely silent — no UI feedback, no loading state.
+function usePartnerGroupAttribution() {
+  const { isAuthenticated } = useAuth();
+  const attributedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || attributedRef.current) return;
+    attributedRef.current = true;
+    attributePartnerGroup().catch(() => {});
+  }, [isAuthenticated]);
+}
 
 function useDocumentDir() {
   const { lang } = useI18n();
@@ -277,6 +291,7 @@ function AppOverlays() {
   const { primeGranted, dismissPrime } = useReferralCapture();
   useDocumentDir();
   useScreenCaptureGuard();
+  usePartnerGroupAttribution();
   return (
     <>
       <PermissionOnboarding isAuthenticated={isAuthenticated} />

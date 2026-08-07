@@ -331,6 +331,185 @@ async function getReferralList(userId, limit = 20) {
   return rows;
 }
 
+// ─── PNP PARTNERS NETWORK ────────────────────────────────────────────────
+
+const PARTNER_EXCLUDED_PLANS = new Set([
+  'call_package',   // private calls — already split 70/30
+  'token_purchase', // Ru$h tips on Live streams
+]);
+
+async function getPartnerGroupBySlug(slug) {
+  const { rows } = await query(
+    'SELECT id, slug, name, badge_color, status, tg_group_id FROM partner_groups WHERE slug = $1',
+    [slug]
+  );
+  return rows[0] || null;
+}
+
+// Called after login/registration when pnp_partner_group cookie is present.
+// Idempotent — silently does nothing if user already attributed or group inactive.
+async function attributePartnerGroup(userId, slug) {
+  if (!userId || !slug) return { attributed: false };
+  const group = await getPartnerGroupBySlug(slug);
+  if (!group || group.status !== 'active') return { attributed: false, reason: 'group_inactive' };
+
+  const { rows: userRows } = await query(
+    'SELECT partner_group_id FROM users WHERE id = $1',
+    [String(userId)]
+  );
+  if (!userRows.length || userRows[0].partner_group_id) {
+    return { attributed: false, reason: 'already_attributed' };
+  }
+
+  try {
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 6);
+
+    await query(
+      `INSERT INTO partner_group_referrals (group_id, user_id, expires_at)
+       VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`,
+      [group.id, String(userId), expiresAt.toISOString()]
+    );
+    await query(
+      'UPDATE users SET partner_group_id = $1, partner_badge_color = $2 WHERE id = $3',
+      [group.id, group.badge_color, String(userId)]
+    );
+    logger.info('[PartnerGroup] Attributed', { userId, groupId: group.id, slug });
+    return { attributed: true, group };
+  } catch (err) {
+    logger.warn('[PartnerGroup] Attribution failed (non-fatal)', { userId, slug, error: err.message });
+    return { attributed: false };
+  }
+}
+
+// Called from paymentService.grantEntitlementsForPlan after the payment is settled.
+// Credits 10% of gross to each group admin based on their split %.
+// Excludes private calls and Ru$h Live tips. Enforces 7-day account age gate.
+async function creditPartnerRevenue(userId, planId, orderId, grossUsd) {
+  if (!userId || !planId || !orderId) return;
+  if (PARTNER_EXCLUDED_PLANS.has(planId)) return;
+
+  try {
+    const { rows: refRows } = await query(
+      `SELECT pgr.id, pgr.group_id, pgr.expires_at
+       FROM partner_group_referrals pgr
+       WHERE pgr.user_id = $1 AND pgr.expires_at > NOW()`,
+      [String(userId)]
+    );
+    if (!refRows.length) return;
+    const referral = refRows[0];
+
+    // Anti-gaming: account must be ≥7 days old
+    const { rows: ageRows } = await query(
+      'SELECT created_at FROM users WHERE id = $1',
+      [String(userId)]
+    );
+    if (!ageRows.length) return;
+    const ageDays = (Date.now() - new Date(ageRows[0].created_at).getTime()) / 86400000;
+    if (ageDays < 7) return;
+
+    // Resolve gross if not supplied — fall back to plan price_usd
+    let resolvedGross = parseFloat(grossUsd) || 0;
+    if (resolvedGross <= 0) {
+      const { rows: planRows } = await query(
+        'SELECT price_usd FROM plans WHERE id = $1',
+        [planId]
+      );
+      resolvedGross = parseFloat(planRows[0]?.price_usd) || 0;
+    }
+    if (resolvedGross <= 0) return;
+
+    const { rows: admins } = await query(
+      'SELECT user_id, revenue_share_pct FROM partner_group_admins WHERE group_id = $1',
+      [referral.group_id]
+    );
+    if (!admins.length) return;
+
+    // 10% of gross goes to admins total, split by their configured percentages
+    const ADMIN_POOL_PCT = 10;
+    for (const admin of admins) {
+      const shareUsd = resolvedGross * (ADMIN_POOL_PCT / 100) * (parseFloat(admin.revenue_share_pct) / 100);
+      await query(
+        `INSERT INTO partner_group_ledger
+           (group_id, admin_id, referral_id, order_id, gross_usd, share_pct, share_usd, entry_type, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'revenue_share', 'pending')
+         ON CONFLICT (order_id, admin_id) DO NOTHING`,
+        [referral.group_id, admin.user_id, referral.id, orderId, resolvedGross, admin.revenue_share_pct, shareUsd.toFixed(2)]
+      );
+    }
+    logger.info('[PartnerGroup] Revenue credited', { userId, planId, orderId, resolvedGross, groupId: referral.group_id });
+  } catch (err) {
+    logger.warn('[PartnerGroup] creditPartnerRevenue failed (non-fatal)', { userId, planId, orderId, error: err.message });
+  }
+}
+
+// Called when a creator payout is processed. One-time $25 bonus when referred
+// creator crosses $500 net total earnings for the first time.
+async function checkCreatorMilestone(creatorId) {
+  if (!creatorId) return;
+  try {
+    const { rows: refRows } = await query(
+      `SELECT id, group_id FROM partner_group_referrals
+       WHERE user_id = $1 AND expires_at > NOW() AND milestone_paid = FALSE`,
+      [String(creatorId)]
+    );
+    if (!refRows.length) return;
+    const referral = refRows[0];
+
+    const { rows: earningsRows } = await query(
+      `SELECT COALESCE(SUM(net_amount), 0) AS total_net
+       FROM creator_earnings WHERE creator_id = $1 AND status = 'paid'`,
+      [String(creatorId)]
+    );
+    const totalNet = parseFloat(earningsRows[0]?.total_net || 0);
+    if (totalNet < 500) return;
+
+    await query('UPDATE partner_group_referrals SET milestone_paid = TRUE WHERE id = $1', [referral.id]);
+
+    const MILESTONE_BONUS = 25.00;
+    const { rows: admins } = await query(
+      'SELECT user_id, revenue_share_pct FROM partner_group_admins WHERE group_id = $1',
+      [referral.group_id]
+    );
+    for (const admin of admins) {
+      const adminBonus = MILESTONE_BONUS * (parseFloat(admin.revenue_share_pct) / 100);
+      await query(
+        `INSERT INTO partner_group_ledger
+           (group_id, admin_id, referral_id, order_id, gross_usd, share_pct, share_usd, entry_type, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'milestone_bonus', 'pending')
+         ON CONFLICT (order_id, admin_id) DO NOTHING`,
+        [referral.group_id, admin.user_id, referral.id, `milestone_${creatorId}`, MILESTONE_BONUS, admin.revenue_share_pct, adminBonus.toFixed(2)]
+      );
+    }
+    logger.info('[PartnerGroup] Creator milestone bonus credited', { creatorId, groupId: referral.group_id });
+  } catch (err) {
+    logger.warn('[PartnerGroup] checkCreatorMilestone failed (non-fatal)', { creatorId, error: err.message });
+  }
+}
+
+async function getPartnerGroupStats(groupId, requestingUserId) {
+  const { rows: authRows } = await query(
+    'SELECT id FROM partner_group_admins WHERE group_id = $1 AND user_id = $2',
+    [groupId, String(requestingUserId)]
+  );
+  if (!authRows.length) {
+    const err = new Error('Forbidden'); err.status = 403; throw err;
+  }
+  const { rows: group } = await query(
+    'SELECT id, slug, name, badge_color, status FROM partner_groups WHERE id = $1',
+    [groupId]
+  );
+  const { rows: stats } = await query(
+    `SELECT
+       (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1) AS total_referred,
+       (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1 AND expires_at > NOW()) AS active_referred,
+       (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'pending') AS pending_usd,
+       (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'paid') AS paid_usd`,
+    [groupId]
+  );
+  return { group: group[0], ...stats[0] };
+}
+
 module.exports = {
   getOrCreateRefCode,
   getReferralStats,
@@ -338,4 +517,9 @@ module.exports = {
   redeemReferral,
   grantReferralReward,
   tokenRewardForPlan,
+  getPartnerGroupBySlug,
+  attributePartnerGroup,
+  creditPartnerRevenue,
+  checkCreatorMilestone,
+  getPartnerGroupStats,
 };

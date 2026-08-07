@@ -1613,6 +1613,149 @@ async function unrestrictUserInGroup(telegram, chatId, userId) {
   }
 }
 
+// ── PNP Partners Network: /admingroup command ─────────────────────────────────
+
+async function handlePartnerAdminCommand(ctx) {
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('Use /admingroup in a private chat with me.').catch(() => {});
+  }
+
+  const tgUserId = ctx.from?.id;
+  if (!tgUserId) return;
+
+  // Resolve webapp user from telegram ID
+  const { rows: userRows } = await query(
+    'SELECT id FROM users WHERE telegram = $1 LIMIT 1',
+    [String(tgUserId)]
+  );
+  if (!userRows.length) {
+    return ctx.reply('You need to create a PNPtv account first at https://pnptv.app');
+  }
+  const userId = userRows[0].id;
+
+  // Find all partner groups this user admins
+  const { rows: adminRows } = await query(
+    `SELECT pga.group_id, pga.revenue_share_pct, pg.slug, pg.name, pg.status
+     FROM partner_group_admins pga
+     JOIN partner_groups pg ON pg.id = pga.group_id
+     WHERE pga.user_id = $1`,
+    [userId]
+  );
+  if (!adminRows.length) {
+    return ctx.reply('You are not registered as an admin of any PNP Partners group.');
+  }
+
+  // Use the first group; most admins manage a single group
+  const adminGroup = adminRows[0];
+
+  const args = ctx.message?.text?.split(/\s+/).slice(1) || [];
+  const subCmd = args[0]?.toLowerCase();
+
+  if (!subCmd) {
+    return ctx.reply(
+      `*PNP Partners Network*\n\n` +
+      `Group: *${adminGroup.name}* (${adminGroup.status})\n\n` +
+      `📊 Stats: /admingroup stats\n` +
+      `📣 Broadcast: /admingroup broadcast [message]\n` +
+      `🔗 Invite link: /admingroup invite`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  if (subCmd === 'stats') {
+    try {
+      const { rows: stats } = await query(
+        `SELECT
+           (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1) AS total_referred,
+           (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1 AND expires_at > NOW()) AS active_referred,
+           (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'pending') AS pending_usd,
+           (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'paid') AS paid_usd`,
+        [adminGroup.group_id]
+      );
+      const s = stats[0];
+      return ctx.reply(
+        `📊 *${adminGroup.name} — Stats*\n\n` +
+        `👥 Total referred: ${s.total_referred}\n` +
+        `✅ Active (within 6mo): ${s.active_referred}\n\n` +
+        `💰 Pending payout: $${parseFloat(s.pending_usd).toFixed(2)}\n` +
+        `✅ Paid out: $${parseFloat(s.paid_usd).toFixed(2)}`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      logger.error('[PartnerGroup] /admingroup stats error', { userId, error: err.message });
+      return ctx.reply('Failed to load stats. Try again later.');
+    }
+  }
+
+  if (subCmd === 'invite') {
+    const link = `https://pnptv.app/join/${adminGroup.slug}`;
+    return ctx.reply(
+      `🔗 *Your referral link:*\n\n${link}\n\n` +
+      `Share this with your Telegram group members. When they sign up and subscribe, you earn 10% revenue share.`,
+      { parse_mode: 'Markdown', disable_web_page_preview: true }
+    );
+  }
+
+  if (subCmd === 'broadcast') {
+    const message = args.slice(1).join(' ').trim();
+    if (!message) {
+      return ctx.reply(
+        'Usage: /admingroup broadcast [your message]\n\nExample:\n`/admingroup broadcast Join PNPtv! PRIME — best queer streaming platform!`',
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    // Count recipients first
+    const { rows: recipRows } = await query(
+      `SELECT u.telegram
+       FROM partner_group_referrals pgr
+       JOIN users u ON u.id = pgr.user_id
+       WHERE pgr.group_id = $1 AND u.telegram IS NOT NULL`,
+      [adminGroup.group_id]
+    );
+
+    if (!recipRows.length) {
+      return ctx.reply('No referred users with Telegram accounts yet.');
+    }
+
+    await ctx.reply(`📣 Sending to ${recipRows.length} member${recipRows.length !== 1 ? 's' : ''}…`);
+
+    let sent = 0;
+    let failed = 0;
+    for (const row of recipRows) {
+      try {
+        await ctx.telegram.sendMessage(
+          row.telegram,
+          `📢 *Message from ${adminGroup.name}:*\n\n${message}`,
+          { parse_mode: 'Markdown' }
+        );
+        sent++;
+      } catch (_) {
+        failed++;
+      }
+      // 30ms throttle to avoid Telegram flood limits
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    // Log broadcast
+    try {
+      await query(
+        `INSERT INTO partner_group_broadcasts (group_id, sent_by, message, recipient_count, sent_count)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [adminGroup.group_id, userId, message, recipRows.length, sent]
+      );
+    } catch (logErr) {
+      logger.warn('[PartnerGroup] broadcast log failed (non-fatal)', { error: logErr.message });
+    }
+
+    return ctx.reply(`✅ Broadcast complete: ${sent} sent, ${failed} failed.`);
+  }
+
+  return ctx.reply(
+    'Unknown subcommand. Available: stats, invite, broadcast [message]'
+  );
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 function registerGroupAdminPanelHandlers(bot) {
@@ -1625,6 +1768,7 @@ function registerGroupAdminPanelHandlers(bot) {
   // Private commands
   bot.command('groupadmin', handleGroupAdmin);
   bot.command('removebanned', handleRemoveBanned);
+  bot.command('admingroup', handlePartnerAdminCommand);
 
   // Group commands
   bot.command('rules', handleRulesCommand);

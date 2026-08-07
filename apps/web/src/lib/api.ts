@@ -1137,6 +1137,9 @@ export interface UserProfile {
   gamificationBadges?: UserBadgeEntry[];
   // Consent state
   acceptedTerms?: boolean;
+  // Partner group badge color — hex color from the partner group this user was
+  // attributed to (e.g. "#a855f7"). Null when not attributed.
+  partner_badge_color?: string | null;
 }
 
 /** Sidecar metadata stored on social_posts.metadata for channel-promo rows. */
@@ -9966,4 +9969,34 @@ export interface CreatorTriageSummary {
 
 export function getCreatorTriageSummary(): Promise<CreatorTriageSummary> {
   return request("/api/webapp/admin/creator-triage");
+}
+
+// ── Partner Groups ────────────────────────────────────────────────────────────
+
+/**
+ * Attribute the current user to a partner group via the cookie set when they
+ * landed on /join/{slug}. Call this once after login — the endpoint is
+ * idempotent and returns {attributed: false, reason: 'no_cookie'} harmlessly
+ * when no partner group cookie is present.
+ */
+export async function attributePartnerGroup(): Promise<{ attributed: boolean; reason?: string }> {
+  const res = await fetch(`${API_BASE}/api/webapp/partner-groups/attribute`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) return { attributed: false };
+  return res.json();
+}
+
+/**
+ * Fetch referral and member stats for a partner group. Only accessible to
+ * group admins and platform super-admins.
+ */
+export async function getPartnerGroupStats(groupId: number): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/api/webapp/partner-groups/${groupId}/stats`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to fetch partner group stats");
+  return res.json();
 }

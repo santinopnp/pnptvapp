@@ -1491,6 +1491,19 @@ export default function Profile() {
                 @{dpnsHandle}
               </span>
             )}
+            {profile.partner_badge_color && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold mt-1"
+                style={{
+                  background: profile.partner_badge_color + "22",
+                  border: `1px solid ${profile.partner_badge_color}55`,
+                  color: profile.partner_badge_color,
+                }}
+              >
+                <span aria-hidden="true">●</span>
+                PNP Partners Network
+              </span>
+            )}
             {!isOwnProfile && profileDistanceKm != null && (
               <NearbyBadge distanceKm={profileDistanceKm} variant="detailed" />
             )}

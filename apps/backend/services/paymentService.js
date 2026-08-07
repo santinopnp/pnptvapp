@@ -1149,6 +1149,16 @@ class PaymentService {
               userId, planId, error: referralErr.message,
             });
           }
+
+          // PNP Partners Network — credit revenue share to referring group admins
+          try {
+            const partnerRef = require('./referralService');
+            const partnerOrderId = resolvedPaymentId || `grant_${userId}_${planId}_${Date.now()}`;
+            const partnerGrossUsd = paymentMetadata?.grossUsd || paymentMetadata?.amount_usd || 0;
+            await partnerRef.creditPartnerRevenue(userId, planId, partnerOrderId, partnerGrossUsd);
+          } catch (partnerErr) {
+            logger.warn('[PartnerGroup] creditPartnerRevenue hook failed (non-critical)', { userId, planId, error: partnerErr.message });
+          }
         }
       }
     } catch (err) {

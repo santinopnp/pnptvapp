@@ -18906,6 +18906,136 @@ try {
   logger.warn('[BullBoard] Failed to mount dashboard: ' + bullBoardErr.message);
 }
 
+// ── PNP Partners Network ─────────────────────────────────────────────────────
+
+// GET /join/:slug — validates slug, sets cookie, redirects to landing page
+app.get('/join/:slug', asyncHandler(async (req, res) => {
+  const { slug } = req.params;
+  const refSvc = require('../../services/referralService');
+  const group = await refSvc.getPartnerGroupBySlug(slug).catch(() => null);
+  if (!group || group.status !== 'active') {
+    return res.redirect('/?ref_invalid=1');
+  }
+  res.cookie('pnp_partner_group', slug, {
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
+  return res.redirect('/?pg_ref=' + encodeURIComponent(group.name));
+}));
+
+// POST /api/webapp/partner-groups/attribute — called by frontend after login if cookie present
+app.post('/api/webapp/partner-groups/attribute', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user.id;
+  const slug = req.cookies?.pnp_partner_group;
+  if (!slug) return res.json({ attributed: false, reason: 'no_cookie' });
+  const refSvc = require('../../services/referralService');
+  const result = await refSvc.attributePartnerGroup(userId, slug);
+  if (result.attributed) {
+    res.clearCookie('pnp_partner_group');
+  }
+  return res.json(result);
+}));
+
+// GET /api/webapp/partner-groups/:groupId/stats — for group admins
+app.get('/api/webapp/partner-groups/:groupId/stats', requireSessionAuth, asyncHandler(async (req, res) => {
+  const groupId = parseInt(req.params.groupId, 10);
+  if (!groupId) return res.status(400).json({ error: 'Invalid groupId' });
+  const refSvc = require('../../services/referralService');
+  const stats = await refSvc.getPartnerGroupStats(groupId, req.session.user.id);
+  return res.json(stats);
+}));
+
+// POST /api/webapp/admin/partner-groups — create partner group (admin only)
+app.post('/api/webapp/admin/partner-groups', requireSessionAuth, asyncHandler(async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { name, slug, tgGroupId, badgeColor, adminUserIds, splitPercentages, notes } = req.body;
+  if (!name || !slug || !adminUserIds?.length) {
+    return res.status(400).json({ error: 'name, slug, adminUserIds required' });
+  }
+  const { rows: [group] } = await query(
+    `INSERT INTO partner_groups (slug, name, tg_group_id, badge_color, notes)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [slug.toLowerCase(), name, tgGroupId || null, badgeColor || '#a855f7', notes || null]
+  );
+  const defaultSplit = (100 / adminUserIds.length).toFixed(2);
+  for (let i = 0; i < adminUserIds.length; i++) {
+    const pct = splitPercentages?.[i] || defaultSplit;
+    await query(
+      `INSERT INTO partner_group_admins (group_id, user_id, revenue_share_pct) VALUES ($1, $2, $3)`,
+      [group.id, adminUserIds[i], pct]
+    );
+  }
+  logger.info('[PartnerGroup] Created', { groupId: group.id, slug: group.slug, adminUserIds });
+  return res.json({ success: true, group });
+}));
+
+// PATCH /api/webapp/admin/partner-groups/:id/status — approve/suspend group
+app.patch('/api/webapp/admin/partner-groups/:id/status', requireSessionAuth, asyncHandler(async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { status } = req.body;
+  if (!['active', 'suspended', 'pending'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  const { rows } = await query(
+    `UPDATE partner_groups SET status = $1, approved_by = $2, approved_at = NOW(), updated_at = NOW()
+     WHERE id = $3 RETURNING id, slug, name, status`,
+    [status, req.session.user.id, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  return res.json({ success: true, group: rows[0] });
+}));
+
+// GET /api/webapp/admin/partner-groups — list all partner groups
+app.get('/api/webapp/admin/partner-groups', requireSessionAuth, asyncHandler(async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { rows } = await query(
+    `SELECT pg.*,
+       json_agg(json_build_object('user_id', pga.user_id, 'pct', pga.revenue_share_pct)) AS admins,
+       (SELECT COUNT(*) FROM partner_group_referrals pgr WHERE pgr.group_id = pg.id) AS referral_count,
+       (SELECT COALESCE(SUM(share_usd),0) FROM partner_group_ledger pgl WHERE pgl.group_id = pg.id AND pgl.status = 'pending') AS pending_usd
+     FROM partner_groups pg
+     LEFT JOIN partner_group_admins pga ON pga.group_id = pg.id
+     GROUP BY pg.id
+     ORDER BY pg.created_at DESC`
+  );
+  return res.json({ groups: rows });
+}));
+
+// POST /api/webapp/admin/partner-groups/:id/backfill-badge — retroactive badge backfill
+app.post('/api/webapp/admin/partner-groups/:id/backfill-badge', requireSessionAuth, asyncHandler(async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { userIds } = req.body;
+  if (!userIds?.length) return res.status(400).json({ error: 'userIds required' });
+  const groupId = parseInt(req.params.id, 10);
+  const { rows: [group] } = await query('SELECT id, badge_color, status FROM partner_groups WHERE id = $1', [groupId]);
+  if (!group) return res.status(404).json({ error: 'Not found' });
+
+  let attributed = 0;
+  const expiresAt = new Date();
+  expiresAt.setMonth(expiresAt.getMonth() + 6);
+
+  for (const uid of userIds) {
+    try {
+      await query(
+        `INSERT INTO partner_group_referrals (group_id, user_id, expires_at)
+         VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`,
+        [groupId, String(uid), expiresAt.toISOString()]
+      );
+      await query(
+        `UPDATE users SET partner_group_id = $1, partner_badge_color = $2
+         WHERE id = $3 AND partner_group_id IS NULL`,
+        [groupId, group.badge_color, String(uid)]
+      );
+      attributed++;
+    } catch (_) { /* skip individual errors */ }
+  }
+  return res.json({ success: true, attempted: userIds.length, attributed });
+}));
+
+// ── End PNP Partners Network ──────────────────────────────────────────────────
+
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback
 module.exports = app;
