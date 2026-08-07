@@ -919,11 +919,20 @@ async function cronProcessor(job) {
 
       const SLACK_API = 'https://slack.com/api';
       const headers = { Authorization: `Bearer ${token}` };
+      // Slack status = source of truth. Presence must be active AND status must match
+      // one of the "available" markers below. Anything else → creator NOT accepting calls.
+      // TTL 900s (15min) > 5min poll cadence, so an available creator stays available
+      // between polls without gaps. Clearing status in Slack → key deleted next poll.
+      const AVAIL_TTL_SECONDS = 900;
       for (const perf of performers) {
+        const redisKey = `user:${perf.id}:accepting_calls`;
         try {
           const presRes = await fetch(`${SLACK_API}/users.getPresence?user=${encodeURIComponent(perf.slack_member_id)}`, { headers });
           const presData = await presRes.json().catch(() => ({}));
-          if (!presData.ok || presData.presence !== 'active') continue;
+          if (!presData.ok || presData.presence !== 'active') {
+            await redis.del(redisKey);
+            continue;
+          }
 
           const profRes = await fetch(`${SLACK_API}/users.profile.get?user=${encodeURIComponent(perf.slack_member_id)}`, { headers });
           const profData = await profRes.json().catch(() => ({}));
@@ -931,9 +940,13 @@ async function cronProcessor(job) {
           const statusText = (profData.profile?.status_text || '').toLowerCase();
           const slackSaysAvailable = statusEmoji === ':large_green_circle:' ||
             statusText.includes('available') || statusText.includes('disponible');
-          if (!slackSaysAvailable) continue;
+          if (!slackSaysAvailable) {
+            await redis.del(redisKey);
+            continue;
+          }
 
-          await redis.set(`user:${perf.id}:accepting_calls`, '1', 'EX', 720, 'NX');
+          // SET (not SET NX): always refresh so status changes propagate within one poll cycle.
+          await redis.set(redisKey, '1', 'EX', AVAIL_TTL_SECONDS);
         } catch (_) {}
       }
       return;

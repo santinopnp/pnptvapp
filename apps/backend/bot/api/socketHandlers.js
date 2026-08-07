@@ -2491,6 +2491,7 @@ function initSocketIO(io) {
         const EntitlementAccessServiceLive = require('../../services/entitlementAccessService');
         const viewerIsSuperGod = EntitlementAccessServiceLive.isSuperGod(user.id);
 
+        let firstJoin = null;
         if (!viewerIsSuperGod) {
           // SOCK-H1: Deduplicate viewer-count increments per user per stream.
           // A user opening multiple tabs or reconnecting rapidly must only count
@@ -2498,7 +2499,7 @@ function initSocketIO(io) {
           // if the key already exists the increment is skipped, but the TTL is
           // still refreshed so long-running streams never reset to 0 at hour 1.
           const joinKey = `live:joined:${streamId}:${user.id}`;
-          const firstJoin = await redis.set(joinKey, '1', 'EX', 28800, 'NX');
+          firstJoin = await redis.set(joinKey, '1', 'EX', 28800, 'NX');
           if (firstJoin === 'OK') {
             await redis.incr(`live:viewers:${streamId}`);
           } else {
