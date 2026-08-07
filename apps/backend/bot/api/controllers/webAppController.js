@@ -3118,6 +3118,37 @@ const uploadCover = async (req, res) => {
 };
 
 /**
+ * DELETE /api/webapp/profile/avatar
+ * Remove the current user's profile picture.
+ */
+const deleteAvatar = async (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const current = await query('SELECT photo_file_id FROM users WHERE id = $1', [user.id]);
+    const oldUrl = current.rows[0]?.photo_file_id;
+
+    await query('UPDATE users SET photo_file_id = NULL, updated_at = NOW() WHERE id = $1', [user.id]);
+
+    // Delete the file from disk (non-fatal if missing)
+    if (oldUrl && oldUrl.startsWith('/uploads/avatars/')) {
+      const filePath = require('path').join(__dirname, '../../../../../public', oldUrl);
+      require('fs').promises.unlink(filePath).catch(() => {});
+    }
+
+    req.session.user.photoUrl = null;
+    await new Promise((resolve, reject) =>
+      req.session.save(err => (err ? reject(err) : resolve()))
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Avatar delete error:', error);
+    return res.status(500).json({ error: 'Failed to remove avatar' });
+  }
+};
+
+/**
  * DELETE /api/webapp/profile/cover
  * Remove the current user's cover image.
  */
@@ -3460,6 +3491,7 @@ module.exports = {
   getMastodonFeed,
   uploadAvatar,
   uploadCover,
+  deleteAvatar,
   deleteCover,
   uploadEventCover,
   getXAutoPostSettings,

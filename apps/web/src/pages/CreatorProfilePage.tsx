@@ -41,6 +41,8 @@ import {
   createUserReport,
   togglePostLike,
   getMyCallCredits,
+  uploadCoverPhoto,
+  deleteCoverPhoto,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
@@ -347,6 +349,9 @@ export default function CreatorProfilePage() {
   const [reportError, setReportError] = useState<string | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverError, setCoverError] = useState<string | null>(null);
 
   // Load creator profile
   useEffect(() => {
@@ -568,6 +573,35 @@ export default function CreatorProfilePage() {
     }
   }
 
+  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoverUploading(true);
+    setCoverError(null);
+    try {
+      const res = await uploadCoverPhoto(file);
+      setData((prev) => (prev ? { ...prev, creator: { ...prev.creator, cover_url: res.coverUrl } } : prev));
+    } catch (err) {
+      setCoverError(err instanceof Error ? err.message : "Failed to upload cover");
+    } finally {
+      setCoverUploading(false);
+      if (coverInputRef.current) coverInputRef.current.value = "";
+    }
+  };
+
+  const handleCoverDelete = async () => {
+    setCoverUploading(true);
+    setCoverError(null);
+    try {
+      await deleteCoverPhoto();
+      setData((prev) => (prev ? { ...prev, creator: { ...prev.creator, cover_url: null } } : prev));
+    } catch (err) {
+      setCoverError(err instanceof Error ? err.message : "Failed to remove cover");
+    } finally {
+      setCoverUploading(false);
+    }
+  };
+
   async function handleLike(postId: number) {
     try {
       const res = await togglePostLike(postId);
@@ -711,6 +745,59 @@ export default function CreatorProfilePage() {
               </div>
             )}
           </div>
+          {/* Cover upload controls — creator/self only. Same endpoint + column
+              (users.cover_url) as the member profile page. Recommended
+              1200×420, resized server-side; jpg/png/webp/gif accepted. */}
+          {isOwnProfile && (
+            <>
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={handleCoverUpload}
+              />
+              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                {creator.cover_url && !coverUploading && (
+                  <button
+                    onClick={handleCoverDelete}
+                    aria-label="Remove cover"
+                    title="Remove cover"
+                    className="w-9 h-9 rounded-full flex items-center justify-center transition-opacity active:scale-95"
+                    style={{ background: "rgba(30,30,30,0.7)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  >
+                    <X size={16} className="text-white" />
+                  </button>
+                )}
+                <button
+                  onClick={() => coverInputRef.current?.click()}
+                  disabled={coverUploading}
+                  aria-label={creator.cover_url ? "Change cover" : "Add cover"}
+                  title={`${creator.cover_url ? "Change" : "Add"} cover · recommended 1200×420 (jpg, png, webp, gif · max 15MB)`}
+                  className="w-9 h-9 rounded-full flex items-center justify-center transition-opacity active:scale-95 disabled:opacity-60"
+                  style={{ background: "rgba(30,30,30,0.7)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}
+                >
+                  {coverUploading ? (
+                    <svg className="w-4 h-4 animate-spin text-white" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <Pencil size={14} className="text-white" />
+                  )}
+                </button>
+              </div>
+              {coverError && (
+                <div
+                  className="absolute bottom-14 right-3 max-w-[240px] px-3 py-1.5 rounded-md text-[11px] text-white"
+                  style={{ background: "rgba(220,53,69,0.9)" }}
+                  role="alert"
+                >
+                  {coverError}
+                </div>
+              )}
+            </>
+          )}
           {/* Avatar overlap (78px per mockup; xl=80 rounds cleanly) */}
           <div className="absolute left-4" style={{ bottom: -34 }}>
             <div

@@ -4142,6 +4142,7 @@ app.get('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController
 app.put('/api/webapp/profile', requireSessionAuth, asyncHandler(webAppController.updateProfile));
 app.post('/api/webapp/profile/avatar', requireSessionAuth, uploadLimiter, avatarUpload.single('avatar'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadAvatar));
 app.post('/api/webapp/profile/cover', requireSessionAuth, uploadLimiter, coverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(webAppController.uploadCover));
+app.delete('/api/webapp/profile/avatar', requireSessionAuth, asyncHandler(webAppController.deleteAvatar));
 app.delete('/api/webapp/profile/cover', requireSessionAuth, asyncHandler(webAppController.deleteCover));
 app.post('/api/webapp/profile/telegram/link', telegramWidgetLimiter, requireSessionAuth, asyncHandler(webAppController.linkTelegram));
 app.post('/api/webapp/profile/telegram/unlink', requireSessionAuth, asyncHandler(webAppController.unlinkTelegram));

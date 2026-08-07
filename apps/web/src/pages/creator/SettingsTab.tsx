@@ -14,6 +14,8 @@ import {
   deleteRecording,
   updateRecording,
   uploadAvatar,
+  uploadCoverPhoto,
+  deleteCoverPhoto,
   uploadCreatorMediaFile,
   uploadCreatorVideoFile,
   uploadCreatorVideoChunked,
@@ -105,6 +107,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       if (res.success) {
         setStageName(res.profile.firstName || authUser?.firstName || "");
         setLocationCountry(res.profile.country ?? "");
+        setCoverUrl(res.profile.coverUrl ?? null);
       }
     }).catch(() => {/* non-fatal */});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,6 +170,13 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const [profilePhotoError, setProfilePhotoError] = useState<string | null>(null);
   const [profilePhotoSuccess, setProfilePhotoSuccess] = useState<string | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<string | null>(null);
+
+  // Cover photo state — writes to users.cover_url via the same endpoint used
+  // by the member profile page. Displayed on CreatorProfilePage header.
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverError, setCoverError] = useState<string | null>(null);
+  const [coverSuccess, setCoverSuccess] = useState<string | null>(null);
 
   // User manual state — public "how to book / what to expect" markdown
   const MANUAL_MAX = 5000;
@@ -256,6 +266,39 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       setProfilePhotoPreview(null);
     } finally {
       setProfilePhotoUploading(false);
+    }
+  };
+
+  const handleCoverChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoverError(null);
+    setCoverSuccess(null);
+    setCoverUploading(true);
+    try {
+      const res = await uploadCoverPhoto(file);
+      setCoverUrl(res.coverUrl);
+      setCoverSuccess("Cover photo updated.");
+    } catch (err) {
+      setCoverError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setCoverUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleCoverDelete = async () => {
+    setCoverError(null);
+    setCoverSuccess(null);
+    setCoverUploading(true);
+    try {
+      await deleteCoverPhoto();
+      setCoverUrl(null);
+      setCoverSuccess("Cover photo removed.");
+    } catch (err) {
+      setCoverError(err instanceof Error ? err.message : "Remove failed.");
+    } finally {
+      setCoverUploading(false);
     }
   };
 
@@ -669,6 +712,43 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         )}
         {profilePhotoError && (
           <div className="mt-3 px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>{profilePhotoError}</div>
+        )}
+      </div>
+
+      {/* Cover Photo — same endpoint + column (users.cover_url) as the
+          member profile page. Shows on the CreatorProfilePage header. */}
+      <div className="glass-card-sm p-5">
+        <p className="text-sm font-semibold text-white mb-1">Cover photo</p>
+        <p className="text-xs mb-4" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          Wide banner shown at the top of your profile. Recommended 1200 × 420 px (≈16:9). JPG, PNG, WebP or GIF · max 15MB.
+        </p>
+        <div className="w-full rounded-lg overflow-hidden mb-3" style={{ aspectRatio: "1200 / 420", background: coverUrl ? `url(${coverUrl}) center/cover no-repeat` : "linear-gradient(135deg, #2a2a2a, #1a1a1a)", border: "1px solid rgba(255,255,255,0.08)" }} aria-label="Cover preview" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+            style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            {coverUploading ? "Uploading…" : coverUrl ? "Change cover" : "Add cover"}
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="sr-only"
+              onChange={handleCoverChange} disabled={coverUploading} />
+          </label>
+          {coverUrl && !coverUploading && (
+            <button
+              type="button"
+              onClick={handleCoverDelete}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
+              style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.12)" }}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+        {coverSuccess && (
+          <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(94,209,196,0.1)", color: "#5ED1C4" }}>{coverSuccess}</div>
+        )}
+        {coverError && (
+          <div className="mt-3 px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>{coverError}</div>
         )}
       </div>
 

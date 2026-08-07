@@ -16,6 +16,7 @@ import {
   getPublicProfile,
   updateProfile,
   uploadAvatar,
+  deleteAvatar,
   uploadCoverPhoto,
   deleteCoverPhoto,
   togglePostLike,
@@ -590,6 +591,20 @@ export default function Profile() {
     } finally {
       setAvatarUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleAvatarDelete = async () => {
+    setAvatarUploading(true);
+    try {
+      await deleteAvatar();
+      setProfile((prev) => prev ? { ...prev, photoUrl: null } : prev);
+      await refreshUser();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to remove avatar");
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setAvatarUploading(false);
     }
   };
 
@@ -1214,6 +1229,7 @@ export default function Profile() {
                 className="absolute top-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-white text-[11px] font-semibold transition-opacity active:scale-95 disabled:opacity-60"
                 style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
                 aria-label={profile.coverUrl ? "Change cover" : "Add cover"}
+                title={`${profile.coverUrl ? "Change" : "Add"} cover · recommended 1200×420 (jpg, png, webp, gif · max 15MB)`}
               >
                 {coverUploading ? (
                   <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -1313,6 +1329,21 @@ export default function Profile() {
                     </svg>
                   )}
                 </button>
+                {/* Remove avatar — only shown when a photo exists */}
+                {profile?.photoUrl && !avatarUploading && (
+                  <button
+                    onClick={handleAvatarDelete}
+                    disabled={avatarUploading}
+                    className="absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center border-2 shadow-md bg-red-600 hover:bg-red-500 transition-colors"
+                    style={{ borderColor: "#121214" }}
+                    title="Remove photo"
+                    aria-label="Remove profile photo"
+                  >
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </>
             )}
           </div>

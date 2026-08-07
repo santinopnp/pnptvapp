@@ -1466,6 +1466,18 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
   return res.json();
 }
 
+export async function deleteAvatar(): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/webapp/profile/avatar`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function uploadCoverPhoto(file: File): Promise<{ success: boolean; coverUrl: string }> {
   const formData = new FormData();
   formData.append("cover", file);
