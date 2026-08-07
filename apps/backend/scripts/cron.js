@@ -1707,67 +1707,10 @@ const startCronJobs = async (bot = null) => {
       } catch (_) {}
     });
 
-    // ── Phase 4: Slack status → performer availability (every 5 min) ─────────
-    // For each performer whose slack_member_id is set, poll Slack presence +
-    // status. If active + status suggests availability → extend or create the
-    // accepting_calls Redis key (12-min TTL via SET NX). Does not overwrite a
-    // manually-set key with a longer TTL (manual toggle wins via NX flag).
-    // If Slack says not available: let the key expire naturally (no DEL).
-    cron.schedule('*/5 * * * *', async () => {
-      try {
-        const token = process.env.SLACK_BOT_TOKEN;
-        if (!token) return;
-        const { query: pgQ } = require(path.join(backendPath, 'config/postgres'));
-        const { getRedis } = require(path.join(backendPath, 'config/redis'));
-        const redis = getRedis();
-        if (!redis) return;
-
-        const { rows: performers } = await pgQ(
-          `SELECT u.id, u.slack_member_id
-           FROM users u
-           WHERE u.slack_member_id IS NOT NULL
-             AND u.creator_status = 'active'`
-        );
-        if (performers.length === 0) return;
-
-        const SLACK_API = 'https://slack.com/api';
-        const headers = { Authorization: `Bearer ${token}` };
-
-        for (const perf of performers) {
-          try {
-            // Presence check
-            const presRes = await fetch(
-              `${SLACK_API}/users.getPresence?user=${encodeURIComponent(perf.slack_member_id)}`,
-              { headers }
-            );
-            const presData = await presRes.json().catch(() => ({}));
-            if (!presData.ok || presData.presence !== 'active') continue;
-
-            // Profile check for status
-            const profRes = await fetch(
-              `${SLACK_API}/users.profile.get?user=${encodeURIComponent(perf.slack_member_id)}`,
-              { headers }
-            );
-            const profData = await profRes.json().catch(() => ({}));
-            const statusEmoji = profData.profile?.status_emoji || '';
-            const statusText = (profData.profile?.status_text || '').toLowerCase();
-            const slackSaysAvailable = statusEmoji === ':large_green_circle:' ||
-              statusText.includes('available') || statusText.includes('disponible');
-
-            if (!slackSaysAvailable) continue;
-
-            // SET NX — only if key does not already exist (manual 60-min toggle wins)
-            const key = `user:${perf.id}:accepting_calls`;
-            const set = await redis.set(key, '1', 'EX', 720, 'NX');
-            if (set) {
-              logger.debug('[slackAvailPoller] set accepting_calls from Slack status', { userId: perf.id });
-            }
-          } catch (_) {}
-        }
-      } catch (err) {
-        logger.warn('[slackAvailPoller] cron error', { error: err.message });
-      }
-    });
+    // Slack availability poller moved to BullMQ (services/workers/index.js
+    // case 'slack-avail-poll'), scheduled by services/queueService.js. The
+    // BullMQ version is authoritative — SET (not SET NX) + DEL on unavailable,
+    // so status changes propagate within one poll cycle.
 
     logger.info('✓ Cron jobs started successfully');
     return true;
