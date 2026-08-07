@@ -15,6 +15,7 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const PushNotificationService = require('./pushNotificationService');
 const sendSystemDM = require('./sendSystemDM');
+const slackCreatorNotify = require('./slackCreatorNotifyService');
 
 const SYSTEM_DM_SENDER_ID = process.env.SYSTEM_DM_SENDER_ID || '8552451957';
 
@@ -504,6 +505,12 @@ function scheduleCallReminders(bookingId, creatorId, memberId, startAt, callInfo
           ? sendBookingEmail({ to: creatorUserInfo.email, subject: `${label} — Upcoming call on PNPtv`, html })
           : Promise.resolve(),
       ]);
+
+      slackCreatorNotify.notifyCallStartingSoon(creatorId, {
+        bookerName: memberInfo.display_name || memberInfo.username || 'Member',
+        startTime: formattedTime,
+        joinLink: joinUrl,
+      }).catch(() => {});
     }
   }
 
