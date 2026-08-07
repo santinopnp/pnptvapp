@@ -13,8 +13,13 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const axios = require('axios');
 const crypto = require('crypto');
+const fs = require('fs').promises;
+const path = require('path');
 const NotificationEmitter = require('./notificationEmitter');
 const sendSystemDM = require('./sendSystemDM');
+
+const AI_DOC_MODEL = process.env.XAI_VISION_MODEL || 'grok-4.3';
+const UPLOADS_ROOT = process.env.UPLOADS_ROOT || '/app/public';
 
 class IdentityVerificationService {
   /**
@@ -99,6 +104,15 @@ class IdentityVerificationService {
        RETURNING *`,
       [userId, legalName.trim(), dateOfBirth, idType, idDocumentPath, idSelfiePath, ip]
     );
+
+    // Fire-and-forget AI extraction. Never block the user on this.
+    setImmediate(() => {
+      IdentityVerificationService.analyzeDocumentWithAI(userId, {
+        submittedName: legalName.trim(),
+        submittedDob: dateOfBirth,
+      }).catch(err => logger.warn('2257 AI: background analysis error', { userId, error: err.message }));
+    });
+
     return rows[0];
   }
 
@@ -411,6 +425,15 @@ class IdentityVerificationService {
          r.ip_address,
          r.resubmission_count,
          r.banned_from_applying_until,
+         r.ai_extracted_name,
+         r.ai_extracted_dob,
+         r.ai_extracted_doc_type,
+         r.ai_extracted_expiry,
+         r.ai_extracted_country,
+         r.ai_confidence_score,
+         r.ai_flags,
+         r.ai_analyzed_at,
+         r.ai_error,
          u.username,
          u.first_name,
          u.last_name,
@@ -469,6 +492,177 @@ class IdentityVerificationService {
       records: rows,
     };
   }
+  /**
+   * Analyze a submitted government-ID document with xAI Grok-4.3 vision.
+   * Extracts legal_name, date_of_birth, doc_type, expiry, country and derives
+   * flags (blurry, under_18, expired, name_mismatch). Persists into the
+   * ai_extracted_* columns on creator_2257_records so admins see AI-populated
+   * fields in the review panel. Non-throwing — failures are logged and stored
+   * in ai_error rather than propagated.
+   *
+   * @param {string} userId
+   * @param {{ submittedName?: string, submittedDob?: string }} [context]
+   * @returns {Promise<object|null>} extraction payload or null on hard failure
+   */
+  static async analyzeDocumentWithAI(userId, context = {}) {
+    if (!process.env.GROK_API_KEY) {
+      logger.warn('2257 AI: GROK_API_KEY not set — skipping analysis', { userId });
+      return null;
+    }
+
+    const { rows } = await query(
+      `SELECT id_document_path FROM creator_2257_records WHERE user_id = $1`,
+      [userId]
+    );
+    if (!rows.length || !rows[0].id_document_path) {
+      logger.warn('2257 AI: no id_document_path for user', { userId });
+      return null;
+    }
+
+    const relPath = rows[0].id_document_path.replace(/^\/+/, '');
+    const absPath = path.join(UPLOADS_ROOT, relPath);
+    let imageBuffer;
+    try {
+      imageBuffer = await fs.readFile(absPath);
+    } catch (readErr) {
+      const errMsg = `Could not read document at ${absPath}: ${readErr.message}`;
+      logger.warn('2257 AI: file read failed', { userId, error: errMsg });
+      await query(
+        `UPDATE creator_2257_records SET ai_error = $2, ai_analyzed_at = NOW() WHERE user_id = $1`,
+        [userId, errMsg]
+      );
+      return null;
+    }
+
+    const ext = path.extname(absPath).toLowerCase();
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    const b64 = imageBuffer.toString('base64');
+    const dataUrl = `data:${mime};base64,${b64}`;
+
+    const prompt = `You are a KYC document analyzer. Extract structured data from this government-issued ID.
+
+Return ONLY a raw JSON object (no markdown fences, no prose) with these exact keys:
+{
+  "legal_name": string or null,
+  "date_of_birth": "YYYY-MM-DD" or null,
+  "doc_type": one of "passport" | "drivers_license" | "national_id" | "state_id" | "other" | null,
+  "expiry_date": "YYYY-MM-DD" or null,
+  "country": ISO 3166-1 alpha-3 code (e.g. "USA", "COL", "MEX") or null,
+  "confidence": number 0.0-1.0 (your confidence in the extraction as a whole),
+  "flags": array of strings from: "blurry", "under_18", "expired", "face_missing", "not_an_id", "handwritten_edits"
+}
+
+Rules:
+- Under_18 means computed age from date_of_birth < 18 at today's date.
+- Expired means expiry_date < today.
+- If you cannot read the document at all, set every field to null and add "not_an_id" or "blurry" to flags.
+- Do NOT wrap the JSON in code fences. Do NOT add commentary.`;
+
+    const startedAt = Date.now();
+    let aiJson = null;
+    let rawContent = null;
+    let errorMsg = null;
+
+    try {
+      const resp = await axios.post(
+        'https://api.x.ai/v1/chat/completions',
+        {
+          model: AI_DOC_MODEL,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          }],
+          max_tokens: 500,
+          temperature: 0,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.GROK_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000,
+        }
+      );
+
+      rawContent = resp.data?.choices?.[0]?.message?.content?.trim() || '';
+      const cleaned = rawContent.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+      aiJson = JSON.parse(cleaned);
+    } catch (aiErr) {
+      errorMsg = aiErr.response?.data
+        ? `xAI ${aiErr.response.status}: ${JSON.stringify(aiErr.response.data).slice(0, 200)}`
+        : (aiErr.message || 'unknown xAI error');
+      logger.warn('2257 AI: extraction failed', { userId, error: errorMsg, rawContent: rawContent?.slice(0, 200) });
+    }
+
+    const flags = Array.isArray(aiJson?.flags) ? aiJson.flags.filter(f => typeof f === 'string') : [];
+
+    // Derive name_mismatch server-side (more reliable than trusting the model)
+    if (aiJson?.legal_name && context.submittedName) {
+      const norm = s => s.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
+      if (norm(aiJson.legal_name) !== norm(context.submittedName) && !flags.includes('name_mismatch')) {
+        flags.push('name_mismatch');
+      }
+    }
+
+    // Derive under_18 server-side
+    if (aiJson?.date_of_birth) {
+      const dob = new Date(aiJson.date_of_birth);
+      if (!isNaN(dob.getTime())) {
+        const ageMs = Date.now() - dob.getTime();
+        const ageYears = ageMs / (365.25 * 24 * 60 * 60 * 1000);
+        if (ageYears < 18 && !flags.includes('under_18')) flags.push('under_18');
+      }
+    }
+
+    // Derive expired server-side
+    if (aiJson?.expiry_date) {
+      const exp = new Date(aiJson.expiry_date);
+      if (!isNaN(exp.getTime()) && exp < new Date() && !flags.includes('expired')) {
+        flags.push('expired');
+      }
+    }
+
+    await query(
+      `UPDATE creator_2257_records
+         SET ai_extracted_name    = $2,
+             ai_extracted_dob     = $3::date,
+             ai_extracted_doc_type = $4,
+             ai_extracted_expiry  = $5::date,
+             ai_extracted_country = $6,
+             ai_confidence_score  = $7,
+             ai_flags             = $8,
+             ai_raw_response      = $9::jsonb,
+             ai_analyzed_at       = NOW(),
+             ai_error             = $10
+       WHERE user_id = $1`,
+      [
+        userId,
+        aiJson?.legal_name || null,
+        aiJson?.date_of_birth || null,
+        aiJson?.doc_type || null,
+        aiJson?.expiry_date || null,
+        aiJson?.country || null,
+        typeof aiJson?.confidence === 'number' ? aiJson.confidence : null,
+        flags,
+        aiJson ? JSON.stringify(aiJson) : null,
+        errorMsg,
+      ]
+    );
+
+    logger.info('2257 AI: analysis complete', {
+      userId,
+      ok: !!aiJson,
+      confidence: aiJson?.confidence,
+      flags,
+      durationMs: Date.now() - startedAt,
+    });
+
+    return { ...aiJson, flags, error: errorMsg };
+  }
+
   /**
    * Returns true when both PERSONA_API_KEY and PERSONA_TEMPLATE_ID env vars are set.
    * Used by controllers to decide whether to surface the Persona path in the UI.

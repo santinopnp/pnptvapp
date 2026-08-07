@@ -30,6 +30,37 @@ function extractFilename(docPath: string | null): string | null {
   return docPath.split("/").pop() || null;
 }
 
+function AiField({
+  label,
+  aiValue,
+  submittedValue,
+}: {
+  label: string;
+  aiValue: string | null;
+  submittedValue: string | null | undefined;
+}) {
+  const norm = (s: string | null | undefined) =>
+    (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const mismatch =
+    submittedValue != null &&
+    aiValue != null &&
+    norm(aiValue) !== norm(submittedValue);
+
+  return (
+    <div>
+      <span className="text-white/50">{label}: </span>
+      <span
+        className={mismatch ? "font-semibold" : "text-white"}
+        style={mismatch ? { color: "#eab308" } : undefined}
+        title={mismatch && submittedValue ? `Creator submitted: ${submittedValue}` : undefined}
+      >
+        {aiValue || "—"}
+      </span>
+      {mismatch && <span className="ml-1 text-yellow-500">≠</span>}
+    </div>
+  );
+}
+
 export default function Compliance2257() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -338,6 +369,86 @@ export default function Compliance2257() {
                     )}
                   </div>
                 </div>
+
+                {/* AI-extracted data panel */}
+                {rec.ai_analyzed_at && (
+                  <div
+                    className="mb-3 p-3 rounded-lg"
+                    style={{
+                      background: "rgba(147,51,234,0.08)",
+                      border: "1px solid rgba(147,51,234,0.25)",
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold" style={{ color: "#c084fc" }}>
+                          🤖 AI extraction
+                        </span>
+                        {rec.ai_confidence_score != null && (
+                          <span
+                            className="text-xs px-1.5 py-0.5 rounded"
+                            style={{
+                              background:
+                                rec.ai_confidence_score >= 0.85
+                                  ? "rgba(34,197,94,0.15)"
+                                  : rec.ai_confidence_score >= 0.6
+                                  ? "rgba(234,179,8,0.15)"
+                                  : "rgba(239,68,68,0.15)",
+                              color:
+                                rec.ai_confidence_score >= 0.85
+                                  ? "#22c55e"
+                                  : rec.ai_confidence_score >= 0.6
+                                  ? "#eab308"
+                                  : "#ef4444",
+                            }}
+                          >
+                            {Math.round(rec.ai_confidence_score * 100)}% confident
+                          </span>
+                        )}
+                      </div>
+                      {rec.ai_flags && rec.ai_flags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {rec.ai_flags.map((f) => (
+                            <span
+                              key={f}
+                              className="text-xs px-1.5 py-0.5 rounded font-medium"
+                              style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}
+                            >
+                              ⚠ {f.replace(/_/g, " ")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {rec.ai_error ? (
+                      <p className="text-xs text-red-400 italic">Extraction failed: {rec.ai_error}</p>
+                    ) : (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                        <AiField
+                          label="Name"
+                          aiValue={rec.ai_extracted_name}
+                          submittedValue={rec.legal_name}
+                        />
+                        <AiField
+                          label="DOB"
+                          aiValue={rec.ai_extracted_dob}
+                          submittedValue={rec.date_of_birth?.slice(0, 10)}
+                        />
+                        <AiField
+                          label="Type"
+                          aiValue={rec.ai_extracted_doc_type}
+                          submittedValue={rec.id_type}
+                        />
+                        {rec.ai_extracted_expiry && (
+                          <AiField label="Expires" aiValue={rec.ai_extracted_expiry} submittedValue={null} />
+                        )}
+                        {rec.ai_extracted_country && (
+                          <AiField label="Country" aiValue={rec.ai_extracted_country} submittedValue={null} />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Admin notes on resolved records */}
                 {rec.admin_notes && (

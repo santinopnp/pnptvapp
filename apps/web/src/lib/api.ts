@@ -4249,6 +4249,15 @@ export interface Record2257 {
   creator_status: string | null;
   resubmission_count: number;
   banned_from_applying_until: string | null;
+  ai_extracted_name: string | null;
+  ai_extracted_dob: string | null;
+  ai_extracted_doc_type: string | null;
+  ai_extracted_expiry: string | null;
+  ai_extracted_country: string | null;
+  ai_confidence_score: number | null;
+  ai_flags: string[] | null;
+  ai_analyzed_at: string | null;
+  ai_error: string | null;
 }
 
 export function get2257Records(status?: "pending" | "approved" | "rejected"): Promise<{
