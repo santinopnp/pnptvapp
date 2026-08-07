@@ -76,6 +76,50 @@ function StuckMeruTable({ items }: { items: PaymentHealthStuckPayment[] }) {
   );
 }
 
+function StuckNowPaymentsTable({ items }: { items: PaymentHealthStuckPayment[] }) {
+  if (!items.length) return <p className="text-sm text-zinc-400 italic">No stuck NowPayments orders. Reconciler is keeping up. ✓</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-zinc-400 border-b border-zinc-700">
+          <tr>
+            <th className="py-2 pr-3">User</th>
+            <th className="py-2 pr-3">Plan</th>
+            <th className="py-2 pr-3">Status</th>
+            <th className="py-2 pr-3">USD</th>
+            <th className="py-2 pr-3">Order ID</th>
+            <th className="py-2 pr-3">Age</th>
+            <th className="py-2 pr-3">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((p) => {
+            const isPartial = p.status === 'partially_paid';
+            const isConfirming = p.status === 'confirming' || p.status === 'confirmed';
+            return (
+              <tr key={p.id} className={`border-b border-zinc-800 hover:bg-zinc-800/40 ${isPartial ? "bg-amber-900/10" : isConfirming ? "bg-blue-900/10" : ""}`}>
+                <td className="py-2 pr-3 font-mono text-xs">{truncate(p.user_id, 20)}</td>
+                <td className="py-2 pr-3">{p.plan_id || "—"}</td>
+                <td className="py-2 pr-3">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    isPartial ? "bg-amber-500/20 text-amber-300" :
+                    isConfirming ? "bg-blue-500/20 text-blue-300" :
+                    "bg-zinc-700 text-zinc-300"
+                  }`}>{p.status}</span>
+                </td>
+                <td className="py-2 pr-3">${p.usd_amount}</td>
+                <td className="py-2 pr-3 font-mono text-xs">{truncate(p.btcpay_invoice_id, 20)}</td>
+                <td className="py-2 pr-3">{fmtAge(undefined, p.minutes_pending)}</td>
+                <td className="py-2 pr-3">{fmtTime(p.created_at)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // StuckDashTable: historical view — BTCPay/Dash retired 2026-07-31, shows only old records
 function StuckDashTable({ items }: { items: PaymentHealthStuckPayment[] }) {
   if (!items.length) return <p className="text-sm text-zinc-400 italic">No stuck BTCPay invoices (provider retired 2026-07-31).</p>;
@@ -183,7 +227,8 @@ export default function PaymentHealth() {
   }
   if (!data) return null;
 
-  const total = data.stuck.meru.count + data.stuck.dash.count;
+  const npCount = data.stuck.nowpayments?.count ?? 0;
+  const total = data.stuck.meru.count + data.stuck.dash.count + npCount;
 
   return (
     <div className="p-6 space-y-6">
@@ -208,8 +253,9 @@ export default function PaymentHealth() {
       </div>
 
       {/* Summary tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatusPill count={total} label="Stuck Total" />
+        <StatusPill count={npCount} label="NowPayments Stuck" />
         <StatusPill count={data.stuck.meru.count} label="Meru Stuck" />
         <StatusPill count={data.stuck.dash.count} label="BTCPay (retired)" />
       </div>
@@ -227,6 +273,17 @@ export default function PaymentHealth() {
           <div><div className="text-zinc-400 text-xs">Video fetches</div><div className="text-lg font-mono">{data.activity.video_views_7d ?? 0}</div></div>
           <div><div className="text-zinc-400 text-xs">Distinct videos</div><div className="text-lg font-mono">{data.activity.distinct_videos_7d ?? 0}</div></div>
         </div>
+      </div>
+
+      {/* NowPayments stuck orders — active provider, highest operational priority */}
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
+        <h2 className="text-sm uppercase tracking-wide text-zinc-400 mb-1">
+          NowPayments Stuck — {npCount}
+        </h2>
+        <p className="text-xs text-zinc-500 mb-3">
+          Orders in pending/confirming/confirmed/partially_paid for &gt;15 min. Reconciler runs every 15 min — amber = partially paid, blue = confirming.
+        </p>
+        <StuckNowPaymentsTable items={data.stuck.nowpayments?.items ?? []} />
       </div>
 
       {/* Leaks first — highest priority for security review */}

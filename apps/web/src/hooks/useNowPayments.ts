@@ -36,6 +36,7 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
   const [isPolling, setIsPolling] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [isPartiallyPaid, setIsPartiallyPaid] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Resume from storage on mount
@@ -90,6 +91,12 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
           setIsConfirming(true);
         } else {
           setIsConfirming(false);
+        }
+
+        if (data.partiallyPaid) {
+          setIsPartiallyPaid(true);
+        } else {
+          setIsPartiallyPaid(false);
         }
 
         if (data.failed) {
@@ -190,6 +197,7 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
     setIsPolling(false);
     setIsSuccess(false);
     setIsConfirming(false);
+    setIsPartiallyPaid(false);
     sessionStorage.removeItem(storageKey);
   }, [storageKey]);
 
@@ -198,6 +206,7 @@ export function useNowPayments(options: UseNowPaymentsOptions = {}) {
     isPolling,
     isSuccess,
     isConfirming,
+    isPartiallyPaid,
     error,
     startPayment,
     cancelOrder,

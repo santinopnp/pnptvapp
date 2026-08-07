@@ -960,10 +960,10 @@ class PaymentRecoveryService {
                       logger.debug('NOWPayments reconciler: JWT auth still failing (throttled)', { error: authErr.response?.status });
                     }
                     results._jwtFailed = true;
-                    // Track consecutive JWT failures; open admin_alert on 3+ (avoids one-off blips paging)
+                    // Alert on first JWT failure — revenue leak risk is immediate
                     try {
                       const failCounter = await cache.incr('nowpayments:reconciler:jwt_fail_count', 24 * 3600).catch(() => 1);
-                      if (failCounter >= 3) {
+                      if (failCounter >= 1) {
                         const alertOpenKey = 'nowpayments:reconciler:jwt_alert_open';
                         const alertAlreadyOpen = await cache.get(alertOpenKey).catch(() => null);
                         if (!alertAlreadyOpen) {
@@ -1369,6 +1369,58 @@ class PaymentRecoveryService {
               results.errors++;
               logger.error('NOWPayments reconciler: grant failed', { orderId: row.order_id, error: grantErr.message });
             }
+          } else if (
+            (payment.payment_status === 'confirmed' || payment.payment_status === 'confirming' || payment.payment_status === 'sending') &&
+            (row.status === 'confirming' || row.status === 'confirmed' || row.status === 'pending') &&
+            (Date.now() - new Date(row.created_at).getTime()) > 20 * 60 * 1000
+          ) {
+            // Stablecoin stuck in confirmed/confirming > 20 min — treat as finished
+            logger.info('NOWPayments reconciler: confirmed/confirming >20min — force-settling as finished', {
+              orderId: row.order_id, paymentId, npStatus: payment.payment_status, dbStatus: row.status,
+            });
+            try {
+              const lockResC = await query(
+                `UPDATE dash_subscription_orders SET status = 'processing'
+                 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','processing')
+                 RETURNING id, user_id, plan_id, usd_amount, creator_id`,
+                [row.order_id]
+              );
+              if (lockResC.rows.length > 0) {
+                const ordC = lockResC.rows[0];
+                if (ordC.plan_id === 'token_purchase') {
+                  const rowMetaC = row.metadata && typeof row.metadata === 'object'
+                    ? row.metadata
+                    : (typeof row.metadata === 'string' ? (() => { try { return JSON.parse(row.metadata); } catch { return null; } })() : null);
+                  const tokensCred = Number(rowMetaC?.tokens);
+                  if (!tokensCred || tokensCred <= 0) throw new Error('confirming:missing tokens');
+                  const TokSvcC = require('./tokenService');
+                  await TokSvcC.creditTokens(ordC.user_id, tokensCred, `nowpayments:reconciler:confirming_force:${paymentId}`);
+                } else if (ordC.plan_id !== 'call_package') {
+                  const PSvcC = require('./paymentService');
+                  const grC = await PSvcC.grantEntitlementsForPlan(
+                    ordC.user_id, ordC.plan_id, 'nowpayments',
+                    ordC.creator_id ? { creatorId: String(ordC.creator_id) } : null,
+                    row.order_id
+                  );
+                  if (!grC || grC.granted === 0) throw new Error('grant_zero_confirming_force');
+                }
+                await query(
+                  `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
+                   notes = $2 WHERE btcpay_invoice_id = $1`,
+                  [row.order_id, `nowpayments:reconciler:confirming_force:${paymentId}`]
+                );
+                results.settled++;
+              } else {
+                results.stillPending++;
+              }
+            } catch (confErr) {
+              logger.error('NOWPayments reconciler: confirming force-settle failed', { orderId: row.order_id, error: confErr.message });
+              await query(
+                `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+                [row.order_id, `reconciler:confirming_force_failed:${confErr.message}`.slice(0, 500)]
+              ).catch(() => {});
+              results.errors++;
+            }
           } else if (payment.payment_status === 'waiting'
                      && (Date.now() - new Date(row.created_at).getTime()) > 60 * 60 * 1000) {
             // 60-min auto-expire — user opened invoice but never broadcast crypto.
@@ -1396,6 +1448,63 @@ class PaymentRecoveryService {
             logger.info('NOWPayments reconciler: 60-min auto-expired waiting invoice', {
               orderId: row.order_id, paymentId, planId: row.plan_id,
             });
+          } else if (
+            (payment.payment_status === 'partially_paid' || payment.payment_status === 'confirmed') &&
+            row.status === 'partially_paid' &&
+            Number(payment.actually_paid || 0) > 0 &&
+            Number(payment.price_amount || payment.pay_amount || 0) > 0 &&
+            Number(payment.actually_paid) >= Number(payment.price_amount || payment.pay_amount) * 0.95
+          ) {
+            // ≥95% received — settle as complete to avoid abandoned revenue
+            const actuallyPaid = Number(payment.actually_paid);
+            const priceAmount = Number(payment.price_amount || payment.pay_amount);
+            logger.info('NOWPayments reconciler: partially_paid ≥95% — auto-settling', {
+              orderId: row.order_id, paymentId, actuallyPaid, priceAmount,
+              ratio: (actuallyPaid / priceAmount).toFixed(3),
+            });
+            try {
+              const lockRes3 = await query(
+                `UPDATE dash_subscription_orders SET status = 'processing'
+                 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','processing')
+                 RETURNING id, user_id, plan_id, usd_amount, creator_id`,
+                [row.order_id]
+              );
+              if (lockRes3.rows.length > 0) {
+                const ord3 = lockRes3.rows[0];
+                if (ord3.plan_id === 'token_purchase') {
+                  const rowMeta3 = row.metadata && typeof row.metadata === 'object'
+                    ? row.metadata
+                    : (typeof row.metadata === 'string' ? (() => { try { return JSON.parse(row.metadata); } catch { return null; } })() : null);
+                  const tokensToCredit = Number(rowMeta3?.tokens);
+                  if (!tokensToCredit || tokensToCredit <= 0) throw new Error('missing tokens in metadata');
+                  const TokenSvc3 = require('./tokenService');
+                  await TokenSvc3.creditTokens(ord3.user_id, tokensToCredit, `nowpayments:reconciler:partial95:${paymentId}`);
+                } else if (ord3.plan_id !== 'call_package') {
+                  const PaySvc3 = require('./paymentService');
+                  const gr3 = await PaySvc3.grantEntitlementsForPlan(
+                    ord3.user_id, ord3.plan_id, 'nowpayments',
+                    ord3.creator_id ? { creatorId: String(ord3.creator_id) } : null,
+                    row.order_id
+                  );
+                  if (!gr3 || gr3.granted === 0) throw new Error('grant_zero_partial95');
+                }
+                await query(
+                  `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
+                   notes = $2 WHERE btcpay_invoice_id = $1`,
+                  [row.order_id, `nowpayments:reconciler:partial95:${paymentId}:${actuallyPaid}/${priceAmount}`]
+                );
+                results.settled++;
+              } else {
+                results.stillPending++;
+              }
+            } catch (p95Err) {
+              logger.error('NOWPayments reconciler: partial95 settle failed', { orderId: row.order_id, error: p95Err.message });
+              await query(
+                `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+                [row.order_id, `reconciler:partial95_failed:${p95Err.message}`.slice(0, 500)]
+              ).catch(() => {});
+              results.errors++;
+            }
           } else {
             results.stillPending++;
           }

@@ -4269,7 +4269,31 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
     WHERE status = 'pending'
       AND created_at < NOW() - INTERVAL '15 minutes'
       AND created_at > NOW() - INTERVAL '14 days'
+      AND btcpay_invoice_id NOT LIKE 'pnptv-nowp-%'
+      AND btcpay_invoice_id NOT LIKE 'pnptv-tokens-nowp-%'
+      AND btcpay_invoice_id NOT LIKE 'call-%'
     ORDER BY created_at DESC
+    LIMIT 50
+  `);
+
+  // NowPayments: stuck orders (pending/confirming/confirmed/partially_paid > 15 min)
+  const nowpaymentsStuck = await q(`
+    SELECT id, user_id, plan_id, btcpay_invoice_id, usd_amount, status, notes,
+           created_at,
+           EXTRACT(EPOCH FROM (NOW() - created_at))/60 AS minutes_pending
+    FROM dash_subscription_orders
+    WHERE (
+      btcpay_invoice_id LIKE 'pnptv-nowp-%'
+      OR btcpay_invoice_id LIKE 'pnptv-tokens-nowp-%'
+      OR btcpay_invoice_id LIKE 'call-%'
+      OR (metadata->>'provider' = 'nowpayments')
+    )
+      AND status IN ('pending', 'confirming', 'confirmed', 'partially_paid')
+      AND created_at < NOW() - INTERVAL '15 minutes'
+      AND created_at > NOW() - INTERVAL '72 hours'
+    ORDER BY
+      CASE status WHEN 'partially_paid' THEN 0 WHEN 'confirming' THEN 1 WHEN 'confirmed' THEN 2 ELSE 3 END,
+      created_at ASC
     LIMIT 50
   `);
 
@@ -4309,6 +4333,7 @@ app.get('/api/webapp/admin/payment-health', adminGuard, asyncHandler(async (req,
     stuck: {
       meru: { count: meruStuck.rowCount, items: meruStuck.rows },
       dash: { count: dashStuck.rowCount, items: dashStuck.rows },
+      nowpayments: { count: nowpaymentsStuck.rowCount, items: nowpaymentsStuck.rows },
     },
     leaks: { count: leaks.rowCount, items: leaks.rows },
     activity: settlements.rows[0] || {},
@@ -13565,6 +13590,67 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       }
     }
 
+    // ≥98% for entitlement plans: within typical network-fee rounding — settle as complete
+    // rather than leaving access permanently denied over a dust shortfall.
+    if (paidRatio >= 0.98) {
+      try {
+        const { rows: [orderFor98] } = await dbQuery(
+          `SELECT id, user_id, plan_id, usd_amount, creator_id, metadata FROM dash_subscription_orders
+             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed')`,
+          [order_id]
+        );
+        if (orderFor98 && orderFor98.plan_id !== 'token_purchase' && !orderFor98.plan_id?.startsWith('donation')) {
+          const lockRes98 = await dbQuery(
+            `UPDATE dash_subscription_orders SET status = 'processing'
+             WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','processing')
+             RETURNING id, user_id, plan_id, usd_amount, creator_id`,
+            [order_id]
+          );
+          if (lockRes98.rows.length > 0) {
+            const ord98 = lockRes98.rows[0];
+            const PaySvc98 = require('../../services/paymentService');
+            const gr98 = await PaySvc98.grantEntitlementsForPlan(
+              ord98.user_id, ord98.plan_id, 'nowpayments',
+              ord98.creator_id ? { creatorId: String(ord98.creator_id) } : null,
+              order_id
+            );
+            if (!gr98 || gr98.granted === 0) throw new Error('grant_zero_partial98');
+            await dbQuery(
+              `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(),
+                 notes = $2 WHERE btcpay_invoice_id = $1`,
+              [order_id, `nowpayments:${payment_id}:partial98_settled:${paidRatio.toFixed(4)}`]
+            );
+            try {
+              const NotificationEmitter98 = require('../../services/notificationEmitter');
+              await NotificationEmitter98.emit({
+                type: 'payment_completed',
+                category: 'commerce',
+                priority: 'high',
+                targetUserId: String(ord98.user_id),
+                entityType: 'nowpayments_order',
+                entityId: String(order_id),
+                message: `Your payment was accepted — access unlocked! (${(paidRatio * 100).toFixed(1)}% received, within fee tolerance)`,
+                metadata: { url: '/subscribe', pushTitle: 'Access unlocked!', pushBody: 'Your crypto payment was accepted.' },
+              }).catch(() => {});
+            } catch (_) { /* non-fatal */ }
+            logger.info('[NOWPayments] IPN: partial ≥98% entitlement plan settled', {
+              order_id, paidRatio: paidRatio.toFixed(4), planId: ord98.plan_id,
+            });
+            return res.json({ received: true });
+          }
+        }
+      } catch (p98Err) {
+        logger.error('[NOWPayments] IPN: partial ≥98% entitlement settle failed — falling through to partial', {
+          order_id, error: p98Err.message,
+        });
+        // Fall through — mark as partially_paid for manual review
+        await dbQuery(
+          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1 AND status = 'processing'`,
+          [order_id, `nowpayments:partial98_failed:${p98Err.message}`.slice(0, 500)]
+        ).catch(() => {});
+      }
+    }
+
     // Default path: not-eligible for auto-prorate (entitlement plan, below 50%,
     // or grant failed). Mark partial + notify user of the shortfall so they can
     // top up. Below 50% still gets flagged for manual review.
@@ -13760,10 +13846,34 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
 
   if (payment_status === 'confirming' || payment_status === 'sending') {
     const internalStatus = 'confirming';
-    await dbQuery(
-      `UPDATE dash_subscription_orders SET status = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed',$2)`,
+    const confirmUpdateRes = await dbQuery(
+      `UPDATE dash_subscription_orders SET status = $2 WHERE btcpay_invoice_id = $1 AND status NOT IN ('completed','failed','confirmed',$2)
+       RETURNING user_id`,
       [order_id, internalStatus]
     );
+    // Inform frontend immediately so UI can switch to "confirming" state without waiting for next poll
+    if (confirmUpdateRes.rows.length > 0) {
+      const confirmingUserId = confirmUpdateRes.rows[0].user_id;
+      try {
+        const io = require('../../services/socketSingleton').get();
+        io?.to(`user:${confirmingUserId}`).emit('payment:confirming', { orderId: order_id });
+      } catch (_) { /* non-fatal */ }
+      setImmediate(async () => {
+        try {
+          const NotificationEmitter = require('../../services/notificationEmitter');
+          await NotificationEmitter.emit({
+            type: 'payment_confirming',
+            category: 'commerce',
+            priority: 'normal',
+            targetUserId: String(confirmingUserId),
+            entityType: 'nowpayments_order',
+            entityId: String(order_id),
+            message: 'Your crypto payment was detected on-chain — confirming now. This usually takes 1–3 minutes.',
+            metadata: { url: '/subscribe', pushTitle: 'Payment detected!', pushBody: 'Your crypto payment is confirming on-chain.' },
+          });
+        } catch (_) { /* non-fatal */ }
+      });
+    }
     return res.json({ received: true });
   }
 

@@ -9,6 +9,7 @@ interface NowPaymentsWaitingPanelProps {
   order: NowPaymentsOrder;
   isSuccess: boolean;
   isConfirming?: boolean;
+  isPartiallyPaid?: boolean;
   onCancel: () => void;
   lang: string;
   wrapperClassName?: string;
@@ -30,6 +31,7 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
   order,
   isSuccess,
   isConfirming = false,
+  isPartiallyPaid = false,
   onCancel,
   lang,
   wrapperClassName = "",
@@ -97,6 +99,19 @@ export const NowPaymentsWaitingPanel: React.FC<NowPaymentsWaitingPanelProps> = (
           {es
             ? "Tu pago fue detectado y está siendo confirmado por la red (1–30 min según la moneda). No cierres esta página."
             : "Your payment was detected and is being confirmed by the network (1–30 min depending on the coin). Don't close this page."}
+        </div>
+      )}
+
+      {isPartiallyPaid && !isConfirming && (
+        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/8 px-3 py-3">
+          <p className="text-[12px] font-semibold text-amber-300 mb-1">
+            {es ? "⚠ Pago incompleto recibido" : "⚠ Partial payment received"}
+          </p>
+          <p className="text-[11px] text-amber-200/80 leading-relaxed">
+            {es
+              ? "Recibimos menos del monto esperado (probablemente comisiones de red). Si el monto es ≥95%, lo acreditamos automáticamente en el próximo ciclo del reconciliador (≤15 min). Si no, envía el resto al mismo address."
+              : "We received less than the expected amount (likely network fees). If it's ≥95%, we'll auto-credit it in the next reconciler cycle (≤15 min). Otherwise, send the remainder to the same address."}
+          </p>
         </div>
       )}
 
