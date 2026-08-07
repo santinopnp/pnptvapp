@@ -14,8 +14,8 @@ export function VerificationGate({ children }: VerificationGateProps) {
   const t = useI18n();
   const v = t.gates.verification;
   const [step, setStep] = useState<"age" | "terms" | "guidelines">("age");
-  // "choose" → show method picker; "photo" → photo upload flow; "dob" → DOB form
-  const [ageMethod, setAgeMethod] = useState<"choose" | "photo" | "dob">("choose");
+  // Photo (AI selfie check) is the default path; DOB is a fallback for users who prefer not to upload a selfie.
+  const [ageMethod, setAgeMethod] = useState<"choose" | "photo" | "dob">("photo");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -245,10 +245,10 @@ export function VerificationGate({ children }: VerificationGateProps) {
 
                 <button
                   type="button"
-                  onClick={() => { setAgeMethod("choose"); setPhotoFile(null); setPhotoPreview(null); setPhotoError(null); }}
-                  className="w-full text-xs text-pnp-textSecondary hover:text-pnp-textPrimary text-center"
+                  onClick={() => { setAgeMethod("dob"); setPhotoFile(null); setPhotoPreview(null); setPhotoError(null); }}
+                  className="w-full text-xs text-pnp-textSecondary hover:text-pnp-textPrimary text-center underline"
                 >
-                  ← {v.photoBack}
+                  {v.photoFallbackLink}
                 </button>
               </div>
             )}
