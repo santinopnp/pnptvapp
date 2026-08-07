@@ -139,6 +139,20 @@ class IdentityVerificationService {
 
     logger.info(`2257: record approved for user ${userId} by admin ${adminId}`);
 
+    // Sync approval to Zoho CRM Contact (fire-and-forget, no-op when unconfigured)
+    setImmediate(async () => {
+      try {
+        const zoho = require('./zohoService');
+        if (!zoho.isConfigured()) return;
+        await zoho.upsertContactByPnptvId(String(userId), {
+          Verified_2257: true,
+          Verification_Expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        });
+      } catch (crmErr) {
+        logger.warn('2257: Zoho CRM sync failed (non-fatal)', { userId, error: crmErr.message });
+      }
+    });
+
     // Identity was the last gate that could have been holding the creator's
     // onboarding lock. Try to unlock. checkAndMaybeUnlockCreator is idempotent
     // and no-ops if payout or terms are still missing; safe to fire and forget.
