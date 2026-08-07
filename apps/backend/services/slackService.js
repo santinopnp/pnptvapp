@@ -87,7 +87,7 @@ async function lookupMemberByEmail(email) {
 }
 
 /**
- * Create a public channel named ext-<handle>.
+ * Create a private channel named ext-<handle>.
  * If the channel already exists, returns its ID.
  *
  * Channel names are lower-cased and non-alphanumeric chars replaced with hyphens
@@ -101,7 +101,7 @@ async function createExtChannel(handle) {
 
   const createData = await _slackCall('conversations.create', {
     name,
-    is_private: false,
+    is_private: true,
   });
 
   if (createData.ok) return createData.channel.id;
