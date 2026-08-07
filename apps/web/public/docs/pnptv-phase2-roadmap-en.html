@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Phase 2 — 12-Month Business Roadmap — PNPtv!</title>
+<meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+<meta name="googlebot" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<style>
+:root{--bg:#0d0d0f;--surface:#18181c;--border:#2a2a32;--accent:#7c5cfc;--text:#e8e8f0;--muted:#8888a0;--gold:#f5c842;--red:#f87171;--radius:10px}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.7;font-size:15px;padding-bottom:80px}
+header{background:linear-gradient(135deg,#1a1025 0%,#0d0d1a 60%,#0a1520 100%);border-bottom:1px solid var(--border);padding:56px 24px 48px;text-align:center}
+.badge{display:inline-block;background:rgba(180,0,80,.25);border:1px solid rgba(180,0,80,.5);color:#f87171;font-size:11px;font-weight:700;letter-spacing:.12em;padding:4px 14px;border-radius:20px;margin-bottom:18px}
+h1{font-size:clamp(24px,4vw,42px);font-weight:800;color:#fff;line-height:1.15;margin-bottom:12px}
+.subtitle{color:var(--muted);font-size:14px;max-width:600px;margin:0 auto}
+main{max-width:820px;margin:0 auto;padding:48px 24px 0}
+h2{font-size:22px;font-weight:700;color:var(--accent);margin:48px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+h3{font-size:17px;font-weight:600;color:var(--gold);margin:28px 0 10px}
+h4{font-size:15px;font-weight:600;color:#c8b8ff;margin:20px 0 8px}
+p{margin-bottom:14px;color:#d0d0e0}
+ul,ol{margin:0 0 14px 20px;color:#d0d0e0}
+li{margin-bottom:5px}
+strong{color:#fff}
+em{color:var(--muted);font-style:italic}
+table{width:100%;border-collapse:collapse;margin:20px 0 28px;font-size:14px}
+th{background:var(--surface);color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:10px 14px;text-align:left;border:1px solid var(--border)}
+td{padding:10px 14px;border:1px solid var(--border);vertical-align:top;color:#d0d0e0}
+tr:nth-child(even) td{background:rgba(255,255,255,.02)}
+code,pre{font-family:'Courier New',monospace;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:13px;color:#a8e6cf}
+code{padding:1px 6px}
+pre{padding:16px 20px;overflow-x:auto;margin:16px 0}
+blockquote{border-left:3px solid var(--accent);padding:12px 18px;margin:20px 0;background:rgba(124,92,252,.07);border-radius:0 var(--radius) var(--radius) 0}
+blockquote p{color:#c8b8ff;margin:0}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+.section-label{font-size:10px;font-weight:700;letter-spacing:.15em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+footer{text-align:center;padding:48px 24px 24px;color:var(--muted);font-size:13px;border-top:1px solid var(--border);margin-top:64px}
+</style>
+</head>
+<body>
+<div style="position:fixed;top:0;left:0;right:0;z-index:10000;background:rgba(180,0,80,.9);color:#fff;text-align:center;font-size:11px;font-weight:700;letter-spacing:.1em;padding:4px 0;font-family:monospace">🔒 CONFIDENTIAL — FOR AUTHORIZED READERS ONLY — NOT FOR DISTRIBUTION</div>
+<div style="height:24px"></div>
+<header>
+  <div class="badge">🔒 CONFIDENTIAL — INTERNAL DOCUMENT</div>
+  <h1>Phase 2 — 12-Month Business Roadmap</h1>
+  <p class="subtitle">From 3-person operation to world-class 10-person platform. Milestones, hiring plan, financials, tools, and risk register — August 2026</p>
+</header>
+<main>
+
+<h2>Current State — Phase 1 Baseline</h2>
+<table><tr><th>Area</th><th>Phase 1 — Today</th><th>Phase 2 — Month 12</th></tr>
+<tr><td><strong>Team</strong></td><td>3 people, no departments, everyone does everything</td><td>10 people, 5 departments, clear accountabilities</td></tr>
+<tr><td><strong>Operations</strong></td><td>No CRM, no accounting, no formal processes</td><td>Zoho One fully operational, automated workflows</td></tr>
+<tr><td><strong>Creator Welfare</strong></td><td>Informal onboarding, no welfare screening</td><td>Welfare-first ATS, monthly check-ins, distress protocol</td></tr>
+<tr><td><strong>Marketing</strong></td><td>Manual scripts, no campaigns system</td><td>Zoho Campaigns, lifecycle segmentation, referral programs</td></tr>
+<tr><td><strong>Infrastructure</strong></td><td>Single VPS, no async jobs, no observability</td><td>BullMQ, circuit breakers, OpenTelemetry, service extraction</td></tr>
+</table>
+
+<hr>
+<h2>Strategic Pillars</h2>
+<table><tr><th>Pillar</th><th>What It Covers</th></tr>
+<tr><td><strong>1 — Business Infrastructure</strong></td><td>Zoho One (CRM, Books, Campaigns, Recruit, Sign), financial tracking, legal/tax compliance, formal departments</td></tr>
+<tr><td><strong>2 — Creator Welfare &amp; Success</strong></td><td>Welfare-first ATS, creator Slack onboarding, training program, monthly check-ins, distress protocol</td></tr>
+<tr><td><strong>3 — Platform Reliability</strong></td><td>BullMQ event bus, circuit breakers, OpenTelemetry, service extraction, zero silent failures</td></tr>
+<tr><td><strong>4 — Marketing Engine</strong></td><td>Zoho Campaigns replacing manual scripts, lifecycle segmentation, referral programs, creator advisory panel</td></tr>
+<tr><td><strong>5 — Feature Excellence</strong></td><td>Main Stage upgrades, call quality, hangout→Slack bridge, creator analytics, ticketed shows</td></tr>
+</table>
+
+<hr>
+<h2>12-Month Roadmap</h2>
+
+<h3>Month 0 — Week 1: Baseline Lock</h3>
+<p>Before anything is built or hired, document what exists: total users, active PRIME subscribers, active creators, monthly NowPayments volume. Define roles in writing. Set up Zoho One workspace. Open business bank account.</p>
+<p><strong>Exit criteria:</strong> Written baseline document. Roles defined. Zoho workspace live.</p>
+
+<h3>Month 1: Business Infrastructure</h3>
+<p><strong>Zoho Books setup:</strong> chart of accounts, recurring expenses, n8n → Zoho Books payment sync, first P&amp;L.<br>
+<strong>Zoho CRM setup:</strong> contact import (PRIME subscribers + creators), custom fields, n8n daily sync.<br>
+<strong>Zoho Recruit setup:</strong> creator application pipeline (9 stages), welfare interview template, red flag fields.<br>
+<strong>Hire: Operations Manager</strong> (target end of Month 1 — $1,200–2,000/month)<br>
+<strong>BullMQ:</strong> install, first queue (notification dispatch).</p>
+<p><strong>Exit criteria:</strong> First P&amp;L. All payments tracked. Operations Manager hired. BullMQ handling notifications.</p>
+
+<h3>Month 2: Creator Operations</h3>
+<p><strong>Creator welfare audit:</strong> review all active creators — welfare status, 2257 expiry, earnings trend, last contact.<br>
+<strong>Creator ATS live:</strong> all new applications through Zoho Recruit.<br>
+<strong>Hire: Creator Success Manager</strong> ($1,000–1,800/month)<br>
+<strong>Slack ops channels:</strong> #ops-payments, #ops-incidents, #ops-creator, #support-triage, #support-human.<br>
+<strong>BullMQ expanded:</strong> all payment-related jobs migrated.</p>
+<p><strong>Exit criteria:</strong> Creator ATS live. Creator Success Manager hired. Slack ops channels active. All payments through BullMQ.</p>
+
+<h3>Month 3: Automation Foundation</h3>
+<p><strong>Hire: Welfare &amp; Safety Officer</strong> ($1,200–2,000/month — start search Month 2)<br>
+<strong>n8n setup:</strong> new user → CRM, payment → Books, creator approved → welcome email, 2257 expiry chain, churn → re-engagement.<br>
+<strong>Circuit breakers:</strong> Opossum wrapping NowPayments, Telegram, Slack, Grok, SMTP, LiveKit.<br>
+<strong>Harm reduction partnerships:</strong> 2-3 LGBTQ+ organizations identified.</p>
+<p><strong>Exit criteria:</strong> n8n 5+ workflows live. Circuit breakers on all external services. Harm reduction partnerships identified.</p>
+
+<h3>Month 4: Creator Communications</h3>
+<p><strong>Creator Slack onboarding:</strong> 80% of active creators in Slack by end of month.<br>
+<strong>Training canvases:</strong> Getting Started, Going Live, Private Calls, PNP Channels, Ru$h Tips, Rules &amp; Compliance.<br>
+<strong>Creator notifications pipeline:</strong> all creator alerts → Slack #ext-[handle] ONLY (in-app disabled).<br>
+<strong>Hire: Content / Community Manager</strong> ($800–1,500/month)<br>
+<strong>First Zoho Campaigns drip sequences:</strong> PRIME welcome (3 emails / 7 days), creator onboarding sequence.</p>
+<p><strong>Exit criteria:</strong> 80% Slack adoption. All 6 canvases live. Content Manager hired. First sequences running.</p>
+
+<h3>Month 5: Marketing Engine</h3>
+<p><strong>Hire: Growth Marketer</strong> ($1,200–2,000/month)<br>
+<strong>Zoho Campaigns replaces all broadcast scripts.</strong><br>
+<strong>Referral programs live:</strong> creator referral (500 Ru$h bonus / 90 days), member referral (1 free month).<br>
+<strong>Re-engagement campaign:</strong> churned subscribers 30-90 days ago, A/B test subject lines.<br>
+<strong>OpenTelemetry + Grafana Tempo:</strong> slow queries, external latency, Socket.IO timing — all visible.<br>
+<strong>Creator Advisory Panel:</strong> 5 creators, rotating quarterly, $100/month cash or Ru$h equivalent.</p>
+<p><strong>Exit criteria:</strong> All scripts replaced. Referral programs live. First campaign sent and measured. OpenTelemetry live. Advisory Panel first meeting held.</p>
+
+<h3>Month 6: Platform Reliability + DevOps</h3>
+<p><strong>Hire: DevOps / SRE</strong> ($1,500–2,500/month)<br>
+<strong>Notification Service extracted:</strong> standalone container, receives jobs from BullMQ, can restart independently.<br>
+<strong>Socket.IO Redis adapter:</strong> 2-line config change, enables horizontal scaling.<br>
+<strong>Stream recording → VOD pipeline:</strong> LiveKit Cloud recording, auto-save, n8n job → notify creator in Slack.<br>
+<strong>Mux Data analytics:</strong> viewer count, quality score, rebuffering rate per stream → Grafana.<br>
+<strong>First quarterly financial review.</strong></p>
+<p><strong>Exit criteria:</strong> Notification Service live. Stream recording working. DevOps/SRE hired. Q1-Q2 P&amp;L reviewed.</p>
+
+<h3>Month 7: Feature Excellence</h3>
+<p><strong>Hire: CX Lead</strong> ($800–1,400/month)<br>
+<strong>Main Stage upgrades:</strong> tipping animations, viewer polls, pre-stream lobby, stream health display.<br>
+<strong>Private call improvements:</strong> Krisp AI noise cancellation, post-call rating, extension booking, call quality logging.<br>
+<strong>Hangout → Slack bridge:</strong> bidirectional messages, stickers as image attachments.<br>
+<strong>Creator analytics dashboard:</strong> earnings over time, viewer counts, call history, top tippers, subscriber growth.</p>
+<p><strong>Exit criteria:</strong> CX Lead hired. Tipping animations live. Noise cancellation on calls. Hangout→Slack bridge live. Analytics dashboard shipped.</p>
+
+<h3>Month 8: Growth &amp; Expansion</h3>
+<p><strong>Ticketed shows launch:</strong> creator creation flow, member purchase flow, Zoho Campaigns announcement.<br>
+<strong>Creator Training Certification:</strong> non-creator subscription to Creator Academy content.<br>
+<strong>Creator profile boosts:</strong> 1,000 Ru$h = 24hr boost in search/nearby/featured.<br>
+<strong>First paid marketing test:</strong> Telegram Ads, queer media partnerships ($500 test budget).<br>
+<strong>Zoho Sign rollout:</strong> updated creator agreement signed by all active creators.</p>
+<p><strong>Exit criteria:</strong> Ticketed shows live. Profile boosts live. First paid channel tested. All creators signed updated agreement.</p>
+
+<h3>Month 9: Consolidation</h3>
+<p><strong>Media Processing Service extracted:</strong> ffmpeg, GIF generation, thumbnails → separate container, CPU-isolated.<br>
+<strong>2257 compliance audit:</strong> full audit of all active creators, automated suspension workflow for expired IDs.<br>
+<strong>Creator welfare review:</strong> Welfare Officer conducts 6-month check-in with every active creator.<br>
+<strong>Financial prep:</strong> all transactions reconciled, quarterly DIAN declarations current.</p>
+<p><strong>Exit criteria:</strong> Media Service extracted. 2257 audit complete. 9-month P&amp;L reviewed. Tax obligations current.</p>
+
+<h3>Months 10–12: Scale Readiness + Phase 3 Planning</h3>
+<p><strong>Team complete:</strong> all 10 positions filled.<br>
+<strong>Annual load test:</strong> simulate 10× current traffic, address bottlenecks.<br>
+<strong>First annual P&amp;L + tax filing.</strong><br>
+<strong>Creator cohort analysis:</strong> which cohorts have best retention and earnings.<br>
+<strong>Phase 3 Planning:</strong> B2B licensing evaluation, infrastructure migration assessment, investor readiness.</p>
+
+<hr>
+<h2>Hiring Plan Summary</h2>
+<table><tr><th>Role</th><th>Department</th><th>Target Month</th><th>Est. Monthly Cost</th></tr>
+<tr><td>Operations Manager</td><td>Ops &amp; Finance</td><td>Month 1</td><td>$1,200–2,000</td></tr>
+<tr><td>Creator Success Manager</td><td>Creator Success</td><td>Month 2</td><td>$1,000–1,800</td></tr>
+<tr><td>Welfare &amp; Safety Officer</td><td>Creator Success</td><td>Month 3</td><td>$1,200–2,000</td></tr>
+<tr><td>Content / Community Manager</td><td>Marketing</td><td>Month 4</td><td>$800–1,500</td></tr>
+<tr><td>Growth Marketer</td><td>Marketing</td><td>Month 5</td><td>$1,200–2,000</td></tr>
+<tr><td>DevOps / SRE</td><td>Technology</td><td>Month 6</td><td>$1,500–2,500</td></tr>
+<tr><td>CX Lead</td><td>Customer Experience</td><td>Month 7</td><td>$800–1,400</td></tr>
+<tr><td><strong>Total by Month 7</strong></td><td></td><td></td><td><strong>~$8,700–13,200/mo</strong></td></tr>
+</table>
+<p><em>Ranges assume Latin America-based remote hires. US-based would be 2-4×. Part-time or freelance for Content Manager and CX Lead viable in early months.</em></p>
+
+<hr>
+<h2>Tool Adoption Timeline</h2>
+<table><tr><th>Tool</th><th>Live By</th><th>Monthly Cost</th></tr>
+<tr><td>Zoho One (CRM + Books + Campaigns + Recruit + Sign)</td><td>Month 1</td><td>$111</td></tr>
+<tr><td>Slack Pro</td><td>Month 2</td><td>$22</td></tr>
+<tr><td>n8n (self-hosted)</td><td>Month 3</td><td>$0</td></tr>
+<tr><td>Loom (free tier)</td><td>Month 4</td><td>$0</td></tr>
+<tr><td>Mux Data (free monitoring)</td><td>Month 6</td><td>$0</td></tr>
+<tr><td>Grafana Tempo (self-hosted)</td><td>Month 5</td><td>$0</td></tr>
+<tr><td>StreamYard (evaluate)</td><td>Month 8</td><td>$49</td></tr>
+<tr><td><strong>Total new tooling</strong></td><td></td><td><strong>$133–182/mo</strong></td></tr>
+</table>
+
+<hr>
+<h2>Financial Framework</h2>
+<table><tr><th>Metric</th><th>Phase 1 (Now)</th><th>Phase 2 Target (Month 12)</th></tr>
+<tr><td>Active PRIME subscribers</td><td>[baseline]</td><td>3× baseline</td></tr>
+<tr><td>Active creator subscriptions</td><td>[baseline]</td><td>4× baseline</td></tr>
+<tr><td>Monthly Ru$h token volume</td><td>[baseline]</td><td>5× baseline</td></tr>
+<tr><td>Private call bookings/month</td><td>[baseline]</td><td>3× baseline</td></tr>
+<tr><td>Total MRR</td><td>[baseline]</td><td>4× baseline</td></tr>
+</table>
+
+<h3>Hiring Gate Rule</h3>
+<p>Hiring is gated on revenue, not calendar. Operations Manager is hired regardless — they enable all financial visibility. Each subsequent hire: confirm MRR can absorb the cost with 3 months of runway margin. If revenue target is not on track by Month 3: delay Months 4-7 hires by 60 days and reassess.</p>
+
+<hr>
+<h2>Risk Register</h2>
+<table><tr><th>Risk</th><th>Likelihood</th><th>Impact</th><th>Mitigation</th></tr>
+<tr><td>Welfare Officer hire takes 2+ months</td><td>High</td><td>Medium</td><td>Creator Success Manager covers welfare interviews with structured template until hire</td></tr>
+<tr><td>Creator resistance to Slack onboarding</td><td>Medium</td><td>High</td><td>Make first Slack notification immediately valuable (new booking alert within first week)</td></tr>
+<tr><td>Revenue doesn't grow fast enough</td><td>Medium</td><td>High</td><td>Hiring gate rule. Part-time versions of non-technical hires.</td></tr>
+<tr><td>BullMQ migration breaks existing flows</td><td>Low</td><td>High</td><td>New features get BullMQ first. Legacy code migrated only after patterns proven in production.</td></tr>
+<tr><td>Creator attrition during transition</td><td>Low</td><td>High</td><td>Personal outreach from Santino to top 10 creators before any changes.</td></tr>
+<tr><td>Regulatory changes affecting adult platforms</td><td>Low</td><td>Very High</td><td>Legal review of compliance posture in Month 1. Counsel on retainer.</td></tr>
+</table>
+
+<hr>
+<h2>KPIs by Department</h2>
+<table><tr><th>Area</th><th>KPI</th><th>Target</th></tr>
+<tr><td>Platform Health</td><td>Uptime</td><td>99.9%</td></tr>
+<tr><td>Platform Health</td><td>API P95 response time</td><td>&lt;300ms</td></tr>
+<tr><td>Platform Health</td><td>BullMQ job failure rate</td><td>&lt;0.1%</td></tr>
+<tr><td>Creator Success</td><td>Slack adoption rate</td><td>90% by Month 6</td></tr>
+<tr><td>Creator Success</td><td>Creator churn rate</td><td>&lt;5%/month</td></tr>
+<tr><td>Marketing</td><td>PRIME subscriber growth</td><td>15% MoM</td></tr>
+<tr><td>Marketing</td><td>Email campaign open rate</td><td>&gt;25%</td></tr>
+<tr><td>Finance</td><td>Creator payout accuracy</td><td>100%</td></tr>
+<tr><td>CX</td><td>Cristina AI resolution rate (L1)</td><td>&gt;80%</td></tr>
+<tr><td>CX</td><td>Human escalation response time</td><td>&lt;4h (business hours)</td></tr>
+</table>
+
+</main>
+<footer>
+  <p>© 2026 Amplifying Insights LLC / PNPtv! — All rights reserved.</p>
+  <p>This document is confidential and intended solely for authorized personnel.</p>
+  <p>Unauthorized distribution, copying, or reproduction is strictly prohibited.</p>
+</footer>
+<style>
+p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,span,a,em,strong,section,article{-webkit-user-select:none!important;-moz-user-select:none!important;user-select:none!important}
+@media print{html{display:none!important}}
+body::after{content:"CONFIDENTIAL — PNPtv! INTERNAL";position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:5vw;color:rgba(255,255,255,0.03);pointer-events:none;z-index:9999;white-space:nowrap;font-weight:900;letter-spacing:.15em}
+</style>
+<script src="/docs/protection.js"></script>
+</body>
+</html>
