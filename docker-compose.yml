@@ -92,6 +92,12 @@ volumes:
       type: none
       o: bind
       device: /opt/pnptvapp/infrastructure/data/healthchecks
+  vol_n8n:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/n8n
 services:
 
 
@@ -863,6 +869,53 @@ services:
           memory: 512m
           cpus: '0.5'
 
+
+  # ===========================================
+  # N8N — Automation backbone (self-hosted)
+  # https://n8n.pnptv.app
+  # ===========================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.production
+    environment:
+      N8N_HOST: n8n.pnptv.app
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.pnptv.app/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      GENERIC_TIMEZONE: America/Bogota
+      TZ: America/Bogota
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: pg-pnptv
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - vol_n8n:/home/node/.n8n
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ===========================================
   # UMAMI — Privacy-friendly web analytics

@@ -23,6 +23,10 @@ public/uploads/
 apps/backend/yt-dlp_linux
 .claude/
 
+# Docs bundle archives (regenerated on demand from apps/web/public/docs/*)
+apps/web/public/docs/pnptv-docs.zip
+apps/web/dist/docs/pnptv-docs.zip
+
 # Local backups & scratch dirs — not code
 *.bak
 pitch/
