@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PNPtv! — Creator Partner Program — Legal &amp; Policy Package</title>
+  <meta name="robots" content="noindex" />
+  <style>
+    :root {
+      --bg: #0d0d0f;
+      --surface: #18181c;
+      --surface-2: #1e1e28;
+      --border: #2a2a32;
+      --accent: #7c5cfc;
+      --accent-soft: rgba(124,92,252,0.12);
+      --text: #e8e8f0;
+      --text-muted: #8888a0;
+      --gold: #f5c842;
+      --teal: #2dd4bf;
+      --coral: #f87171;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    header {
+      background: linear-gradient(135deg, #1a1025 0%, #0d0d1a 60%, #0a1520 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 48px 24px 40px;
+      text-align: center;
+    }
+    .logo-mark {
+      display: inline-flex; align-items: center; gap: 10px; margin-bottom: 16px;
+    }
+    .logo-mark span {
+      font-size: 28px; font-weight: 800; letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #a78bfa 0%, #7c5cfc 50%, #2dd4bf 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .logo-mark .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+    header h1 {
+      font-size: clamp(20px, 4vw, 32px); font-weight: 700; margin-bottom: 8px;
+    }
+    header p { color: var(--text-muted); font-size: 15px; max-width: 620px; margin: 0 auto; }
+    .draft-banner {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 8px 16px;
+      background: rgba(245,200,66,0.12);
+      border: 1px solid rgba(245,200,66,0.35);
+      color: var(--gold);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .lang-bar { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+    .lang-btn {
+      padding: 6px 16px; border-radius: 999px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 500;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .lang-btn.active, .lang-btn:hover {
+      background: var(--accent-soft); border-color: var(--accent); color: #a78bfa;
+    }
+    main { max-width: 960px; margin: 0 auto; padding: 48px 20px 80px; }
+    .section { margin-bottom: 48px; }
+    .section-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+    }
+    .section-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
+    }
+    .section-title { font-size: 17px; font-weight: 700; }
+    .section-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+    .doc-grid { display: grid; gap: 12px; }
+    .doc-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 20px;
+      display: flex; align-items: flex-start; gap: 16px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .doc-card:hover { border-color: var(--accent); background: var(--surface-2); }
+    .doc-num {
+      font-size: 20px; font-weight: 700; color: var(--accent);
+      background: var(--accent-soft); border-radius: 8px;
+      width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .doc-info { flex: 1; min-width: 0; }
+    .doc-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .doc-title .type-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; margin-left: 8px; vertical-align: middle;
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .type-sign { background: rgba(248,113,113,0.15); color: var(--coral); }
+    .type-policy { background: rgba(45,212,191,0.15); color: var(--teal); }
+    .type-ref { background: rgba(124,92,252,0.15); color: #a78bfa; }
+    .doc-desc {
+      font-size: 13px; color: var(--text-muted);
+      margin-bottom: 12px; line-height: 1.5;
+    }
+    .doc-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+    .doc-meta strong { color: var(--text); font-weight: 600; }
+    .doc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      text-decoration: none; transition: all 0.2s; white-space: nowrap;
+    }
+    .btn-view {
+      background: var(--accent-soft); color: #a78bfa;
+      border: 1px solid rgba(124,92,252,0.3);
+    }
+    .btn-view:hover { background: rgba(124,92,252,0.22); }
+    .footer-note {
+      text-align: center; padding: 32px 20px;
+      color: var(--text-muted); font-size: 13px; border-top: 1px solid var(--border);
+    }
+    .footer-note a { color: #a78bfa; text-decoration: none; }
+    .footer-note a:hover { text-decoration: underline; }
+    [data-lang="es"] { display: none; }
+    body.lang-es [data-lang="en"] { display: none; }
+    body.lang-es [data-lang="es"] { display: block; }
+    body.lang-es .doc-actions[data-lang="es"] { display: flex; }
+    @media (max-width: 600px) {
+      .doc-card { flex-direction: column; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-mark">
+      <span>PNPtv!</span>
+      <span class="dot"></span>
+    </div>
+    <h1 data-lang="en">Creator Partner Program — Legal &amp; Policy Package</h1>
+    <h1 data-lang="es">Programa de Socios Creadores — Paquete Legal y de Políticas</h1>
+    <p data-lang="en">The full document set every Partner Program creator receives on approval. Nine documents: three signable contracts, four binding policies, one plain-English rights charter, one onboarding index.</p>
+    <p data-lang="es">Conjunto completo de documentos que recibe cada creador del Programa de Socios al ser aprobado. Nueve documentos: tres contratos firmables, cuatro políticas vinculantes, una carta de derechos en lenguaje claro y un índice de inducción.</p>
+    <div class="draft-banner" data-lang="en">DRAFT — Pending Colombian legal counsel review</div>
+    <div class="draft-banner" data-lang="es">BORRADOR — Pendiente de revisión por asesoría legal colombiana</div>
+    <div class="lang-bar">
+      <button class="lang-btn active" data-set-lang="en">English</button>
+      <button class="lang-btn" data-set-lang="es">Español</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- START HERE -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon" style="background: rgba(124,92,252,0.15);">▶</div>
+        <div>
+          <div class="section-title" data-lang="en">Start here</div>
+          <div class="section-title" data-lang="es">Comienza aquí</div>
+          <div class="section-subtitle" data-lang="en">Read these two first — the whole deal in plain English.</div>
+          <div class="section-subtitle" data-lang="es">Lee estos dos primero — todo el acuerdo en lenguaje claro.</div>
+        </div>
+      </div>
+      <div class="doc-grid">
+        <div class="doc-card">
+          <div class="doc-num">08</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Rights &amp; Responsibilities Charter <span class="type-badge type-ref">Overview</span></div>
+            <div class="doc-title" data-lang="es">Carta de Derechos y Responsabilidades <span class="type-badge type-ref">Resumen</span></div>
+            <div class="doc-desc" data-lang="en">Plain-English "what you get / what you give". Read first.</div>
+            <div class="doc-desc" data-lang="es">Lenguaje claro: "qué recibes / qué aportas". Léelo primero.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 10 min · <strong>Type:</strong> Reference overview</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 10 min · <strong>Tipo:</strong> Documento de referencia</div>
+            <div class="doc-actions"><a class="btn btn-view" href="08-rights-responsibilities.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">09</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Onboarding Index &amp; Document Map <span class="type-badge type-ref">Index</span></div>
+            <div class="doc-title" data-lang="es">Índice de Inducción y Mapa de Documentos <span class="type-badge type-ref">Índice</span></div>
+            <div class="doc-desc" data-lang="en">Welcome letter, reading order, 10-step onboarding checklist, "who to talk to" table, key numbers.</div>
+            <div class="doc-desc" data-lang="es">Carta de bienvenida, orden de lectura, lista de 10 pasos de inducción, tabla "a quién contactar", números clave.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 5 min · <strong>Type:</strong> Cover doc</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 5 min · <strong>Tipo:</strong> Documento portada</div>
+            <div class="doc-actions"><a class="btn btn-view" href="09-onboarding-index.md">Read →</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIGNABLE CONTRACTS -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon" style="background: rgba(248,113,113,0.15);">✍</div>
+        <div>
+          <div class="section-title" data-lang="en">Signable contracts</div>
+          <div class="section-title" data-lang="es">Contratos firmables</div>
+          <div class="section-subtitle" data-lang="en">Colombian jurisdiction. Bilingual signature blocks. Signed via [signing platform TBD] on approval.</div>
+          <div class="section-subtitle" data-lang="es">Jurisdicción colombiana. Bloques de firma bilingües. Firmados vía [plataforma por definir] al aprobar.</div>
+        </div>
+      </div>
+      <div class="doc-grid">
+        <div class="doc-card">
+          <div class="doc-num">01</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Non-Disclosure Agreement (NDA) <span class="type-badge type-sign">Sign</span></div>
+            <div class="doc-title" data-lang="es">Acuerdo de Confidencialidad (NDA) <span class="type-badge type-sign">Firmar</span></div>
+            <div class="doc-desc" data-lang="en">Mutual confidentiality. Protects platform IP, unreleased features, revenue data, other creators' identities, member PII, internal Slack &amp; Zoho content. 2-year survival post-term.</div>
+            <div class="doc-desc" data-lang="es">Confidencialidad mutua. Protege IP de la plataforma, funciones no lanzadas, datos de ingresos, identidades de otros creadores, datos personales de miembros, contenido interno de Slack y Zoho. Vigencia post-terminación: 2 años.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 15 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 15 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="01-nda.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">02</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Partner Program Agreement <span class="type-badge type-sign">Sign</span></div>
+            <div class="doc-title" data-lang="es">Acuerdo del Programa de Socios <span class="type-badge type-sign">Firmar</span></div>
+            <div class="doc-desc" data-lang="en">The main commercial contract. 70/30 revenue split, payout mechanics ($100 weekly / $50 on-demand, gifted tokens excluded), 2257 compliance, content warranties, 12-month initial term with 30-day termination for convenience.</div>
+            <div class="doc-desc" data-lang="es">Contrato comercial principal. Reparto de ingresos 70/30, mecánica de pagos ($100 semanal / $50 bajo demanda, tokens regalados excluidos), cumplimiento 2257, garantías de contenido, plazo inicial de 12 meses con terminación por conveniencia a 30 días.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 25 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 25 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="02-partner-program-agreement.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">03</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Content License Addendum <span class="type-badge type-sign">Sign</span></div>
+            <div class="doc-title" data-lang="es">Anexo de Licencia de Contenido <span class="type-badge type-sign">Firmar</span></div>
+            <div class="doc-desc" data-lang="en">Non-exclusive license for PNPtv! to distribute, promote and clip your content across platform surfaces during term + 12-month promotional tail for existing clips only. You keep the right to distribute elsewhere.</div>
+            <div class="doc-desc" data-lang="es">Licencia no exclusiva para que PNPtv! distribuya, promocione y edite tu contenido en las superficies de la plataforma durante el plazo + cola promocional de 12 meses únicamente para clips existentes. Conservas el derecho de distribuir en otros lugares.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 10 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 10 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="03-content-license.md">Read →</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BINDING POLICIES -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon" style="background: rgba(45,212,191,0.15);">◆</div>
+        <div>
+          <div class="section-title" data-lang="en">Binding policies</div>
+          <div class="section-title" data-lang="es">Políticas vinculantes</div>
+          <div class="section-subtitle" data-lang="en">Not per-signature — you agree to these by joining. The Partner Agreement incorporates them by reference.</div>
+          <div class="section-subtitle" data-lang="es">No requieren firma individual — al unirte los aceptas. El Acuerdo del Programa los incorpora por referencia.</div>
+        </div>
+      </div>
+      <div class="doc-grid">
+        <div class="doc-card">
+          <div class="doc-num">04</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Code of Conduct <span class="type-badge type-policy">Binding</span></div>
+            <div class="doc-title" data-lang="es">Código de Conducta <span class="type-badge type-policy">Vinculante</span></div>
+            <div class="doc-desc" data-lang="en">Zero-tolerance list (2257 violations, doxxing, hate speech, harassment); warning-triggering behaviors (drama, gossip, public complaints, poaching regulars); positive standards; enforcement ladder with 14-day appeal.</div>
+            <div class="doc-desc" data-lang="es">Lista de tolerancia cero (violaciones 2257, doxeo, discurso de odio, acoso); comportamientos que activan advertencia (dramas, chismes, quejas públicas, robo de habituales); estándares positivos; escala de sanciones con apelación a 14 días.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 10 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 10 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="04-code-of-conduct.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">05</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Communications Policy <span class="type-badge type-policy">Binding</span></div>
+            <div class="doc-title" data-lang="es">Política de Comunicaciones <span class="type-badge type-policy">Vinculante</span></div>
+            <div class="doc-desc" data-lang="en">Slack #ext-[handle] + PNPtv! platform ONLY for platform business. No WhatsApp, IG DM, personal Telegram, SMS, Signal, Discord. Redirect templates when a member reaches out off-channel.</div>
+            <div class="doc-desc" data-lang="es">Slack #ext-[handle] + plataforma PNPtv! ÚNICAMENTE para asuntos de la plataforma. Nada de WhatsApp, IG DM, Telegram personal, SMS, Signal, Discord. Plantillas para redirigir cuando un miembro contacte fuera de los canales.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 5 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 5 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="05-communications-policy.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">06</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Telegram Group Guidelines <span class="type-badge type-policy">Opt-in</span></div>
+            <div class="doc-title" data-lang="es">Lineamientos del Grupo de Telegram <span class="type-badge type-policy">Opcional</span></div>
+            <div class="doc-desc" data-lang="en">Rules for the internal Partner Program Telegram group(s): what belongs (peer support, wins, BTS), what goes to Slack instead (payouts, bugs, complaints), moderation, opt-out any time.</div>
+            <div class="doc-desc" data-lang="es">Reglas del grupo interno de Telegram del Programa de Socios: qué corresponde (apoyo entre pares, logros, tras bambalinas), qué va a Slack (pagos, errores, quejas), moderación, salida en cualquier momento.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 5 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 5 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="06-telegram-group-guidelines.md">Read →</a></div>
+          </div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-num">07</div>
+          <div class="doc-info">
+            <div class="doc-title" data-lang="en">Anti-Poaching &amp; Non-Circumvention <span class="type-badge type-policy">Binding</span></div>
+            <div class="doc-title" data-lang="es">Anti-Fuga y No Elusión <span class="type-badge type-policy">Vinculante</span></div>
+            <div class="doc-desc" data-lang="en">No routing members to off-platform payment channels. No recruiting other PNPtv! creators or staff to competitors. Non-exclusivity preserved — you can be on other platforms; you just don't cross-poach PNPtv! members. 12-month tail post-term.</div>
+            <div class="doc-desc" data-lang="es">No dirigir miembros a canales de pago fuera de la plataforma. No reclutar a otros creadores o personal de PNPtv! para competidores. Se conserva la no exclusividad — puedes estar en otras plataformas; simplemente no captas miembros PNPtv!. Cola de 12 meses post-terminación.</div>
+            <div class="doc-meta" data-lang="en"><strong>Read time:</strong> 10 min</div>
+            <div class="doc-meta" data-lang="es"><strong>Tiempo:</strong> 10 min</div>
+            <div class="doc-actions"><a class="btn btn-view" href="07-anti-poaching-non-circumvention.md">Read →</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <div class="footer-note">
+    <p data-lang="en">These are living drafts pending Colombian legal counsel review. Questions: Slack <code>#ext-[your-handle]</code> or direct DM Santino.</p>
+    <p data-lang="es">Estos son borradores vivos pendientes de revisión por asesoría legal colombiana. Preguntas: Slack <code>#ext-[tu-handle]</code> o DM directo a Santino.</p>
+    <p style="margin-top:12px;"><a href="../../index.html">← All PNPtv! documents</a></p>
+  </div>
+
+  <script>
+    document.querySelectorAll('.lang-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var lang = btn.getAttribute('data-set-lang');
+        document.body.classList.toggle('lang-es', lang === 'es');
+        document.querySelectorAll('.lang-btn').forEach(function (b) {
+          b.classList.toggle('active', b === btn);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
