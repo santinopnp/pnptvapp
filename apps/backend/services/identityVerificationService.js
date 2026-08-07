@@ -161,9 +161,29 @@ class IdentityVerificationService {
         await zoho.upsertContactByPnptvId(String(userId), {
           Verified_2257: true,
           Verification_Expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          Legal_Package_Version: process.env.LEGAL_PACKAGE_VERSION || 'v1.0-2026-08-07-DRAFT',
+          Legal_Package_URL: process.env.LEGAL_PACKAGE_URL || 'https://pnptv.app/docs/legal/creator/',
         });
       } catch (crmErr) {
         logger.warn('2257: Zoho CRM sync failed (non-fatal)', { userId, error: crmErr.message });
+      }
+    });
+
+    // Fire the Slack onboarding sequence immediately (fire-and-forget, no-op
+    // if creator has no #ext-[handle] channel or SLACK_BOT_TOKEN is missing).
+    // Idempotent via users.slack_onboarded_at — safe to re-run.
+    setImmediate(async () => {
+      try {
+        const onboarding = require('./creatorOnboardingService');
+        const res = await onboarding.sendOnboarding(userId);
+        if (res.sent) {
+          await onboarding.notifyAdminNewCreator(userId);
+        }
+      } catch (obErr) {
+        logger.warn('2257: Slack onboarding trigger failed (non-fatal)', {
+          userId,
+          error: obErr.message,
+        });
       }
     });
 

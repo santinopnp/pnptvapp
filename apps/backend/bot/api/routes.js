@@ -2445,6 +2445,15 @@ app.post('/api/webhooks/slack/events', webhookLimiter, asyncHandler(async (req, 
         slackSupport.handleResolveReaction(event).catch(() => {});
       }
     } catch (_) {}
+
+    // Creator onboarding — ✅ on the pinned onboarding message = legal ack.
+    // Safe no-op if the reacted message isn't a tracked onboarding message.
+    if (event.type === 'reaction_added' && event.reaction === 'white_check_mark') {
+      try {
+        const onboarding = require('../../services/creatorOnboardingService');
+        onboarding.handleReactionAdded(event).catch(() => {});
+      } catch (_) {}
+    }
   }
 }));
 
@@ -12368,6 +12377,144 @@ app.post('/api/wallet/link-dpns', requireSessionAuth, asyncHandler(async (req, r
   }
 }));
 
+// ── Custom JWT auth for Web3Auth (silent embed) ────────────────────────────
+// Backend mints a short-lived RS256 JWT for the logged-in user; Web3Auth
+// verifies it against our public JWKS below. Result: fully silent embedded
+// wallet materialization with zero Web3Auth UI at any step.
+let __w3aSigningKey = null;
+let __w3aPublicJwk = null;
+
+async function __getWeb3AuthSigningKey() {
+  if (__w3aSigningKey && __w3aPublicJwk) return { privateKey: __w3aSigningKey, publicJwk: __w3aPublicJwk };
+  const { importPKCS8 } = require('jose');
+  const nodeCrypto = require('crypto');
+  const b64 = process.env.WEB3AUTH_JWT_PRIVATE_KEY_B64;
+  if (!b64) throw new Error('WEB3AUTH_JWT_PRIVATE_KEY_B64 not set');
+  const pem = Buffer.from(b64, 'base64').toString('utf8');
+  __w3aSigningKey = await importPKCS8(pem, 'RS256');
+  const pubKeyObj = nodeCrypto.createPublicKey(nodeCrypto.createPrivateKey(pem));
+  const pubJwk = pubKeyObj.export({ format: 'jwk' });
+  __w3aPublicJwk = {
+    ...pubJwk,
+    kid: process.env.WEB3AUTH_JWT_KID,
+    alg: 'RS256',
+    use: 'sig',
+  };
+  return { privateKey: __w3aSigningKey, publicJwk: __w3aPublicJwk };
+}
+
+// Public JWKS — Web3Auth Custom Verifier polls this URL to fetch our public
+// key and verify tokens minted by /api/wallet/issue-jwt.
+// Kept under /api/ because nginx only proxies /api/* to the bot; anything at
+// /.well-known/* is served by the SPA container (returns 404 there).
+app.get('/api/wallet/jwks.json', asyncHandler(async (_req, res) => {
+  try {
+    const { publicJwk } = await __getWeb3AuthSigningKey();
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ keys: [publicJwk] });
+  } catch (err) {
+    logger.error('[jwks] Failed to build public JWKS', { error: err.message });
+    res.status(503).json({ error: 'JWKS unavailable' });
+  }
+}));
+
+// POST /api/wallet/issue-jwt — mint a 5-min RS256 JWT for the current session.
+// Frontend passes this to Web3Auth's connectTo(AUTH, { authConnection: "custom",
+// extraLoginOptions: { id_token: jwt, verifierIdField: "sub" } }) to spawn an
+// embedded MPC wallet silently — no Web3Auth modal shown to the user.
+app.post('/api/wallet/issue-jwt', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const userId = String(user.telegram_id || user.id);
+  try {
+    const { SignJWT } = require('jose');
+    const { privateKey } = await __getWeb3AuthSigningKey();
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = await new SignJWT({
+      email: user.email || null,
+      pnptv_id: userId,
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: process.env.WEB3AUTH_JWT_KID })
+      .setSubject(userId)
+      .setIssuer(process.env.WEB3AUTH_JWT_ISSUER || 'https://pnptv.app')
+      .setAudience(process.env.WEB3AUTH_JWT_AUDIENCE || 'pnptv-web3auth')
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .sign(privateKey);
+    res.json({ success: true, token: jwt, verifierId: userId });
+  } catch (err) {
+    logger.error('[issue-jwt] Signing failed', { userId, error: err.message });
+    res.status(500).json({ success: false, error: 'Could not mint token' });
+  }
+}));
+
+// POST /api/wallet/link — persist the EVM wallet a user just linked/created via
+// MetaMask Embedded Wallets (ex-Web3Auth) in the checkout flow. Frontend sends
+// the Web3Auth-issued ID token + the wallet address. We verify the JWT's RS256
+// signature against the public Web3Auth JWKS, check aud/iss/exp, and — when
+// the token payload includes a `wallets` claim — cross-check the address is
+// one of them. Persist lowercase on users.wallet_address. Idempotent.
+let __w3aJwks = null;
+function __getWeb3AuthJwks() {
+  if (__w3aJwks) return __w3aJwks;
+  const { createRemoteJWKSet } = require('jose');
+  __w3aJwks = createRemoteJWKSet(new URL(process.env.WEB3AUTH_JWKS_URL || 'https://api-auth.web3auth.io/jwks'));
+  return __w3aJwks;
+}
+
+app.post('/api/wallet/link', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const { idToken, walletAddress: rawAddress } = req.body || {};
+  if (!idToken || typeof idToken !== 'string' || idToken.length > 8192) {
+    return res.status(400).json({ success: false, error: 'idToken is required' });
+  }
+  if (!rawAddress || typeof rawAddress !== 'string' || !/^0x[a-fA-F0-9]{40}$/.test(rawAddress)) {
+    return res.status(400).json({ success: false, error: 'Valid walletAddress (0x…) is required' });
+  }
+  if (!process.env.WEB3AUTH_CLIENT_ID) {
+    return res.status(503).json({ success: false, error: 'Web3Auth is not configured', code: 'WEB3AUTH_NOT_CONFIGURED' });
+  }
+
+  let payload;
+  try {
+    const { jwtVerify } = require('jose');
+    const verified = await jwtVerify(idToken, __getWeb3AuthJwks(), {
+      audience: process.env.WEB3AUTH_CLIENT_ID,
+      issuer: process.env.WEB3AUTH_ISSUER || 'https://api-auth.web3auth.io',
+    });
+    payload = verified.payload;
+  } catch (err) {
+    logger.warn('[wallet/link] Web3Auth token verification failed', { userId: user.id, error: err.message });
+    return res.status(401).json({ success: false, error: 'Invalid Web3Auth token', code: 'WEB3AUTH_INVALID_TOKEN' });
+  }
+
+  // If the ID token carries a `wallets` array, insist the submitted address is
+  // in it. If not (some flows omit it), fall back to trusting the client — the
+  // valid JWT already proves the session is authenticated with our client_id.
+  const claimWallets = Array.isArray(payload?.wallets) ? payload.wallets : [];
+  const submitted = rawAddress.toLowerCase();
+  if (claimWallets.length > 0) {
+    const match = claimWallets.some((w) => {
+      const addr = typeof w?.address === 'string' ? w.address.toLowerCase()
+                 : typeof w?.public_key === 'string' ? w.public_key.toLowerCase()
+                 : null;
+      return addr === submitted;
+    });
+    if (!match) {
+      logger.warn('[wallet/link] walletAddress not in token wallets claim', { userId: user.id, submitted, tokenWallets: claimWallets });
+      return res.status(400).json({ success: false, error: 'Wallet address does not match the Web3Auth session', code: 'WALLET_MISMATCH' });
+    }
+  }
+
+  const userId = String(user.telegram_id || user.id);
+  await query(
+    `UPDATE users SET wallet_address = $1, wallet_linked_at = NOW() WHERE id = $2`,
+    [submitted, userId]
+  );
+
+  logger.info('[wallet/link] Wallet linked', { userId, walletAddress: submitted });
+  res.json({ success: true, walletAddress: submitted });
+}));
+
 // POST /api/wallet/pay-subscription — pay for a platform plan (PRIME, member, etc.) with Tokens
 app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
@@ -13221,6 +13368,122 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     invoiceUrl,
     ...(discountInfo || {}),
     ...npPayInfo2,
+  });
+}));
+
+// POST /api/webapp/payments/onchain/prepare — create a NowPayments direct
+// payment (not a hosted invoice) so the frontend can pull pay_address +
+// pay_amount and drive an in-wallet sendTransaction from Privy/injected
+// MetaMask. Forces pay_currency=etharb (Arbitrum ETH, cheapest L2 confirmed
+// on NowPayments). Currently wired to Donate only; other checkout callers
+// still route through /prepare until the Web3 flow is validated.
+app.post('/api/webapp/payments/onchain/prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).json({ success: false, error: 'Crypto payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+  }
+  const user = req.session.user;
+  const { planId, creatorId } = req.body || {};
+  if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
+
+  const userId = String(user.telegram_id || user.id);
+  const { query: dbQuery } = require('../../config/postgres');
+  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
+  const PAY_CURRENCY = 'etharb'; // ETH on Arbitrum One
+
+  // Resume: if there's a pending onchain order for this plan < 23h old, reuse it
+  // so we don't spam NP with a fresh pay_address on every page refresh.
+  const resumeRes = await dbQuery(
+    `SELECT btcpay_invoice_id, usd_amount, plan_id, metadata FROM dash_subscription_orders
+     WHERE user_id = $1 AND plan_id = $2 AND status = 'pending'
+       AND metadata->>'flow' = 'onchain'
+       AND metadata->>'payCurrency' = $3
+       AND created_at > NOW() - INTERVAL '23 hours'
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, planId, PAY_CURRENCY]
+  );
+  if (resumeRes.rows.length > 0) {
+    const r = resumeRes.rows[0];
+    const meta = r.metadata || {};
+    if (meta.payAddress && meta.payAmount) {
+      const planRow = await dbQuery('SELECT display_name, name FROM plans WHERE id = $1', [planId]).catch(() => ({ rows: [] }));
+      return res.json({
+        success: true,
+        orderId: r.btcpay_invoice_id,
+        usdAmount: parseFloat(r.usd_amount),
+        planName: planRow.rows[0]?.display_name || planRow.rows[0]?.name || planId,
+        payAddress: meta.payAddress,
+        payAmount: meta.payAmount,
+        payCurrency: PAY_CURRENCY,
+        resumed: true,
+      });
+    }
+  }
+
+  const planRes = await dbQuery('SELECT * FROM plans WHERE id = $1 AND active = true', [planId]);
+  const plan = planRes.rows[0];
+  if (!plan) return res.status(404).json({ success: false, error: 'Plan not found' });
+  const usdAmount = parseFloat(plan.price);
+  if (!Number.isFinite(usdAmount) || usdAmount <= 0) {
+    return res.status(400).json({ success: false, error: 'Plan has no payable price' });
+  }
+  const planDisplayName = plan.display_name || plan.name;
+
+  const orderId = `pnptv-nowp-${userId}-${Date.now()}`;
+  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
+
+  let payAddress, payAmount, nowpaymentsPaymentId;
+  try {
+    const resp = await axios.post(`${NOWPAYMENTS_URL}/payment`, {
+      price_amount: usdAmount,
+      price_currency: 'usd',
+      pay_currency: PAY_CURRENCY,
+      order_id: orderId,
+      order_description: `${planDisplayName} – PNPtv!`,
+      ipn_callback_url: ipnCallbackUrl,
+    }, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    payAddress = resp.data?.pay_address;
+    payAmount = resp.data?.pay_amount;
+    nowpaymentsPaymentId = resp.data?.payment_id;
+    if (!payAddress || !payAmount || !nowpaymentsPaymentId) {
+      throw new Error('NOWPayments response missing pay_address/pay_amount/payment_id');
+    }
+  } catch (err) {
+    logger.error('[NOWPayments onchain] Payment creation failed', {
+      userId, planId, orderId,
+      error: err.response?.data || err.message,
+    });
+    return res.status(502).json({ success: false, error: 'Could not reach NOWPayments. Please try again.', code: 'NOWPAYMENTS_ERROR' });
+  }
+
+  await dbQuery(
+    `INSERT INTO dash_subscription_orders
+       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, creator_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+    [
+      userId, planId, null, usdAmount, orderId, creatorId || null,
+      JSON.stringify({
+        flow: 'onchain',
+        payCurrency: PAY_CURRENCY,
+        payAddress,
+        payAmount: String(payAmount),
+        nowpaymentsPaymentId: String(nowpaymentsPaymentId),
+      }),
+    ]
+  );
+
+  logger.info('[NOWPayments onchain] Order created', { userId, planId, orderId, usdAmount, payAddress, payAmount });
+  res.json({
+    success: true,
+    orderId,
+    usdAmount,
+    planName: planDisplayName,
+    payAddress,
+    payAmount: String(payAmount),
+    payCurrency: PAY_CURRENCY,
   });
 }));
 

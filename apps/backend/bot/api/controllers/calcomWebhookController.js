@@ -139,6 +139,14 @@ async function handleCalcomWebhook(req, res) {
           applicationIds: result.rows.map((r) => r.id),
         });
 
+        // Creator onboarding: first booking by a creator counts as their onboarding
+        // call. Guarded internally to only stamp when slack_calbooked_at IS NULL
+        // AND the user has a Slack channel — safe to fire on every booking.
+        try {
+          const onboarding = require('../../../services/creatorOnboardingService');
+          onboarding.recordCalBooking(email).catch(() => {});
+        } catch (_) { /* non-fatal */ }
+
         // Notify creator (organizer) in their personal Slack channel — best-effort
         try {
           const organizerEmail = bookingPayload?.organizer?.email || null;
