@@ -49,14 +49,17 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     body: (
       <div className="space-y-3">
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          A private social network built for the queer PNP community. Post, chat, stream, meet people nearby —
-          without judgment, algorithms, or bans. <span className="text-white font-medium">Your data stays with us.</span>
+          A <span className="text-white font-medium">private members-only club</span> for gay, bisexual, and queer men 25 and over — built from inside the PNP community, not looking at it from the outside.
+        </p>
+        <p className="text-pnp-textSecondary text-sm leading-relaxed">
+          Post, stream, hang out, meet people nearby — without judgment, algorithms, or bans.
+          Built on a <span className="text-white font-medium">Duty of Care model</span> that treats your wellbeing as infrastructure, not an afterthought.
         </p>
         <div className="space-y-2">
           {[
-            { e: "🔒", t: "Private by default", b: "Nothing you post leaves our walls unless you share it yourself." },
-            { e: "🌈", t: "Built for you", b: "Every feature designed with the queer PNP community in mind." },
-            { e: "📱", t: "Works in your browser", b: "No app store. Open pnptv.app on any phone. Install it for push notifications." },
+            { e: "🔒", t: "Private by design", b: "Nothing leaves our walls unless you share it. Your location is fuzzy-anonymized. Your data is never sold." },
+            { e: "🌈", t: "Built from inside the community", b: "Every feature designed with real PNP lived experience. Community vocabulary is never censored." },
+            { e: "📱", t: "Works in your browser", b: "No app store flags. Open pnptv.app on any phone. Install it for push notifications." },
           ].map(c => (
             <div key={c.t} className="flex gap-3 p-3 rounded-xl bg-pnp-surface border border-pnp-border">
               <span className="text-lg flex-shrink-0">{c.e}</span>
@@ -67,6 +70,7 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
             </div>
           ))}
         </div>
+        <a href="/docs" className="block text-center text-xs font-semibold text-gradient mt-1">Read our research & documentation →</a>
       </div>
     ),
   },
@@ -78,10 +82,10 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
         <p className="text-xs font-bold uppercase tracking-widest text-gradient">Like X — but ours</p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           Post text, photos, or videos. Like, reply, repost. Follow people you vibe with and get a feed
-          that's actually relevant — <span className="text-white font-medium">no shadow banning, no ads, no content cops.</span>
+          that's actually relevant — <span className="text-white font-medium">no shadow banning, no ads, no content police.</span>
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          Creators can lock exclusive posts for subscribers only. Cross-post to X in one tap if you want.
+          Community language — party culture, lifestyle, all of it — is protected here. Creators can lock exclusive posts for subscribers. Cross-post to X in one tap.
         </p>
       </div>
     ),
@@ -94,10 +98,10 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
         <p className="text-xs font-bold uppercase tracking-widest text-gradient">Like Discord — but simpler</p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           Create a Hangout, invite your people, jump into group video or voice.
-          Public rooms or private ones with a password.
+          Public rooms or private ones — you set the vibe and the access level.
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          <span className="text-white font-medium">No bots. No server setup. No 47 channels you'll never use.</span>
+          <span className="text-white font-medium">No bots. No server setup. No 47 channels you'll never use.</span> Just your people in a room.
         </p>
       </div>
     ),
@@ -107,13 +111,12 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     emoji: "🔴",
     body: (
       <div className="space-y-3">
-        <p className="text-xs font-bold uppercase tracking-widest text-gradient">Like Chaturbate — but cloudy ☁️</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-gradient">Stream on your terms ☁️</p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          Stream directly from your browser or use OBS with a streaming key.
-          Followers get notified instantly, chat in real-time, and tip you directly.
+          Stream from your browser or OBS with a key. Followers get notified instantly, chat in real-time, and tip you directly.
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          <span className="text-white font-medium">No strikes. No suspensions. No content police.</span>
+          <span className="text-white font-medium">No strikes. No suspensions. No content police.</span> Our moderation understands the difference between community expression and actual harm.
         </p>
       </div>
     ),
@@ -123,13 +126,13 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     emoji: "📍",
     body: (
       <div className="space-y-3">
-        <p className="text-xs font-bold uppercase tracking-widest text-gradient">Like Grindr — but for real PNP stans</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-gradient">Find your people — privately</p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           See community members and PNP-friendly venues near you on a map.
-          <span className="text-white font-medium"> No bots, no algorithms, no judgment.</span>
+          <span className="text-white font-medium"> No bots, no algorithms, no outing risk.</span>
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          Way more private than Grindr. You control your location. <span className="text-white font-medium">Nothing is ever sold to data brokers.</span>
+          Your location is never precise — we apply a cryptographic offset so you're never pinpointed. <span className="text-white font-medium">Nothing is ever sold to data brokers.</span>
         </p>
       </div>
     ),
@@ -141,16 +144,17 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
       <div className="space-y-3">
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           Subscriptions, exclusive content, tips, live streaming —
-          <span className="text-white font-medium"> you keep 80% of everything.</span>
+          <span className="text-white font-medium"> you keep 70% of everything. Tips from live streams are 100% yours.</span>
         </p>
         <div className="flex gap-2">
-          {[{ v: "80%", l: "Revenue yours" }, { v: "0", l: "Middlemen" }, { v: "Fast", l: "Payouts" }].map(s => (
+          {[{ v: "70%", l: "Content revenue" }, { v: "100%", l: "Live tips" }, { v: "Fast", l: "Crypto payouts" }].map(s => (
             <div key={s.l} className="flex-1 text-center p-3 rounded-xl bg-pnp-surface border border-pnp-border">
               <div className="text-base font-bold text-gradient">{s.v}</div>
               <div className="text-pnp-textSecondary text-[10px] mt-0.5">{s.l}</div>
             </div>
           ))}
         </div>
+        <p className="text-pnp-textSecondary text-xs leading-relaxed">Every transaction is in your ledger — verify your 70% yourself, transaction by transaction.</p>
         <Link to="/become-a-model" className="block w-full text-center py-3 rounded-xl text-sm font-semibold border border-pnp-border text-pnp-textSecondary hover:text-white hover:border-white/30 transition-colors">
           Apply as a Creator →
         </Link>
@@ -162,10 +166,10 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     emoji: "💳",
     body: (
       <div className="space-y-2">
-        <p className="text-pnp-textSecondary text-sm mb-3">Multiple ways to pay — pick what works for you.</p>
+        <p className="text-pnp-textSecondary text-sm mb-3">Discreet, crypto-native payments — no card traces, no chargebacks.</p>
         {[
-          { e: "⚡", t: "Crypto (USDC/BTC/ETH +100)", b: "Pay with crypto via NowPayments. Near-instant, low fees." },
-          { e: "⚡💲", t: "Ru$h", b: "Buy Ru$h ⚡💲 inside the app for tips, subscriptions & exclusive content." },
+          { e: "⚡", t: "Crypto (BTC, USDT, Dash +100 coins)", b: "Pay with crypto via NowPayments. Near-instant confirmation, low fees, no bank involved." },
+          { e: "⚡💲", t: "Ru$h", b: "Buy Ru$h inside the app for tips, subscriptions & exclusive content. 1 USD = 6 Ru$h." },
         ].map(c => (
           <div key={c.t} className="flex gap-3 p-3 rounded-xl bg-pnp-surface border border-pnp-border">
             <span className="text-lg flex-shrink-0">{c.e}</span>
@@ -175,33 +179,39 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
             </div>
           </div>
         ))}
-        <p className="text-pnp-textSecondary/50 text-[10px] text-center pt-1">🔒 Encrypted · Discreet billing · We never store your card</p>
+        <p className="text-pnp-textSecondary/50 text-[10px] text-center pt-1">Encrypted · Discreet · We never store card data</p>
       </div>
     ),
   },
   safety: {
-    title: "Safety First",
+    title: "Safety & Wellbeing",
     emoji: "🛡️",
     body: (
       <div className="space-y-3">
-        <p className="text-pnp-textSecondary text-sm leading-relaxed">We take safety seriously. This is your space and we protect it.</p>
+        <p className="text-pnp-textSecondary text-sm leading-relaxed">Built on a <span className="text-white font-medium">Duty of Care model</span> — safety infrastructure designed from inside the community, not imposed from outside.</p>
         <div className="space-y-2">
           {[
-            "Age & identity verification for all members",
-            "Human moderation — real people reviewing reports",
-            "Encrypted direct messages",
-            "Block, mute, and report tools on every post",
-            "Harm reduction resources & community guidelines",
+            { t: "Age & identity verification for all members (25+)", sub: "ID verification required. We protect the club." },
+            { t: "Wellness Mode & Use Tracker", sub: "Self-imposed rest periods with deliberate friction. Private session log — only you see it." },
+            { t: "Community-calibrated moderation", sub: "Our filter knows the difference between party culture and actual harm vectors." },
+            { t: "Encrypted DMs & fuzzy location", sub: "Your messages and location are protected by design, not policy." },
+            { t: "Human review of all reports", sub: "Real people who understand this community handle every flag." },
           ].map(item => (
-            <div key={item} className="flex gap-2.5 items-start">
+            <div key={item.t} className="flex gap-2.5 items-start">
               <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
-              <p className="text-pnp-textSecondary text-sm">{item}</p>
+              <div>
+                <p className="text-pnp-textSecondary text-xs font-semibold text-white">{item.t}</p>
+                <p className="text-pnp-textSecondary text-[11px]">{item.sub}</p>
+              </div>
             </div>
           ))}
         </div>
-        <a href="/safety" className="block text-center text-sm font-semibold text-gradient mt-2">Learn more →</a>
+        <div className="flex gap-2 pt-1">
+          <a href="/safety" className="flex-1 text-center text-xs font-semibold text-gradient">Safety resources →</a>
+          <a href="/docs" className="flex-1 text-center text-xs font-semibold text-gradient">Our research →</a>
+        </div>
       </div>
     ),
   },
@@ -225,6 +235,8 @@ const legalLinks = [
   { label: "Content Policy", href: "/content-policy" },
   { label: "DMCA", href: "/dmca" },
   { label: "Refunds", href: "/refunds" },
+  { label: "Safety", href: "/safety" },
+  { label: "Research", href: "/docs" },
   { label: "Contact", href: "/contact" },
 ];
 
@@ -1026,6 +1038,9 @@ export function LandingPage() {
           {/* Tagline */}
           <p className="text-xs font-bold uppercase tracking-[0.25em] text-pnp-accent">
             The Queer PNP Community
+          </p>
+          <p className="text-[10px] text-pnp-textSecondary/60 tracking-wide -mt-2">
+            Private club · Men 25+ · Age verified
           </p>
 
           {/* Performer focus banner — LATAM redirect with ?focus=performer */}
