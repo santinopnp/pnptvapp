@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
+import * as Sentry from "@sentry/react";
 import { getI18n, getLang } from "@/lib/i18n";
 
 interface Props {
@@ -54,6 +55,10 @@ class ErrorBoundary extends Component<Props, State> {
         window.location.reload();
         return;
       }
+    }
+
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } });
     }
 
     // Log to backend in production

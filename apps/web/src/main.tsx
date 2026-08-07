@@ -1,7 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import * as Sentry from "@sentry/react";
 import App from "./App";
 import "./styles/globals.css";
+
+if (import.meta.env.VITE_SENTRY_DSN) {
+  Sentry.init({
+    dsn: import.meta.env.VITE_SENTRY_DSN as string,
+    environment: import.meta.env.MODE,
+    tracesSampleRate: 0.05,
+  });
+}
 
 const REALTIME_SESSION_KEY = "pnptv:active-realtime-session";
 const SW_UPDATE_PENDING_KEY = "pnptv:sw-update-pending";
