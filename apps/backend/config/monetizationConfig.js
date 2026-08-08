@@ -13,31 +13,30 @@ const TIP_CREATOR_RATE         = 1.0; // 100% to creator — tips are fully exem
 
 // ── Gifted-token policy ──────────────────────────────────────────────────────
 // Tokens gifted before PNP Live's public launch are restricted to these
-// performers' live shows (tips + stream heartbeats). User IDs: SantinoFurioso,
-// PNPLatinoBoy. Regular purchased tokens work for any performer.
-const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840', '7246621722'];
+// performers' live shows (tips + stream heartbeats). Regular purchased tokens
+// work for any performer.
+const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840'];
 
 // Santino Furioso's user ID — historical key for the purchase-bonus token pool.
-// The JSONB pool (user_token_wallets.creator_gifts['8599671840']) is now spendable
-// on BOTH Santino AND Lex streams/tips (PRIME co-founders share this pool).
+// The JSONB pool (user_token_wallets.creator_gifts['8599671840']) is spendable
+// on Santino streams/tips.
 const SANTINO_USER_ID = '8599671840';
 
-// PNPLatinoBoy (Lex) — co-founder of PNPtv, co-owner of the PRIME channel.
-// Tips to Lex also draw from the SANTINO bonus pool above.
-const LEX_USER_ID = '7246621722';
+// Legacy exports — Lex account terminated 2026-08-08. Keep as null so
+// downstream `=== LEX_USER_ID` / `=== LEX_PRIME_HANGOUT_GROUP_ID` checks
+// never match without breaking imports.
+const LEX_USER_ID = null;
+const LEX_PRIME_HANGOUT_GROUP_ID = null;
 
-// PRIME revenue split — 20% platform / 40% Santino / 40% Lex.
+// PRIME revenue split — 20% platform / 80% Santino (solo owner as of 2026-08-08).
 // Applies to every paid PRIME plan grant (price>0 only, trials skip).
-// The two 40%s must equal 1 - PRIME_PLATFORM_RATE and be split equally to stay equitable.
 const PRIME_PLATFORM_RATE = 0.20;
-const PRIME_CREATOR_RATE  = 0.40; // per co-founder — Santino AND Lex each get this
-const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID, LEX_USER_ID];
+const PRIME_CREATOR_RATE  = 0.80;
+const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID];
 
-// PRIME hangout group IDs — every qualifying PRIME member is auto-joined to BOTH.
-// Kept independent (per co-founder choice) instead of a shared room.
+// PRIME hangout group IDs — every qualifying PRIME member is auto-joined.
 const SANTINO_PRIME_HANGOUT_GROUP_ID = 719;
-const LEX_PRIME_HANGOUT_GROUP_ID     = 785;
-const PRIME_HANGOUT_GROUP_IDS = [SANTINO_PRIME_HANGOUT_GROUP_ID, LEX_PRIME_HANGOUT_GROUP_ID];
+const PRIME_HANGOUT_GROUP_IDS = [SANTINO_PRIME_HANGOUT_GROUP_ID];
 
 // ── Creator content-compliance policy ────────────────────────────────────────
 // New creator_monthly subscribers' membership start is held until the creator has
