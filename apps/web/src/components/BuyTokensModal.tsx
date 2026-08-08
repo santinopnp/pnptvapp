@@ -1067,10 +1067,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                           className="text-[9px] leading-tight mb-1"
                           style={{ color: "#D4007A" }}
                           title={es
-                            ? "Este Ru$h de bono solo puede gastarse en streams y contenido de Santino y Lex (@PNPLatinoBoy)."
-                            : "This bonus Ru$h can only be spent on Santino and Lex (@PNPLatinoBoy) streams and content."}
+                            ? "Este Ru$h de bono solo puede gastarse en streams y contenido de Santino."
+                            : "This bonus Ru$h can only be spent on Santino streams and content."}
                         >
-                          +{bonusTokens.toLocaleString()} {es ? "para Santino & Lex" : "Santino & Lex only"}
+                          +{bonusTokens.toLocaleString()} {es ? "solo Santino" : "Santino only"}
                         </p>
                       )}
                       <p className="text-[11px] text-pnp-textSecondary mb-1">Ru$h 💎</p>

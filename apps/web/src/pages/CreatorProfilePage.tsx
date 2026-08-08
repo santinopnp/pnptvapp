@@ -43,6 +43,8 @@ import {
   getMyCallCredits,
   uploadCoverPhoto,
   deleteCoverPhoto,
+  tipTokens,
+  getWalletBalance,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
@@ -349,9 +351,19 @@ export default function CreatorProfilePage() {
   const [reportError, setReportError] = useState<string | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const tipPanelRef = useRef<HTMLDivElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [coverUploading, setCoverUploading] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
+
+  // Tip panel state
+  const [tipPanelOpen, setTipPanelOpen] = useState(false);
+  const [tipAmount, setTipAmount] = useState<number | null>(null);
+  const [tipMessage, setTipMessage] = useState("");
+  const [tipLoading, setTipLoading] = useState(false);
+  const [tipResult, setTipResult] = useState<"success" | "error" | null>(null);
+  const [tipError, setTipError] = useState("");
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   // Load creator profile
   useEffect(() => {
@@ -405,6 +417,10 @@ export default function CreatorProfilePage() {
           setCallCredits(usable);
         })
         .catch(() => {});
+
+      getWalletBalance()
+        .then((r) => { if (r.success) setWalletBalance(r.balance); })
+        .catch(() => {});
     }
   }, [data?.creator?.id, isAuthenticated, user?.dbId, user?.id]);
 
@@ -457,6 +473,16 @@ export default function CreatorProfilePage() {
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
+
+  // Close tip panel on outside click
+  useEffect(() => {
+    if (!tipPanelOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (tipPanelRef.current && !tipPanelRef.current.contains(e.target as Node)) setTipPanelOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [tipPanelOpen]);
 
   const isOwnProfile = useMemo(() => {
     if (!data || !user) return false;
@@ -520,6 +546,40 @@ export default function CreatorProfilePage() {
       navigate("/subscribe");
     } else {
       handleSubscribeCta();
+    }
+  }
+
+  async function handleSendTip() {
+    if (!data || !tipAmount || tipLoading) return;
+    if (!isAuthenticated) { navigate("/login"); return; }
+    setTipLoading(true);
+    setTipResult(null);
+    setTipError("");
+    try {
+      const res = await tipTokens(data.creator.id, tipAmount, tipMessage.trim() || undefined);
+      if (res.success) {
+        setWalletBalance(res.newBalance);
+        setTipResult("success");
+        setTimeout(() => {
+          setTipPanelOpen(false);
+          setTipResult(null);
+          setTipAmount(null);
+          setTipMessage("");
+        }, 2000);
+      } else {
+        setTipResult("error");
+        setTipError("Could not send tip. Please try again.");
+      }
+    } catch (err: unknown) {
+      setTipResult("error");
+      const code = (err as { code?: string })?.code;
+      if (code === "INSUFFICIENT_TOKENS") {
+        setTipError("INSUFFICIENT_TOKENS");
+      } else {
+        setTipError(err instanceof Error ? err.message : "Could not send tip. Please try again.");
+      }
+    } finally {
+      setTipLoading(false);
     }
   }
 
@@ -1024,6 +1084,99 @@ export default function CreatorProfilePage() {
               )}
             </button>
           </div>
+
+          {/* Tip button — only for authenticated non-self viewers who are active performers */}
+          {isAuthenticated && !isOwnProfile && (data?.creator?.creator_role === "live" || data?.creator?.creator_role === "both") && (
+            <div className="lg:max-w-md mb-4" ref={tipPanelRef}>
+              <button
+                onClick={() => {
+                  if (!isAuthenticated) { navigate("/login"); return; }
+                  setTipPanelOpen((v) => !v);
+                  setTipResult(null);
+                  setTipError("");
+                }}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold border transition-opacity hover:opacity-90 flex items-center justify-center gap-1.5"
+                style={{ borderColor: "rgba(255,255,255,0.15)", color: "#fff", background: "transparent" }}
+              >
+                <Diamond size={14} style={{ color: "var(--pnp-accent, #D4007A)" }} />
+                Send a tip
+              </button>
+
+              {tipPanelOpen && (
+                <div
+                  className="mt-2 rounded-2xl p-4"
+                  style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-semibold text-white">Send a Rush tip</span>
+                    {walletBalance !== null && (
+                      <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                        Your balance: {walletBalance} 💎
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
+                    {([6, 12, 30, 60, 120] as const).map((amt) => {
+                      const usdLabel = amt === 6 ? "$1" : amt === 12 ? "$2" : amt === 30 ? "$5" : amt === 60 ? "$10" : "$20";
+                      const selected = tipAmount === amt;
+                      return (
+                        <button
+                          key={amt}
+                          onClick={() => setTipAmount(amt)}
+                          className="flex flex-col items-center justify-center py-2 rounded-xl text-[11px] font-semibold border transition-colors"
+                          style={
+                            selected
+                              ? { borderColor: "var(--pnp-accent, #D4007A)", background: "rgba(212,0,122,0.12)", color: "#fff" }
+                              : { borderColor: "rgba(255,255,255,0.1)", background: "transparent", color: "rgba(255,255,255,0.75)" }
+                          }
+                        >
+                          <span>{amt}💎</span>
+                          <span style={{ color: selected ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.4)" }}>{usdLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <textarea
+                    value={tipMessage}
+                    onChange={(e) => setTipMessage(e.target.value.slice(0, 140))}
+                    placeholder="Add a message… (optional)"
+                    maxLength={140}
+                    rows={2}
+                    className="w-full rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 resize-none outline-none mb-3"
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  />
+
+                  {tipResult === "success" && (
+                    <div className="flex items-center gap-2 text-sm font-semibold mb-3" style={{ color: "#34C759" }}>
+                      <Check size={14} strokeWidth={3} /> Tip sent!
+                    </div>
+                  )}
+                  {tipResult === "error" && tipError === "INSUFFICIENT_TOKENS" && (
+                    <div className="text-sm mb-3" style={{ color: "#FF6B6B" }}>
+                      Not enough Rush.{" "}
+                      <Link to="/subscribe" className="underline font-semibold" style={{ color: "var(--pnp-accent, #D4007A)" }}>
+                        Top up
+                      </Link>
+                    </div>
+                  )}
+                  {tipResult === "error" && tipError !== "INSUFFICIENT_TOKENS" && tipError && (
+                    <div className="text-sm mb-3" style={{ color: "#FF6B6B" }}>{tipError}</div>
+                  )}
+
+                  <button
+                    onClick={handleSendTip}
+                    disabled={!tipAmount || tipLoading || tipResult === "success"}
+                    className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-opacity disabled:opacity-50"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >
+                    {tipLoading ? "Sending…" : "Send tip"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Channel deep-link — takes subscribers straight to the videos in
               the creator's canonical channel (skips the /channels landing).
