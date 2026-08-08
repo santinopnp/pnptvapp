@@ -1712,6 +1712,40 @@ const startCronJobs = async (bot = null) => {
     // BullMQ version is authoritative — SET (not SET NX) + DEL on unavailable,
     // so status changes propagate within one poll cycle.
 
+    // Call reminder — every 5 minutes, fires for bookings starting in 55–65 min
+    // Window avoids double-firing: confirmed bookings only, tight 10-min band.
+    cron.schedule('*/5 * * * *', async () => {
+      try {
+        const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
+        const slackOps = require(path.join(backendPath, 'services/slackOpsService'));
+        const result = await pgQuery(
+          `SELECT b.id, b.duration_minutes, b.start_time_utc,
+                  u.username  AS client_username,
+                  u2.username AS creator_username
+             FROM bookings b
+             JOIN users u       ON u.id  = b.user_id
+             JOIN performers pf ON pf.id = b.performer_id
+             JOIN users u2      ON u2.id = pf.user_id
+            WHERE b.status = 'confirmed'
+              AND b.start_time_utc BETWEEN NOW() + INTERVAL '58 minutes'
+                                       AND NOW() + INTERVAL '63 minutes'`
+        );
+        for (const row of result.rows) {
+          slackOps.notifyCallReminder({
+            bookingId: row.id,
+            clientUsername: row.client_username,
+            creatorUsername: row.creator_username,
+            durationMinutes: row.duration_minutes,
+            startTimeCol: row.start_time_utc
+              ? new Date(row.start_time_utc).toLocaleString('en-US', { timeZone: 'America/Bogota', hour12: false })
+              : 'N/A',
+          }).catch(() => {});
+        }
+      } catch (e) {
+        logger.warn('[callReminder] cron error', { error: e.message });
+      }
+    });
+
     logger.info('✓ Cron jobs started successfully');
     return true;
   } catch (error) {

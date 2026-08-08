@@ -19,10 +19,14 @@ const logger = require('../utils/logger');
 
 const SLACK_API = 'https://slack.com/api';
 
-const _tok              = () => process.env.SLACK_BOT_TOKEN              || '';
-const _paymentsChannel  = () => process.env.SLACK_OPS_PAYMENTS_CHANNEL   || '';
-const _incidentsChannel = () => process.env.SLACK_OPS_INCIDENTS_CHANNEL  || '';
-const _creatorChannel   = () => process.env.SLACK_OPS_CREATOR_CHANNEL    || '';
+const _tok              = () => process.env.SLACK_BOT_TOKEN                    || '';
+const _paymentsChannel  = () => process.env.SLACK_OPS_PAYMENTS_CHANNEL         || '';
+const _incidentsChannel = () => process.env.SLACK_OPS_INCIDENTS_CHANNEL        || '';
+const _creatorChannel   = () => process.env.SLACK_OPS_CREATOR_CHANNEL          || '';
+const _callsChannel     = () => process.env.SLACK_OPS_CALLS_CHANNEL            || '';
+const _adminChannel     = () => process.env.SLACK_OPS_ADMIN_CHANNEL            || '';
+const _tgMarketChannel  = () => process.env.SLACK_MARKETING_TELEGRAM_CHANNEL   || '';
+const _xMarketChannel   = () => process.env.SLACK_MARKETING_X_CHANNEL          || '';
 
 function _nowTs() {
   return new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
@@ -576,6 +580,200 @@ async function notifyRushConversion(opts) {
   }
 }
 
+/**
+ * Posts a new call booking alert to #ops-calls.
+ * @param {object} opts
+ * @param {string} opts.bookingId
+ * @param {string} opts.clientUsername
+ * @param {string} opts.creatorUsername
+ * @param {number} opts.durationMinutes
+ * @param {string|number} opts.priceUsd
+ * @param {string} opts.startTimeCol    local Colombia time string
+ * @param {string|Date} opts.startTimeUtc
+ */
+async function notifyNewBooking(opts) {
+  const channel = _callsChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      bookingId = 'N/A',
+      clientUsername = 'unknown',
+      creatorUsername = 'unknown',
+      durationMinutes = 0,
+      priceUsd = '0.00',
+      startTimeCol = 'N/A',
+      startTimeUtc,
+    } = opts || {};
+    const utcLabel = startTimeUtc ? new Date(startTimeUtc).toUTCString() : 'N/A';
+    const text = `📅 New call booking: @${clientUsername} → @${creatorUsername} (${durationMinutes} min)`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':calendar: New Call Booking', emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Client:*\n@${clientUsername}` },
+          { type: 'mrkdwn', text: `*Creator:*\n@${creatorUsername}` },
+          { type: 'mrkdwn', text: `*Duration:*\n${durationMinutes} min` },
+          { type: 'mrkdwn', text: `*Price:*\n$${priceUsd} USD` },
+          { type: 'mrkdwn', text: `*Start (COL):*\n${startTimeCol}` },
+          { type: 'mrkdwn', text: `*Start (UTC):*\n${utcLabel}` },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `Booking ID: \`${bookingId}\` · <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyNewBooking error', { error: e.message });
+  }
+}
+
+/**
+ * Posts a call-starting-soon reminder to #ops-calls.
+ * @param {object} opts
+ * @param {string} opts.bookingId
+ * @param {string} opts.clientUsername
+ * @param {string} opts.creatorUsername
+ * @param {number} opts.durationMinutes
+ * @param {string} opts.startTimeCol    local Colombia time string
+ */
+async function notifyCallReminder(opts) {
+  const channel = _callsChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      bookingId = 'N/A',
+      clientUsername = 'unknown',
+      creatorUsername = 'unknown',
+      durationMinutes = 0,
+      startTimeCol = 'N/A',
+    } = opts || {};
+    const text = `⏰ Call starting in ~60 min: @${clientUsername} → @${creatorUsername}`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':alarm_clock: Call Starting in 60 Minutes', emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Client:*\n@${clientUsername}` },
+          { type: 'mrkdwn', text: `*Creator:*\n@${creatorUsername}` },
+          { type: 'mrkdwn', text: `*Duration:*\n${durationMinutes} min` },
+          { type: 'mrkdwn', text: `*Start (COL):*\n${startTimeCol}` },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `Booking ID: \`${bookingId}\` · Reminder sent at ${_nowTs()} ET` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyCallReminder error', { error: e.message });
+  }
+}
+
+/**
+ * Posts a user ban alert to #ops-admin.
+ * @param {object} opts
+ * @param {string} opts.bannedUsername
+ * @param {string} opts.bannedUserId
+ * @param {string} opts.adminId
+ * @param {string} [opts.reason]
+ * @param {string|null} [opts.ip]
+ */
+async function notifyBan(opts) {
+  const channel = _adminChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      bannedUsername = 'unknown',
+      bannedUserId = 'N/A',
+      adminId = 'N/A',
+      reason = 'No reason provided',
+      ip = null,
+    } = opts || {};
+    const text = `🚫 User banned: @${bannedUsername} (${bannedUserId})`;
+    const fields = [
+      { type: 'mrkdwn', text: `*Username:*\n@${bannedUsername}` },
+      { type: 'mrkdwn', text: `*User ID:*\n\`${bannedUserId}\`` },
+      { type: 'mrkdwn', text: `*Reason:*\n${reason || 'Not specified'}` },
+      { type: 'mrkdwn', text: `*Banned By (Admin ID):*\n\`${adminId}\`` },
+      { type: 'mrkdwn', text: `*IP Address:*\n${ip || 'N/A'}` },
+      { type: 'mrkdwn', text: `*Timestamp:*\n${_nowTs()} ET` },
+    ];
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':no_entry: User Banned', emoji: true },
+      },
+      { type: 'section', fields },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyBan error', { error: e.message });
+  }
+}
+
+/**
+ * Posts a new-user-via-Telegram alert to #marketing-telegram.
+ * @param {object} opts
+ * @param {string} opts.userId       internal DB user id
+ * @param {string} [opts.username]
+ * @param {string} [opts.firstName]
+ * @param {string} [opts.telegramId]
+ * @param {string} [opts.source]     e.g. 'telegram-widget', 'mini_app'
+ */
+async function notifyNewTelegramUser(opts) {
+  const channel = _tgMarketChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      userId = 'N/A',
+      username = '',
+      firstName = '',
+      telegramId = 'N/A',
+      source = 'telegram',
+    } = opts || {};
+    const userLabel = username ? `@${username}` : `(no username)`;
+    const text = `👤 New user via Telegram: ${userLabel} (${firstName})`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: ':bust_in_silhouette: New User via Telegram', emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Username:*\n${userLabel}` },
+          { type: 'mrkdwn', text: `*Name:*\n${firstName || 'N/A'}` },
+          { type: 'mrkdwn', text: `*Telegram ID:*\n\`${telegramId}\`` },
+          { type: 'mrkdwn', text: `*Source:*\n${source}` },
+          { type: 'mrkdwn', text: `*User ID:*\n\`${userId}\`` },
+          { type: 'mrkdwn', text: `*Registered At:*\n${_nowTs()} ET` },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyNewTelegramUser error', { error: e.message });
+  }
+}
+
 function _wrap(fnName, origFn) {
   return async function (...args) {
     const qs = _qs();
@@ -597,6 +795,10 @@ module.exports = {
   notifyNpJwt403: _wrap('notifyNpJwt403', notifyNpJwt403),
   notifyNequiPendingActivation: _wrap('notifyNequiPendingActivation', notifyNequiPendingActivation),
   notifyRushConversion: _wrap('notifyRushConversion', notifyRushConversion),
+  notifyNewBooking: _wrap('notifyNewBooking', notifyNewBooking),
+  notifyCallReminder: _wrap('notifyCallReminder', notifyCallReminder),
+  notifyBan: _wrap('notifyBan', notifyBan),
+  notifyNewTelegramUser: _wrap('notifyNewTelegramUser', notifyNewTelegramUser),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,
   _direct_notifyPaymentFailed: notifyPaymentFailed,
@@ -606,4 +808,8 @@ module.exports = {
   _direct_notifyCreatorApplication: notifyCreatorApplication,
   _direct_notifyNpJwt403: notifyNpJwt403,
   _direct_notifyRushConversion: notifyRushConversion,
+  _direct_notifyNewBooking: notifyNewBooking,
+  _direct_notifyCallReminder: notifyCallReminder,
+  _direct_notifyBan: notifyBan,
+  _direct_notifyNewTelegramUser: notifyNewTelegramUser,
 };
