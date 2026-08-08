@@ -3,7 +3,7 @@
 const { query } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const crypto = require('crypto');
-const logger = require('../config/logger');
+const logger = require('../utils/logger');
 
 const RECEIVING_ADDRESS = process.env.CRYPTO_RECEIVING_ADDRESS;
 const ALCHEMY_SIGNING_KEY = process.env.ALCHEMY_SIGNING_KEY;
@@ -63,7 +63,7 @@ class CryptoPaymentService {
     }
 
     const { rows } = await query(
-      `INSERT INTO crypto_payments
+      `INSERT INTO checkout_intents
          (user_id, plan_id, chain, token, amount_usd, expected_amount_usdc, expected_amount_native, receiving_address, creator_id, scope_type, scope_id)
        VALUES ($1, $2, 'base', $3, $4, $5, $6, $7, $8::varchar, $9, $10)
        RETURNING id, token, expected_amount_native, receiving_address, expires_at`,
@@ -95,7 +95,7 @@ class CryptoPaymentService {
    */
   static async recordSubmittedTx({ paymentId, txHash, fromAddress, userId }) {
     const { rowCount } = await query(
-      `UPDATE crypto_payments
+      `UPDATE checkout_intents
        SET tx_hash = $1, from_address = $2
        WHERE id = $3 AND user_id = $4 AND status = 'pending' AND tx_hash IS NULL AND expires_at > NOW()`,
       [txHash, fromAddress?.toLowerCase(), paymentId, userId]
@@ -132,7 +132,7 @@ class CryptoPaymentService {
     // Primary match: tx_hash (set by recordSubmittedTx before confirmation)
     // Fallback: from_address + token + native-amount within tolerance
     const { rows } = await query(
-      `SELECT * FROM crypto_payments
+      `SELECT * FROM checkout_intents
        WHERE status = 'pending'
          AND expires_at > NOW()
          AND token = $3
@@ -164,7 +164,7 @@ class CryptoPaymentService {
         paymentId: payment.id, expected: expectedNative, received: amountReceived, asset,
       });
       await query(
-        `UPDATE crypto_payments SET status = 'failed', grant_result = $1 WHERE id = $2 AND status = 'pending'`,
+        `UPDATE checkout_intents SET status = 'failed', grant_result = $1 WHERE id = $2 AND status = 'pending'`,
         [JSON.stringify({ error: 'amount_mismatch', expected: expectedNative, received: amountReceived, asset, ts: new Date().toISOString() }), payment.id]
       );
       return;
@@ -172,7 +172,7 @@ class CryptoPaymentService {
 
     // Atomic idempotency — flip to confirmed exactly once
     const { rowCount } = await query(
-      `UPDATE crypto_payments
+      `UPDATE checkout_intents
        SET status = 'confirmed', tx_hash = $1, from_address = $2, confirmed_at = NOW()
        WHERE id = $3 AND status = 'pending'`,
       [hash, from, payment.id]
@@ -204,14 +204,14 @@ class CryptoPaymentService {
         `crypto_${payment.id}`
       );
       await query(
-        `UPDATE crypto_payments SET grant_result = $1 WHERE id = $2`,
+        `UPDATE checkout_intents SET grant_result = $1 WHERE id = $2`,
         [JSON.stringify(grantResult), payment.id]
       );
       logger.info('CryptoPayment: entitlements granted', { paymentId: payment.id, userId: payment.user_id, planId: payment.plan_id });
     } catch (grantErr) {
       // Mark as grant_failed so reconciler can retry — do NOT leave in confirmed+null state
       await query(
-        `UPDATE crypto_payments SET status = 'grant_failed', grant_result = $1 WHERE id = $2`,
+        `UPDATE checkout_intents SET status = 'grant_failed', grant_result = $1 WHERE id = $2`,
         [JSON.stringify({ error: grantErr.message, ts: new Date().toISOString() }), payment.id]
       );
       logger.error('CryptoPayment: grant failed after on-chain confirm — marked grant_failed', {
@@ -247,7 +247,7 @@ class CryptoPaymentService {
   /** Poll status — frontend uses this to detect confirmation. */
   static async getStatus(paymentId, userId) {
     const { rows } = await query(
-      `SELECT id, status, tx_hash, confirmed_at, expires_at FROM crypto_payments
+      `SELECT id, status, tx_hash, confirmed_at, expires_at FROM checkout_intents
        WHERE id = $1 AND user_id = $2`,
       [paymentId, userId]
     );
@@ -258,7 +258,7 @@ class CryptoPaymentService {
   /** Expire stale pending intents — called by cron every 15 min. */
   static async expireStale() {
     const { rowCount } = await query(
-      `UPDATE crypto_payments SET status = 'expired'
+      `UPDATE checkout_intents SET status = 'expired'
        WHERE status = 'pending' AND expires_at < NOW()`
     );
     if (rowCount > 0) logger.info('CryptoPayment: expired stale intents', { count: rowCount });
@@ -272,7 +272,7 @@ class CryptoPaymentService {
   static async alertStuck() {
     // Fresh stuck: tx submitted but webhook never arrived (5min–24h old)
     const { rows: freshStuck } = await query(
-      `SELECT id, user_id, tx_hash, plan_id, created_at FROM crypto_payments
+      `SELECT id, user_id, tx_hash, plan_id, created_at FROM checkout_intents
        WHERE tx_hash IS NOT NULL AND status = 'pending'
          AND created_at < NOW() - INTERVAL '5 minutes'
          AND created_at > NOW() - INTERVAL '24 hours'`
@@ -286,7 +286,7 @@ class CryptoPaymentService {
 
     // Fresh grant_failed: on-chain confirmed but grant threw (last 7 days)
     const { rows: freshGrantFailed } = await query(
-      `SELECT id, user_id, plan_id FROM crypto_payments
+      `SELECT id, user_id, plan_id FROM checkout_intents
        WHERE status = 'grant_failed'
          AND COALESCE(confirmed_at, created_at) > NOW() - INTERVAL '7 days'`
     );
@@ -300,7 +300,7 @@ class CryptoPaymentService {
     // Aged grant_failed: still unresolved past investigation horizon. Warn (not error)
     // to keep signal on fresh alerts high without silently dropping old rows.
     const { rows: agedGrantFailed } = await query(
-      `SELECT COUNT(*)::int AS count FROM crypto_payments
+      `SELECT COUNT(*)::int AS count FROM checkout_intents
        WHERE status = 'grant_failed'
          AND COALESCE(confirmed_at, created_at) <= NOW() - INTERVAL '7 days'`
     );
