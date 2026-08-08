@@ -237,7 +237,7 @@ function HangoutInviteRedirect() {
 }
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
-const STREAMS_DEPRECATED = false;
+const STREAMS_DEPRECATED = true;
 
 import { Layout } from "@/components/Layout";
 import { AdminLayout } from "@/components/admin/AdminLayout";
@@ -1175,7 +1175,9 @@ export const router = createBrowserRouter([
     path: "/donate",
     element: (
       <ModuleLoader>
-        <Donate />
+        <VerificationGate>
+          <Donate />
+        </VerificationGate>
       </ModuleLoader>
     ),
   },

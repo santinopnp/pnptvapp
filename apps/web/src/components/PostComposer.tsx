@@ -32,10 +32,13 @@ const API_BASE = import.meta.env.VITE_API_URL || "https://pnptv.app";
 const POST_CATEGORIES = [
   { value: "fun",       label: "Fun",       color: "#E69138" },
   { value: "wellness",  label: "Wellness",  color: "#34D399" },
-  { value: "adult",     label: "+18",       color: "#D4007A" },
-  { value: "community", label: "Community", color: "#60A5FA" },
-  { value: "media",     label: "Media",     color: "#A78BFA" },
-  { value: "social",    label: "Social",    color: "#8E8E93" },
+  { value: "chemsex",   label: "Chem-Sex",  color: "#D4007A" },
+  { value: "slam",      label: "Slam",      color: "#FF3B30" },
+  { value: "clouds",    label: "Clouds",    color: "#A78BFA" },
+  { value: "non_pnp",   label: "Non-PNP",   color: "#60A5FA" },
+  { value: "community", label: "Community", color: "#34C759" },
+  { value: "media",     label: "Media",     color: "#8E8E93" },
+  { value: "social",    label: "Social",    color: "#636366" },
 ] as const;
 
 type PostCategory = (typeof POST_CATEGORIES)[number]["value"];
@@ -826,7 +829,8 @@ export function PostComposer({
   // Kept for backward-compat with existing UI conditionals; matches new limit.
   const canAddVideo = canAddMoreVideos;
   const isOverCharLimit = text.length > MAX_CHARS;
-  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit;
+  const hasVideoFile = files.some((f) => isVideoType(f.file));
+  const canPost = (text.trim().length > 0 || files.length > 0) && !isPosting && !isOverCharLimit && (!hasVideoFile || category !== null);
   const resolvedPlaceholder = placeholder ?? tFeed.whatOnYourMind;
   const displayName = user?.displayName || user?.username || "U";
 
@@ -1159,7 +1163,7 @@ export function PostComposer({
           )}
 
           {/* Category chips */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
+          <div className="mb-1 flex flex-wrap gap-1.5">
             {POST_CATEGORIES.map((cat) => {
               const active = category === cat.value;
               return (
@@ -1180,6 +1184,11 @@ export function PostComposer({
               );
             })}
           </div>
+          {hasVideoFile && !category && (
+            <p className="mb-3 text-[11px]" style={{ color: "#FF9500" }}>
+              Select a category to post your video
+            </p>
+          )}
 
           {/* Tag performers section */}
           {(showTagPicker || taggedPerformers.length > 0) && (

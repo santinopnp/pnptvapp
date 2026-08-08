@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
+import { PrivyProvider } from "@privy-io/react-auth";
+import { base } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/hooks/useNotifications";
 import { MusicPlayerProvider } from "@/hooks/useMusicPlayer";
@@ -392,8 +394,19 @@ export default function App() {
                   navigation (Phase 2 of cam-first redesign).
                 */}
                 <MainStageProvider>
-                  <RouterProvider router={router} />
-                  <AppOverlays />
+                  <PrivyProvider
+                    appId={import.meta.env.VITE_PRIVY_APP_ID as string}
+                    config={{
+                      defaultChain: base,
+                      supportedChains: [base],
+                      loginMethods: ["telegram", "twitter", "wallet"],
+                      embeddedWallets: { createOnLogin: "users-without-wallets" },
+                      appearance: { theme: "dark", accentColor: "#D4007A" },
+                    }}
+                  >
+                    <RouterProvider router={router} />
+                    <AppOverlays />
+                  </PrivyProvider>
                 </MainStageProvider>
               </MusicPlayerProvider>
             </NotificationProvider>

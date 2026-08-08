@@ -10,19 +10,19 @@ const strings = {
     backBtn: "Back",
     agreeBtn: "I Agree",
 
-    // Step 1 — Tiers
-    tiersTitle: "Welcome to PNPtv!",
+    // Step 1 — Welcome (freemium pitch)
+    tiersTitle: "The Private PNP-aware Queer Adult Entertainment Digital Community",
     tiersBody:
-      "PNPtv! is the private digital home for the queer party & play community. A space built by and for us — with live shows, exclusive content, private hangouts, and tools that respect your privacy. Choose how you want to participate below.",
+      "Freemium platform — no credit card required. Join free and explore at your own pace.",
 
     // Step 2 — Age
     ageTitle: "Age Verification",
-    ageSubtitle: "This platform contains adult content intended for people 18 years of age or older.",
+    ageSubtitle: "This platform contains adult content intended for verified members only. Please confirm your date of birth to continue.",
     ageSelectYear: "Year",
     ageSelectMonth: "Month",
     ageSelectDay: "Day",
-    ageCheckLabel: "I confirm I am 18 years old or older.",
-    ageErrorUnderage: "You must be 18 or older to use PNPtv!.",
+    ageCheckLabel: "I confirm I am of age and eligible to access this platform.",
+    ageErrorUnderage: "You do not meet the age requirements for this platform.",
     ageErrorInvalidDate: "Please select a valid date of birth.",
     ageErrorServer: "Age could not be verified. Please try again.",
 
@@ -32,7 +32,7 @@ const strings = {
     termsScrollHint: "Scroll to the bottom to enable the button.",
     termsExcerptHeading: "PNPtv! Terms of Service — Summary",
     termsP1:
-      "By accessing PNPtv!, you agree to use the platform in accordance with all applicable laws. You must be at least 18 years of age to register and use any feature of this service.",
+      "By accessing PNPtv!, you agree to use the platform in accordance with all applicable laws. You must meet our membership age requirements to register and use any feature of this service.",
     termsP2:
       "PNPtv! hosts adult content created by verified members and creators. All content depicting real people requires documented consent. We operate under 18 U.S.C. §2257 record-keeping requirements and cooperate fully with law enforcement requests.",
     termsP3:
@@ -82,26 +82,10 @@ const strings = {
       "Privacy-first — your data, identity, and activity are protected by design.",
     ] as const,
 
-    // Step 7 — Crypto
-    cryptoTitle: "Crypto Payments",
-    cryptoSubtitle: "PNPtv! uses cryptocurrency for payments. Here’s why — and how to get started.",
-    cryptoP1:
-      "Traditional card networks (Visa, Mastercard) routinely block adult-content platforms. We use crypto so you can pay privately without chargebacks or card-network refusals. Your bank statement will never show PNPtv.",
-    cryptoP2:
-      "You don’t need to be a crypto expert. Binance lets you buy AND send crypto from one single app — no separate wallet needed. Just create an account, buy with your card, and send.",
-    cryptoDashTitle: "DashPay",
-    cryptoDashDesc: "Recommended for Dash payments. Fast, low-fee, and private.",
-    cryptoDashHomepage: "https://www.dash.org/downloads/",
-    cryptoDashAppStore: "https://apps.apple.com/app/dash-wallet/id1206647026",
-    cryptoDashPlayStore: "https://play.google.com/store/apps/details?id=hashengineering.darkcoin.wallet",
-    cryptoTrustTitle: "Binance",
-    cryptoTrustDesc: "Recommended for USDT, Bitcoin, and all coins. Buy AND send from one app — no separate wallet needed.",
-    cryptoTrustHomepage: "https://www.binance.com/en/download",
-    cryptoTrustAppStore: "https://apps.apple.com/app/binance-buy-bitcoin-crypto/id1436799971",
-    cryptoTrustPlayStore: "https://play.google.com/store/apps/details?id=com.binance.dev",
-    cryptoGuideLink: "Want more detail? See our Crypto Guide.",
-    cryptoGuideLinkLabel: "Crypto Guide",
-    cryptoFinishBtn: "Finish Setup",
+    // Step 7 — Wallet setup
+    cryptoTitle: "Your Digital Wallet",
+    cryptoSubtitle: "PNPtv! includes a built-in wallet — think of it as a prepaid account. No bank, no credit card needed.",
+    cryptoFinishBtn: "Continue →",
     cryptoFinishLoading: "Setting up your account…",
   },
 
@@ -114,17 +98,17 @@ const strings = {
     backBtn: "Atrás",
     agreeBtn: "Acepto",
 
-    tiersTitle: "¡Bienvenido a PNPtv!",
+    tiersTitle: "La Comunidad Digital Adulta Queer PNP-aware",
     tiersBody:
-      "PNPtv! es el hogar digital privado de la comunidad queer de party & play. Un espacio construido por y para nosotros — con shows en vivo, contenido exclusivo, hangouts privados y herramientas que respetan tu privacidad. Elige cómo quieres participar a continuación.",
+      "Plataforma freemium — sin tarjeta de crédito. Únete gratis y explora a tu ritmo.",
 
     ageTitle: "Verificación de Edad",
-    ageSubtitle: "Esta plataforma contiene contenido para adultos destinado a personas de 18 años o más.",
+    ageSubtitle: "Esta plataforma contiene contenido para adultos destinado exclusivamente a miembros verificados. Por favor confirma tu fecha de nacimiento para continuar.",
     ageSelectYear: "Año",
     ageSelectMonth: "Mes",
     ageSelectDay: "Día",
-    ageCheckLabel: "Confirmo que tengo 18 años o más.",
-    ageErrorUnderage: "Debes tener 18 años o más para usar PNPtv!.",
+    ageCheckLabel: "Confirmo que tengo la edad requerida y soy elegible para acceder a esta plataforma.",
+    ageErrorUnderage: "No cumples con los requisitos de edad para esta plataforma.",
     ageErrorInvalidDate: "Por favor selecciona una fecha de nacimiento válida.",
     ageErrorServer: "No se pudo verificar la edad. Intenta de nuevo.",
 
@@ -133,7 +117,7 @@ const strings = {
     termsScrollHint: "Desplázate al final para habilitar el botón.",
     termsExcerptHeading: "PNPtv! Términos de Servicio — Resumen",
     termsP1:
-      "Al acceder a PNPtv!, aceptas usar la plataforma de acuerdo con todas las leyes aplicables. Debes tener al menos 18 años para registrarte y usar cualquier función de este servicio.",
+      "Al acceder a PNPtv!, aceptas usar la plataforma de acuerdo con todas las leyes aplicables. Debes cumplir con los requisitos de edad para miembros para registrarte y usar cualquier función de este servicio.",
     termsP2:
       "PNPtv! aloja contenido para adultos creado por miembros y creadores verificados. Todo el contenido que muestre a personas reales requiere consentimiento documentado. Operamos bajo los requisitos de registro del artículo 18 U.S.C. §2257 y cooperamos plenamente con las solicitudes de las autoridades.",
     termsP3:
@@ -180,25 +164,9 @@ const strings = {
       "Privacidad primero — tus datos, identidad y actividad están protegidos por diseño.",
     ] as const,
 
-    cryptoTitle: "Pagos con Criptomonedas",
-    cryptoSubtitle: "PNPtv! usa criptomonedas para pagos. Aquí te explicamos por qué y cómo empezar.",
-    cryptoP1:
-      "Las redes de tarjetas tradicionales (Visa, Mastercard) bloquean rutinariamente las plataformas de contenido para adultos. Usamos cripto para que puedas pagar de forma privada sin contracargos ni rechazos. Tu estado de cuenta bancario nunca mostrará PNPtv.",
-    cryptoP2:
-      "No necesitas saber de cripto. Con Binance puedes comprar Y enviar cripto desde una sola app — sin wallet separada. Crea una cuenta, compra con tu tarjeta y envía.",
-    cryptoDashTitle: "DashPay",
-    cryptoDashDesc: "Recomendado para pagos con Dash. Rápido, bajo costo y privado.",
-    cryptoDashHomepage: "https://www.dash.org/downloads/",
-    cryptoDashAppStore: "https://apps.apple.com/app/dash-wallet/id1206647026",
-    cryptoDashPlayStore: "https://play.google.com/store/apps/details?id=hashengineering.darkcoin.wallet",
-    cryptoTrustTitle: "Binance",
-    cryptoTrustDesc: "Recomendado para USDT, Bitcoin y todas las monedas. Compra Y envía desde una sola app — sin wallet separada.",
-    cryptoTrustHomepage: "https://www.binance.com/en/download",
-    cryptoTrustAppStore: "https://apps.apple.com/app/binance-buy-bitcoin-crypto/id1436799971",
-    cryptoTrustPlayStore: "https://play.google.com/store/apps/details?id=com.binance.dev",
-    cryptoGuideLink: "¿Quieres más detalles? Consulta nuestra Guía de Cripto.",
-    cryptoGuideLinkLabel: "Guía de Cripto",
-    cryptoFinishBtn: "Finalizar Configuración",
+    cryptoTitle: "Tu Billetera Digital",
+    cryptoSubtitle: "PNPtv! incluye una billetera integrada — funciona como cuenta prepagada. Sin banco, sin tarjeta de crédito.",
+    cryptoFinishBtn: "Continuar →",
     cryptoFinishLoading: "Configurando tu cuenta…",
   },
 } as const;

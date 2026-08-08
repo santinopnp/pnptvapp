@@ -6,7 +6,7 @@ import { useI18n } from "@/lib/i18n";
 
 // Creators whose free videos get a PRIME upsell banner below the player.
 // Add IDs here to promote additional creators.
-const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "7246621722"]); // Santino (SantinoFurioso + pnptv alt) & Lex (PNPLatinoBoy) — verified against DB 2026-08-03
+const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957"]); // Santino (SantinoFurioso + pnptv alt)
 
 const PRIME_PLANS = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
@@ -284,11 +284,11 @@ export default function PostCard({
   const { isPrime, tier: viewerTier } = useTier();
   const navigate = useNavigate();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const isSantinoOrLex =
+  const isPrimeCreator =
     PRIME_UPSELL_CREATOR_IDS.has(post.author_id) ||
-    ["santinofurioso", "pnplatinoboy", "pnplatinotv"].includes(String(post.author_username || "").toLowerCase());
+    ["santinofurioso"].includes(String(post.author_username || "").toLowerCase());
   // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
-  const showPrimeUpsell = isSantinoOrLex && viewerTier !== "prime" && !post.is_exclusive && String(user?.id ?? "") !== String(post.author_id);
+  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && String(user?.id ?? "") !== String(post.author_id);
   const upsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(upsellKey) === "1"; } catch { return false; }

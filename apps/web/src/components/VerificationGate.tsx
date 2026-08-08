@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { acceptTerms, verifyAgeSelf, verifyAgePhoto } from "@/lib/api";
 import { Button, Card } from "@pnptv/ui-kit";
@@ -79,7 +79,7 @@ export function VerificationGate({ children }: VerificationGateProps) {
   const currentStepNumber = currentStep === "age" ? 1 : currentStep === "terms" ? (needsAge ? 2 : 1) : (needsAge ? 3 : 2);
 
   const _n = new Date();
-  const dobMax = `${_n.getFullYear() - 18}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
+  const dobMax = `${_n.getFullYear() - 25}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -116,8 +116,8 @@ export function VerificationGate({ children }: VerificationGateProps) {
 
   const handleAgeConfirm = async () => {
     setDobError(null);
-    if (!dob) { setDobError("Please enter your date of birth."); return; }
-    if (dob > dobMax) { setDobError("You must be at least 18 years old."); return; }
+    if (!dob) { setDobError(v.dobRequired); return; }
+    if (dob > dobMax) { setDobError(v.dobError); return; }
     setSubmitting(true);
     setError(null);
     try {
@@ -258,7 +258,7 @@ export function VerificationGate({ children }: VerificationGateProps) {
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-pnp-textSecondary mb-1.5">
-                    Date of birth
+                    {v.dobLabel}
                   </label>
                   <input
                     type="date"
@@ -272,7 +272,7 @@ export function VerificationGate({ children }: VerificationGateProps) {
                   {dobError && <p className="text-xs text-pnp-error mt-1">{dobError}</p>}
                 </div>
                 <p className="text-[11px] text-pnp-textSecondary/60 text-center">
-                  You must be 18 or older to access this platform. Your date of birth is stored securely.
+                  {v.dobPrivacyNote}
                 </p>
 
                 {error && <p className="text-sm text-pnp-error">{error}</p>}
@@ -361,7 +361,6 @@ export function VerificationGate({ children }: VerificationGateProps) {
 
             <div className="max-h-56 overflow-y-auto p-3 rounded-lg bg-pnp-surface border border-pnp-border text-xs text-pnp-textSecondary space-y-3 mb-4">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-bold text-red-400">18+</span>
                 <p className="font-medium text-pnp-textPrimary">{v.adultsOnlyLabel}</p>
               </div>
               <p>{v.adultsOnlyBody}</p>
@@ -378,6 +377,18 @@ export function VerificationGate({ children }: VerificationGateProps) {
                 <li>{v.prohibitedItem7}</li>
                 <li>{v.prohibitedItem8}</li>
               </ul>
+
+              <div className="rounded-lg bg-amber-500/[0.08] border border-amber-500/20 px-3 py-2.5 mt-2">
+                <p className="font-medium text-amber-400 text-xs flex items-center gap-1.5 mb-1">
+                  <span aria-hidden="true">ℹ️</span>
+                  {v.substanceDisclaimerTitle}
+                </p>
+                <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
+                  {v.substanceDisclaimerBodyPre}
+                  <Link to="/self-care" className="text-amber-400 hover:underline">{v.substanceDisclaimerLinkText}</Link>
+                  {v.substanceDisclaimerBodyPost}
+                </p>
+              </div>
 
               <p className="font-medium text-pnp-textPrimary mt-2">{v.enforcementHeading}</p>
               <p>{v.enforcementBody1}</p>

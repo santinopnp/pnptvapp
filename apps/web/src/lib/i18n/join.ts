@@ -269,7 +269,7 @@ const strings = {
     bottomCtaHeadlinePart2: "encontrar a tu gente?",
     bottomCtaBody: "Empieza gratis. Mejora cuando quieras. Cancela cuando quieras.",
 
-    footerAdults: "Solo para mayores de 18 años",
+    footerAdults: "Plataforma para miembros verificados",
     footerTerms: "Términos de Servicio",
     footerPrivacy: "Política de Privacidad",
     footerSupport: "Soporte",

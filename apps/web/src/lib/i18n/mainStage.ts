@@ -57,13 +57,13 @@ const strings = {
     guestTermsLink: "Terms and Conditions",
     guestPrivacyLabel: "I agree to PNPtv's",
     guestPrivacyLink: "Privacy Policy",
-    guestAgeLabel: "I confirm that I am 18 or older and understand this is a live adult platform.",
+    guestAgeLabel: "I confirm I am of age and eligible to access adult content on this platform.",
     guestJoinBtn: "Join Main Stage",
     guestNoAccount: "No PNPtv account needed to join as a guest.",
     guestCreateFree: "Create one free",
     guestValidationName: "Display name must be 2–30 characters.",
     guestValidationEmail: "A valid email is required so we can send you your invite to PNPtv.",
-    guestValidationConsent: "You must accept the Terms, Privacy Policy, and confirm you are 18+ to continue.",
+    guestValidationConsent: "You must accept the Terms, Privacy Policy, and confirm you are eligible to access adult content to continue.",
 
     // ── MainStageLiveBanner ────────────────────────────────────────────────────
     banner: {
@@ -138,13 +138,13 @@ const strings = {
     guestTermsLink: "Términos y Condiciones",
     guestPrivacyLabel: "Acepto la",
     guestPrivacyLink: "Política de Privacidad",
-    guestAgeLabel: "Confirmo que tengo 18 años o más y entiendo que esta es una plataforma adulta en vivo.",
+    guestAgeLabel: "Confirmo que tengo la edad requerida y soy elegible para acceder a contenido adulto en esta plataforma.",
     guestJoinBtn: "Entrar al Main Stage",
     guestNoAccount: "No necesitas cuenta PNPtv para unirte como invitado.",
     guestCreateFree: "Crea una gratis",
     guestValidationName: "El nombre debe tener 2–30 caracteres.",
     guestValidationEmail: "Necesitamos un email válido para enviarte tu invitación a PNPtv.",
-    guestValidationConsent: "Debes aceptar Términos, Privacidad y confirmar que tienes 18+ para continuar.",
+    guestValidationConsent: "Debes aceptar los Términos, la Privacidad y confirmar que eres elegible para acceder a contenido adulto para continuar.",
 
     // ── MainStageLiveBanner ────────────────────────────────────────────────────
     banner: {

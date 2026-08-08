@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
+import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
 import {
   submitOnboardingStep,
   completeOnboarding,
+  linkPrivyIdentity,
   type OnboardingStepKey,
 } from "@/lib/api";
-import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ function ScrollAgreementCard({
   );
 }
 
-// ── Step 1: Tiers ─────────────────────────────────────────────────────────────
+// ── Step 1: Welcome (freemium pitch — no prices) ──────────────────────────────
 
 function StepTiers({
   onNext,
@@ -112,71 +113,41 @@ function StepTiers({
   state: StepState;
 }) {
   const t = useI18n();
-  const o = t.onboarding;
-  const j = t.join;
-
-  const tiers = [
-    {
-      name: j.freePlanName,
-      price: j.freePlanPrice,
-      period: j.freePlanPeriod,
-      features: j.freePlanFeatures as readonly string[],
-      accent: "rgba(255,255,255,0.15)",
-    },
-    {
-      name: j.memberPlanName,
-      price: j.memberPlanPrice,
-      period: j.memberPlanPriceSuffix,
-      features: j.memberPlanFeatures as readonly string[],
-      accent: "rgba(212,0,122,0.25)",
-    },
-    {
-      name: j.primePlanName,
-      price: j.primePlanPrice,
-      period: j.primePlanPriceSuffix,
-      features: j.primePlanFeatures as readonly string[],
-      accent: "rgba(230,145,56,0.25)",
-      badge: j.primePlanBestValue,
-    },
-  ] as const;
-
   const es = t.lang === "es";
 
+  const perks = es
+    ? [
+        { icon: "🔓", label: "Gratis para siempre", desc: "Comunidad, feed social y PNP Channels sin costo" },
+        { icon: "💜", label: "Mejora cuando quieras", desc: "PRIME desbloquea shows en vivo y contenido exclusivo de creadores" },
+        { icon: "💎", label: "Gasta Ru$h", desc: "Nuestra moneda interna — funciona como crédito de regalo. $1 = 6 Ru$h" },
+      ]
+    : [
+        { icon: "🔓", label: "Free forever", desc: "Community, social feed & PNP Channels at no cost" },
+        { icon: "💜", label: "Upgrade anytime", desc: "PRIME unlocks live shows & exclusive creator content" },
+        { icon: "💎", label: "Spend Ru$h", desc: "Our in-app currency — works like a gift card. $1 = 6 Ru$h" },
+      ];
+
   return (
-    <StepWrapper title={o.tiersTitle} subtitle={o.tiersBody}>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {tiers.map((tier) => (
-          <div
-            key={tier.name}
-            className="relative rounded-xl border border-pnp-border p-4 flex flex-col gap-2"
-            style={{ background: tier.accent }}
-          >
-            {("badge" in tier) && tier.badge && (
-              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                    style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}>
-                {tier.badge}
-              </span>
-            )}
-            <div className="flex items-baseline gap-1">
-              <span className="text-lg font-bold text-pnp-textPrimary">{tier.price}</span>
-              <span className="text-xs text-pnp-textSecondary">{tier.period}</span>
+    <StepWrapper
+      title={es ? "Club Digital Adulto Queer PNP-aware" : "The Private PNP-aware Queer Adult Entertainment Digital Club"}
+      subtitle={es
+        ? "Plataforma freemium — sin tarjeta de crédito. Únete gratis y explora a tu ritmo."
+        : "Freemium platform — no credit card required. Join free and explore at your own pace."
+      }
+    >
+      <div className="space-y-3">
+        {perks.map((p) => (
+          <div key={p.label} className="flex items-start gap-4 rounded-xl bg-pnp-surface border border-pnp-border p-4">
+            <span className="text-2xl flex-shrink-0" aria-hidden="true">{p.icon}</span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-pnp-textPrimary">{p.label}</p>
+              <p className="text-xs text-pnp-textSecondary mt-0.5">{p.desc}</p>
             </div>
-            <p className="text-sm font-semibold text-pnp-textPrimary">{tier.name}</p>
-            <ul className="space-y-1 mt-1">
-              {(tier.features as readonly string[]).map((f) => (
-                <li key={f} className="flex items-start gap-2 text-xs text-pnp-textSecondary">
-                  <span className="mt-0.5 text-pnp-accent flex-shrink-0" aria-hidden="true">
-                    <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none">
-                      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </span>
-                  <span className="min-w-0">{f}</span>
-                </li>
-              ))}
-            </ul>
           </div>
         ))}
       </div>
+
+      {state.error && <p role="alert" className="text-sm text-pnp-error">{state.error}</p>}
 
       <button
         type="button"
@@ -185,17 +156,8 @@ function StepTiers({
         className="w-full min-h-[44px] rounded-xl font-semibold text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
         style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
       >
-        {state.isSubmitting ? "…" : o.continueBtn}
+        {state.isSubmitting ? "…" : (es ? "Unirme gratis →" : "Join free →")}
       </button>
-
-      <a
-        href="/crypto-guide"
-        className="w-full min-h-[44px] rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-150 active:scale-[0.98] border"
-        style={{ borderColor: "rgba(247,147,26,0.4)", background: "rgba(247,147,26,0.08)", color: "#F7931A" }}
-      >
-        <span aria-hidden="true">₿</span>
-        {es ? "¿Nuevo en crypto? Ver la guía" : "New to crypto? Read the guide"}
-      </a>
     </StepWrapper>
   );
 }
@@ -527,7 +489,7 @@ function StepValues({
   );
 }
 
-// ── Step 7: Crypto ────────────────────────────────────────────────────────────
+// ── Step 7: Wallet ────────────────────────────────────────────────────────────
 
 function StepCrypto({
   onFinish,
@@ -537,26 +499,185 @@ function StepCrypto({
   state: StepState;
 }) {
   const t = useI18n();
-  const o = t.onboarding;
-  const lang: "en" | "es" = t.lang === "es" ? "es" : "en";
+  const es = t.lang === "es";
+  const { ready, authenticated, login, getAccessToken } = usePrivy();
+  const { wallets } = useWallets();
+  const { connectWallet } = useConnectWallet();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const walletReady = authenticated && !!embeddedWallet;
+  const [connecting, setConnecting] = useState(false);
+  const linkedRef = useRef(false);
+
+  // Privy auth completed → stop spinner + sync privy_id + wallet_address to
+  // our backend so support can look up "which pnptv user owns 0xabc". Fires
+  // once per mount; guarded by linkedRef so re-renders don't re-POST.
+  useEffect(() => {
+    if (!walletReady) return;
+    setConnecting(false);
+    if (linkedRef.current) return;
+    linkedRef.current = true;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) await linkPrivyIdentity(token);
+      } catch (err) {
+        // Non-fatal — user can still complete onboarding. Support lookup
+        // just won't work until the user reconnects.
+        console.warn("[onboarding] privy link failed", err);
+        linkedRef.current = false;
+      }
+    })();
+  }, [walletReady, getAccessToken]);
+
+  // "Create my wallet" path — social login (Telegram / X) → embedded wallet auto-created
+  const handleCreateWallet = useCallback(() => {
+    setConnecting(true);
+    login();
+  }, [login]);
+
+  // "I already use crypto" path — connect existing external wallet (MetaMask, Coinbase, …)
+  const handleConnectExternal = useCallback(() => {
+    setConnecting(true);
+    connectWallet();
+  }, [connectWallet]);
+
+  const handleCancel = useCallback(() => {
+    setConnecting(false);
+  }, []);
 
   return (
-    <StepWrapper title={o.cryptoTitle} subtitle={o.cryptoSubtitle}>
-      <CryptoOnboardingWizard lang={lang} />
+    <StepWrapper
+      title={es ? "Tu billetera digital" : "Your digital wallet"}
+      subtitle={es
+        ? "PNPtv! incluye una billetera integrada — funciona como cuenta prepagada. Sin banco, sin tarjeta de crédito."
+        : "PNPtv! includes a built-in wallet — think of it as a prepaid account. No bank, no credit card needed."
+      }
+    >
+      {walletReady ? (
+        /* ── Success ── */
+        <div className="rounded-xl border border-green-500/30 p-4 space-y-2" style={{ background: "rgba(34,197,94,0.06)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(34,197,94,0.15)" }}>
+              <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-sm font-bold text-green-300">{es ? "¡Billetera lista!" : "Wallet ready!"}</p>
+          </div>
+          <p
+            className="text-xs font-mono text-pnp-textSecondary pl-11 break-all"
+            aria-label={es ? `Dirección de tu billetera: ${embeddedWallet.address}` : `Your wallet address: ${embeddedWallet.address}`}
+          >
+            {embeddedWallet.address}
+          </p>
+          <p className="text-xs text-pnp-textSecondary pl-11 leading-relaxed">
+            {es
+              ? "Cárgala con USDC (= dólares en Base) o compra Ru$h directamente con tarjeta desde la app."
+              : "Top it up with USDC (= dollars on Base) or buy Ru$h with a card directly inside the app."
+            }
+          </p>
+        </div>
+      ) : connecting ? (
+        /* ── Connecting spinner ── */
+        <div className="flex flex-col items-center gap-3 py-8">
+          <div className="w-10 h-10 rounded-full border-2 border-white/10 border-t-[#D4007A] animate-spin" />
+          <p className="text-sm font-semibold text-pnp-textPrimary text-center">
+            {es ? "Creando tu billetera…" : "Creating your wallet…"}
+          </p>
+          <p className="text-xs text-pnp-textSecondary text-center max-w-[220px] leading-relaxed">
+            {es
+              ? "Puede tardar hasta 60 segundos la primera vez. No cierres esta pantalla."
+              : "This can take up to 60 seconds the first time. Don't close this screen."
+            }
+          </p>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="mt-3 min-h-[44px] px-4 rounded-lg text-sm font-semibold text-pnp-textPrimary underline hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
+          >
+            {es ? "Cancelar" : "Cancel"}
+          </button>
+        </div>
+      ) : (
+        /* ── Choice ── */
+        <div className="space-y-3">
+          {/* Path B — Create (recommended) */}
+          <button
+            type="button"
+            onClick={handleCreateWallet}
+            disabled={!ready}
+            className="w-full flex items-center gap-4 p-4 rounded-xl border text-left transition-all active:scale-[0.98] disabled:opacity-40 hover:brightness-110"
+            style={{ borderColor: "rgba(212,0,122,0.4)", background: "rgba(212,0,122,0.08)" }}
+          >
+            <span className="text-2xl flex-shrink-0" aria-hidden="true">✨</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-pnp-textPrimary">
+                {es ? "Crear mi billetera" : "Create my wallet"}
+              </p>
+              <p className="text-xs text-pnp-textSecondary mt-0.5">
+                {es ? "Gratis. Entra con Telegram o X." : "Free. Sign in with Telegram or X."}
+              </p>
+            </div>
+            <span className="text-[9px] font-bold px-2 py-1 rounded-full text-white flex-shrink-0" style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}>
+              {es ? "RECOMENDADO" : "RECOMMENDED"}
+            </span>
+          </button>
 
-      {state.error && (
-        <p role="alert" className="text-sm text-pnp-error">{state.error}</p>
+          {/* Path A — Already have wallet */}
+          <button
+            type="button"
+            onClick={handleConnectExternal}
+            disabled={!ready}
+            className="w-full flex items-center gap-4 p-4 rounded-xl border border-white/10 bg-pnp-surface text-left transition-all active:scale-[0.98] disabled:opacity-40 hover:border-white/20"
+          >
+            <span className="text-2xl flex-shrink-0" aria-hidden="true">🔗</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-pnp-textPrimary">
+                {es ? "Ya tengo una wallet" : "I already use crypto"}
+              </p>
+              <p className="text-xs text-pnp-textSecondary mt-0.5">
+                {es ? "Conecta MetaMask, Coinbase u otra wallet." : "Connect MetaMask, Coinbase, or any wallet."}
+              </p>
+            </div>
+          </button>
+
+          {/* Security note */}
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-pnp-surface/50 border border-pnp-border/50">
+            <span className="text-base flex-shrink-0 mt-0.5" aria-hidden="true">🔐</span>
+            <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
+              {es
+                ? "Tu billetera solo te pertenece a ti. PNPtv! nunca tiene acceso a tus fondos — solo vemos las transacciones que tú firmas."
+                : "Your wallet belongs only to you. PNPtv! never has access to your funds — we only see transactions you sign."
+              }
+            </p>
+          </div>
+        </div>
       )}
+
+      {state.error && <p role="alert" className="text-sm text-pnp-error">{state.error}</p>}
 
       <button
         type="button"
         onClick={onFinish}
-        disabled={state.isSubmitting}
+        disabled={state.isSubmitting || connecting}
         className="w-full min-h-[44px] rounded-xl font-semibold text-white transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
         style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
       >
-        {state.isSubmitting ? o.cryptoFinishLoading : o.cryptoFinishBtn}
+        {state.isSubmitting
+          ? (es ? "Configurando tu cuenta…" : "Setting up your account…")
+          : walletReady
+          ? (es ? "Continuar →" : "Continue →")
+          : (es ? "Saltar por ahora →" : "Skip for now →")}
       </button>
+
+      {!walletReady && !connecting && (
+        <p className="text-center text-[11px] text-pnp-textSecondary/50">
+          {es
+            ? "Puedes configurar tu billetera después desde la app."
+            : "You can set up your wallet later from inside the app."
+          }
+        </p>
+      )}
     </StepWrapper>
   );
 }
@@ -572,8 +693,20 @@ export default function Onboarding() {
   const { isAuthenticated, isLoading, refreshUser } = useAuth();
   const o = useI18n().onboarding;
 
-  const [stepIndex, setStepIndex] = useState(0);
+  // Persist stepIndex to sessionStorage so a re-mount (Privy popup close, HMR,
+  // OAuth callback bounce, etc.) doesn't reset the wizard to step 0.
+  const [stepIndex, setStepIndex] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem("pnptv:onboarding:stepIndex");
+      const n = raw ? parseInt(raw, 10) : 0;
+      return Number.isFinite(n) && n >= 0 && n < STEPS.length ? n : 0;
+    } catch { return 0; }
+  });
   const [stepState, setStepState] = useState<StepState>({ isSubmitting: false, error: null });
+
+  useEffect(() => {
+    try { sessionStorage.setItem("pnptv:onboarding:stepIndex", String(stepIndex)); } catch {}
+  }, [stepIndex]);
 
   const totalSteps = STEPS.length;
   const currentStep = STEPS[stepIndex];
@@ -666,6 +799,7 @@ export default function Onboarding() {
     try {
       await completeOnboarding();
       await refreshUser().catch(() => {});
+      try { sessionStorage.removeItem("pnptv:onboarding:stepIndex"); } catch {}
       navigate("/", { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not complete setup. Please try again.");

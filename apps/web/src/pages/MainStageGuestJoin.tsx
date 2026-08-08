@@ -129,7 +129,7 @@ export default function MainStageGuestJoin() {
       return;
     }
     if (!terms || !privacy || !ageConfirmed) {
-      setFieldError("You must accept the Terms, Privacy Policy, and confirm you are 18+ to continue. / Debes aceptar Términos, Privacidad y confirmar que tienes 18+ para continuar.");
+      setFieldError("You must accept the Terms, Privacy Policy, and confirm you are eligible to access adult content to continue. / Debes aceptar Términos, Privacidad y confirmar que eres elegible para acceder a contenido adulto para continuar.");
       return;
     }
 
@@ -382,9 +382,9 @@ export default function MainStageGuestJoin() {
               className="mt-0.5 w-4 h-4 rounded accent-pnp-accent flex-shrink-0"
             />
             <span className="text-xs text-white/60 leading-snug">
-              I confirm that I am 18 or older and understand this is a live adult platform.
+              I confirm that I am of age and eligible to access adult content on this platform.
               {" / "}
-              Confirmo que tengo 18 años o más y entiendo que esta es una plataforma adulta en vivo.
+              Confirmo que tengo la edad requerida y soy elegible para acceder a contenido adulto en esta plataforma.
             </span>
           </label>
 

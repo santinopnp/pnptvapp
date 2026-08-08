@@ -15,6 +15,10 @@ export interface NowPaymentsOrder {
   nowpaymentsInvoiceId: string;
   payCurrency?: string | null;
   confirming?: boolean;
+  // Onchain flow (MetaMask Embedded Wallets → Arbitrum). Populated only when
+  // the order was created via /api/webapp/payments/onchain/prepare.
+  payAddress?: string;
+  payAmount?: string;
 }
 
 interface UseNowPaymentsOptions {

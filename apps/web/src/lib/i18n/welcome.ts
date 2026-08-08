@@ -15,8 +15,8 @@ const strings = {
 
     // Community Rules section
     communityRulesTitle: "Community Rules",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "You must be 18 years or older to use PNPtv! By continuing to use this platform, you confirm that you are at least 18 years of age.",
+    ageRequirementLabel: "Members Only",
+    ageRequirementText: "You must meet our membership age requirements to use this service. By continuing to use this platform, you confirm that you meet those requirements.",
     prohibitedContentTitle: "The following content is strictly prohibited:",
     prohibitedItems: [
       "Content involving minors in any context",
@@ -98,8 +98,8 @@ const strings = {
     memberActiveBadge: "Member Activo",
 
     communityRulesTitle: "Normas de la Comunidad",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Debes tener 18 años o más para usar PNPtv! Al continuar usando esta plataforma, confirmas que tienes al menos 18 años.",
+    ageRequirementLabel: "Solo Miembros",
+    ageRequirementText: "Debes cumplir nuestros requisitos de edad para ser miembro de este servicio. Al continuar usando esta plataforma, confirmas que cumples dichos requisitos.",
     prohibitedContentTitle: "El siguiente contenido está estrictamente prohibido:",
     prohibitedItems: [
       "Contenido que involucre menores en cualquier contexto",
@@ -177,8 +177,8 @@ const strings = {
     memberActiveBadge: "Member Ativo",
 
     communityRulesTitle: "Regras da Comunidade",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Você deve ter 18 anos ou mais para usar o PNPtv! Ao continuar usando esta plataforma, você confirma ter pelo menos 18 anos.",
+    ageRequirementLabel: "Apenas Membros",
+    ageRequirementText: "Você deve atender aos requisitos de idade para ser membro deste serviço. Ao continuar usando esta plataforma, você confirma que atende a esses requisitos.",
     prohibitedContentTitle: "O seguinte conteúdo é estritamente proibido:",
     prohibitedItems: [
       "Conteúdo envolvendo menores em qualquer contexto",
@@ -256,8 +256,8 @@ const strings = {
     memberActiveBadge: "Member 已激活",
 
     communityRulesTitle: "社区规则",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "您必须年满 18 岁才能使用 PNPtv!。继续使用本平台即表示您确认年龄至少为 18 岁。",
+    ageRequirementLabel: "仅限会员",
+    ageRequirementText: "您必须满足本平台的会员年龄要求才能使用 PNPtv!。继续使用本平台即表示您确认符合这些要求。",
     prohibitedContentTitle: "以下内容被严格禁止：",
     prohibitedItems: [
       "任何涉及未成年人的内容",
@@ -335,8 +335,8 @@ const strings = {
     memberActiveBadge: "Member 已啟用",
 
     communityRulesTitle: "社群規則",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "您必須年滿 18 歲才能使用 PNPtv!。繼續使用本平台即表示您確認年齡至少為 18 歲。",
+    ageRequirementLabel: "僅限會員",
+    ageRequirementText: "您必須符合本平台的會員年齡要求才能使用 PNPtv!。繼續使用本平台即表示您確認符合這些要求。",
     prohibitedContentTitle: "以下內容被嚴格禁止：",
     prohibitedItems: [
       "任何涉及未成年人的內容",
@@ -414,8 +414,8 @@ const strings = {
     memberActiveBadge: "Member Actif",
 
     communityRulesTitle: "Règles de la Communauté",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Vous devez avoir 18 ans ou plus pour utiliser PNPtv!. En continuant à utiliser cette plateforme, vous confirmez avoir au moins 18 ans.",
+    ageRequirementLabel: "Membres Seulement",
+    ageRequirementText: "Vous devez remplir les conditions d'âge pour être membre de ce service. En continuant à utiliser cette plateforme, vous confirmez remplir ces conditions.",
     prohibitedContentTitle: "Le contenu suivant est strictement interdit :",
     prohibitedItems: [
       "Contenu impliquant des mineurs dans quelque contexte que ce soit",
@@ -493,8 +493,8 @@ const strings = {
     memberActiveBadge: "Member Aktiv",
 
     communityRulesTitle: "Community-Regeln",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Du musst mindestens 18 Jahre alt sein, um PNPtv! zu nutzen. Indem du die Plattform weiter verwendest, bestätigst du, dass du mindestens 18 Jahre alt bist.",
+    ageRequirementLabel: "Nur Mitglieder",
+    ageRequirementText: "Du musst die Altersvorgaben für eine Mitgliedschaft erfüllen, um PNPtv! zu nutzen. Indem du die Plattform weiter verwendest, bestätigst du, dass du diese Anforderungen erfüllst.",
     prohibitedContentTitle: "Folgende Inhalte sind streng verboten:",
     prohibitedItems: [
       "Inhalte, die Minderjährige in irgendeinem Kontext zeigen",
@@ -572,8 +572,8 @@ const strings = {
     memberActiveBadge: "Member ใช้งานแล้ว",
 
     communityRulesTitle: "กฎของชุมชน",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "คุณต้องมีอายุ 18 ปีขึ้นไปจึงจะใช้ PNPtv! ได้ การใช้แพลตฟอร์มนี้ต่อไปถือว่าคุณยืนยันว่ามีอายุอย่างน้อย 18 ปี",
+    ageRequirementLabel: "สำหรับสมาชิกเท่านั้น",
+    ageRequirementText: "คุณต้องตรงตามข้อกำหนดอายุสำหรับการเป็นสมาชิกของบริการนี้ การใช้แพลตฟอร์มนี้ต่อไปถือว่าคุณยืนยันว่าตรงตามข้อกำหนดเหล่านั้น",
     prohibitedContentTitle: "เนื้อหาต่อไปนี้ถูกห้ามอย่างเด็ดขาด:",
     prohibitedItems: [
       "เนื้อหาที่เกี่ยวข้องกับผู้เยาว์ในทุกบริบท",
@@ -651,8 +651,8 @@ const strings = {
     memberActiveBadge: "Member Attivo",
 
     communityRulesTitle: "Regole della Community",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Devi avere almeno 18 anni per usare PNPtv!. Continuando a usare questa piattaforma, confermi di avere almeno 18 anni.",
+    ageRequirementLabel: "Solo Membri",
+    ageRequirementText: "Devi soddisfare i requisiti di età per l'iscrizione a questo servizio. Continuando a usare questa piattaforma, confermi di soddisfare tali requisiti.",
     prohibitedContentTitle: "I seguenti contenuti sono severamente vietati:",
     prohibitedItems: [
       "Contenuti che coinvolgono minori in qualsiasi contesto",
@@ -730,8 +730,8 @@ const strings = {
     memberActiveBadge: "Member Aktif",
 
     communityRulesTitle: "Topluluk Kuralları",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "PNPtv!'i kullanmak için 18 yaşında veya daha büyük olmalısın. Bu platformu kullanmaya devam ederek en az 18 yaşında olduğunu onaylıyorsun.",
+    ageRequirementLabel: "Yalnızca Üyeler",
+    ageRequirementText: "Bu hizmeti kullanmak için üyelik yaş gereksinimlerini karşılıyor olmalısın. Bu platformu kullanmaya devam ederek bu gereksinimleri karşıladığını onaylamış olursun.",
     prohibitedContentTitle: "Aşağıdaki içerikler kesinlikle yasaktır:",
     prohibitedItems: [
       "Herhangi bir bağlamda reşit olmayanları içeren içerikler",
@@ -809,8 +809,8 @@ const strings = {
     memberActiveBadge: "Member Активен",
 
     communityRulesTitle: "Правила сообщества",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Для использования PNPtv! вам должно быть не менее 18 лет. Продолжая использовать платформу, вы подтверждаете, что вам исполнилось 18 лет.",
+    ageRequirementLabel: "Только для участников",
+    ageRequirementText: "Для использования PNPtv! вы должны соответствовать возрастным требованиям для членства. Продолжая использовать платформу, вы подтверждаете, что соответствуете этим требованиям.",
     prohibitedContentTitle: "Следующий контент строго запрещён:",
     prohibitedItems: [
       "Контент с участием несовершеннолетних в любом контексте",
@@ -888,8 +888,8 @@ const strings = {
     memberActiveBadge: "Member Actief",
 
     communityRulesTitle: "Community-regels",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Je moet 18 jaar of ouder zijn om PNPtv! te gebruiken. Door dit platform te blijven gebruiken, bevestig je dat je minimaal 18 jaar oud bent.",
+    ageRequirementLabel: "Alleen Leden",
+    ageRequirementText: "Je moet voldoen aan de leeftijdsvereisten voor lidmaatschap om PNPtv! te gebruiken. Door dit platform te blijven gebruiken, bevestig je dat je aan deze vereisten voldoet.",
     prohibitedContentTitle: "De volgende inhoud is strikt verboden:",
     prohibitedItems: [
       "Inhoud waarbij minderjarigen betrokken zijn in welk context dan ook",
@@ -967,8 +967,8 @@ const strings = {
     memberActiveBadge: "Member Đang hoạt động",
 
     communityRulesTitle: "Quy tắc Cộng đồng",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Bạn phải từ 18 tuổi trở lên để sử dụng PNPtv!. Tiếp tục sử dụng nền tảng này đồng nghĩa bạn xác nhận mình ít nhất 18 tuổi.",
+    ageRequirementLabel: "Chỉ Dành Cho Thành Viên",
+    ageRequirementText: "Bạn phải đáp ứng yêu cầu độ tuổi thành viên để sử dụng dịch vụ này. Tiếp tục sử dụng nền tảng này đồng nghĩa bạn xác nhận rằng bạn đáp ứng các yêu cầu đó.",
     prohibitedContentTitle: "Nội dung sau đây bị nghiêm cấm hoàn toàn:",
     prohibitedItems: [
       "Nội dung liên quan đến trẻ vị thành niên trong bất kỳ bối cảnh nào",
@@ -1046,8 +1046,8 @@ const strings = {
     memberActiveBadge: "Member アクティブ",
 
     communityRulesTitle: "コミュニティルール",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "PNPtv! を使用するには18歳以上である必要があります。このプラットフォームを引き続き使用することで、あなたが少なくとも18歳であることを確認したことになります。",
+    ageRequirementLabel: "会員限定",
+    ageRequirementText: "PNPtv! を使用するにはメンバーシップの年齢要件を満たす必要があります。このプラットフォームを引き続き使用することで、これらの要件を満たしていることを確認したことになります。",
     prohibitedContentTitle: "以下のコンテンツは厳しく禁止されています：",
     prohibitedItems: [
       "いかなる文脈においても未成年者が関与するコンテンツ",
@@ -1125,8 +1125,8 @@ const strings = {
     memberActiveBadge: "Member Aktif",
 
     communityRulesTitle: "Aturan Komunitas",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "Kamu harus berusia 18 tahun atau lebih untuk menggunakan PNPtv!. Dengan terus menggunakan platform ini, kamu mengonfirmasi bahwa kamu berusia minimal 18 tahun.",
+    ageRequirementLabel: "Khusus Anggota",
+    ageRequirementText: "Kamu harus memenuhi persyaratan usia keanggotaan untuk menggunakan layanan ini. Dengan terus menggunakan platform ini, kamu mengonfirmasi bahwa kamu memenuhi persyaratan tersebut.",
     prohibitedContentTitle: "Konten berikut ini dilarang keras:",
     prohibitedItems: [
       "Konten yang melibatkan anak di bawah umur dalam konteks apa pun",
@@ -1204,8 +1204,8 @@ const strings = {
     memberActiveBadge: "Member نشط",
 
     communityRulesTitle: "قواعد المجتمع",
-    ageRequirementLabel: "18+",
-    ageRequirementText: "يجب أن تكون في عمر 18 سنة أو أكثر لاستخدام PNPtv!. بالاستمرار في استخدام هذه المنصة، تؤكد أنك في عمر 18 سنة على الأقل.",
+    ageRequirementLabel: "للأعضاء فقط",
+    ageRequirementText: "يجب أن تستوفي متطلبات العمر للعضوية لاستخدام هذه الخدمة. بالاستمرار في استخدام هذه المنصة، تؤكد أنك تستوفي هذه المتطلبات.",
     prohibitedContentTitle: "المحتوى التالي محظور تماماً:",
     prohibitedItems: [
       "المحتوى الذي يشمل القاصرين في أي سياق",

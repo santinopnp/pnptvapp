@@ -99,9 +99,11 @@ export default function AboutPage() {
                 borderColor: "rgba(212,0,122,0.2)",
               }}
             >
-              <p className="text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.75)" }}>
-                {t.missionBody}
-              </p>
+              {t.missionBody.split("\n\n").map((para, i) => (
+                <p key={i} className={`text-sm leading-relaxed${i > 0 ? " mt-3" : ""}`} style={{ color: "rgba(255,255,255,0.75)" }}>
+                  {para}
+                </p>
+              ))}
             </div>
           </section>
 

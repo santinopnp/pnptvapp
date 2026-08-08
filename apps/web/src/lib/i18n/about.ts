@@ -1,11 +1,11 @@
 const strings = {
   en: {
-    pageTitle: "About PNPtv! — The #1 Queer PNP Community",
+    pageTitle: "About PNPtv! — The Queer PNP Community",
     pageDescription: "Learn about PNPtv's mission, values, and the team building the platform our community deserves.",
     pageHeading: "About PNPtv!",
-    pageSubtitle: "Built by us, for us. No judgment. No stigma. No gatekeeping.",
+    pageSubtitle: "Community for the few who get it. Private by design.",
     missionTitle: "Our Mission",
-    missionBody: "PNPtv exists to give the queer PNP community a home online — a platform built by us, for us. No judgment, no stigma, no gatekeeping. We believe every person deserves space to exist authentically, connect with community, and access information that keeps them safer. We built PNPtv because no one else was going to.",
+    missionBody: "PNPtv exists to give the queer PNP community a home online — a platform built by us, for us. No judgment, no stigma, no gatekeeping. We believe every person deserves space to exist authentically, connect with their community, and access information that keeps them safer. We built PNPtv because no one else was going to.\n\nThe use of substances can be recreational or problematic and may affect your physical, mental, social, and spiritual health. At PNPtv, we believe in the right to make informed choices. Visit the Self-Care Center for resources.",
     whatWeOfferTitle: "What We Offer",
     features: [
       {
@@ -72,12 +72,12 @@ const strings = {
     contactCta: "Contact Us",
   },
   es: {
-    pageTitle: "Acerca de PNPtv! — La #1 Comunidad Queer PNP",
+    pageTitle: "Acerca de PNPtv! — La Comunidad Queer PNP",
     pageDescription: "Conoce la misión, los valores y el equipo que construye la plataforma que nuestra comunidad merece.",
     pageHeading: "Acerca de PNPtv!",
-    pageSubtitle: "Construida por nosotros, para nosotros. Sin juicio. Sin estigma. Sin barreras.",
+    pageSubtitle: "Una comunidad para los que entienden. Privada por diseño.",
     missionTitle: "Nuestra Misión",
-    missionBody: "PNPtv existe para darle a la comunidad queer PNP un hogar en línea — una plataforma construida por nosotros, para nosotros. Sin juicio, sin estigma, sin barreras. Creemos que toda persona merece espacio para existir auténticamente, conectarse con la comunidad y acceder a información que la mantenga más segura. Construimos PNPtv porque nadie más lo iba a hacer.",
+    missionBody: "PNPtv existe para darle a la comunidad queer PNP un hogar en línea — una plataforma construida por nosotros, para nosotros. Sin juicio, sin estigma, sin barreras. Creemos que toda persona merece espacio para existir auténticamente, conectarse con su comunidad y acceder a información que la mantenga más segura. Construimos PNPtv porque nadie más lo iba a hacer.\n\nEl uso de sustancias puede ser recreativo o problemático y puede afectar tu salud física, mental, social y espiritual. En PNPtv creemos en el derecho a tomar decisiones informadas. Visita el Centro de Autocuidado para acceder a recursos.",
     whatWeOfferTitle: "Qué Ofrecemos",
     features: [
       {

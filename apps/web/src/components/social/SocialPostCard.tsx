@@ -219,6 +219,7 @@ function resolveChannelPromoCta(
   metadata: Record<string, unknown> | undefined | null,
   isPrime: boolean,
   lang: string,
+  isLocked: boolean = false,
 ): { label: string; href: string; canPlayInline: boolean; videoUrl: string | null } | null {
   if (!metadata || (metadata as { kind?: string }).kind !== "channel_promo") return null;
   const m = metadata as {
@@ -238,9 +239,14 @@ function resolveChannelPromoCta(
   // This URL is stored at publish time and is publicly accessible on the Directus CDN
   // (no auth required for the media request itself). Access control is enforced at
   // the channel/entitlement layer, not at the CDN layer.
-  const videoUrl = (m.video_url && m.video_url.length > 10)
-    ? m.video_url
-    : (m.video_directus_id ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
+  // Belt-and-suspenders: never construct a playable URL for locked posts —
+  // the backend already nulls these fields, but channel_promo metadata
+  // may still carry video_url / video_directus_id before the lock runs.
+  const videoUrl = isLocked
+    ? null
+    : (m.video_url && m.video_url.length > 10)
+      ? m.video_url
+      : (m.video_directus_id ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
 
   switch (m.access_type) {
     case "free":
@@ -408,19 +414,20 @@ export default function SocialPostCard({
     post.metadata as Record<string, unknown> | undefined,
     !!isPrime,
     lang,
+    !!(post.content_locked || post.exclusive_status === "locked"),
   );
   // For own posts/replies, always use the live auth-context photo so avatar
   // updates cascade instantly without a full feed refetch.
   const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
 
   // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
-  // Santino & Lex's videos push Become PRIME (classic Telegram content + 2 Hangouts);
+  // Santino's videos push Become PRIME (classic Telegram content + hangout);
   // every other active creator pushes membership for exclusive content, channel & private hangout.
   // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
-  const isSantinoOrLex =
-    ["8599671840", "8552451957", "7246621722"].includes(String(post.author_id)) ||
-    ["santinofurioso", "pnplatinoboy", "pnptv"].includes(String(post.author_username || "").toLowerCase());
-  const showPrimeUpsell = isSantinoOrLex && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
+  const isPrimeCreator =
+    ["8599671840", "8552451957"].includes(String(post.author_id)) ||
+    ["santinofurioso", "pnptv"].includes(String(post.author_username || "").toLowerCase());
+  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
   const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
   const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
     try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
@@ -1059,13 +1066,61 @@ export default function SocialPostCard({
           ) : (post.is_exclusive && post.exclusive_status === "locked") || (post.content_locked && !post.blurred) ? (
             (() => {
               const unlockPrime = post.unlock_target === "prime";
+              const unlockPaid = post.unlock_target === "paid";
+              const isChannelGated = post.locked_reason === "channel_gated";
               const price = Number(post.author_creator_price || 15);
               const displayName = post.author_first_name || post.author_username || (lang === "es" ? "este creador" : "this creator");
               const previewSrc = post.preview_gif_url || null;
-              const ctaLabel = unlockPrime
-                ? (lang === "es" ? "Ver video completo en PRIME" : "Watch full video on PRIME")
-                : (lang === "es" ? `Ver video — Suscríbete a @${post.author_username || displayName} $${price}/mes` : `Watch full video — Subscribe to @${post.author_username || displayName} $${price}/mo`);
+
+              // Derive CTA label — channel-gated posts get channel-specific copy
+              let ctaLabel: string;
+              if (unlockPrime && isChannelGated) {
+                ctaLabel = lang === "es" ? "Desbloquea el canal PRIME" : "Unlock PRIME channel";
+              } else if (unlockPrime) {
+                ctaLabel = lang === "es" ? "Ver video completo en PRIME" : "Watch full video on PRIME";
+              } else if (unlockPaid && isChannelGated) {
+                ctaLabel = lang === "es" ? "Comprar acceso al canal" : "Purchase channel access";
+              } else if (isChannelGated) {
+                // creator_sub channel-gated
+                ctaLabel = lang === "es"
+                  ? `Suscríbete a @${post.author_username || displayName} para acceso al canal`
+                  : `Subscribe to @${post.author_username || displayName} for full channel access`;
+              } else {
+                ctaLabel = lang === "es"
+                  ? `Ver video — Suscríbete a @${post.author_username || displayName} $${price}/mes`
+                  : `Watch full video — Subscribe to @${post.author_username || displayName} $${price}/mo`;
+              }
+
+              // Paid-channel gate: link directly to channel page (purchase flow lives there)
+              if (unlockPaid && isChannelGated) {
+                const channelHref = post.channel_id ? `/channels?channel=${post.channel_id}` : "/channels";
+                return (
+                  <div
+                    className="mt-2 rounded-xl overflow-hidden relative"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  >
+                    <div className="p-4 text-center space-y-3">
+                      <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/15 flex items-center justify-center border border-pink-500/30">
+                        <svg className="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                        </svg>
+                      </div>
+                      <a
+                        href={channelHref}
+                        className="inline-block px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {`🔒 ${ctaLabel}`}
+                      </a>
+                    </div>
+                  </div>
+                );
+              }
+
               // Creator-sub wizard reveal: mirrors CreatorProfilePage subscribe pill.
+              // Applies to both regular creator_sub exclusive posts AND channel-gated creator_sub.
               if (!unlockPrime && showCreatorSubWizard) {
                 return (
                   <div className="mt-2" onClick={(e) => e.stopPropagation()}>

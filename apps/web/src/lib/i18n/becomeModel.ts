@@ -3,7 +3,7 @@ const strings = {
     pageTitle: "Become a Model — PNPtv!",
     pageDescription: "Learn how to become a PNPtv model. Explore the enrollment process, community milestones, and what it takes to join our creator team.",
     heading: "Become a Model",
-    subtitle: "Join the PNPtv creator team and share your talent with the community",
+    subtitle: "Join a community that actually protects its creators.",
 
     // Intro
     introTitle: "What is a PNPtv Model?",
@@ -18,7 +18,7 @@ const strings = {
     processStep3Title: "Enroll as a Tier Creator",
     processStep3Body: "Once you meet the eligibility criteria (10+ posts, 30+ likes, 15+ followers, 4 weeks active), enroll as an Ice, Crystal, or Diamond creator. Your enrollment is reviewed within 24-48 hours.",
     processStep4Title: "Apply for Full-Time Status",
-    processStep4Body: "After being approved as a tier creator, submit your full-time model application with your stage name, profile photo, social media links, and legal verification documents (18+ required).",
+    processStep4Body: "After being approved as a tier creator, submit your full-time model application with your stage name, profile photo, social media links, and legal verification documents.",
     processStep5Title: "Interview & Onboarding",
     processStep5Body: "Schedule a brief video call with our team. We'll walk you through the platform, discuss expectations, and answer any questions.",
     processStep6Title: "Go Live!",
@@ -46,7 +46,7 @@ const strings = {
 
     // Requirements
     requirementsTitle: "Requirements",
-    req1: "Must be 18 years or older (ID verification required)",
+    req1: "Must meet our membership age requirements (ID verification required)",
     req2: "Active PNPtv community member",
     req3: "Complete the model application form",
     req4: "Pass a brief video interview",
@@ -62,13 +62,13 @@ const strings = {
 
     // Disclaimer
     disclaimerTitle: "Important Disclaimer",
-    disclaimerBody: "Submitting an application does not guarantee that you will become a PNPtv model. All applications are reviewed individually by our team. Factors including community engagement, interview results, and compliance with our guidelines are considered in the review process. PNPtv reserves the right to approve or decline any application at its sole discretion. We encourage all applicants to continue engaging with the community regardless of application outcome.",
+    disclaimerBody: "Submitting an application does not guarantee that you will become a PNPtv model. All applications are reviewed individually by our team. Factors including community engagement, interview results, and compliance with our guidelines are considered in the review process. PNPtv reserves the right to approve or decline any application at its sole discretion. We encourage all applicants to continue engaging with the community regardless of application outcome.\n\nThe use of substances can be recreational or problematic and may affect your physical, mental, social, and spiritual health. At PNPtv, we believe in the right to make informed choices. Visit the Self-Care Center for resources.",
   },
   es: {
     pageTitle: "Conviértete en Modelo — PNPtv!",
     pageDescription: "Aprende cómo convertirte en modelo de PNPtv. Explora el proceso de inscripción, los hitos de la comunidad y lo que se necesita para unirte al equipo de creadores.",
     heading: "Conviértete en Modelo",
-    subtitle: "Únete al equipo de creadores de PNPtv y comparte tu talento con la comunidad",
+    subtitle: "Únete a una comunidad que realmente protege a sus creadores.",
 
     introTitle: "¿Qué es un Modelo PNPtv?",
     introBody: "Los modelos de PNPtv son creadores de la comunidad que transmiten en vivo, producen contenido exclusivo, reciben propinas y se conectan con fans a través de sesiones privadas. Como modelo, obtienes tu propio perfil, canal de streaming, calendario de reservas y acceso a herramientas de creador.",
@@ -81,7 +81,7 @@ const strings = {
     processStep3Title: "Inscríbete como Creador de Nivel",
     processStep3Body: "Una vez que cumplas los criterios de elegibilidad (10+ publicaciones, 30+ likes, 15+ seguidores, 4 semanas activo), inscríbete como creador Ice, Crystal o Diamond. Tu inscripción se revisa en 24-48 horas.",
     processStep4Title: "Solicita Estatus de Tiempo Completo",
-    processStep4Body: "Después de ser aprobado como creador de nivel, envía tu solicitud de modelo de tiempo completo con tu nombre artístico, foto de perfil, redes sociales y documentos de verificación legal (mayores de 18 requerido).",
+    processStep4Body: "Después de ser aprobado como creador de nivel, envía tu solicitud de modelo de tiempo completo con tu nombre artístico, foto de perfil, redes sociales y documentos de verificación legal.",
     processStep5Title: "Entrevista e Incorporación",
     processStep5Body: "Programa una breve videollamada con nuestro equipo. Te guiaremos por la plataforma, discutiremos expectativas y responderemos cualquier pregunta.",
     processStep6Title: "¡Transmite en Vivo!",
@@ -106,7 +106,7 @@ const strings = {
     perk7: "Mensajes directos con fans y miembros de la comunidad",
 
     requirementsTitle: "Requisitos",
-    req1: "Debe tener 18 años o más (verificación de ID requerida)",
+    req1: "Debe cumplir con los requisitos de edad para ser miembro (verificación de ID requerida)",
     req2: "Miembro activo de la comunidad PNPtv",
     req3: "Completar el formulario de solicitud de modelo",
     req4: "Pasar una breve entrevista por video",
@@ -120,7 +120,7 @@ const strings = {
     ctaCreatorDashboard: "Ir al Panel de Creador",
 
     disclaimerTitle: "Aviso Importante",
-    disclaimerBody: "Enviar una solicitud no garantiza que te convertirás en modelo de PNPtv. Todas las solicitudes son revisadas individualmente por nuestro equipo. Se consideran factores como la participación comunitaria, los resultados de la entrevista y el cumplimiento de nuestras directrices en el proceso de revisión. PNPtv se reserva el derecho de aprobar o rechazar cualquier solicitud a su entera discreción. Animamos a todos los solicitantes a seguir participando en la comunidad independientemente del resultado de su solicitud.",
+    disclaimerBody: "Enviar una solicitud no garantiza que te convertirás en modelo de PNPtv. Todas las solicitudes son revisadas individualmente por nuestro equipo. Se consideran factores como la participación comunitaria, los resultados de la entrevista y el cumplimiento de nuestras directrices en el proceso de revisión. PNPtv se reserva el derecho de aprobar o rechazar cualquier solicitud a su entera discreción. Animamos a todos los solicitantes a seguir participando en la comunidad independientemente del resultado de su solicitud.\n\nEl uso de sustancias puede ser recreativo o problemático y puede afectar tu salud física, mental, social y espiritual. En PNPtv creemos en el derecho a tomar decisiones informadas. Visita el Centro de Autocuidado para acceder a recursos.",
   },
 } as const;
 

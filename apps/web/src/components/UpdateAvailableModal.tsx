@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-/**
- * Shown to every user when a new app version is available.
- * Non-dismissible — user must tap "Update now" to continue.
- */
+const UPDATE_DISMISSED_DATE_KEY = "pnptv:update-dismissed-date";
+const UPDATE_FIRST_SEEN_KEY = "pnptv:update-first-seen";
+
 export function UpdateAvailableModal() {
   const [pending, setPending] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -16,6 +15,7 @@ export function UpdateAvailableModal() {
 
   const handleUpdate = useCallback(() => {
     setUpdating(true);
+    try { localStorage.removeItem(UPDATE_FIRST_SEEN_KEY); } catch { /* ignore */ }
     if (!("serviceWorker" in navigator)) {
       window.location.reload();
       return;
@@ -30,18 +30,21 @@ export function UpdateAvailableModal() {
         }
       })
       .catch(() => window.location.reload());
-    // Safety net: force reload if controllerchange doesn't fire within 8s.
     setTimeout(() => window.location.reload(), 8_000);
+  }, []);
+
+  const handleLater = useCallback(() => {
+    try { localStorage.setItem(UPDATE_DISMISSED_DATE_KEY, new Date().toDateString()); } catch { /* ignore */ }
+    setPending(false);
   }, []);
 
   if (!pending) return null;
 
   return (
     <>
-      {/* Backdrop — blocks interaction with stale UI */}
-      <div className="fixed inset-0 z-[9993] bg-black/60 backdrop-blur-sm" />
+      {/* Tap backdrop to dismiss */}
+      <div className="fixed inset-0 z-[9993] bg-black/40 backdrop-blur-sm" onClick={handleLater} />
 
-      {/* Prompt card */}
       <div
         className="fixed inset-x-0 bottom-0 z-[9994] flex flex-col items-center"
         role="alertdialog"
@@ -53,11 +56,7 @@ export function UpdateAvailableModal() {
           className="w-full max-w-sm mx-4 mb-6 rounded-2xl shadow-2xl overflow-hidden"
           style={{ background: "#1C1C1E", border: "1px solid rgba(255,255,255,0.12)" }}
         >
-          {/* Gradient bar at top */}
-          <div
-            className="h-1 w-full"
-            style={{ background: "linear-gradient(90deg, #D4007A, #7B61FF, #5BB8F5)" }}
-          />
+          <div className="h-1 w-full" style={{ background: "linear-gradient(90deg, #D4007A, #7B61FF, #5BB8F5)" }} />
 
           <div className="px-5 py-5">
             <div className="flex items-start gap-3 mb-4">
@@ -83,7 +82,7 @@ export function UpdateAvailableModal() {
               type="button"
               onClick={handleUpdate}
               disabled={updating}
-              className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+              className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60 mb-2"
               style={{
                 background: updating
                   ? "rgba(212,0,122,0.4)"
@@ -98,6 +97,14 @@ export function UpdateAvailableModal() {
               ) : (
                 "Update now"
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLater}
+              className="w-full py-2 rounded-xl text-sm text-white/40 hover:text-white/60 transition-colors"
+            >
+              Later
             </button>
           </div>
         </div>

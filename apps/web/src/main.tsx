@@ -177,6 +177,25 @@ if (!resetInProgress) {
 // The modal itself posts SKIP_WAITING when the user taps "Update now"; the
 // controllerchange handler below then reloads the page.
 
+// Keys shared with UpdateAvailableModal for once-daily low-traffic gating
+const UPDATE_FIRST_SEEN_KEY = "pnptv:update-first-seen";
+const UPDATE_DISMISSED_DATE_KEY = "pnptv:update-dismissed-date";
+
+function shouldShowUpdateNow(): boolean {
+  try {
+    // Suppress if user already dismissed today
+    if (localStorage.getItem(UPDATE_DISMISSED_DATE_KEY) === new Date().toDateString()) return false;
+    // Force after 3 days of pending (prevents indefinite deferral)
+    const firstSeen = localStorage.getItem(UPDATE_FIRST_SEEN_KEY);
+    if (firstSeen && Date.now() - parseInt(firstSeen, 10) >= 3 * 86_400_000) return true;
+    // Only prompt during low-traffic window: 3am–6am local time
+    const h = new Date().getHours();
+    return h >= 3 && h < 6;
+  } catch {
+    return true; // storage unavailable → fail open
+  }
+}
+
 if (!resetInProgress && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((reg) => {
     let announced = false;
@@ -184,11 +203,16 @@ if (!resetInProgress && "serviceWorker" in navigator) {
     const announceWaitingWorker = (origin: string) => {
       if (!reg.waiting) return;
       if (announced) return;
+      // Record when we first detected this pending update
+      try {
+        if (!localStorage.getItem(UPDATE_FIRST_SEEN_KEY)) {
+          localStorage.setItem(UPDATE_FIRST_SEEN_KEY, String(Date.now()));
+        }
+      } catch { /* ignore */ }
+      if (!shouldShowUpdateNow()) return; // defer until low-traffic window
       announced = true;
       markSwUpdatePending();
       dispatchSwUpdateStatus(`${origin}-prompt`);
-      // Fire the event UpdateAvailableModal listens for. The modal is
-      // non-dismissible so the user *must* update before continuing.
       window.dispatchEvent(new Event("pnptv:update-available"));
     };
 

@@ -105,9 +105,9 @@ export default function EditProfileModal({
     }
   };
 
-  // Compute exactly 18 years ago using local calendar date (avoids UTC off-by-one)
+  // Compute membership age cutoff using local calendar date (avoids UTC off-by-one)
   const _today = new Date();
-  const dobMax = `${_today.getFullYear() - 18}-${String(_today.getMonth() + 1).padStart(2, "0")}-${String(_today.getDate()).padStart(2, "0")}`;
+  const dobMax = `${_today.getFullYear() - 25}-${String(_today.getMonth() + 1).padStart(2, "0")}-${String(_today.getDate()).padStart(2, "0")}`;
 
   return (
     <Modal open={open} onClose={onClose} title={p.editProfileTitle}>

@@ -169,9 +169,9 @@ export default function SocialFeedTabs({
   const FEED_STORAGE_KEY = "pnptv:feed:tab";
   const FEED_ORDER_STORAGE_KEY = "pnptv:feed:tabOrder";
   type TabKey = Exclude<FeedFilter, "all">;
-  const DEFAULT_TAB_ORDER: TabKey[] = ["latest", "subscribed", "following", "new", "nearby", "hot"];
+  const DEFAULT_TAB_ORDER: TabKey[] = ["latest", "subscribed", "following", "new", "nearby", "hot", "slam"];
   const isTabKey = (v: unknown): v is TabKey =>
-    v === "latest" || v === "subscribed" || v === "following" || v === "new" || v === "nearby" || v === "hot";
+    v === "latest" || v === "subscribed" || v === "following" || v === "new" || v === "nearby" || v === "hot" || v === "slam";
   const [feedMode, setFeedMode] = useState<TabKey>(() => {
     try {
       const saved = localStorage.getItem(FEED_STORAGE_KEY);
@@ -583,6 +583,7 @@ export default function SocialFeedTabs({
                 key === "following"  ? t.tabFollowing  :
                 key === "new"        ? t.tabNew        :
                 key === "nearby"     ? t.tabNearby     :
+                key === "slam"       ? "💉 Slam"       :
                                        t.tabHot;
               const isActive = feedMode === key;
               return (

@@ -16,8 +16,8 @@ export const tutorialContent: Record<string, TutorialSection> = {
       {
         titleEn: "Welcome to PNPtv!",
         titleEs: "Bienvenido a PNPtv!",
-        descEn: "Your queer community hub. This is an 18+ platform. Content involving minors, non-consensual material, harassment, illegal sales, and spam are strictly prohibited. Violations are reported to authorities.",
-        descEs: "Tu centro comunitario queer. Esta es una plataforma para mayores de 18. Contenido con menores, material no consensual, acoso, ventas ilegales y spam estan estrictamente prohibidos. Las violaciones se reportan a las autoridades.",
+        descEn: "Your private queer community — members only. Content involving minors, non-consensual material, harassment, illegal sales, and spam are strictly prohibited. Violations are reported to authorities.",
+        descEs: "Tu comunidad queer privada — solo para miembros. Contenido con menores, material no consensual, acoso, ventas ilegales y spam están estrictamente prohibidos. Las violaciones se reportan a las autoridades.",
         illustration: "welcome",
       },
       {

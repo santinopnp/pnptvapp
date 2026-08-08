@@ -147,7 +147,7 @@ const strings = {
     mute: "Silenciar",
 
     // Misc
-    forAdults18Plus: "Para adultos mayores de 18 años",
+    forAdults18Plus: "Para miembros verificados",
     allRightsReserved: "Todos los derechos reservados",
     termsOfService: "Términos de Servicio",
     privacyPolicy: "Política de Privacidad",
@@ -160,7 +160,7 @@ const strings = {
 
     // Descargo de responsabilidad de video (creadores)
     videoDisclaimerTitle: "Acerca de este video",
-    videoDisclaimerBody: "Todos los intérpretes son mayores de 18 años. Cualquier objeto mostrado es utilería. PNPtv no fomenta el consumo de sustancias. Si estás lidiando con adicción, por favor busca ayuda profesional.",
+    videoDisclaimerBody: "Todos los intérpretes son mayores de 18 años. Cualquier objeto mostrado es utilería. El uso de sustancias puede ser recreativo o problemático y puede afectar tu salud física, mental, social y espiritual. En PNPtv creemos en el derecho a tomar decisiones informadas.",
     videoDisclaimerCta: "Visita el Centro de Autocuidado",
     videoDisclaimerReplay: "Ver de nuevo",
     videoDisclaimerDismiss: "Cerrar",

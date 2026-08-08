@@ -75,7 +75,7 @@ function AccordionItem({
 }
 
 export default function CommunityResourcesPage() {
-  const { t } = getStrings();
+  const { t, lang } = getStrings();
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
@@ -260,7 +260,20 @@ export default function CommunityResourcesPage() {
             className="text-xs text-center leading-relaxed"
             style={{ color: "rgba(255,255,255,0.25)" }}
           >
-            {t.copyrightNote}
+            {(() => {
+              const selfCareTrigger = lang === "es" ? "Centro de Autocuidado" : "Self-Care Center";
+              const parts = t.copyrightNote.split(selfCareTrigger);
+              if (parts.length !== 2) return t.copyrightNote;
+              return (
+                <>
+                  {parts[0]}
+                  <Link to="/self-care" className="underline hover:text-white/50 transition-colors">
+                    {selfCareTrigger}
+                  </Link>
+                  {parts[1]}
+                </>
+              );
+            })()}
           </p>
         </div>
 

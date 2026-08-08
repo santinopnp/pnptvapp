@@ -211,7 +211,9 @@ export default function BecomeModel() {
           </svg>
           <h3 className="text-sm font-bold text-yellow-500">{t.disclaimerTitle}</h3>
         </div>
-        <p className="text-xs text-pnp-textSecondary leading-relaxed">{t.disclaimerBody}</p>
+        {t.disclaimerBody.split("\n\n").map((para, i) => (
+          <p key={i} className={`text-xs text-pnp-textSecondary leading-relaxed${i > 0 ? " mt-2" : ""}`}>{para}</p>
+        ))}
       </div>
     </div>
   );

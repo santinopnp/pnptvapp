@@ -66,6 +66,7 @@ import {
   createHangoutTopic,
   updateHangoutTopic,
   deleteHangoutTopic,
+  tipTokens,
   ApiError,
   type HangoutGroup,
   type TopicLite,
@@ -287,6 +288,13 @@ function HangoutChatPanel({
   const [confirmDelete, setConfirmDelete] = useState<GroupMessage | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Tip state
+  const [tipPickerOpen, setTipPickerOpen] = useState(false);
+  const [tipAmount, setTipAmount] = useState<number | null>(null);
+  const [tipLoading, setTipLoading] = useState(false);
+  const [tipSuccess, setTipSuccess] = useState(false);
+  const [tipError, setTipError] = useState("");
+
   // Persist the draft as the user types, keyed by room. Skip while editing an
   // existing message — inputText is repurposed for edit text in that mode and
   // must not clobber the real unsent draft.
@@ -324,6 +332,7 @@ function HangoutChatPanel({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastTypingEmit = useRef(0);
+  const tipPickerRef = useRef<HTMLDivElement>(null);
 
   // Auto-grow the composer as text is typed/restored (including on the
   // initial mount, e.g. an edit's content or a restored draft).
@@ -337,6 +346,16 @@ function HangoutChatPanel({
   const hasFetched = useRef<number | null>(null);
   const isNearBottom = useRef(true);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Close tip picker on outside click
+  useEffect(() => {
+    if (!tipPickerOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (tipPickerRef.current && !tipPickerRef.current.contains(e.target as Node)) setTipPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [tipPickerOpen]);
 
   const ALLOWED_REACTIONS = ["😈", "❤️", "😆", "🔝", "🐷", "🍆", "🍑", "💨", "🚀"] as const;
   const QUICK_REACTIONS = ALLOWED_REACTIONS;
@@ -992,6 +1011,26 @@ function HangoutChatPanel({
   };
 
   const isValidPhoto = (p: string | null | undefined) => p && (p.startsWith("/") || p.startsWith("http"));
+
+  // Tip handler — sends tokens to hangout creator
+  const handleSendTip = async () => {
+    if (!tipAmount || tipLoading || !activeGroup.creatorId) return;
+    setTipLoading(true);
+    setTipError("");
+    try {
+      await tipTokens(String(activeGroup.creatorId), tipAmount);
+      setTipSuccess(true);
+      setTimeout(() => {
+        setTipSuccess(false);
+        setTipPickerOpen(false);
+        setTipAmount(null);
+      }, 2000);
+    } catch (err) {
+      setTipError(err instanceof Error ? err.message : "Could not send tip. Try again.");
+    } finally {
+      setTipLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full relative">
@@ -1696,7 +1735,70 @@ function HangoutChatPanel({
           🏆 Este tema es moderado por PNPtv! — el contenido lo gestiona la comunidad automáticamente.
         </div>
       ) : (
-        <div className="flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
+        <>
+          {/* Tip picker — floats above input bar when open */}
+          {tipPickerOpen && activeGroup.creatorId && String(activeGroup.creatorId) !== String(myId) && (
+            <div
+              ref={tipPickerRef}
+              className="mx-2 mb-1 rounded-2xl p-3 flex-shrink-0"
+              style={{ background: "rgba(0,0,0,0.85)", border: "1px solid rgba(255,255,255,0.10)" }}
+            >
+              {tipSuccess ? (
+                <p className="text-center text-sm font-semibold text-pnp-accent py-1">Tip sent! 💎</p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-pnp-textSecondary mb-2 text-center">
+                    Send a tip to{" "}
+                    <span className="text-white font-semibold">
+                      {memberMap[String(activeGroup.creatorId)] || "the creator"}
+                    </span>
+                  </p>
+                  <div className="flex gap-1.5 justify-center mb-2.5 flex-wrap">
+                    {([
+                      { tokens: 6,   usd: "$1"  },
+                      { tokens: 12,  usd: "$2"  },
+                      { tokens: 30,  usd: "$5"  },
+                      { tokens: 60,  usd: "$10" },
+                      { tokens: 120, usd: "$20" },
+                    ] as const).map(({ tokens, usd }) => (
+                      <button
+                        key={tokens}
+                        type="button"
+                        onClick={() => setTipAmount(tipAmount === tokens ? null : tokens)}
+                        className="flex flex-col items-center rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all active:scale-95 flex-shrink-0"
+                        style={{
+                          background: tipAmount === tokens
+                            ? "linear-gradient(135deg, #D4007A, #E69138)"
+                            : "rgba(255,255,255,0.08)",
+                          color: tipAmount === tokens ? "#fff" : "rgba(255,255,255,0.75)",
+                          border: tipAmount === tokens
+                            ? "1px solid transparent"
+                            : "1px solid rgba(255,255,255,0.10)",
+                        }}
+                      >
+                        <span>{tokens}💎</span>
+                        <span className="text-[9px] font-normal opacity-70 mt-0.5">{usd}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {tipError && (
+                    <p className="text-[10px] text-red-400 text-center mb-1.5">{tipError}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSendTip}
+                    disabled={!tipAmount || tipLoading}
+                    className="w-full rounded-xl py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-30"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", touchAction: "manipulation" }}
+                  >
+                    {tipLoading ? "Sending…" : tipAmount ? `Send ${tipAmount}💎` : "Select an amount"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-end gap-1.5 px-2 py-1.5 border-t border-pnp-border flex-shrink-0 bg-pnp-background" style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}>
           {!editingMsg && (
             <div className="flex items-end gap-1 mb-0.5">
               <MediaUploadButton
@@ -1706,6 +1808,23 @@ function HangoutChatPanel({
                 onVideoNoteRecord={handleVideoNoteRecorded}
                 disabled={sending}
               />
+              {activeGroup.creatorId && String(activeGroup.creatorId) !== String(myId) && (
+                <button
+                  type="button"
+                  onClick={() => { setTipPickerOpen((o) => !o); setTipError(""); }}
+                  className="w-9 h-9 flex items-center justify-center rounded-full text-base transition-all active:scale-90 flex-shrink-0"
+                  style={{
+                    background: tipPickerOpen
+                      ? "linear-gradient(135deg, #D4007A, #E69138)"
+                      : "rgba(255,255,255,0.08)",
+                    touchAction: "manipulation",
+                  }}
+                  aria-label="Send tip"
+                  title="Send a tip"
+                >
+                  💎
+                </button>
+              )}
             </div>
           )}
           <MentionInput
@@ -1743,6 +1862,7 @@ function HangoutChatPanel({
             )}
           </button>
         </div>
+        </>
       )}
 
       {/* Lightbox */}

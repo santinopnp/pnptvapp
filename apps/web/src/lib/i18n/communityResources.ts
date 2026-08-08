@@ -39,7 +39,7 @@ const strings = {
       },
     ],
     harmReductionTitle: "Harm Reduction Basics",
-    harmReductionSubtitle: "Practical information to reduce risk when using substances.",
+    harmReductionSubtitle: "Practical, judgment-free information to help you make informed choices about substance use.",
     harmReductionItems: [
       {
         title: "Test Your Substances",
@@ -109,7 +109,7 @@ const strings = {
     communityGuidelinesTitle: "Community Guidelines",
     communityGuidelinesBody: "PNPtv is built on mutual respect, harm reduction, and community care. We ask all members to engage with honesty, treat each other with dignity, respect consent in all interactions, report content or behavior that violates community standards, and prioritize the wellbeing of themselves and others. Violations of our community guidelines — including harassment, non-consensual sharing of content, and content involving minors — result in immediate and permanent removal from the platform.",
     communityGuidelinesCta: "Read Full Community Guidelines",
-    copyrightNote: "Resource information is provided for harm reduction purposes. PNPtv does not endorse any specific organizations and is not responsible for the content of external websites. In an emergency, call your local emergency services.",
+    copyrightNote: "The use of substances can be recreational or problematic and may affect your physical, mental, social, and spiritual health. At PNPtv, we believe in the right to make informed choices. Visit the Self-Care Center for more information and community resources. Content on this page is provided for harm-reduction education. PNPtv does not endorse specific organizations. In an emergency, contact your local emergency services.",
   },
   es: {
     pageTitle: "Recursos Comunitarios — PNPtv!",
@@ -151,7 +151,7 @@ const strings = {
       },
     ],
     harmReductionTitle: "Fundamentos de Reducción de Daños",
-    harmReductionSubtitle: "Información práctica para reducir riesgos al usar sustancias.",
+    harmReductionSubtitle: "Información práctica y sin juicios para ayudarte a tomar decisiones informadas sobre el uso de sustancias.",
     harmReductionItems: [
       {
         title: "Prueba tus Sustancias",
@@ -221,7 +221,7 @@ const strings = {
     communityGuidelinesTitle: "Pautas Comunitarias",
     communityGuidelinesBody: "PNPtv está construida sobre el respeto mutuo, la reducción de daños y el cuidado comunitario. Pedimos a todos los miembros que participen con honestidad, que traten a los demás con dignidad, que respeten el consentimiento en todas las interacciones, que reporten contenido o comportamiento que viole los estándares comunitarios y que prioricen el bienestar de ellos mismos y de los demás. Las violaciones de nuestras pautas comunitarias resultan en una eliminación inmediata y permanente de la plataforma.",
     communityGuidelinesCta: "Leer las Pautas Comunitarias Completas",
-    copyrightNote: "La información de recursos se proporciona con fines de reducción de daños. PNPtv no respalda ninguna organización específica y no es responsable del contenido de sitios web externos. En una emergencia, llama a los servicios de emergencia de tu localidad.",
+    copyrightNote: "El uso de sustancias puede ser recreativo o problemático y puede afectar tu salud física, mental, social y espiritual. En PNPtv creemos en el derecho a tomar decisiones informadas. Visita el Centro de Autocuidado para más información y recursos comunitarios. El contenido de esta página se ofrece con fines educativos de reducción de daños. PNPtv no respalda organizaciones específicas. En una emergencia, contacta a los servicios de emergencia de tu localidad.",
   },
 } as const;
 

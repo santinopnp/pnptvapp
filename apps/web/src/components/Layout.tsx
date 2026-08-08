@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
-const STREAMS_DEPRECATED = false;
+const STREAMS_DEPRECATED = true;
 import { createPortal } from "react-dom";
 import { Outlet, NavLink, useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { BottomNav } from "./BottomNav";
@@ -2129,8 +2129,8 @@ export function Layout() {
             </h2>
             <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>
               {t.lang === "es"
-                ? "PNPtv! contiene contenido sexual explícito para adultos. Al continuar confirmas que tienes 18 años o más."
-                : "PNPtv! contains explicit adult content. By continuing you confirm you are 18 years of age or older."}
+                ? "PNPtv! contiene contenido sexual explícito para adultos. Al continuar confirmas que cumples con los requisitos de edad para ser miembro."
+                : "PNPtv! contains explicit adult content. By continuing you confirm you meet our membership age requirements."}
             </p>
             <button
               onClick={() => {

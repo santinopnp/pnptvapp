@@ -1105,14 +1105,6 @@ export default function Profile() {
       roleBadge: "The Meth Daddy",
       roleStyle: { background: "rgba(255,215,0,0.15)", color: "#FFD700", border: "1px solid rgba(255,215,0,0.3)" },
     },
-    "7246621722": { // PNPLatinoBoy — light silver
-      gradient: "linear-gradient(135deg, #C0C0C0, #E8E8E8)",
-      color: "#D0D0D0",
-      border: "rgba(192,192,192,0.4)",
-      borderColor: "rgba(192,192,192,0.25)",
-      roleBadge: "The Rush Papi",
-      roleStyle: { background: "rgba(192,192,192,0.15)", color: "#D0D0D0", border: "1px solid rgba(192,192,192,0.3)" },
-    },
     "8250283246": { // Lexboytv — light silver
       gradient: "linear-gradient(135deg, #C0C0C0, #E8E8E8)",
       color: "#D0D0D0",

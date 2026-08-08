@@ -49,7 +49,7 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
     body: (
       <div className="space-y-3">
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
-          A <span className="text-white font-medium">private members-only club</span> for gay, bisexual, and queer men 25 and over — built from inside the PNP community, not looking at it from the outside.
+          A <span className="text-white font-medium">private members-only community</span> for gay, bisexual, and queer men — built from inside the PNP community, not looking at it from the outside.
         </p>
         <p className="text-pnp-textSecondary text-sm leading-relaxed">
           Post, stream, hang out, meet people nearby — without judgment, algorithms, or bans.
@@ -191,7 +191,7 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
         <p className="text-pnp-textSecondary text-sm leading-relaxed">Built on a <span className="text-white font-medium">Duty of Care model</span> — safety infrastructure designed from inside the community, not imposed from outside.</p>
         <div className="space-y-2">
           {[
-            { t: "Age & identity verification for all members (25+)", sub: "ID verification required. We protect the club." },
+            { t: "Age & identity verification for all members", sub: "ID verification required. We protect the community." },
             { t: "Wellness Mode & Use Tracker", sub: "Self-imposed rest periods with deliberate friction. Private session log — only you see it." },
             { t: "Community-calibrated moderation", sub: "Our filter knows the difference between party culture and actual harm vectors." },
             { t: "Encrypted DMs & fuzzy location", sub: "Your messages and location are protected by design, not policy." },
@@ -207,6 +207,17 @@ export const sheets: Record<string, { title: string; emoji: string; body: React.
               </div>
             </div>
           ))}
+          <div className="flex gap-2.5 items-start">
+            <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+            <div>
+              <p className="text-pnp-textSecondary text-[11px] leading-relaxed">
+                The use of substances can be recreational or problematic and may affect your physical, mental, social, and spiritual health. At PNPtv, we believe in the right to make informed choices.{" "}
+                <Link to="/self-care" className="text-pnp-accent font-semibold">Visit the Self-Care Center →</Link>
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex gap-2 pt-1">
           <a href="/safety" className="flex-1 text-center text-xs font-semibold text-gradient">Safety resources →</a>
@@ -1040,7 +1051,7 @@ export function LandingPage() {
             The Queer PNP Community
           </p>
           <p className="text-[10px] text-pnp-textSecondary/60 tracking-wide -mt-2">
-            Private club · Men 25+ · Age verified
+            Private Community · Members Only · Age Verified
           </p>
 
           {/* Performer focus banner — LATAM redirect with ?focus=performer */}
