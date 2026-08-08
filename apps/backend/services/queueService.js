@@ -242,12 +242,8 @@ async function initializeQueues() {
     jobId: 'cron-btcpay-webhook-probe',
   });
 
-  // Performer eligibility enforcement — daily at 07:00 UTC
-  await cronQueue.add('performer-eligibility', {}, {
-    repeat: { pattern: '0 7 * * *', tz: 'UTC' },
-    attempts: 2, removeOnFail: false,
-    jobId: 'cron-performer-eligibility',
-  });
+  // Performer eligibility enforcement runs from scripts/cron.js (node-cron) —
+  // do not schedule here to avoid duplicate execution.
 
   // Media cleanup — daily at 03:00 UTC
   await cronQueue.add('media-cleanup', {}, {
@@ -485,6 +481,20 @@ async function initializeQueues() {
     repeat: { pattern: '*/5 * * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-slack-avail-poll',
+  });
+
+  // Crypto on-chain payment: expire stale pending intents — every 15 min
+  await cronQueue.add('crypto-expire', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crypto-expire',
+  });
+
+  // Crypto on-chain payment: alert on stuck intents — every 10 min
+  await cronQueue.add('crypto-alert-stuck', {}, {
+    repeat: { pattern: '*/10 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crypto-alert-stuck',
   });
 
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');

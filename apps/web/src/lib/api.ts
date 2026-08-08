@@ -27,15 +27,13 @@ export const NP_COINS_SUBSCRIBE = [
 export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
 
 // Performer user IDs eligible for Gifted Ru$h partial payment on private calls.
-// These are users.id values for Santino and Lex (PNPLatinoBoy).
-// Never expand without explicit approval — gifted pool is scoped to these two only.
+// Never expand without explicit approval.
 export const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
   "8599671840",  // Santino
-  "7246621722",  // Lex / PNPLatinoBoy
 ]);
 
 // Creators whose pay buttons are live before the June 1 launch gate lifts
-const LAUNCH_UNLOCKED = new Set(['SantinoFurioso', 'PNPLatinoBoy'].map(u => u.toLowerCase()));
+const LAUNCH_UNLOCKED = new Set(['SantinoFurioso'].map(u => u.toLowerCase()));
 export const LAUNCH_DATE = new Date('2026-06-01T00:00:00-05:00');
 export function isCreatorPayLocked(username?: string | null): boolean {
   if (new Date() >= LAUNCH_DATE) return false;
@@ -867,6 +865,17 @@ export function sendTip(
   });
 }
 
+export function tipTokens(
+  recipientId: string,
+  amountTokens: number,
+  message?: string,
+): Promise<{ success: boolean; amountTokens: number; recipientUsername: string; newBalance: number }> {
+  return request("/api/webapp/tip-tokens", {
+    method: "POST",
+    body: { recipientId, amountTokens, ...(message ? { message } : {}) },
+  });
+}
+
 // Dash Token Wallet
 export interface TokenPackage {
   id: string;
@@ -1202,11 +1211,14 @@ export interface SocialPostItem {
   // Exclusive content fields
   is_exclusive?: boolean;
   exclusive_status?: "unlocked" | "locked";
-  locked_reason?: "not_prime" | "not_subscribed";
+  locked_reason?: "not_prime" | "not_subscribed" | "channel_gated";
   // Paywall enrichment (populated only when contentLocked)
   preview_gif_url?: string | null;
   is_video_exclusive?: boolean;
-  unlock_target?: "prime" | "creator_sub";
+  unlock_target?: "prime" | "creator_sub" | "paid";
+  // Channel access gate fields (populated via LEFT JOIN creator_channels in feed queries)
+  channel_access_type?: "free" | "prime" | "paid" | "subscription" | null;
+  channel_creator_id?: string | null;
   plan_slug?: string | null;
   creator_channel_url?: string | null;
   // Creator info on author
@@ -1469,6 +1481,20 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
   return res.json();
 }
 
+export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true; privyId: string; walletAddress: string | null }> {
+  const res = await fetch(`${API_BASE}/api/privy/link`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ privyToken }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteAvatar(): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/api/webapp/profile/avatar`, {
     method: "DELETE",
@@ -1713,7 +1739,7 @@ export function getPublicPost(
 export const getSocialPost = getPublicPost;
 
 /** Feed filter variants for the 5-tab home feed (2026-07-23). */
-export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot" | "latest";
+export type FeedFilter = "all" | "subscribed" | "following" | "new" | "nearby" | "hot" | "latest" | "slam";
 
 export interface NewMember {
   id: string;
@@ -10000,3 +10026,69 @@ export async function getPartnerGroupStats(groupId: number): Promise<unknown> {
   if (!res.ok) throw new Error("Failed to fetch partner group stats");
   return res.json();
 }
+
+// ── Crypto on-chain payments (Privy / Wagmi / USDC on Base) ──────────────────
+
+export interface CryptoPaymentIntent {
+  paymentId: number;
+  receivingAddress: string;
+  // Amount in the token's native units, locked at intent creation.
+  // USDC: dollars (e.g. 9.99). ETH: eth (e.g. 0.00312). Always use this
+  // for the on-chain send — never re-derive from a client-side price feed.
+  amountNative: number;
+  amountUsdc: number | null;
+  chain: string;
+  token: "USDC" | "ETH";
+  contractAddress: string;
+  expiresAt: string;
+}
+
+export interface CryptoPaymentStatus {
+  id: number;
+  status: "pending" | "confirmed" | "expired" | "failed" | "grant_failed";
+  tx_hash: string | null;
+  confirmed_at: string | null;
+  expires_at: string;
+}
+
+export async function createCryptoPaymentIntent(params: {
+  planId: string;
+  token?: "USDC" | "ETH";
+  creatorId?: string | null;
+  scopeType?: string | null;
+  scopeId?: string | null;
+}): Promise<CryptoPaymentIntent> {
+  const res = await fetch(`${API_BASE}/api/crypto/payment-intent`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).error || "Failed to create payment intent");
+  }
+  return res.json();
+}
+
+export async function recordCryptoTx(paymentId: number, txHash: string, fromAddress: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/crypto/payment-intent/${paymentId}/tx`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ txHash, fromAddress }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).error || "Failed to record transaction");
+  }
+}
+
+export async function getCryptoPaymentStatus(paymentId: number): Promise<CryptoPaymentStatus> {
+  const res = await fetch(`${API_BASE}/api/crypto/payment-intent/${paymentId}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to get crypto payment status");
+  return res.json();
+}
+

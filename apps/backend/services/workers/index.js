@@ -514,16 +514,6 @@ async function cronProcessor(job) {
       return;
     }
 
-    case 'performer-eligibility': {
-      const UserService = _safeRequire('../userService');
-      if (!UserService) { logger.warn('[BullMQ] performer-eligibility: userService not found'); return; }
-      if (typeof UserService.enforcePerformerEligibility === 'function') {
-        const results = await UserService.enforcePerformerEligibility();
-        logger.info('Performer eligibility enforcement completed', { revoked: results.revoked?.length, kept: results.kept?.length });
-      }
-      return;
-    }
-
     case 'media-cleanup': {
       const MediaCleanupService = _safeRequire('../mediaCleanupService');
       if (!MediaCleanupService) { logger.warn('[BullMQ] media-cleanup: service not found'); return; }
@@ -949,6 +939,20 @@ async function cronProcessor(job) {
           await redis.set(redisKey, '1', 'EX', AVAIL_TTL_SECONDS);
         } catch (_) {}
       }
+      return;
+    }
+
+    case 'crypto-expire': {
+      const CryptoPaymentService = _safeRequire('../cryptoPaymentService');
+      if (!CryptoPaymentService) { logger.warn('[BullMQ] crypto-expire: service not found'); return; }
+      await CryptoPaymentService.expireStale();
+      return;
+    }
+
+    case 'crypto-alert-stuck': {
+      const CryptoPaymentService = _safeRequire('../cryptoPaymentService');
+      if (!CryptoPaymentService) { logger.warn('[BullMQ] crypto-alert-stuck: service not found'); return; }
+      await CryptoPaymentService.alertStuck();
       return;
     }
 

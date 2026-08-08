@@ -14,8 +14,15 @@
     "@livekit/components-react": "^2.9.20",
     "@livekit/components-styles": "^1.2.0",
     "@pnptv/ui-kit": "*",
+    "@privy-io/react-auth": "^3.37.0",
     "@sentry/react": "^7.120.4",
+    "@solana-program/compute-budget": "^0.17.0",
+    "@solana-program/system": "^0.13.0",
+    "@solana-program/token": "^0.15.0",
+    "@solana-program/token-2022": "^0.14.1",
+    "@tanstack/react-query": "^5.101.4",
     "@types/react-window": "^1.8.8",
+    "@web3auth/modal": "^11.4.0",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.12",
     "hls.js": "^1.5.0",
@@ -33,7 +40,9 @@
     "shaka-player": "^5.2.1",
     "shallowequal": "^1.1.0",
     "socket.io-client": "^4.7.0",
-    "tus-js-client": "^4.3.1"
+    "tus-js-client": "^4.3.1",
+    "viem": "^2.55.11",
+    "wagmi": "^3.7.6"
   },
   "devDependencies": {
     "@types/dompurify": "^3.2.0",

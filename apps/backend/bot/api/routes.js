@@ -450,7 +450,7 @@ const BLOCKED_US_REGIONS = new Set();
 // 2026-07-23 per operator instruction — full open access restored.
 const BLOCKED_COUNTRIES = new Set();
 // Per-user geo-block whitelist — bypasses the hard country block for specific user IDs.
-const GEO_BLOCK_USER_WHITELIST = new Set(['7246621722', '8599671840']); // PNPLatinoBoy, SantinoFurioso
+const GEO_BLOCK_USER_WHITELIST = new Set(['8599671840']); // SantinoFurioso
 
 // Auto-populated whitelist of active Colombian creators. They live in CO and
 // need to post/stream/receive tips to do their job, so the hard geo-block
@@ -13525,6 +13525,140 @@ app.get('/api/webapp/payments/usdc/status/:orderId', requireSessionAuth, usdcSta
   });
 }));
 
+// POST /api/webapp/tip-tokens — instant Rush token tip to any active performer
+app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(async (req, res) => {
+  const payerUser = req.session?.user;
+  if (!payerUser) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  const VALID_AMOUNTS = [6, 12, 30, 60, 120];
+  const { recipientId, amountTokens, message: rawMessage } = req.body || {};
+
+  // Validate amount
+  const parsedAmount = Number.isFinite(amountTokens) ? amountTokens : Number(amountTokens);
+  if (!VALID_AMOUNTS.includes(parsedAmount)) {
+    return res.status(400).json({ success: false, error: `Amount must be one of: ${VALID_AMOUNTS.join(', ')} tokens.` });
+  }
+
+  // Validate recipientId
+  if (!recipientId || typeof recipientId !== 'string' || !recipientId.trim()) {
+    return res.status(400).json({ success: false, error: 'recipientId is required.' });
+  }
+
+  // Sanitize message (max 140 chars, null if absent/empty)
+  const message = rawMessage && typeof rawMessage === 'string'
+    ? rawMessage.trim().slice(0, 140) || null
+    : null;
+
+  // Lookup recipient — must be an active performer
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows: recipientRows } = await dbQuery(
+    `SELECT u.id::text AS id, u.username
+     FROM users u
+     JOIN performers p ON p.user_id = u.id::text
+     WHERE (u.id::text = $1 OR u.username ILIKE $1)
+       AND p.status = 'active'
+     LIMIT 1`,
+    [recipientId.trim()]
+  );
+  if (!recipientRows.length) {
+    return res.status(404).json({ success: false, error: 'Recipient not found or is not an active performer.' });
+  }
+  const recipient = recipientRows[0];
+  const recipientUserId = recipient.id;
+  const recipientUsername = recipient.username;
+
+  // Anti-self-tip
+  if (recipientUserId === String(payerUser.id)) {
+    return res.status(400).json({ success: false, error: 'You cannot tip yourself.' });
+  }
+
+  const payerUserId = String(payerUser.id);
+  const orderId = crypto.randomUUID();
+  const amountUsd = (parsedAmount / 6.0).toFixed(2);
+
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const { getClient: getPgClient } = require('../../config/postgres');
+
+  // Idempotency / duplicate-click guard — 5 s NX lock per (payer, recipient, amount)
+  const lockKey = `tip_lock:${payerUserId}:${recipientUserId}:${parsedAmount}`;
+  const lockAcquired = await cache.set(lockKey, '1', 'EX', 5, 'NX');
+  if (!lockAcquired) {
+    return res.status(429).json({ success: false, error: 'DUPLICATE_TIP', message: 'Duplicate tip request. Please wait a moment.' });
+  }
+
+  // Wrap debit + credit + INSERT in a single transaction so no orphaned debit is possible
+  let debitResult;
+  let released = false;
+  const pgClient = await getPgClient();
+  const releasePg = () => { if (!released) { released = true; pgClient.release(); } };
+  try {
+    await pgClient.query('BEGIN');
+
+    debitResult = await tokenLedger.debit({
+      userId: payerUserId,
+      amount: parsedAmount,
+      reason: 'live_tip_send',
+      allowGifted: false,
+      sourceType: 'creator_tip',
+      sourceId: orderId,
+      actorId: payerUserId,
+      metadata: { recipientId: recipientUserId, recipientUsername, orderId },
+      externalClient: pgClient,
+    });
+
+    await tokenLedger.credit({
+      userId: recipientUserId,
+      balanceDelta: parsedAmount,
+      reason: 'live_tip_receive',
+      sourceType: 'creator_tip',
+      sourceId: orderId,
+      actorId: payerUserId,
+      metadata: { payerId: payerUserId, orderId },
+      externalClient: pgClient,
+    });
+
+    await pgClient.query(
+      `INSERT INTO creator_tips (payer_id, creator_id, amount_usd, order_id, message, status)
+       VALUES ($1, $2, $3::numeric, $4, $5, 'completed')`,
+      [payerUserId, recipientUserId, amountUsd, orderId, message]
+    );
+
+    await pgClient.query('COMMIT');
+  } catch (err) {
+    await pgClient.query('ROLLBACK').catch(() => {});
+    releasePg();
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ success: false, error: 'INSUFFICIENT_TOKENS', message: 'Not enough Ru$h to send this tip.' });
+    }
+    throw err;
+  } finally {
+    releasePg();
+  }
+
+  // Fire-and-forget Slack notification (non-fatal)
+  try {
+    const slackOps = require('../../services/slackOpsService');
+    if (typeof slackOps.notifyPaymentSuccess === 'function') {
+      slackOps.notifyPaymentSuccess({
+        orderId,
+        userId: payerUserId,
+        username: payerUser.username,
+        amount: amountUsd,
+        currency: 'USD',
+        plan: `Rush token tip → @${recipientUsername}`,
+        provider: 'RushTokens',
+      }).catch(() => {});
+    }
+  } catch (_) { /* non-fatal */ }
+
+  return res.json({
+    success: true,
+    amountTokens: parsedAmount,
+    recipientUsername,
+    newBalance: debitResult.balance_after,
+  });
+}));
+
 // ── Creator tip endpoints ─────────────────────────────────────────────────────
 // Tips are 100% commission-free to the creator (TIP_CREATOR_RATE = 1.0).
 // Uses NowPayments hosted invoice. Idempotency key = UUID stored in creator_tips.order_id.
@@ -14443,6 +14577,37 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       ).catch(() => {});
       throw callGrantErr;
     }
+    // Fire-and-forget: notify #ops-calls of the new confirmed booking
+    try {
+      const _bookingRow = await dbQuery(
+        `SELECT b.id, b.duration_minutes, b.price_cents, b.start_time_utc,
+                u.username  AS client_username,
+                u2.username AS creator_username
+           FROM bookings b
+           JOIN payments p  ON p.id = $1::text
+           JOIN users u     ON u.id = b.user_id
+           JOIN performers pf ON pf.id = b.performer_id
+           JOIN users u2    ON u2.id = pf.user_id
+          WHERE p.id = $1::text
+          LIMIT 1`,
+        [callPaymentId]
+      );
+      if (_bookingRow.rows[0]) {
+        const _b = _bookingRow.rows[0];
+        const slackOps = require('../../services/slackOpsService');
+        slackOps.notifyNewBooking({
+          bookingId: _b.id,
+          clientUsername: _b.client_username,
+          creatorUsername: _b.creator_username,
+          durationMinutes: _b.duration_minutes,
+          priceUsd: ((_b.price_cents || 0) / 100).toFixed(2),
+          startTimeUtc: _b.start_time_utc,
+          startTimeCol: _b.start_time_utc
+            ? new Date(_b.start_time_utc).toLocaleString('en-US', { timeZone: 'America/Bogota', hour12: false })
+            : 'N/A',
+        }).catch(() => {});
+      }
+    } catch (_) { /* non-fatal — never block IPN response */ }
     await dbQuery(
       `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
       [order_id, `nowpayments:call:${payment_id}`]
@@ -15030,6 +15195,108 @@ app.post('/api/webhooks/epayco', webhookLimiter, express.json(), (req, res) => r
 // POST /api/webhooks/daimo (legacy webhook endpoint stub for health/compatibility checks)
 app.post('/api/webhooks/daimo', webhookLimiter, express.json(), (req, res) => res.json({ status: 'deprecated', provider: 'daimo' }));
 
+// ── Crypto on-chain payments (Privy / Wagmi / USDC on Base) ──────────────────
+
+// Rate limiter: 5 payment intents per user per minute to prevent intent flooding
+const cryptoIntentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => `user:${req.session?.user?.id || req.ip}`,
+  handler: (req, res) => res.status(429).json({ error: 'Too many payment requests. Please slow down.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// POST /api/crypto/payment-intent — create a pending on-chain payment intent
+// amountUsd is NEVER trusted from the client — always pulled from the plan record.
+const CRYPTO_ALLOWED_TOKENS = ['USDC', 'ETH'];
+const CRYPTO_ALLOWED_SCOPE_TYPES = new Set(['channel', 'hangout', 'creator-subscription']);
+app.post('/api/crypto/payment-intent', requireSessionAuth, cryptoIntentLimiter, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const { planId, token, creatorId, scopeType, scopeId } = req.body;
+  if (!planId) return res.status(400).json({ error: 'planId is required' });
+
+  const safeToken = CRYPTO_ALLOWED_TOKENS.includes(token) ? token : 'USDC';
+
+  const PlanModel = require('../../models/planModel');
+  const plan = await PlanModel.getById(planId);
+  if (!plan) return res.status(400).json({ error: 'Unknown plan' });
+  const canonicalUsd = parseFloat(plan.price);
+  if (!canonicalUsd || canonicalUsd <= 0) return res.status(400).json({ error: 'Plan has no valid price' });
+
+  // Validate creatorId belongs to an active creator when provided. Prevents
+  // a user passing an arbitrary creator id to receive scoped access grants
+  // they didn't pay for.
+  let safeCreatorId = null;
+  if (creatorId) {
+    const { query: pgQuery } = require('../../config/postgres');
+    const { rows } = await pgQuery(
+      `SELECT id FROM users WHERE id = $1 AND creator_status IN ('approved','active') LIMIT 1`,
+      [String(creatorId)]
+    );
+    if (!rows.length) return res.status(400).json({ error: 'Invalid creatorId' });
+    safeCreatorId = rows[0].id;
+  }
+
+  const safeScopeType = scopeType && CRYPTO_ALLOWED_SCOPE_TYPES.has(String(scopeType)) ? String(scopeType) : null;
+  const safeScopeId = safeScopeType && scopeId ? String(scopeId) : null;
+
+  const CryptoPaymentService = require('../../services/cryptoPaymentService');
+  try {
+    const intent = await CryptoPaymentService.createPaymentIntent({
+      userId: user.id,
+      planId,
+      amountUsd: canonicalUsd,
+      token: safeToken,
+      creatorId: safeCreatorId,
+      scopeType: safeScopeType,
+      scopeId: safeScopeId,
+    });
+    return res.json({ ok: true, ...intent });
+  } catch (err) {
+    if (err.code === 'ETH_PRICE_UNAVAILABLE') {
+      return res.status(503).json({ error: 'ETH price oracle unavailable, please retry in a moment' });
+    }
+    throw err;
+  }
+}));
+
+// POST /api/crypto/payment-intent/:id/tx — record submitted tx hash
+app.post('/api/crypto/payment-intent/:id/tx', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const paymentId = parseInt(req.params.id, 10);
+  const { txHash, fromAddress } = req.body;
+  if (!txHash) return res.status(400).json({ error: 'txHash required' });
+  const CryptoPaymentService = require('../../services/cryptoPaymentService');
+  await CryptoPaymentService.recordSubmittedTx({ paymentId, txHash, fromAddress, userId: user.id });
+  return res.json({ ok: true });
+}));
+
+// GET /api/crypto/payment-intent/:id — poll status
+app.get('/api/crypto/payment-intent/:id', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const paymentId = parseInt(req.params.id, 10);
+  const CryptoPaymentService = require('../../services/cryptoPaymentService');
+  const status = await CryptoPaymentService.getStatus(paymentId, user.id);
+  if (!status) return res.status(404).json({ error: 'not_found' });
+  return res.json(status);
+}));
+
+// POST /api/webhooks/alchemy-base — Alchemy Notify webhook for Base USDC transfers
+// Alchemy sends raw body; must NOT use express.json() here so we can verify HMAC on raw bytes.
+app.post('/api/webhooks/alchemy-base', webhookLimiter, express.text({ type: '*/*' }), asyncHandler(async (req, res) => {
+  const CryptoPaymentService = require('../../services/cryptoPaymentService');
+  const sig = req.headers['x-alchemy-signature'];
+  if (!CryptoPaymentService.verifyAlchemySignature(req.body, sig)) {
+    logger.warn('[Alchemy] Invalid webhook signature');
+    return res.status(400).json({ error: 'invalid_signature' });
+  }
+  let payload;
+  try { payload = JSON.parse(req.body); } catch { return res.status(400).json({ error: 'invalid_json' }); }
+  await CryptoPaymentService.handleAlchemyWebhook(payload);
+  return res.json({ ok: true });
+}));
+
 // Mux webhook — signature verification needs the exact raw bytes Mux signed.
 // The global express.json() verify callback (~line 372) already captures
 // those into req.rawBody for every request. This route used to instead
@@ -15071,6 +15338,27 @@ app.post('/api/webhooks/mux',
     res.json({ received: true });
   })
 );
+
+// ── Privy identity link — client posts its Privy access token after wallet
+// creation; server verifies with @privy-io/server-auth and writes privy_id +
+// wallet_address onto the pnptv user row. Replaces the Enterprise-only webhook
+// flow with the same end-state (users.privy_id + users.wallet_address populated
+// so support can look up "who owns wallet 0xabc").
+app.post('/api/privy/link', requireSessionAuth, asyncHandler(async (req, res) => {
+  const privyLinkService = require('../../services/privyLinkService');
+  const pnptvUserId = req.session?.user?.id;
+  const privyToken = String(req.body?.privyToken || req.body?.identityToken || '').trim();
+  if (!privyToken) return res.status(400).json({ error: 'privyToken required' });
+  try {
+    const { privyId, walletAddress } = await privyLinkService.verifyAndLink({ pnptvUserId, privyToken });
+    return res.json({ ok: true, privyId, walletAddress });
+  } catch (err) {
+    if (err.message === 'invalid_privy_token') return res.status(401).json({ error: 'invalid_privy_token' });
+    if (err.message === 'privy_id_already_linked') return res.status(409).json({ error: 'privy_id_already_linked' });
+    logger.error('[privy-link] unexpected error', { err: err.message, pnptvUserId });
+    return res.status(500).json({ error: 'link_failed' });
+  }
+}));
 
 // ── Hostinger Mail webhook — message.received on support@pnptv.app ────────────
 // Hostinger sends Authorization: Bearer <webhook-secret> with each delivery.
@@ -15153,7 +15441,7 @@ app.post('/api/verify-age-self', authLimiter, asyncHandler(async (req, res) => {
   const now = new Date();
   let age = now.getUTCFullYear() - dobYear;
   if (now.getUTCMonth() + 1 < dobMonth || (now.getUTCMonth() + 1 === dobMonth && now.getUTCDate() < dobDay)) age--;
-  if (age < 18) return res.status(400).json({ success: false, error: 'You must be at least 18 years old' });
+  if (age < 25) return res.status(400).json({ success: false, error: 'AGE_REQUIREMENT_NOT_MET', message: 'You do not meet the age requirements for this platform.' });
   if (dateOfBirth > now.toISOString().split('T')[0]) {
     return res.status(400).json({ success: false, error: 'Date of birth cannot be in the future' });
   }

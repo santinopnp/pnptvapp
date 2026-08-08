@@ -20,6 +20,7 @@
     "@livekit/rtc-node": "^0.13.25",
     "@mux/mux-node": "^14.1.1",
     "@noble/hashes": "^2.0.1",
+    "@privy-io/server-auth": "^1.32.5",
     "@sentry/node": "^7.99.0",
     "@simplewebauthn/server": "^13.3.2",
     "axios": "^1.17.0",
