@@ -519,6 +519,21 @@ async function onCallPaymentSuccess(paymentId) {
           notifSvc.sendBookingConfirmationToCreator(creator_id, bookingSummary, memberInfo, callInfo),
         ]);
 
+        try {
+          const slackOps = require('./slackOpsService');
+          slackOps.notifyNewBooking({
+            bookingId: confirmedBookingId,
+            clientUsername: memberRow?.username || 'unknown',
+            creatorUsername: creatorName,
+            durationMinutes: pkg.duration_minutes,
+            priceUsd: parseFloat(pkg.price_usd).toFixed(2),
+            startTimeCol: meta.startTimeUtc
+              ? new Date(meta.startTimeUtc).toLocaleString('en-US', { timeZone: 'America/Bogota', hour12: false })
+              : 'N/A',
+            startTimeUtc: meta.startTimeUtc,
+          }).catch(() => {});
+        } catch (_) { /* non-fatal */ }
+
         if (confirmedBookingId && meta.startTimeUtc) {
           // Schedule in-memory reminders (1h + 15min before)
           try {
