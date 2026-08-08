@@ -16,7 +16,7 @@ Este Acuerdo del Programa de Socios Creadores es un **contrato de prestación de
 
 **1.1. Parties.** This Creator Partner Program Agreement (the **"Agreement"** or **"Partner Agreement"**) is entered into by and between:
 
-- **PNPtv!** — [PNPtv! LEGAL ENTITY — to be confirmed by counsel], a company organized under the laws of the Republic of Colombia, with its principal place of business in Bogotá D.C., represented herein by its founder Santino (the **"Company"** or **"PNPtv!"**); and
+- **PNPtv!** — **Amplify Insights LLC**, a California limited liability company with its principal place of business in the State of California, United States of America, operating the PNPtv! platform, represented herein by its founder and Managing Member, Santino (the **"Company"** or **"PNPtv!"**); and
 - **The Creator** — the natural person identified in the signature block below (the **"Creator"**).
 
 **1.2. Recitals.**
@@ -211,7 +211,21 @@ Capitalized terms used but not defined in this Agreement have the meanings given
 - **(a)** **Content availability window.** For **ninety (90) days** following termination, the Creator retains access to a data-export tool to download the Creator's own uploaded Content (source files where feasible; otherwise best-available master).
 - **(b)** **Post-termination Payout.** Revenue accrued through the effective date of termination, net of any offsets (including chargebacks and refunds properly attributable to the Creator's Content), shall be paid to the Creator within **thirty (30) days** of the effective date of termination, subject to Payout thresholds being met (or, if not met, on a final "final settlement" basis to be documented).
 - **(c)** **Content license tail.** The post-termination license window for promotional use of the Creator's Content is governed by the Content License (Document 3).
-- **(d)** **Survival.** Sections 5.3, 6.4, 6.6, 7, 8, 11, 12, 13.6, 14, 15, 16, 17, 18, and 19, together with any provision that by its nature is intended to survive, shall survive termination.
+- **(d)** **Survival.** Sections 5.3, 6.4, 6.6, 7, 8, 11, 12, 13.6, 13.7, 14, 15, 16, 17, 18, and 19, together with any provision that by its nature is intended to survive, shall survive termination.
+
+**13.7. Impact on Member Subscribers Upon Creator Account Termination.**
+
+The Creator acknowledges that members of the platform ("Subscribers") may hold active Creator Subscriptions at the time of termination, and the following applies:
+
+- **(a)** **Voluntary termination or departure.** Upon any voluntary termination (Section 13.3) or voluntary account deletion, all active Creator Subscriptions to the Creator are cancelled effective the date of departure. The prorated value of each Subscriber's remaining subscription period is credited to that Subscriber's platform balance as Ru$h tokens (at the applicable base rate of 1 USD = 6 Ru$h). These credits are funded from the Creator's accrued but unpaid Net Revenue balance where sufficient; any shortfall is covered by the Company. The Creator acknowledges and consents to this offset mechanism.
+
+- **(b)** **Termination for cause — non-egregious.** Upon termination for cause under Section 13.4 for non-egregious violations (excluding 13.4(a), (b), (c)), active Creator Subscriptions are cancelled and Subscriber credits are issued. Subscriber credit costs are offset against the Creator's post-termination Payout under Section 13.6(b).
+
+- **(c)** **Termination for egregious cause.** Upon termination for any of the egregious violations listed in Section 13.4(a), (b), or (c) (CSAM, fraud, non-consensual recordings, identity fraud), all pending Payouts are withheld indefinitely pending investigation and any applicable law enforcement referral. Subscriber credits are funded entirely by the Company. The Creator forfeits any claim to withheld Payouts if criminal proceedings are initiated.
+
+- **(d)** **Temporary suspension exceeding 7 days.** If the Creator's account is suspended for more than 7 days and Subscribers request credit extensions, those extension costs may be offset from the Creator's next Payout following reinstatement.
+
+- **(e)** **No double payment.** In no event shall the Creator receive both a full post-termination Payout and retain Subscriber subscription fees for a period during which Subscribers did not have access to the Creator's Content. The parties agree that the offset mechanism in (a) and (b) above is the fair remedy.
 
 ---
 
@@ -307,7 +321,7 @@ Capitalized terms used but not defined in this Agreement have the meanings given
 
 | Field / Campo | Value / Valor |
 |---|---|
-| Entity / Entidad | [PNPtv! LEGAL ENTITY — to be confirmed by counsel] |
+| Entity / Entidad | Amplify Insights LLC (California LLC) |
 | Representative / Representante | Santino, Founder / Fundador |
 | Identification / Documento de identidad | ______________________________ |
 | Signature / Firma | ______________________________ |

@@ -16,7 +16,7 @@ Este Acuerdo de Confidencialidad Mutua (NDA) protege la información confidencia
 
 **1.1.** This Mutual Non-Disclosure Agreement (the **"Agreement"** or **"NDA"**) is entered into by and between:
 
-- **PNPtv!** — [PNPtv! LEGAL ENTITY — to be confirmed by counsel], a company organized under the laws of the Republic of Colombia, with its principal place of business in Bogotá D.C., represented herein by its founder Santino (the **"Company"** or **"PNPtv!"**); and
+- **PNPtv!** — **Amplify Insights LLC**, a California limited liability company, operating the PNPtv! platform, represented herein by its founder and Managing Member, Santino (the **"Company"** or **"PNPtv!"**); and
 - **The Creator** — the natural person identified in the signature block below (the **"Creator"**).
 
 Each of PNPtv! and the Creator is a **"Party"**, and together the **"Parties"**.
@@ -219,7 +219,7 @@ Each of the foregoing documents is incorporated by reference where relevant.
 
 | Field / Campo | Value / Valor |
 |---|---|
-| Entity / Entidad | [PNPtv! LEGAL ENTITY — to be confirmed by counsel] |
+| Entity / Entidad | Amplify Insights LLC (California LLC) |
 | Representative / Representante | Santino, Founder / Fundador |
 | Identification / Documento de identidad | ______________________________ |
 | Signature / Firma | ______________________________ |

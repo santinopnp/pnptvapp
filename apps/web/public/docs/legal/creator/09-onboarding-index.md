@@ -168,7 +168,7 @@ Al firmar abajo, reconozco que he recibido el paquete completo de documentos lis
 
 | Field / Campo | Value / Valor |
 |---|---|
-| Entity / Entidad | [PNPtv! LEGAL ENTITY — to be confirmed by counsel] |
+| Entity / Entidad | Amplify Insights LLC (California LLC) |
 | Representative / Representante | Santino, Founder / Fundador |
 | Signature / Firma | ______________________________ |
 | Date / Fecha | ______________________________ |

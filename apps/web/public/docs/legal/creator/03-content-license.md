@@ -14,7 +14,7 @@ Este Anexo de Licencia de Contenido complementa el **Acuerdo del Programa de Soc
 
 ## 1. Parties and Purpose
 
-**1.1.** This Content License Addendum (the **"Content License"** or **"Addendum"**) is entered into by and between **PNPtv!** ([PNPtv! LEGAL ENTITY — to be confirmed by counsel]) and the **Creator**, each as defined in the Creator Partner Program Agreement (Document 2, the "**Partner Agreement**").
+**1.1.** This Content License Addendum (the **"Content License"** or **"Addendum"**) is entered into by and between **PNPtv!** (Amplify Insights LLC, a California limited liability company) and the **Creator**, each as defined in the Creator Partner Program Agreement (Document 2, the "**Partner Agreement**").
 
 **1.2.** This Addendum forms **Document 3** of the Creator Partner Program legal package and is incorporated by reference into the Partner Agreement. It sets out the licensing terms applicable to the Creator's Content (as defined in Section 2 of the Partner Agreement).
 
@@ -169,7 +169,7 @@ Este Anexo de Licencia de Contenido complementa el **Acuerdo del Programa de Soc
 
 | Field / Campo | Value / Valor |
 |---|---|
-| Entity / Entidad | [PNPtv! LEGAL ENTITY — to be confirmed by counsel] |
+| Entity / Entidad | Amplify Insights LLC, a California limited liability company |
 | Representative / Representante | Santino, Founder / Fundador |
 | Identification / Documento de identidad | ______________________________ |
 | Signature / Firma | ______________________________ |
