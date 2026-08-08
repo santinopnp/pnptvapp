@@ -190,6 +190,20 @@ const handleTelegramAuth = async (req, res) => {
           redirect: '/auth/telegram-login'
         });
       }
+      // Fire-and-forget: notify #marketing-telegram of the new signup
+      try {
+        const createdUser = userQuery.rows[0];
+        if (createdUser) {
+          const slackOps = require('../../../services/slackOpsService');
+          slackOps.notifyNewTelegramUser({
+            userId: createdUser.id,
+            username: createdUser.username,
+            firstName: createdUser.first_name,
+            telegramId: String(telegramUser.id),
+            source: 'mini_app',
+          }).catch(() => {});
+        }
+      } catch (_) { /* non-fatal */ }
     } else {
       // User exists — sync pnptv_id, username, and first_name from Telegram
       const dbUser = userQuery.rows[0];

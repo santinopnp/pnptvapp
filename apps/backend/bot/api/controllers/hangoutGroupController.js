@@ -20,7 +20,6 @@ const wellnessModeService = require('../../../services/wellnessModeService');
 const mentionService = require('../../../services/mentionService');
 const {
   SANTINO_PRIME_HANGOUT_GROUP_ID,
-  LEX_PRIME_HANGOUT_GROUP_ID,
 } = require('../../../config/monetizationConfig');
 
 // A hangout is a PRIME co-founder room if it IS a root PRIME hangout or a topic under one.
@@ -28,9 +27,7 @@ function isPrimeCoFounderHangout(groupId, parentGroupId) {
   const gid = Number(groupId);
   const pid = parentGroupId != null ? Number(parentGroupId) : null;
   return gid === SANTINO_PRIME_HANGOUT_GROUP_ID
-      || gid === LEX_PRIME_HANGOUT_GROUP_ID
-      || pid === SANTINO_PRIME_HANGOUT_GROUP_ID
-      || pid === LEX_PRIME_HANGOUT_GROUP_ID;
+      || pid === SANTINO_PRIME_HANGOUT_GROUP_ID;
 }
 
 // In-memory cache for Telegram video chat status (30s TTL)
@@ -1615,7 +1612,7 @@ const discoverGroups = async (req, res) => {
     // Subscription/paid hangouts require an active creator sub with that owner.
     // Admins bypass entirely.
     const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-    const primeHangoutIds = [SANTINO_PRIME_HANGOUT_GROUP_ID, LEX_PRIME_HANGOUT_GROUP_ID];
+    const primeHangoutIds = [SANTINO_PRIME_HANGOUT_GROUP_ID];
     const accessFilter = isAdmin ? '' : `
          AND (
            -- system hangouts (no creator) always visible

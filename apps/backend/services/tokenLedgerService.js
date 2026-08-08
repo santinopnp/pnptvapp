@@ -119,13 +119,13 @@ async function credit(opts) {
   try {
     if (owned) await client.query('BEGIN');
 
-    // Upsert wallet + increment atomically
+    // Upsert wallet + increment atomically. Gifted balance is hard-capped at 3600.
     const { rows } = await client.query(
       `INSERT INTO user_token_wallets (user_id, balance_tokens, gifted_balance)
-       VALUES ($1, $2, $3)
+       VALUES ($1, $2, LEAST($3, 3600))
        ON CONFLICT (user_id) DO UPDATE
          SET balance_tokens = user_token_wallets.balance_tokens + EXCLUDED.balance_tokens,
-             gifted_balance = user_token_wallets.gifted_balance + EXCLUDED.gifted_balance,
+             gifted_balance = LEAST(user_token_wallets.gifted_balance + EXCLUDED.gifted_balance, 3600),
              updated_at = now()
        RETURNING balance_tokens, gifted_balance`,
       [String(userId), balanceDelta, giftedDelta]

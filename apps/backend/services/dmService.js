@@ -387,6 +387,7 @@ class DmService {
          JOIN users u ON u.id = CASE WHEN dm.sender_id = $1 THEN dm.recipient_id ELSE dm.sender_id END
         WHERE (dm.sender_id = $1 OR dm.recipient_id = $1)
           AND dm.is_deleted = false
+          AND u.is_deleted = false
           AND dm.content IS NOT NULL
           AND to_tsvector('simple', dm.content) @@ plainto_tsquery('simple', $2)
         ORDER BY rank DESC, dm.created_at DESC

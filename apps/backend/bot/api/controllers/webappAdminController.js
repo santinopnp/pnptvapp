@@ -436,6 +436,20 @@ const banUser = async (req, res) => {
       [userId]
     );
 
+    // Fire-and-forget: notify #ops-admin when a user is banned (not for unbans)
+    if (ban) {
+      try {
+        const slackOps = require('../../../services/slackOpsService');
+        slackOps.notifyBan({
+          bannedUsername: result.rows[0]?.username || userId,
+          bannedUserId: userId,
+          adminId: user.id,
+          reason,
+          ip: null,
+        }).catch(() => {});
+      } catch (_) { /* non-fatal */ }
+    }
+
     return res.json({ success: true, user: result.rows[0], action: ban ? 'banned' : 'unbanned' });
   } catch (error) {
     logger.error('Error banning user:', error);

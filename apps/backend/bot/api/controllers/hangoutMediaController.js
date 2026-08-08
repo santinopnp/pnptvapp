@@ -82,12 +82,11 @@ const uploadHangoutMedia = async (req, res) => {
       );
       const {
         SANTINO_PRIME_HANGOUT_GROUP_ID,
-        LEX_PRIME_HANGOUT_GROUP_ID,
       } = require('../../../config/monetizationConfig');
       const gid = Number(groupId);
       const pid = grpInfo?.parent_group_id != null ? Number(grpInfo.parent_group_id) : null;
-      const isPrimeRoom = gid === SANTINO_PRIME_HANGOUT_GROUP_ID || gid === LEX_PRIME_HANGOUT_GROUP_ID
-        || pid === SANTINO_PRIME_HANGOUT_GROUP_ID || pid === LEX_PRIME_HANGOUT_GROUP_ID;
+      const isPrimeRoom = gid === SANTINO_PRIME_HANGOUT_GROUP_ID
+        || pid === SANTINO_PRIME_HANGOUT_GROUP_ID;
       if (isPrimeRoom) {
         const EntitlementAccessService = require('../../../services/entitlementAccessService');
         const qualifies = await EntitlementAccessService.hasQualifyingPrimeEntitlement(user.id);

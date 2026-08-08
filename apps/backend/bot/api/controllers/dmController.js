@@ -153,7 +153,8 @@ const getThreads = async (req, res) => {
          ON s.user_id = $1
         AND s.partner_id = CASE WHEN dt.user_a = $1 THEN dt.user_b ELSE dt.user_a END
        LEFT JOIN direct_messages lm ON lm.id = dt.last_message_id
-       WHERE dt.user_a = $1 OR dt.user_b = $1
+       WHERE (dt.user_a = $1 OR dt.user_b = $1)
+         AND u.is_deleted = false
        ORDER BY (s.pinned_at IS NOT NULL) DESC, s.pinned_at DESC NULLS LAST, dt.last_message_at DESC
        LIMIT 100`,
       [user.id]

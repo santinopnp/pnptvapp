@@ -4,7 +4,6 @@ const logger = require('../utils/logger');
 const BusinessNotificationService = require('./businessNotificationService');
 const {
   SANTINO_PRIME_HANGOUT_GROUP_ID,
-  LEX_PRIME_HANGOUT_GROUP_ID,
 } = require('../config/monetizationConfig');
 
 /**
@@ -1123,20 +1122,16 @@ Type /subscribe to view membership plans and reactivate your access!`;
   }
 
   /**
-   * Reconcile BOTH PRIME co-founder hangouts (Santino's + Lex's).
+   * Reconcile the PRIME co-founder hangout (Santino's).
    * Rule: only users with an active QUALIFYING PRIME entitlement (lifetime OR
-   * plan.duration_days >= 30) may remain in either room.
+   * plan.duration_days >= 30) may remain.
    */
   static async reconcilePrimeHangouts({ dryRun = false, notify = true } = {}) {
     const santino = await this.reconcileOnePrimeHangout(
       { groupId: SANTINO_PRIME_HANGOUT_GROUP_ID, ownerId: '8599671840', labelEn: "Santino's Cult",     labelEs: 'El Culto de Santino' },
       { dryRun, notify },
     );
-    const lex = await this.reconcileOnePrimeHangout(
-      { groupId: LEX_PRIME_HANGOUT_GROUP_ID, ownerId: '7246621722', labelEn: "Lex's Cult",         labelEs: 'El Culto de Lex' },
-      { dryRun, notify },
-    );
-    return { santino, lex };
+    return { santino };
   }
 
   /**

@@ -228,6 +228,7 @@ const getFollowers = async (req, res) => {
        FROM user_follows uf
        JOIN users u ON u.id = uf.follower_id
        WHERE uf.following_id = $1
+         AND u.is_deleted = false
          AND ($2::timestamptz IS NULL OR uf.created_at < $2::timestamptz)
        ORDER BY uf.created_at DESC
        LIMIT $3`,
@@ -269,6 +270,7 @@ const getFollowing = async (req, res) => {
        FROM user_follows uf
        JOIN users u ON u.id = uf.following_id
        WHERE uf.follower_id = $1
+         AND u.is_deleted = false
          AND ($2::timestamptz IS NULL OR uf.created_at < $2::timestamptz)
        ORDER BY uf.created_at DESC
        LIMIT $3`,

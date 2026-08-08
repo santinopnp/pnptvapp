@@ -1283,6 +1283,17 @@ const telegramLogin = async (req, res) => {
 
     if (isNew) {
       logger.info(`Created new user via Telegram widget login: ${user.id} (@${user.username})`);
+      // Fire-and-forget: notify #marketing-telegram of the new signup
+      try {
+        const slackOps = require('../../../services/slackOpsService');
+        slackOps.notifyNewTelegramUser({
+          userId: user.id,
+          username: user.username,
+          firstName: user.first_name,
+          telegramId: telegramId,
+          source: 'telegram-widget',
+        }).catch(() => {});
+      } catch (_) { /* non-fatal */ }
     }
 
     query(`UPDATE users SET last_login_at = NOW(), last_login_method = 'telegram', updated_at = NOW() WHERE id = $1`, [user.id]).catch(() => {});
@@ -2554,7 +2565,7 @@ const updateProfile = async (req, res) => {
     const now = new Date();
     let age = now.getUTCFullYear() - dobYear;
     if (now.getUTCMonth() + 1 < dobMonth || (now.getUTCMonth() + 1 === dobMonth && now.getUTCDate() < dobDay)) age--;
-    if (age < 18) return res.status(400).json({ error: 'You must be at least 18 years old' });
+    if (age < 25) return res.status(400).json({ error: 'AGE_REQUIREMENT_NOT_MET', message: 'You do not meet the age requirements for this platform.' });
     if (dobYear > now.getUTCFullYear() || dateOfBirth > now.toISOString().split('T')[0]) {
       return res.status(400).json({ error: 'Date of birth cannot be in the future' });
     }

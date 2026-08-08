@@ -16,15 +16,14 @@ const ENTITLEMENT_CACHE_TTL = 120;
 // despite being superadmin in users.role, because those gates only bypass on
 // super-god. Adding him here also stops his browsing from inflating creator
 // metrics (follows, likes, view counts, live/hangout headcount).
-const HARDCODED_SUPER_GOD_IDS = new Set(['8599671840', '7246621722', '8552451957']);
+const HARDCODED_SUPER_GOD_IDS = new Set(['8599671840', '8552451957']);
 
-// PRIME co-founders (Santino + Lex). Their profile exclusive posts unlock via
-// PRIME entitlement — regular creators require a per-creator subscription.
-// Kept in sync with the frontend PRIME_UPSELL_CREATOR_IDS allowlist.
+// PRIME co-founders. Their profile exclusive posts unlock via PRIME entitlement —
+// regular creators require a per-creator subscription. Kept in sync with the
+// frontend PRIME_UPSELL_CREATOR_IDS allowlist.
 const PRIME_COFOUNDER_IDS = new Set([
   '8599671840',   // SantinoFurioso (Santino primary)
   '8552451957',   // pnptv (Santino admin alt, superadmin)
-  '7246621722',   // PNPLatinoBoy (Lex, admin) — verified against DB 2026-08-03
 ]);
 function isPrimeCoFounder(userId) {
   return !!userId && PRIME_COFOUNDER_IDS.has(String(userId));

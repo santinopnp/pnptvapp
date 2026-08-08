@@ -451,7 +451,7 @@ class UserService {
    *  2. Activity score is in the top 10% of active users
    * Returns { eligible, reasons[] }
    */
-  async checkPerformerEligibility(userId) {
+  async checkPerformerEligibility(userId, precomputedThreshold = null) {
     const reasons = [];
 
     const { rows } = await query(
@@ -463,10 +463,10 @@ class UserService {
     const hasPhoto = rows[0].photo_file_id && rows[0].photo_file_id.trim() !== '';
     if (!hasPhoto) reasons.push('no_profile_picture');
 
-    const [score, threshold] = await Promise.all([
-      this.getActivityScore(userId),
-      this.getTop10PctThreshold(),
-    ]);
+    const score = await this.getActivityScore(userId);
+    const threshold = precomputedThreshold != null
+      ? precomputedThreshold
+      : await this.getTop10PctThreshold();
 
     if (score < threshold) {
       reasons.push(`activity_too_low`);
@@ -489,7 +489,7 @@ class UserService {
     const kept = [];
 
     for (const creator of creators) {
-      const { eligible, reasons, score } = await this.checkPerformerEligibility(creator.id);
+      const { eligible, reasons, score } = await this.checkPerformerEligibility(creator.id, threshold);
       if (!eligible) {
         await query(`UPDATE users SET role = 'user' WHERE id = $1`, [creator.id]);
         revoked.push({ id: creator.id, username: creator.username, score, threshold, reasons });

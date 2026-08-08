@@ -21,11 +21,9 @@ const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, EAR
 const PaymentSecurityService = require('./paymentSecurityService');
 
 // Performers eligible for Gifted Ru$h partial payment on private calls.
-// Values are users.id (= call_packages.creator_id) for Santino and Lex.
 // Never expand this list without explicit approval.
 const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
   '8599671840',  // Santino (display_name "Santino", performer user_id)
-  '7246621722',  // PNPLatinoBoy / Lex (display_name "PNPLatinoBoy")
 ]);
 
 const TOKENS_PER_USD = 6;

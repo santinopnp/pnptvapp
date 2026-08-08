@@ -232,6 +232,8 @@ class SocialPostService {
               sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
               sp.promoted_link2, sp.promoted_link2_label,
               COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
               u.id as author_id, u.username as author_username,
               u.first_name as author_first_name, u.photo_file_id as author_photo,
               u.city as author_city, u.country as author_country,
@@ -259,6 +261,7 @@ class SocialPostService {
        LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
        LEFT JOIN users ru ON rp.user_id = ru.id
        LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
        WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
          AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
          ${cursorClause}
@@ -269,6 +272,7 @@ class SocialPostService {
            OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
            OR u.role IN ('admin', 'superadmin')
          )
+         AND (sp.category IS NULL OR sp.category != 'slam')
        ORDER BY
          CASE WHEN sp.pinned_at IS NOT NULL AND sp.is_deleted = false THEN 0 ELSE 1 END,
          sp.pinned_at DESC NULLS LAST,
@@ -288,6 +292,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
     posts = SocialPostService._diversifyFeed(posts);
     posts = await SocialPostService._applyDiscoveryBoost(posts);
 
@@ -299,6 +304,7 @@ class SocialPostService {
         pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
         pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
       }
+      pins = await SocialPostService._applyChannelAccessLock(pins, userId, { isAdmin });
       const pinnedIds = new Set(pins.map(p => p.id));
       posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
     }
@@ -657,6 +663,101 @@ class SocialPostService {
     });
   }
 
+  /**
+   * Gate posts whose channel has a non-free access_type and the viewer lacks
+   * the required entitlement. Runs after _applyContentTierBlur so it never
+   * overwrites an existing exclusive lock.
+   *
+   * Prerequisites: post rows must carry channel_access_type + channel_creator_id
+   * (SELECTed via LEFT JOIN creator_channels cc_gate in getFeed / getFeedFiltered).
+   *
+   * @param {Array}   posts       - Post rows (already through sanitizePostRows)
+   * @param {string}  viewerId    - Authenticated viewer's user ID
+   * @param {object}  viewerCtx   - { isAdmin: boolean }
+   * @returns {Promise<Array>}
+   */
+  static async _applyChannelAccessLock(posts, viewerId, viewerCtx = {}) {
+    if (!posts || posts.length === 0) return posts;
+    const { isAdmin = false } = viewerCtx;
+    if (isAdmin) return posts;
+
+    const EntitlementAccessService = require('./entitlementAccessService');
+
+    // Collect unique channel IDs that are non-free and not authored by viewer,
+    // then resolve entitlements in parallel to avoid serial DB round-trips.
+    const channelIdsToCheck = new Set();
+    for (const post of posts) {
+      const accessType = post.channel_access_type;
+      if (!accessType || accessType === 'free') continue;
+      // Skip if already locked by a prior gate
+      if (post.content_locked === true || post.exclusive_status === 'locked') continue;
+      // Author bypass
+      if (String(post.user_id || post.author_id) === String(viewerId)) continue;
+      // Channel owner bypass
+      if (post.channel_creator_id != null && String(post.channel_creator_id) === String(viewerId)) continue;
+      if (post.channel_id != null) channelIdsToCheck.add(post.channel_id);
+    }
+
+    if (channelIdsToCheck.size === 0) return posts;
+
+    // Resolve all channel entitlements in parallel
+    const decisions = new Map();
+    await Promise.all(
+      [...channelIdsToCheck].map(async (channelId) => {
+        try {
+          const decision = await EntitlementAccessService.hasResourceAccess(viewerId, 'channel', channelId);
+          decisions.set(channelId, decision);
+        } catch (err) {
+          logger.warn('_applyChannelAccessLock: hasResourceAccess failed (non-fatal)', { channelId, error: err.message });
+          // Fail open: don't lock if the check itself errored
+          decisions.set(channelId, { allowed: true, reason: 'check_error' });
+        }
+      })
+    );
+
+    return posts.map(post => {
+      const accessType = post.channel_access_type;
+      if (!accessType || accessType === 'free') return post;
+      if (post.content_locked === true || post.exclusive_status === 'locked') return post;
+      if (String(post.user_id || post.author_id) === String(viewerId)) return post;
+      if (post.channel_creator_id != null && String(post.channel_creator_id) === String(viewerId)) return post;
+      if (post.channel_id == null) return post;
+
+      const decision = decisions.get(post.channel_id);
+      if (!decision || decision.allowed) return post;
+
+      // Determine unlock_target from access_type
+      let unlockTarget;
+      if (accessType === 'prime') unlockTarget = 'prime';
+      else if (accessType === 'paid') unlockTarget = 'paid';
+      else unlockTarget = 'creator_sub';
+
+      // Null out media fields; preserve preview_gif_url for blurred previews
+      const meta = post.metadata
+        ? (typeof post.metadata === 'string'
+            ? (() => { try { return JSON.parse(post.metadata); } catch { return post.metadata; } })()
+            : post.metadata)
+        : null;
+      const safeMeta = meta
+        ? { ...meta, video_url: null, video_directus_id: null }
+        : meta;
+
+      return {
+        ...post,
+        content_locked: true,
+        locked_reason: 'channel_gated',
+        unlock_target: unlockTarget,
+        media_url: null,
+        media_urls: null,
+        video_thumbnail_url: null,
+        video_title: null,
+        video_description: null,
+        metadata: safeMeta,
+        // preserve preview_gif_url so blurred preview still renders
+      };
+    });
+  }
+
   // Keyword-based auto-classifier. Returns a category string for the post.
   static _classifyByKeywords(content) {
     if (!content || typeof content !== 'string') return 'social';
@@ -672,8 +773,19 @@ class SocialPostService {
               'esta noche join', 'anyone know', 'alguien sabe', 'help needed',
               'necesito ayuda', 'looking for info'])) return 'community';
 
-    if (has(['party', 'fiesta', 'hookup', 'pnp fun', 'let\'s play', 'pipe', 'cloud9',
-              'party and play', 'juguemos', 'partyhost'])) return 'fun';
+    if (has(['slam', 'slamming', 'slammed', 'iv ', 'needle', 'jeringa', 'inyect', 'shoot up',
+              'booty bump bb', 'boofing'])) return 'slam';
+
+    if (has(['cloud', 'nube', 'smoke', 'tina', 'meth', 'crystal', 'tweak', 'pipe', 'bowl',
+              'railing', 'foil', 'vapori', 'burbuja'])) return 'clouds';
+
+    if (has(['chemsex', 'chem sex', 'pnp', 'party and play', 'partyhost', 'g ', ' ghb', 'gbl',
+              'mdma', 'coke', 'cocaína', 'poppers', 'sexo con drogas'])) return 'chemsex';
+
+    if (has(['no drugs', 'sin drogas', 'sober', 'drug free', 'libre de drogas', 'non pnp',
+              'non-pnp', 'no pnp', 'vanilla'])) return 'non_pnp';
+
+    if (has(['party', 'fiesta', 'hookup', 'let\'s play', 'juguemos', 'hookup'])) return 'fun';
 
     if (has([' video', 'música', 'music', 'playlist', 'podcast', 'watch this',
               'escucha', 'listen to', 'new track', 'nueva canción'])) return 'media';
@@ -751,6 +863,13 @@ class SocialPostService {
          -- on a PRIME-tier post would otherwise leak unblurred to free
          -- viewers. See 2026-05-01 backfill.
          AND COALESCE(sp.content_tier, 'free') = 'free'
+         -- Same reasoning for paywalled channels: unauthenticated preview
+         -- cannot resolve entitlements, so drop any post that belongs to a
+         -- prime/paid/subscription channel.
+         AND (
+           sp.channel_id IS NULL
+           OR sp.channel_id IN (SELECT id FROM creator_channels WHERE COALESCE(access_type, 'free') = 'free')
+         )
        ORDER BY sp.id DESC
        LIMIT $1`,
       [lim]
@@ -831,12 +950,15 @@ class SocialPostService {
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
               ru.username as repost_author_username, ru.first_name as repost_author_first_name,
-              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id  AS channel_creator_id
        FROM social_posts sp
        JOIN users u ON sp.user_id = u.id
        LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
        LEFT JOIN users ru ON rp.user_id = ru.id
        LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
        WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
          AND sp.content ILIKE '%' || $2 || '%'
          AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
@@ -851,6 +973,7 @@ class SocialPostService {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
     posts = await SocialPostService.hydrateTopHypers(posts);
     const nextCursor = rows.length === lim ? String(rows[rows.length - 1].id) : null;
     return { posts, nextCursor };
@@ -899,11 +1022,14 @@ class SocialPostService {
               COALESCE(sp.hype_score, 0) AS hype_score,
               EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
               rp.content as repost_content, rp.created_at as repost_created_at,
-              ru.username as repost_author_username, ru.first_name as repost_author_first_name
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id  AS channel_creator_id
        FROM social_posts sp
        JOIN users u ON sp.user_id = u.id
        LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
        LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
        WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
          AND sp.hangout_group_id = $2
          ${cursorClause}
@@ -916,6 +1042,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
     posts = await SocialPostService.hydrateTopHypers(posts);
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
     return { posts, nextCursor };
@@ -957,9 +1084,12 @@ class SocialPostService {
                 u.city as author_city, u.country as author_country,
                 EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
                 COALESCE(sp.hype_score, 0) AS hype_score,
-                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+                cc_gate.access_type AS channel_access_type,
+                cc_gate.creator_id  AS channel_creator_id
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
          WHERE sp.is_deleted = false
            AND (
              sp.user_id = $2
@@ -993,6 +1123,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
     posts = await SocialPostService.hydrateTopHypers(posts);
 
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
@@ -1010,7 +1141,7 @@ class SocialPostService {
       throw err;
     }
     const contentTier = isExclusive ? 'PRIME' : 'free';
-    const VALID_CATEGORIES = new Set(['fun', 'wellness', 'adult', 'community', 'social', 'media']);
+    const VALID_CATEGORIES = new Set(['fun', 'wellness', 'chemsex', 'slam', 'clouds', 'non_pnp', 'community', 'social', 'media', 'adult']);
     const resolvedCategory = (category && VALID_CATEGORIES.has(category))
       ? category
       : SocialPostService._classifyByKeywords(content);
@@ -1420,10 +1551,13 @@ class SocialPostService {
                 u.id as author_id, u.username as author_username,
                 u.first_name as author_first_name, u.photo_file_id as author_photo,
                 COALESCE(sp.hype_score, 0) AS hype_score,
-                (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+                (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers,
+                cc_gate.access_type AS channel_access_type,
+                cc_gate.creator_id  AS channel_creator_id
                 ${likedSubquery}
          FROM social_posts sp
          JOIN users u ON sp.user_id = u.id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
          WHERE sp.is_deleted = false
            AND (
              sp.user_id = $1
@@ -1441,7 +1575,7 @@ class SocialPostService {
                 wellness_days_accumulated,
                 (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
                   WHERE ilu.user_id = users.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
-         FROM users WHERE id = $1`,
+         FROM users WHERE id = $1 AND is_deleted = false`,
         [userId]
       ),
       query(
@@ -1505,6 +1639,7 @@ class SocialPostService {
     if (viewerTier !== undefined) {
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
     posts = await SocialPostService.hydrateTopHypers(posts);
 
     const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
@@ -1563,7 +1698,7 @@ class SocialPostService {
     userId, filter = 'all', cursor, limit = 20,
     viewerTier, isAdmin = false, blockedIds = [], viewerGeoTags = [],
   }) {
-    const valid = ['all', 'subscribed', 'following', 'new', 'nearby', 'hot', 'latest'];
+    const valid = ['all', 'subscribed', 'following', 'new', 'nearby', 'hot', 'latest', 'slam'];
     const f = valid.includes(filter) ? filter : 'all';
 
     // All-branch delegates to the original getFeed for backwards compat + boost.
@@ -1586,6 +1721,8 @@ class SocialPostService {
               sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
               sp.promoted_link2, sp.promoted_link2_label,
               COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
               u.id as author_id, u.username as author_username,
               u.first_name as author_first_name, u.photo_file_id as author_photo,
               u.city as author_city, u.country as author_country,
@@ -1613,7 +1750,8 @@ class SocialPostService {
        JOIN users u ON sp.user_id = u.id
        LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
        LEFT JOIN users ru ON rp.user_id = ru.id
-       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id`;
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id`;
 
     const BASE_WHERE = `sp.is_deleted = false AND sp.reply_to_id IS NULL
          AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
@@ -1671,6 +1809,14 @@ class SocialPostService {
       // 'hot' is a bounded window of ~30 posts, no infinite scroll.
       extraWhere = `AND sp.created_at > NOW() - INTERVAL '48 hours'`;
       orderBy = `ORDER BY (COALESCE(sp.likes_count,0) + COALESCE(sp.reposts_count,0)*2 + COALESCE(sp.replies_count,0)*3) DESC, sp.id DESC`;
+    } else if (f === 'slam') {
+      // Opt-in tab — shows only slam-tagged posts chronologically.
+      extraWhere = `AND sp.category = 'slam'`;
+    }
+
+    // Slam is opt-in: exclude from every feed except the dedicated slam tab.
+    if (f !== 'slam') {
+      extraWhere += ` AND (sp.category IS NULL OR sp.category != 'slam')`;
     }
 
     // Append blockedIds param, then viewerGeoTags — always.
@@ -1702,6 +1848,7 @@ class SocialPostService {
       posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
       posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
     }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
 
     if (f !== 'hot' && f !== 'latest') {
       posts = SocialPostService._diversifyFeed(posts);
@@ -1716,6 +1863,7 @@ class SocialPostService {
         pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
         pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
       }
+      pins = await SocialPostService._applyChannelAccessLock(pins, userId, { isAdmin });
       const pinnedIds = new Set(pins.map(p => p.id));
       posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
     }
