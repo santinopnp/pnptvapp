@@ -95,6 +95,7 @@ import { MediaUploadButton } from "@/components/hangouts/MediaUploadButton";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoCallButton } from "@/components/hangouts/VideoCallButton";
 import LiveKitCallDock from "@/components/hangouts/LiveKitCallDock";
+import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { ForwardTargetPicker } from "@/components/forwarding/ForwardTargetPicker";
 import { MentionText } from "@/components/MentionText";
 import { SharedPostCard } from "@/components/social/SharedPostCard";
@@ -294,6 +295,8 @@ function HangoutChatPanel({
   const [tipLoading, setTipLoading] = useState(false);
   const [tipSuccess, setTipSuccess] = useState(false);
   const [tipError, setTipError] = useState("");
+  const [tipNeedsTopUp, setTipNeedsTopUp] = useState(false);
+  const [showTopUpModal, setShowTopUpModal] = useState(false);
 
   // Persist the draft as the user types, keyed by room. Skip while editing an
   // existing message — inputText is repurposed for edit text in that mode and
@@ -1017,6 +1020,7 @@ function HangoutChatPanel({
     if (!tipAmount || tipLoading || !activeGroup.creatorId) return;
     setTipLoading(true);
     setTipError("");
+    setTipNeedsTopUp(false);
     try {
       await tipTokens(String(activeGroup.creatorId), tipAmount);
       setTipSuccess(true);
@@ -1026,11 +1030,27 @@ function HangoutChatPanel({
         setTipAmount(null);
       }, 2000);
     } catch (err) {
-      setTipError(err instanceof Error ? err.message : "Could not send tip. Try again.");
+      const code = (err as { code?: string; status?: number })?.code;
+      const status = (err as { code?: string; status?: number })?.status;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (code === "INSUFFICIENT_TOKENS" || code === "INSUFFICIENT_FUNDS" || status === 402 || /insufficient/i.test(msg)) {
+        setTipNeedsTopUp(true);
+        setTipError("");
+      } else {
+        setTipError(msg || "Could not send tip. Try again.");
+      }
     } finally {
       setTipLoading(false);
     }
   };
+
+  const chatHasInjectedWallet = (() => {
+    if (typeof window === "undefined") return true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).ethereum) return true;
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    return /TrustWallet|MetaMaskMobile|Rainbow/i.test(ua);
+  })();
 
   return (
     <div className="flex flex-col h-full relative">
@@ -1755,11 +1775,11 @@ function HangoutChatPanel({
                   </p>
                   <div className="flex gap-1.5 justify-center mb-2.5 flex-wrap">
                     {([
-                      { tokens: 6,   usd: "$1"  },
-                      { tokens: 12,  usd: "$2"  },
                       { tokens: 30,  usd: "$5"  },
                       { tokens: 60,  usd: "$10" },
+                      { tokens: 90,  usd: "$15" },
                       { tokens: 120, usd: "$20" },
+                      { tokens: 150, usd: "$25" },
                     ] as const).map(({ tokens, usd }) => (
                       <button
                         key={tokens}
@@ -1783,6 +1803,43 @@ function HangoutChatPanel({
                   </div>
                   {tipError && (
                     <p className="text-[10px] text-red-400 text-center mb-1.5">{tipError}</p>
+                  )}
+                  {tipNeedsTopUp && (
+                    <div
+                      className="rounded-xl p-2.5 mb-2"
+                      style={{ background: "rgba(212,0,122,0.08)", border: "1px solid rgba(212,0,122,0.30)" }}
+                    >
+                      <p className="text-[11px] font-semibold text-white mb-1">Not enough Ru$h 💎</p>
+                      <p className="text-[10px] mb-2" style={{ color: "rgba(255,255,255,0.72)" }}>
+                        Buy Ru$h with crypto — lands instantly after confirm.
+                      </p>
+                      {!chatHasInjectedWallet && (
+                        <a
+                          href="/crypto-guide"
+                          className="block text-[10px] font-semibold mb-1.5"
+                          style={{ color: "#B8A5FF" }}
+                        >
+                          🪄 New here? Set up a wallet in 2 min →
+                        </a>
+                      )}
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowTopUpModal(true)}
+                          className="flex-1 py-1.5 rounded-lg text-[10px] font-bold text-white"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          Buy Ru$h with crypto
+                        </button>
+                        <a
+                          href="/crypto-guide"
+                          className="py-1.5 px-2 rounded-lg text-[10px] font-semibold"
+                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "#fff" }}
+                        >
+                          2-min guide
+                        </a>
+                      </div>
+                    </div>
                   )}
                   <button
                     type="button"
@@ -2031,6 +2088,17 @@ function HangoutChatPanel({
           </div>
         );
       })()}
+
+      {/* Top-up Ru$h modal — opens from tip picker on INSUFFICIENT_TOKENS */}
+      <BuyTokensModal
+        isOpen={showTopUpModal}
+        onClose={() => setShowTopUpModal(false)}
+        onSuccess={() => {
+          setShowTopUpModal(false);
+          setTipNeedsTopUp(false);
+          setTipError("");
+        }}
+      />
     </div>
   );
 }
@@ -6396,15 +6464,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                       className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
                       style={{ background: "linear-gradient(135deg, #6366F1, #8B5CF6)" }}
                     >
-                      💳 Pay with Crypto (BTC, ETH, USDT…)
-                    </button>
-                    <button
-                      onClick={() => handlePurchaseChannel('dash')}
-                      disabled={pgLoading}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                      style={{ background: "linear-gradient(135deg, #008DE4, #0066B2)" }}
-                    >
-                      🥷 Pay with Dash
+                      💳 Pay with ETH / USDC
                     </button>
                     {pgError && <p className="text-xs text-red-400 text-center">{pgError}</p>}
                   </div>

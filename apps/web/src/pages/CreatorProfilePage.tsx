@@ -56,6 +56,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+import { BuyTokensModal } from "@/components/BuyTokensModal";
 import PostCard from "@/components/profile/PostCard";
 import { PostComposer } from "@/components/PostComposer";
 import { SuggestedCreatorRow, useForYou } from "@/components/Layout";
@@ -364,6 +365,16 @@ export default function CreatorProfilePage() {
   const [tipResult, setTipResult] = useState<"success" | "error" | null>(null);
   const [tipError, setTipError] = useState("");
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [showTopUpModal, setShowTopUpModal] = useState(false);
+  // Detect an injected wallet (MetaMask / TrustWallet in-app browser). Missing
+  // wallet → prompt with the "install a wallet first" guide before top-up.
+  const hasInjectedWallet = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).ethereum) return true;
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    return /TrustWallet|MetaMaskMobile|Rainbow/i.test(ua);
+  }, []);
 
   // Load creator profile
   useEffect(() => {
@@ -446,6 +457,8 @@ export default function CreatorProfilePage() {
     setShowBookCall(true);
   }, [data?.creator?.id, isAuthenticated, searchParams]);
 
+  const isOnboardingTutorial = searchParams.get("onboarding") === "1";
+
   const [showVideoUploadModal, setShowVideoUploadModal] = useState(false);
 
   // Load manual lazily when the collapsible card is first expanded
@@ -500,6 +513,20 @@ export default function CreatorProfilePage() {
   const viewerUnlocked = isSubscribed || (isPrimeCreator && viewerHasPrime);
 
   const canSeeExclusives = viewerUnlocked || isOwnProfile || user?.role === "admin" || user?.role === "superadmin";
+
+  // Deep-link from post-onboarding — auto-open the subscribe wizard so the
+  // tutorial flow lands the user directly on "confirm & pay" instead of
+  // making them hunt for the CTA. The banner (below) explains the free 180
+  // gifted Ru$h; onboarding=1 gates it to first-run only.
+  const subscribeActionHandled = useRef(false);
+  useEffect(() => {
+    if (subscribeActionHandled.current) return;
+    if (!data?.creator?.id || !isAuthenticated) return;
+    if (searchParams.get("action") !== "subscribe") return;
+    if (isSubscribed || isOwnProfile || isPrimeCreator) return;
+    subscribeActionHandled.current = true;
+    setShowSubscribePanel(true);
+  }, [data?.creator?.id, isAuthenticated, searchParams, isSubscribed, isOwnProfile, isPrimeCreator]);
 
   // Load more posts
   const loadMorePosts = useCallback(async () => {
@@ -943,6 +970,30 @@ export default function CreatorProfilePage() {
             <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
           )}
 
+          {/* Onboarding tutorial banner — visible only when arriving via the
+              post-signup redirect (?onboarding=1). Explains the 180 gifted
+              Ru$h can cover this first sub. Hidden after subscription. */}
+          {isOnboardingTutorial && !isSubscribed && !isOwnProfile && creator.username?.toLowerCase() === "santinofurioso" && (
+            <div
+              className="mb-3 rounded-xl border p-4 flex gap-3 items-start"
+              style={{ borderColor: "rgba(212,0,122,0.4)", background: "linear-gradient(135deg,rgba(212,0,122,0.08),rgba(230,145,56,0.06))" }}
+            >
+              <span className="text-2xl flex-shrink-0" aria-hidden="true">🎁</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-pnp-textPrimary">
+                  {user?.language === "es"
+                    ? "¡Bienvenido! Tienes 180 Ru$h de regalo"
+                    : "Welcome! You have 180 Ru$h on us"}
+                </p>
+                <p className="text-xs text-pnp-textSecondary mt-1 leading-relaxed">
+                  {user?.language === "es"
+                    ? "Úsalos para suscribirte al primer mes de Santino — sin costo. Así ves cómo funcionan las compras dentro de PNPtv!."
+                    : "Use them to subscribe to Santino's first month — no extra cost. See how purchases work inside PNPtv!."}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Inline CreatorSubscribeWizard opens above the subscribe CTA when
               tapped. Same widget used in the feed banner and channel paywall. */}
           {showSubscribePanel && !isSubscribed && !isOwnProfile && !isPrimeCreator && (
@@ -1116,9 +1167,9 @@ export default function CreatorProfilePage() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
-                    {([6, 12, 30, 60, 120] as const).map((amt) => {
-                      const usdLabel = amt === 6 ? "$1" : amt === 12 ? "$2" : amt === 30 ? "$5" : amt === 60 ? "$10" : "$20";
+                  <div className="grid grid-cols-5 gap-2 mb-3">
+                    {([30, 60, 90, 120, 150] as const).map((amt) => {
+                      const usdLabel = amt === 30 ? "$5" : amt === 60 ? "$10" : amt === 90 ? "$15" : amt === 120 ? "$20" : "$25";
                       const selected = tipAmount === amt;
                       return (
                         <button
@@ -1154,11 +1205,54 @@ export default function CreatorProfilePage() {
                     </div>
                   )}
                   {tipResult === "error" && tipError === "INSUFFICIENT_TOKENS" && (
-                    <div className="text-sm mb-3" style={{ color: "#FF6B6B" }}>
-                      Not enough Rush.{" "}
-                      <Link to="/subscribe" className="underline font-semibold" style={{ color: "var(--pnp-accent, #D4007A)" }}>
-                        Top up
-                      </Link>
+                    <div
+                      className="rounded-xl p-3 mb-3"
+                      style={{
+                        background: "rgba(212,0,122,0.08)",
+                        border: "1px solid rgba(212,0,122,0.30)",
+                      }}
+                    >
+                      <p className="text-sm font-semibold text-white mb-1">
+                        Not enough Ru$h 💎
+                      </p>
+                      <p className="text-xs mb-2.5" style={{ color: "rgba(255,255,255,0.72)" }}>
+                        Buy Ru$h with crypto — it lands in your balance the moment the payment confirms.
+                      </p>
+                      {!hasInjectedWallet && (
+                        <Link
+                          to="/crypto-guide"
+                          className="flex items-center gap-2 rounded-lg px-3 py-2 mb-2 text-xs font-semibold"
+                          style={{
+                            background: "rgba(123,97,255,0.10)",
+                            border: "1px solid rgba(123,97,255,0.30)",
+                            color: "#B8A5FF",
+                          }}
+                        >
+                          <span aria-hidden>🪄</span>
+                          <span>New here? Set up a wallet in 2 min →</span>
+                        </Link>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowTopUpModal(true)}
+                          className="flex-1 py-2 rounded-xl text-xs font-bold text-white transition-transform active:scale-95"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          Buy Ru$h with crypto
+                        </button>
+                        <Link
+                          to="/crypto-guide"
+                          className="py-2 px-3 rounded-xl text-xs font-semibold flex items-center"
+                          style={{
+                            background: "rgba(255,255,255,0.06)",
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            color: "rgba(255,255,255,0.85)",
+                          }}
+                        >
+                          2-min guide
+                        </Link>
+                      </div>
                     </div>
                   )}
                   {tipResult === "error" && tipError !== "INSUFFICIENT_TOKENS" && tipError && (
@@ -1477,6 +1571,18 @@ export default function CreatorProfilePage() {
           </div>
         </div>
       )}
+
+      {/* ── Top-up Ru$h modal — opens on INSUFFICIENT_TOKENS from tip flow ─ */}
+      <BuyTokensModal
+        isOpen={showTopUpModal}
+        onClose={() => setShowTopUpModal(false)}
+        onSuccess={(newBalance) => {
+          setWalletBalance(newBalance);
+          setShowTopUpModal(false);
+          setTipResult(null);
+          setTipError("");
+        }}
+      />
 
       {/* ── Book Call Modal ────────────────────────────────────────────── */}
       {showBookCall && data && (

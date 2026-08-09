@@ -28,6 +28,7 @@ import {
   getOwnChannels,
   assignPostToChannel,
   NP_COINS_SUBSCRIBE,
+  ApiError,
   type SocialPostItem,
   type MentionUser,
   type CreatorChannel,
@@ -402,6 +403,7 @@ export default function SocialPostCard({
   const [hypePosted, setHypePosted] = useState<boolean>(Boolean(post.hyped_by_me));
   const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
   const [hypeError, setHypeError] = useState<string | null>(null);
+  const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
   const hypeInFlight = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -441,7 +443,7 @@ export default function SocialPostCard({
   const showCreatorSubscribeUpsell =
     !hideCreatorCta &&
     !showPrimeUpsell &&
-    !isSantinoOrLex &&
+    !isPrimeCreator &&
     post.author_creator_status === "active" &&
     !post.is_exclusive &&
     !isOwn;
@@ -1832,8 +1834,8 @@ export default function SocialPostCard({
                   >
                     <span>▶</span>
                     {lang === "es"
-                      ? `Más de @${post.author_username}${isSantinoOrLex ? " en PRIME" : ""}`
-                      : `More from @${post.author_username}${isSantinoOrLex ? " on PRIME" : ""}`}
+                      ? `Más de @${post.author_username}${isPrimeCreator ? " en PRIME" : ""}`
+                      : `More from @${post.author_username}${isPrimeCreator ? " on PRIME" : ""}`}
                   </a>
                 </div>
               )}
@@ -2008,12 +2010,24 @@ export default function SocialPostCard({
                     const res = await togglePostHype(post.id);
                     if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
                     if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                    if (typeof res.dailyLimit === 'number' && typeof res.dailyRemaining === 'number') {
+                      setHypeQuota({ remaining: res.dailyRemaining, limit: res.dailyLimit, resetsAt: res.dailyResetsAt ?? null });
+                    }
                   } catch (err) {
                     setHypePosted(!nextHyped);
                     setHypeCount(c => Math.max(0, c + (nextHyped ? -1 : 1)));
-                    const msg = err instanceof Error ? err.message : '';
-                    setHypeError(msg || 'Failed');
-                    setTimeout(() => setHypeError(null), 2500);
+                    if (err instanceof ApiError && err.code === 'HYPE_QUOTA_EXCEEDED') {
+                      const d = err.data as { dailyLimit?: number; dailyRemaining?: number; resetsAt?: string | null };
+                      if (typeof d?.dailyLimit === 'number') {
+                        setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
+                      }
+                      setHypeError(err.message);
+                      setTimeout(() => setHypeError(null), 4500);
+                    } else {
+                      const msg = err instanceof Error ? err.message : '';
+                      setHypeError(msg || 'Failed');
+                      setTimeout(() => setHypeError(null), 2500);
+                    }
                   } finally {
                     hypeInFlight.current = false;
                   }
@@ -2038,6 +2052,38 @@ export default function SocialPostCard({
           {hypeError && (
             <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
           )}
+
+          {hypeQuota && !hypeError && hypeQuota.remaining < hypeQuota.limit && (() => {
+            const anyT = t as unknown as Record<string, (...args: unknown[]) => string>;
+            let label: string;
+            if (hypeQuota.remaining === 0) {
+              const ms = hypeQuota.resetsAt ? new Date(hypeQuota.resetsAt).getTime() - Date.now() : 0;
+              if (hypeQuota.resetsAt && ms > 0) {
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                label = anyT.hypeQuotaFullWithReset?.(hypeQuota.limit, h, m)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day) — resets in ${h}h ${m}m`;
+              } else {
+                label = anyT.hypeQuotaFull?.(hypeQuota.limit)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day)`;
+              }
+            } else {
+              label = anyT.hypeQuotaLeft?.(hypeQuota.remaining, hypeQuota.limit)
+                ?? `${hypeQuota.remaining}/${hypeQuota.limit} hypes left today`;
+            }
+            const tooltip = hypeQuota.resetsAt
+              ? (anyT.hypeQuotaTooltip?.(new Date(hypeQuota.resetsAt).toLocaleString())
+                  ?? `Resets ${new Date(hypeQuota.resetsAt).toLocaleString()}`)
+              : undefined;
+            return (
+              <p
+                className={`text-[10px] mt-1 ${hypeQuota.remaining === 0 ? 'text-red-400' : hypeQuota.remaining <= 1 ? 'text-orange-400' : 'text-pnp-textSecondary'}`}
+                title={tooltip}
+              >
+                🔥 {label}
+              </p>
+            );
+          })()}
 
           {/* Replies section */}
           {showReplies && (
