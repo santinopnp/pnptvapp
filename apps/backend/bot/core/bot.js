@@ -2364,6 +2364,15 @@ const startBot = async () => {
       logger.warn(`Suspicious-members scan init failed: ${error.message}`);
     }
 
+    // Nightly Zoho CRM delta sync — 03:00 America/Bogota (08:00 UTC).
+    // Syncs creators updated in the last 25h + anyone with earnings/subs
+    // activity so metrics stay fresh in Zoho.
+    try {
+      require('../../services/zohoSyncService').start();
+    } catch (error) {
+      logger.warn(`Zoho sync init failed: ${error.message}`);
+    }
+
     // Main Stage media broadcaster (env-gated; FFmpeg → LiveKit WHIP)
     if (String(process.env.MAIN_STAGE_MEDIA_ENABLED ?? 'true').toLowerCase() !== 'false') {
       try {
