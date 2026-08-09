@@ -4,6 +4,7 @@ const { getRedis } = require('../../../config/redis');
 const { resolveUserId } = require('../../utils/helpers');
 const DmService = require('../../../services/dmService');
 const { generateToken, LIVEKIT_WS_URL } = require('../../../services/livekitService');
+const { normalizeImageUrl } = require('../../../services/imageUrlHelper');
 
 const DM_CALL_TTL_SECONDS = 4 * 60 * 60;
 const DM_CALL_KEY_PREFIX = 'dm:call:';
@@ -195,7 +196,7 @@ const getThreads = async (req, res) => {
         userId: partnerIdStr,
         username: r.partner_username || '',
         firstName: r.partner_first_name || '',
-        photoUrl: r.partner_photo || null,
+        photoUrl: normalizeImageUrl(r.partner_photo),
         unreadCount: unread,
       };
     });
@@ -477,7 +478,7 @@ const sendMessage = async (req, res) => {
       io.to(`user:${message.recipient_id}`).emit('dm:message', {
         ...hydratedMessage,
         senderName,
-        senderPhoto: user.photoUrl || user.photo_url || null,
+        senderPhoto: normalizeImageUrl(user.photoUrl || user.photo_url),
       });
     }
 

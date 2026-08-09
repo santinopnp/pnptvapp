@@ -6,6 +6,7 @@ const fs = require('fs/promises');
 const { spawn } = require('child_process');
 const MediaCleanupService = require('./mediaCleanupService');
 const CreatorService = require('./creatorService');
+const { normalizeImageUrl } = require('./imageUrlHelper');
 
 // Blurred preview GIF for the exclusive-video paywall. Fire-and-forget from
 // createPost + reusable by the one-shot backfill script. Source file is either
@@ -84,13 +85,12 @@ async function generateBlurredPreviewGif(postId, mediaUrl) {
 }
 
 /**
- * Check if a photo_file_id is a valid web-servable URL (local path or http URL).
- * Telegram file IDs (base64-like strings) are NOT valid web URLs.
+ * Deprecated local check. Kept as an alias to `normalizeImageUrl(x) != null` so
+ * existing callers still work, but new code should call normalizeImageUrl
+ * directly and use its return value (which rewrites external CDN URLs through
+ * /api/img/proxy so the frontend allow-list never blocks them).
  */
-const isValidPhotoUrl = (photo) => {
-  if (!photo || typeof photo !== 'string') return false;
-  return photo.startsWith('/') || photo.startsWith('http');
-};
+const isValidPhotoUrl = (photo) => normalizeImageUrl(photo) != null;
 
 /**
  * Sanitize + hydrate post rows.
@@ -110,7 +110,7 @@ const sanitizePostRows = async (rows, opts = {}) => {
   const { hideDeletedHypeOriginals = false } = opts;
   const base = rows.map(row => ({
     ...row,
-    author_photo: isValidPhotoUrl(row.author_photo) ? row.author_photo : null,
+    author_photo: normalizeImageUrl(row.author_photo),
   }));
 
   // Collect original_post_ids from community_hype rows (metadata may be a
@@ -170,7 +170,7 @@ const sanitizePostRows = async (rows, opts = {}) => {
         r.original_video_thumbnail_url = null;
         r.original_author_username = orig.author_username;
         r.original_author_first_name = orig.author_first_name;
-        r.original_author_photo = isValidPhotoUrl(orig.author_photo) ? orig.author_photo : null;
+        r.original_author_photo = normalizeImageUrl(orig.author_photo);
         r.original_is_exclusive = false;
       } else {
         // If original became exclusive AFTER the hype, suppress media —
@@ -182,7 +182,7 @@ const sanitizePostRows = async (rows, opts = {}) => {
         r.original_video_thumbnail_url = wentExclusive ? null : orig.video_thumbnail_url;
         r.original_author_username = orig.author_username;
         r.original_author_first_name = orig.author_first_name;
-        r.original_author_photo = isValidPhotoUrl(orig.author_photo) ? orig.author_photo : null;
+        r.original_author_photo = normalizeImageUrl(orig.author_photo);
         r.original_is_exclusive = wentExclusive;
       }
     }
@@ -1109,7 +1109,7 @@ class SocialPostService {
       ),
     ]);
     const profile = profileRes.rows[0] || null;
-    if (profile) profile.photo_file_id = isValidPhotoUrl(profile.photo_file_id) ? profile.photo_file_id : null;
+    if (profile) profile.photo_file_id = normalizeImageUrl(profile.photo_file_id);
 
     // Hype is now a vote (post_hypes table), not a wrapper post. Any leftover
     // community_hype rows from the pre-347 model are dropped so the wall is as
@@ -1487,7 +1487,7 @@ class SocialPostService {
     return {
       hypers: hypersRes.rows.map(r => ({
         ...r,
-        photo_file_id: isValidPhotoUrl(r.photo_file_id) ? r.photo_file_id : null,
+        photo_file_id: normalizeImageUrl(r.photo_file_id),
       })),
       total: countRes.rows[0]?.n || 0,
     };
@@ -1521,7 +1521,7 @@ class SocialPostService {
         id: r.user_id,
         username: r.username,
         first_name: r.first_name,
-        photo_file_id: isValidPhotoUrl(r.photo_file_id) ? r.photo_file_id : null,
+        photo_file_id: normalizeImageUrl(r.photo_file_id),
       });
     }
     return posts.map(p => byPost.has(p.id) ? { ...p, top_hypers: byPost.get(p.id) } : p);
@@ -1684,7 +1684,7 @@ class SocialPostService {
     ]);
 
     const profile = profileRes.rows[0] || null;
-    if (profile) profile.photo_file_id = isValidPhotoUrl(profile.photo_file_id) ? profile.photo_file_id : null;
+    if (profile) profile.photo_file_id = normalizeImageUrl(profile.photo_file_id);
 
     // --- PRIVACY SETTINGS ENFORCEMENT ---
     // Only apply to third-party viewers (not the profile owner themselves).

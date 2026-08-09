@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { normalizeImageUrl } = require('../services/imageUrlHelper');
 
 const TABLE = 'performers';
 const AVAILABILITY_SLOTS_TABLE = 'call_availability_slots';
@@ -78,7 +79,7 @@ class PerformerModel {
       userId: row.user_id,
       displayName: row.display_name,
       bio: row.bio,
-      photoUrl: row.photo_url,
+      photoUrl: normalizeImageUrl(row.photo_url),
       isFeatured: row.is_featured,
       availabilitySchedule: row.availability_schedule
         ? (typeof row.availability_schedule === 'string' ? JSON.parse(row.availability_schedule) : row.availability_schedule)
@@ -120,7 +121,7 @@ class PerformerModel {
       );
       return result.rows.map((row) => {
         const performer = this.mapRowToPerformer(row);
-        performer.photoUrl = row.resolved_photo_url || null;
+        performer.photoUrl = normalizeImageUrl(row.resolved_photo_url);
         return performer;
       });
     } catch (error) {
@@ -197,7 +198,7 @@ class PerformerModel {
       const result = await query(sql, params);
       return result.rows.map((row) => {
         const performer = this.mapRowToPerformer(row);
-        performer.photoUrl = row.resolved_photo_url || null;
+        performer.photoUrl = normalizeImageUrl(row.resolved_photo_url);
         return performer;
       });
     } catch (error) {

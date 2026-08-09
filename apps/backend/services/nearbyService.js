@@ -14,6 +14,7 @@ const UserLocation = require('../models/userLocation');
 const BlockedUser = require('../models/blockedUser');
 const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
+const { normalizeImageUrl } = require('./imageUrlHelper');
 
 const RATE_LIMIT_SECONDS = 5;
 const PRIVACY_DECIMAL_PLACES = 3; // 40.750° = ~111m accuracy
@@ -304,8 +305,7 @@ class NearbyService {
             last_seen: row.last_seen ? new Date(row.last_seen).toISOString() : null,
             username: row.username || null,
             name: row.first_name || null,
-            photo_url: (row.photo_file_id && (row.photo_file_id.startsWith('/') || row.photo_file_id.startsWith('http')))
-              ? row.photo_file_id : null,
+            photo_url: normalizeImageUrl(row.photo_file_id),
           });
         }
       } catch (offlineErr) {
@@ -329,8 +329,7 @@ class NearbyService {
             if (p) {
               u.username = p.username || null;
               u.name = p.first_name || null;
-              const photo = p.photo_file_id || null;
-              u.photo_url = (photo && (photo.startsWith('/') || photo.startsWith('http'))) ? photo : null;
+              u.photo_url = normalizeImageUrl(p.photo_file_id);
               u._privacy_radius = this.resolvePrivacyRadius(p.privacy);
             }
           });

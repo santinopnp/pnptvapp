@@ -4,6 +4,7 @@ const { query } = require('../config/postgres');
 const logger = require('../utils/logger');
 const NotificationEmitter = require('./notificationEmitter');
 const { resolveUserId } = require('../bot/utils/helpers');
+const { normalizeImageUrl } = require('./imageUrlHelper');
 
 /**
  * DM Service
@@ -398,7 +399,7 @@ class DmService {
       id: Number(r.id),
       partnerId: String(r.partner_id),
       partnerName: r.partner_first_name || r.partner_username || 'User',
-      partnerPhoto: r.partner_photo || null,
+      partnerPhoto: normalizeImageUrl(r.partner_photo),
       snippet: (r.content || '').slice(0, 160),
       mediaType: r.media_type || null,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
@@ -458,7 +459,7 @@ class DmService {
           authorId: String(src.sender_id),
           authorUsername: src.sender_username || null,
           authorFirstName: src.sender_first_name || null,
-          authorPhoto: src.sender_photo || null,
+          authorPhoto: normalizeImageUrl(src.sender_photo),
           createdAt: src.created_at ? new Date(src.created_at).toISOString() : null,
           text: src.content || null,
           mediaUrl: src.media_url || null,

@@ -39,6 +39,7 @@ const roleGuard = require('./middleware/roleGuard');
 
 // Middleware
 const { asyncHandler } = require('./middleware/errorHandler');
+const { normalizeImageUrl, isWhitelistedCdn } = require('../../services/imageUrlHelper');
 const { authenticateUser } = require('./middleware/auth');
 const ipTracker = require('./middleware/ipTracker');
 const PermissionService = require('../../services/permissionService');
@@ -2250,6 +2251,71 @@ const aiGenerationLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerat
 // order every 6s for up to 30 min = 300 polls/session. Cap at 200 req / min
 // per user to allow the poll cadence + a bit of jitter.
 const walletStatusLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
+
+// ── Image proxy for external whitelisted CDNs (t.me, R2, directus, cdn) ─────
+// Serves external images through pnptv.app so the frontend allow-list never
+// blocks legit avatars. Cache-to-disk under /app/uploads/cache so subsequent
+// hits skip the upstream fetch. Frontend only sees `/api/img/proxy?src=<enc>`
+// or `/uploads/cache/...` after the first hit.
+const imgProxyLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 120,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true, legacyHeaders: false,
+});
+const IMG_CACHE_ROOT = path.join(__dirname, '../../../../public/uploads/cache');
+const IMG_PROXY_MAX_BYTES = 10 * 1024 * 1024;
+const IMG_PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|127\.|0\.|::1|fc|fd)/i;
+const IMG_EXT_BY_CT = {
+  'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png',
+  'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/svg+xml': 'svg',
+};
+app.get('/api/img/proxy', imgProxyLimiter, asyncHandler(async (req, res) => {
+  const src = req.query.src;
+  if (!src || typeof src !== 'string' || src.length > 2048) return res.status(400).send('bad src');
+  let url;
+  try { url = new URL(src); } catch { return res.status(400).send('invalid url'); }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return res.status(400).send('bad proto');
+  if (!isWhitelistedCdn(url.hostname)) return res.status(403).send('host not allowed');
+  if (IMG_PRIVATE_IP_RE.test(url.hostname)) return res.status(403).send('blocked');
+
+  const hash = crypto.createHash('sha1').update(src).digest('hex');
+  const shard = hash.slice(0, 2);
+  const shardDir = path.join(IMG_CACHE_ROOT, shard);
+  const metaPath = path.join(shardDir, `${hash}.meta`);
+  const fsPromises = fs.promises;
+
+  // Cache hit — read ext from sidecar meta and stream
+  try {
+    const meta = await fsPromises.readFile(metaPath, 'utf8');
+    const ext = meta.split('\n')[0] || 'img';
+    const publicPath = `/uploads/cache/${shard}/${hash}.${ext}`;
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.redirect(302, publicPath);
+  } catch { /* miss → fetch */ }
+
+  try {
+    const upstream = await axios.get(src, {
+      responseType: 'arraybuffer',
+      timeout: 8000,
+      maxContentLength: IMG_PROXY_MAX_BYTES,
+      maxBodyLength: IMG_PROXY_MAX_BYTES,
+      headers: { 'User-Agent': 'PNPtv-imgproxy/1.0', Accept: 'image/*' },
+      validateStatus: (s) => s >= 200 && s < 300,
+    });
+    const ct = String(upstream.headers['content-type'] || '').toLowerCase().split(';')[0].trim();
+    if (!ct.startsWith('image/')) return res.status(415).send('not image');
+    const ext = IMG_EXT_BY_CT[ct] || 'img';
+    await fsPromises.mkdir(shardDir, { recursive: true });
+    await fsPromises.writeFile(path.join(shardDir, `${hash}.${ext}`), Buffer.from(upstream.data));
+    await fsPromises.writeFile(metaPath, ext);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.redirect(302, `/uploads/cache/${shard}/${hash}.${ext}`);
+  } catch (err) {
+    logger.warn('[img-proxy] upstream failed', { src: src.slice(0, 120), error: err.message });
+    return res.status(502).send('upstream failed');
+  }
+}));
+
 app.get('/api/admin/check', adminCheckLimiter, adminGuard, (req, res) => {
   res.json({ isAdmin: true });
 });
@@ -10645,7 +10711,7 @@ app.get('/api/proxy/live/performers', requireSessionAuth, livePerformersLimiter,
       name: p.name,
       slug: p.slug,
       bio: p.bio || '',
-      photo: p.photo ? `https://cms.pnptv.app/assets/${p.photo}` : null,
+      photo: normalizeImageUrl(p.photo ? `https://cms.pnptv.app/assets/${p.photo}` : null),
       // is_featured and is_available were absent from response — featured performers
       // were indistinguishable from regular ones, and unavailable performers were shown
       isFeatured: p.is_featured || false,
