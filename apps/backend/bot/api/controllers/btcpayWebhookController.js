@@ -20,12 +20,11 @@
  */
 
 const logger = require('../../../utils/logger');
-const {
-  validateWebhookSignature,
-  checkInvoiceProcessed,
-  markInvoiceProcessed,
-  getInvoice,
-} = require('../../../config/btcpay');
+// BTCPay/Dash retired 2026-07-31. Stub the imports so this file loads without config/btcpay.js.
+const validateWebhookSignature = () => false;
+const checkInvoiceProcessed = async () => false;
+const markInvoiceProcessed = async () => {};
+const getInvoice = async () => null;
 const { query: dbQuery } = require('../../../config/postgres');
 const { cache } = require('../../../config/redis');
 const EntitlementAccessService = require('../../../services/entitlementAccessService');

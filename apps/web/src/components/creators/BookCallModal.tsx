@@ -168,8 +168,8 @@ export function BookCallModal({
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
   const [provider, setProvider] = useState<Provider>("nowpayments");
   // Coin choice inside the "Crypto" pill — matches Prime/Subscribe checkout token grid.
-  // Defaults to USDT-BSC (recommended). Passed as payCurrency to NowPayments when set.
-  const [npCoinPick, setNpCoinPick] = useState<string>("usdtbsc");
+  // Defaults to USDC on Base (recommended, matches our wallet checkout rail).
+  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
   const [email, setEmail] = useState("");
   const [clientNotes, setClientNotes] = useState("");
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);

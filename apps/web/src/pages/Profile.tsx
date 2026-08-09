@@ -74,7 +74,7 @@ import MonetizeContentCard from "@/components/profile/MonetizeContentCard";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { NearbyBadge, useNearbyToggle } from "@/components/NearbyBadge";
-import { getDistanceToUser, NP_COINS } from "@/lib/api";
+import { getDistanceToUser, NP_COINS_SUBSCRIBE } from "@/lib/api";
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 import { useAcceptingCalls } from "@/hooks/useAcceptingCalls";
@@ -269,7 +269,7 @@ export default function Profile() {
   const [subscribeEmail, setSubscribeEmail] = useState("");
   const [subscribeEmailError, setSubscribeEmailError] = useState<string | null>(null);
   const [subscribeProvider, setSubscribeProvider] = useState<"usdc" | "usdc_sol" | "btc">("usdc");
-  const [npCoinPick, setNpCoinPick] = useState<string>("btc");
+  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
   const [btcAvailable, setBtcAvailable] = useState(false);
   const [usdcAvailable, setUsdcAvailable] = useState<boolean | null>(null);
   const [subscribePaymentLoading, setSubscribePaymentLoading] = useState(false);
@@ -854,7 +854,7 @@ export default function Profile() {
       setSubscribeEmailError(null);
 
       if (subscribeProvider === "usdc" || subscribeProvider === "usdc_sol") {
-        const payCurrency = subscribeProvider === "usdc_sol" ? "usdcsol" : (npCoinPick || "btc");
+        const payCurrency = subscribeProvider === "usdc_sol" ? "usdcsol" : (npCoinPick || "usdcbase");
         const res = await startNowPayments("creator_monthly", trimmed, creatorId, false, payCurrency);
         if (!res?.success) {
           setSubscribeError((res as any)?.error || nowpaymentsError || p.failedToCreatePayment);
@@ -2253,7 +2253,7 @@ export default function Profile() {
                         </a>
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
-                        {NP_COINS.map((coin) => (
+                        {NP_COINS_SUBSCRIBE.map((coin) => (
                           <button
                             key={coin.code}
                             type="button"

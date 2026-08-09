@@ -273,22 +273,15 @@ export const tutorialContent: Record<string, TutorialSection> = {
       {
         titleEn: "Pay with Bitcoin / Crypto",
         titleEs: "Paga con Bitcoin / Crypto",
-        descEn: "Option A — Bitcoin & 100+ coins: Select the Crypto tab. A NowPayments checkout opens. Choose your coin (BTC, ETH, USDT, and more), then scan the QR code or copy the wallet address. Send the exact amount shown. Confirmation typically lands in a few minutes.",
-        descEs: "Opcion A — Bitcoin y mas de 100 criptomonedas: Selecciona la pestana Crypto. Se abre un checkout de NowPayments. Elige tu moneda (BTC, ETH, USDT, y mas), escanea el codigo QR o copia la direccion de wallet. Envia la cantidad exacta indicada. La confirmacion suele llegar en minutos.",
-        illustration: "paymentMethods",
-      },
-      {
-        titleEn: "Pay with Dash",
-        titleEs: "Paga con Dash",
-        descEn: "Option B — Dash crypto: Select the Dash tab (the ninja icon). A QR code and Dash address appear. Scan with any Dash wallet — the official Dash Wallet, Kraken, Uphold, or any exchange that supports Dash. Send the exact amount shown. Confirmation typically lands in 2-5 minutes thanks to InstantSend.",
-        descEs: "Opcion B — Crypto Dash: Selecciona la pestana Dash (el icono ninja). Aparece un codigo QR y una direccion Dash. Escanea con cualquier wallet Dash — Dash Wallet oficial, Kraken, Uphold, o cualquier exchange que soporte Dash. Envia la cantidad exacta. La confirmacion suele llegar en 2-5 minutos gracias a InstantSend.",
+        descEn: "Option A — Ethereum & USDC: Select the Crypto tab. A NowPayments checkout opens. Choose ETH or USDC (Ethereum), then scan the QR code or copy the wallet address. Send the exact amount shown. Confirmation typically lands in a few minutes.",
+        descEs: "Opcion A — Ethereum y USDC: Selecciona la pestana Crypto. Se abre un checkout de NowPayments. Elige ETH o USDC (Ethereum), escanea el codigo QR o copia la direccion de wallet. Envia la cantidad exacta indicada. La confirmacion suele llegar en minutos.",
         illustration: "paymentMethods",
       },
       {
         titleEn: "Confirm Your Payment",
         titleEs: "Confirma Tu Pago",
-        descEn: "Step 3: After paying, come back to the app and tap 'I've already paid'. We'll verify your payment. The page updates automatically once your payment confirms on the blockchain (typically 2-5 minutes for Dash, a few minutes for other crypto).",
-        descEs: "Paso 3: Despues de pagar, regresa a la app y toca 'Ya pague'. Verificaremos tu pago. La pagina se actualiza automaticamente cuando se confirme en la blockchain (tipicamente 2-5 minutos para Dash, unos minutos para otra crypto).",
+        descEn: "Step 3: After paying, come back to the app and tap 'I've already paid'. We'll verify your payment. The page updates automatically once your payment confirms on the blockchain (typically a few minutes for Ethereum / USDC, varies by network).",
+        descEs: "Paso 3: Despues de pagar, regresa a la app y toca 'Ya pague'. Verificaremos tu pago. La pagina se actualiza automaticamente cuando se confirme en la blockchain (normalmente unos minutos para Ethereum / USDC, varia segun la red).",
         illustration: "paymentMethods",
       },
       {

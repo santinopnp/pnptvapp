@@ -19,8 +19,9 @@ const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 const DashTokenService = require('./dashTokenService');
-const meruLinkService = require('./meruLinkService');
-const meruPaymentService = require('./meruPaymentService');
+// meruLinkService and meruPaymentService removed 2026-08 (Meru retired)
+const meruLinkService = null;
+const meruPaymentService = null;
 
 // Token packages — mirrors DashTokenService.TOKEN_PACKAGES but keyed by id for O(1) lookup.
 // Source of truth is DashTokenService; we derive the map from it rather than duplicating numbers.
@@ -57,6 +58,11 @@ class TokenActivationService {
    * >}
    */
   static async reserveTokenActivation({ userId, packageKey, email, language = 'es' }) {
+    // Meru retired 2026-08.
+    logger.info('[tokenActivation] reserveTokenActivation: Meru retired', { userId, packageKey });
+    return { error: 'MERU_RETIRED' };
+
+    // Dead code kept for reference — never reached:
     const pkg = TOKEN_PACKAGES[packageKey];
     if (!pkg) {
       return { error: 'INVALID_PACKAGE' };
@@ -140,9 +146,11 @@ class TokenActivationService {
    * >}
    */
   static async activateTokenCode({ userId, activationCode }) {
-    // Sanitise. The code is now the Meru URL suffix — Meru's format is
-    // A-Z, a-z, 0-9, `_`, `-`. We keep original casing (Meru suffixes are
-    // case-sensitive) but accept a trailing slash / whitespace from paste.
+    // Meru retired 2026-08.
+    logger.info('[tokenActivation] activateTokenCode: Meru retired', { userId, activationCode });
+    return { error: 'MERU_RETIRED', statusCode: 410 };
+
+    // Dead code kept for reference — never reached:
     const code = String(activationCode || '').trim().replace(/\/+$/, '');
     if (!code || code.length > 64 || !/^[A-Za-z0-9_\-]+$/.test(code)) {
       return { error: 'INVALID_CODE', statusCode: 400 };
@@ -268,7 +276,11 @@ class TokenActivationService {
    * @returns {Promise<{ status: 'reserved'|'paid_pending_activation'|'used'|'expired', expiresAt: Date|null, tokens: number|null }>}
    */
   static async getTokenActivationStatus(activationCode) {
-    // Preserve case (Meru URL suffix is case-sensitive) and strip trailing "/".
+    // Meru retired 2026-08.
+    logger.info('[tokenActivation] getTokenActivationStatus: Meru retired', { activationCode });
+    return { status: 'expired', expiresAt: null, tokens: null };
+
+    // Dead code kept for reference — never reached:
     const code = String(activationCode || '').trim().replace(/\/+$/, '');
     if (!code) return { status: 'expired', expiresAt: null, tokens: null };
     const upper = code.toUpperCase();

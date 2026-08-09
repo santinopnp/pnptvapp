@@ -130,12 +130,12 @@ describe('Auth bypass — webappLiveController', () => {
 
 describe('Tip amount validation', () => {
   it('TIP_AMOUNTS contains only the canonical allowed values', () => {
-    expect(PNPLiveTipsService.TIP_AMOUNTS).toEqual([30, 60, 120, 300, 600]);
+    expect(PNPLiveTipsService.TIP_AMOUNTS).toEqual([30, 60, 90, 120, 150]);
   });
 
   it('amounts not in the allowlist are rejected by the route', () => {
     const valid = PNPLiveTipsService.TIP_AMOUNTS;
-    const invalid = [0, -5, 1, 4, 6, 15, 101, 500, 9999, NaN, Infinity, '', null];
+    const invalid = [0, -5, 1, 4, 6, 15, 101, 300, 600, 9999, NaN, Infinity, '', null];
     for (const v of invalid) {
       expect(valid.includes(parseFloat(v))).toBe(false);
     }

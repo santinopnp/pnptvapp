@@ -28,10 +28,10 @@ const SANTINO_USER_ID = '8599671840';
 const LEX_USER_ID = null;
 const LEX_PRIME_HANGOUT_GROUP_ID = null;
 
-// PRIME revenue split — 20% platform / 80% Santino (solo owner as of 2026-08-08).
+// PRIME revenue split — 50% platform (company reinvestment) / 50% Santino (salary).
 // Applies to every paid PRIME plan grant (price>0 only, trials skip).
-const PRIME_PLATFORM_RATE = 0.20;
-const PRIME_CREATOR_RATE  = 0.80;
+const PRIME_PLATFORM_RATE = 0.50;
+const PRIME_CREATOR_RATE  = 0.50;
 const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID];
 
 // PRIME hangout group IDs — every qualifying PRIME member is auto-joined.
@@ -144,17 +144,16 @@ module.exports = {
   // PAYMENT SETTINGS
   // ==========================================
   payment: {
-    // Supported providers — Daimo retired 2026-04-21; PayPal never implemented
-    providers: ['epayco', 'btcpay', 'dash'],
+    // Supported providers — NowPayments only (ETH + USDC-ERC20).
+    // ePayco retired 2026-06-27, BTCPay/Dash retired 2026-07-31.
+    providers: ['nowpayments'],
 
     // Default provider
-    defaultProvider: process.env.DEFAULT_PAYMENT_PROVIDER || 'epayco',
+    defaultProvider: 'nowpayments',
 
     // Payment methods
     methods: {
-      epayco: ['credit_card', 'pse', 'bank_transfer'],
-      btcpay: ['btc', 'lightning'],
-      dash: ['dash'],
+      nowpayments: ['eth', 'usdcerc20'],
     },
 
     // Minimum amounts
@@ -178,12 +177,6 @@ module.exports = {
 
     // Webhook timeout
     webhookTimeout: parseInt(process.env.WEBHOOK_TIMEOUT || '30000'),
-
-    // 3DS settings
-    threeDs: {
-      enabled: process.env.ENABLE_3DS !== 'false',
-      timeout: parseInt(process.env.THREED_DS_TIMEOUT || '360000'), // 6 minutes
-    },
   },
 
   // ==========================================

@@ -378,10 +378,8 @@ async function cronProcessor(job) {
     }
 
     case 'btcpay-reconcile': {
-      const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
-      if (!PaymentRecoveryService) { logger.warn('[BullMQ] btcpay-reconcile: service not found'); return; }
-      const results = await PaymentRecoveryService.processStuckDashInvoices();
-      logger.info('Dash/BTCPay reconciliation completed', results);
+      // BTCPay/Dash retired 2026-07-31. Worker kept in registry so existing BullMQ jobs drain cleanly.
+      logger.info('[BullMQ] btcpay-reconcile: BTCPay retired — no-op');
       return;
     }
 
@@ -407,18 +405,14 @@ async function cronProcessor(job) {
     }
 
     case 'meru-reconcile': {
-      const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
-      if (!PaymentRecoveryService) { logger.warn('[BullMQ] meru-reconcile: service not found'); return; }
-      const results = await PaymentRecoveryService.processStuckMeruPayments();
-      logger.info('Meru reconciliation completed', results);
+      // Meru retired 2026-08. Worker kept so existing BullMQ jobs drain cleanly.
+      logger.info('[BullMQ] meru-reconcile: Meru retired — no-op');
       return;
     }
 
     case 'meru-token-reconcile': {
-      const PaymentRecoveryService = _safeRequire('../paymentRecoveryService');
-      if (!PaymentRecoveryService) { logger.warn('[BullMQ] meru-token-reconcile: service not found'); return; }
-      const results = await PaymentRecoveryService.processStuckTokenActivations();
-      logger.info('Meru token activation reconciliation completed', results);
+      // Meru retired 2026-08. Worker kept so existing BullMQ jobs drain cleanly.
+      logger.info('[BullMQ] meru-token-reconcile: Meru retired — no-op');
       return;
     }
 
@@ -501,16 +495,8 @@ async function cronProcessor(job) {
     }
 
     case 'btcpay-webhook-probe': {
-      if (process.env.BTCPAY_PROBE_ENABLED !== '1') return;
-      try {
-        const btcpay = require('../../config/btcpay');
-        if (!btcpay.isConfigured) return;
-        const expectedUrl = `${process.env.WEBAPP_URL || 'http://localhost:3000'}/api/webhooks/btcpay`;
-        const result = await btcpay.verifyWebhookRegistration({ expectedUrl });
-        if (!result.ok) logger.error('BTCPay webhook probe: MISCONFIGURED', result);
-      } catch (err) {
-        logger.error('BTCPay webhook probe error', { error: err.message });
-      }
+      // BTCPay/Dash retired 2026-07-31. Worker kept so existing BullMQ jobs drain cleanly.
+      logger.info('[BullMQ] btcpay-webhook-probe: BTCPay retired — no-op');
       return;
     }
 
@@ -759,10 +745,8 @@ async function cronProcessor(job) {
     }
 
     case 'meru-reservation-cleanup': {
-      const meruLinkService = _safeRequire('../meruLinkService');
-      if (!meruLinkService) { logger.warn('[BullMQ] meru-reservation-cleanup: service not found'); return; }
-      const released = await meruLinkService.releaseExpiredReservations();
-      if (released > 0) logger.info('Meru reservation cleanup', { released });
+      // Meru retired 2026-08. Worker kept so existing BullMQ jobs drain cleanly.
+      logger.info('[BullMQ] meru-reservation-cleanup: Meru retired — no-op');
       return;
     }
 

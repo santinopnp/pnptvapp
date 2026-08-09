@@ -345,6 +345,82 @@ Type /subscribe to enable automatic monthly renewal.`;
       return false;
     }
   }
+
+  /**
+   * Wallet-checkout renewal reminders (Phase 4 — manual renewal path).
+   *
+   * Web-push notify pnp-member subscribers whose entitlements are about to
+   * expire, so they can 1-click renew from their wallet. Dedupes per
+   * entitlement per day via Redis (`renew_reminder:{entitlement_id}:{day}`)
+   * so re-running the cron in the same day is a no-op.
+   *
+   * Targets ALL entitlements with auto_renew=true expiring in ≤3 days AND
+   * more than 12 hours from now (avoids double-firing with the final "expired"
+   * push in the last hour). Skipped for lifetime and consumed rows.
+   */
+  static async fireWalletRenewalReminders() {
+    const { query } = require('../config/postgres');
+    const { getRedis } = require('../config/redis');
+    const PushService = require('./pushNotificationService');
+    const redis = getRedis();
+
+    let picked = 0, sent = 0, deduped = 0, skipped = 0;
+    try {
+      // Only remind wallet-linked users (no wallet = they'd need to fund one
+      // first before they can renew via USDC anyway; email/telegram remain the
+      // fallback via the legacy TelegramSubscriptionReminderService).
+      const { rows } = await query(
+        `SELECT ue.id, ue.user_id, ue.add_on_id, ue.expires_at, ue.creator_id,
+                u.username, u.first_name
+           FROM user_entitlements ue
+           JOIN users u ON u.id = ue.user_id
+          WHERE ue.auto_renew = true
+            AND ue.is_lifetime = false
+            AND ue.is_consumed = false
+            AND ue.expires_at BETWEEN NOW() + INTERVAL '12 hours' AND NOW() + INTERVAL '3 days'
+            AND u.wallet_address IS NOT NULL
+            AND u.tier != 'banned'`
+      );
+      picked = rows.length;
+
+      const dayKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      for (const row of rows) {
+        const dedupeKey = `renew_reminder:${row.id}:${dayKey}`;
+        const acquired = await redis.set(dedupeKey, '1', 'EX', 25 * 60 * 60, 'NX').catch(() => null);
+        if (!acquired) { deduped++; continue; }
+
+        const hoursLeft = Math.max(1, Math.round((new Date(row.expires_at).getTime() - Date.now()) / 3_600_000));
+        const label = row.add_on_id === 'prime' ? 'PRIME'
+          : row.add_on_id === 'pnp-member' ? 'Basic membership'
+          : row.add_on_id === 'creator-subscription' ? 'creator subscription'
+          : row.add_on_id;
+
+        try {
+          const delivered = await PushService.sendToUser(row.user_id, {
+            title: `⏰ Your ${label} expires soon`,
+            body: `Tap to renew with 1 click from your wallet — ${hoursLeft}h left.`,
+            url: row.add_on_id === 'creator-subscription' && row.creator_id
+              ? `/c/${row.creator_id}?action=subscribe`
+              : '/subscribe',
+            icon: '/Logo2-50.png',
+          });
+          if (delivered > 0) sent++;
+          else skipped++;
+        } catch (err) {
+          logger.warn('[SubReminder] wallet renewal push failed', {
+            userId: row.user_id, entitlementId: row.id, error: err.message,
+          });
+          skipped++;
+        }
+      }
+
+      logger.info('[SubReminder] wallet renewal reminders cycle', { picked, sent, deduped, skipped });
+      return { picked, sent, deduped, skipped };
+    } catch (err) {
+      logger.error('[SubReminder] fireWalletRenewalReminders failed', { error: err.message });
+      return { picked, sent, deduped, skipped, error: err.message };
+    }
+  }
 }
 
 module.exports = SubscriptionReminderService;

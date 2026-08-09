@@ -505,8 +505,77 @@ async function addCammer(identity) {
   // Best-effort stats upsert
   upsertCammerStats(identity).catch(() => {});
 
+  // Fire-and-forget web push to pnp-member push-subscribers. De-duped for 15
+  // min per cammer to survive disconnect/reconnect bounces without spamming.
+  notifyCammerJoined(identity).catch((err) =>
+    logger.warn('[MainStage] notifyCammerJoined failed', { identity, error: err.message })
+  );
+
   await emitState();
   return 'added';
+}
+
+/**
+ * Push-notify pnp-member web-push subscribers when a new creator joins the
+ * Main Stage as a cammer. Best-effort — swallows failures so a broken push
+ * pipeline never blocks a cammer joining. Skipped for the media bot, guests,
+ * and viewers. Respects a 15-minute Redis dedupe per userId.
+ */
+async function notifyCammerJoined(identity) {
+  const idStr = String(identity);
+  if (idStr === MEDIA_BOT_IDENTITY) return;
+  if (idStr.startsWith('guest_') || idStr.startsWith('viewer_')) return;
+
+  const redis = getRedis();
+  const dedupeKey = `mainstage:notif:sent:${idStr}`;
+  // SET NX EX — atomic dedupe. First join wins the 15-min window.
+  const acquired = await redis.set(dedupeKey, '1', 'EX', 15 * 60, 'NX').catch(() => null);
+  if (!acquired) {
+    logger.debug('[MainStage] notifyCammerJoined skipped — deduped', { identity: idStr });
+    return;
+  }
+
+  const pool = getPool();
+  const { rows: userRows } = await pool.query(
+    `SELECT u.id, u.username, u.first_name,
+            COALESCE(p.photo_url, u.photo_file_id) AS photo_url
+       FROM users u
+       LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+      WHERE u.id::text = $1
+      LIMIT 1`,
+    [idStr]
+  );
+  if (userRows.length === 0) return;
+  const cammer = userRows[0];
+  const displayName = cammer.first_name || cammer.username || 'A creator';
+
+  // Audience — active pnp-member entitlement holders AND opted-in to web push.
+  // The push_subscriptions join naturally excludes users without a browser sub.
+  const { rows: audRows } = await pool.query(
+    `SELECT DISTINCT ue.user_id
+       FROM user_entitlements ue
+       JOIN push_subscriptions ps ON ps.user_id = ue.user_id
+      WHERE ue.add_on_id = 'pnp-member'
+        AND (ue.is_lifetime = true OR ue.expires_at > NOW())
+        AND ue.user_id::text <> $1`,
+    [idStr]  // don't notify the cammer about themselves
+  );
+  const userIds = audRows.map((r) => String(r.user_id));
+  if (userIds.length === 0) {
+    logger.info('[MainStage] notifyCammerJoined: no audience', { identity: idStr });
+    return;
+  }
+
+  const push = require('./pushNotificationService');
+  const sent = await push.sendToUsers(userIds, {
+    title: `🎤 ${displayName} is on Main Stage`,
+    body: 'Tap to join the stream →',
+    url: '/main-stage',
+    icon: cammer.photo_url || '/Logo2-50.png',
+  });
+  logger.info('[MainStage] notifyCammerJoined delivered', {
+    identity: idStr, audienceSize: userIds.length, sent,
+  });
 }
 
 // Atomic shuffle-and-rotate-spotlight. Closes the race where a concurrent
@@ -596,6 +665,9 @@ async function addCammerForce(identity) {
 
   logger.info('[MainStage] admin cammer force-added', { identity });
   upsertCammerStats(identity).catch(() => {});
+  notifyCammerJoined(identity).catch((err) =>
+    logger.warn('[MainStage] notifyCammerJoined failed (force path)', { identity, error: err.message })
+  );
   await emitState();
   return 'added';
 }

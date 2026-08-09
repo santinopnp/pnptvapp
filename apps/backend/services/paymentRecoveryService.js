@@ -191,6 +191,12 @@ class PaymentRecoveryService {
    * @returns {Promise<Object>} Reconciliation results
    */
   static async processStuckDashInvoices() {
+    // BTCPay/Dash retired 2026-07-31. No-op stub kept so cron callers do not crash.
+    logger.info('processStuckDashInvoices: BTCPay retired — skipping');
+    return { checked: 0, settled: 0, expired: 0, invalid: 0, stillPending: 0, errors: 0, startTime: new Date(), endTime: new Date(), retired: true };
+  }
+
+  static async _processStuckDashInvoices_RETIRED() {
     logger.info('Starting Dash/BTCPay reconciliation...');
 
     const results = {
@@ -624,6 +630,12 @@ class PaymentRecoveryService {
    * @returns {Promise<Object>} Reconciliation results
    */
   static async processStuckMeruPayments() {
+    // Meru retired 2026-08. No-op stub kept so cron callers do not crash.
+    logger.info('processStuckMeruPayments: Meru retired — skipping');
+    return { checked: 0, autoHealed: 0, orphans: 0, stillUnpaid: 0, errors: 0, startTime: new Date(), endTime: new Date(), retired: true };
+  }
+
+  static async _processStuckMeruPayments_RETIRED() {
     logger.info('Starting Meru lifetime100 reconciliation...');
 
     const results = {
@@ -1543,6 +1555,12 @@ class PaymentRecoveryService {
    * @returns {Promise<Object>} Reconciliation results
    */
   static async processStuckTokenActivations() {
+    // Meru token activation retired 2026-08. No-op stub kept so cron callers do not crash.
+    logger.info('processStuckTokenActivations: Meru retired — skipping');
+    return { checked: 0, autoHealed: 0, alreadyClaimedByUser: 0, orphans: 0, stillUnpaid: 0, errors: 0, startTime: new Date(), endTime: new Date(), retired: true };
+  }
+
+  static async _processStuckTokenActivations_RETIRED() {
     logger.info('Starting Meru token-activation reconciliation...');
 
     const results = {

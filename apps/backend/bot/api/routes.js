@@ -5841,53 +5841,16 @@ const { ensureEmailCredentials } = require('../../services/userService');
 
 // Get a random available Meru link for a product
 // Verifies the link is actually unpaid on Meru before serving it
+// Meru retired 2026-08.
+// meruRandomLinkLimiter kept as a const so no reference errors below if any caller used it.
 const meruRandomLinkLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 5,
+  windowMs: 60 * 60 * 1000, max: 5,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
-  handler: (req, res) => res.status(429).json({ success: false, error: 'Too many requests. Try again later.' }),
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, legacyHeaders: false,
 });
-app.get('/api/meru/random-link', requireSessionAuth, meruRandomLinkLimiter, asyncHandler(async (req, res) => {
-  // Default to the consolidated 'lifetime100' pool — see migration 195.
-  const { product = 'lifetime100' } = req.query;
-  const meruLinkService = require('../../services/meruLinkService');
-  const meruPaymentService = require('../../services/meruPaymentService');
-
-  try {
-    // Try up to 5 random links to find one that's genuinely unpaid on Meru
-    const MAX_ATTEMPTS = 5;
-    const triedCodes = new Set();
-
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const link = await meruLinkService.getRandomAvailableLink(product);
-
-      if (!link) break;
-      if (triedCodes.has(link.code)) continue;
-      triedCodes.add(link.code);
-
-      // Verify link is not already paid on Meru
-      const verification = await meruPaymentService.verifyPayment(link.code);
-      if (!verification.isPaid) {
-        // Fresh link — serve it
-        return res.json({ success: true, code: link.code, url: link.meru_link });
-      }
-
-      // Already paid on Meru — mark as used so it won't be picked again
-      logger.warn('Meru link already paid but was active in DB, marking as used', { code: link.code, paidAt: verification.paidAt });
-      await meruLinkService.invalidateLinkAfterActivation(link.code, 'unknown', 'paid-on-meru-no-activation');
-    }
-
-    return res.status(404).json({
-      success: false,
-      error: `No active Meru links found for product: ${product}`
-    });
-  } catch (error) {
-    logger.error('Error in /api/meru/random-link:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-}));
+app.get('/api/meru/random-link', requireSessionAuth, meruRandomLinkLimiter, (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public founder-lifetime flow (no auth required)
@@ -5909,274 +5872,15 @@ const lifetime100ActivateLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
 });
 
-// GET /api/public/lifetime100/availability — returns { success, available }
-//
-// Must count the same rows reserveRandomLink() treats as claimable — a
-// 'reserved' row whose 60-min hold has expired is just as available as an
-// 'active' one (reserveRandomLink's own WHERE re-reserves it directly,
-// no separate "release" step required). This previously only counted
-// status='active', so abandoned reservations (checkout started, never
-// finished) piled up invisibly: the count could hit 0 and disable the
-// reserve CTA even though real, reusable codes existed, and with the CTA
-// disabled nobody could call /reserve to trigger the one code path that
-// would've reclaimed them — a permanent false "sold out".
-app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) => {
-  const { query: dbQuery } = require('../../config/postgres');
-  const { rows } = await dbQuery(
-    `SELECT COUNT(*)::int AS n FROM meru_payment_links
-      WHERE product='lifetime100'
-        AND (status='active' OR (status='reserved' AND reserved_until < NOW()))`
-  );
-  return res.json({ success: true, available: rows[0]?.n || 0 });
-}));
+// GET /api/public/lifetime100/availability — Meru retired 2026-08
+app.get('/api/public/lifetime100/availability', (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
-// POST /api/public/lifetime100/reserve — capture email, reserve a code, email the user
-app.post('/api/public/lifetime100/reserve', lifetime100ReserveLimiter, asyncHandler(async (req, res) => {
-  const { email: rawEmail, language: rawLang } = req.body || {};
-  const email = String(rawEmail || '').trim().toLowerCase();
-  const language = (rawLang === 'en' ? 'en' : 'es');
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required' });
-  }
-
-  // Per-email soft rate-limit: max 2 reservations per hour via Redis incr
-  const emailRateKey = `lifetime100:reserve:email:${email}`;
-  const emailRate = await cache.incr(emailRateKey, 60 * 60);
-  if (emailRate > 2) {
-    return res.status(429).json({ success: false, error: 'Too many reservations for this email. Try again later.' });
-  }
-
-  const meruLinkService = require('../../services/meruLinkService');
-  const EmailService = require('../../services/emailservice');
-  const { ensureEmailCredentials } = require('../../services/userService');
-  const { query: dbQuery } = require('../../config/postgres');
-  const crypto = require('crypto');
-
-  // 1) Find or create user record
-  const existingUser = await dbQuery(
-    `SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND COALESCE(is_deleted,false)=false LIMIT 1`,
-    [email]
-  );
-  let userId;
-  if (existingUser.rows.length > 0) {
-    userId = existingUser.rows[0].id;
-  } else {
-    userId = crypto.randomUUID();
-    const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
-    await dbQuery(
-      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, created_at, updated_at)
-       VALUES ($1, $2, $3, 'free', 'user', 'free', NOW(), NOW())`,
-      [userId, email, firstName]
-    );
-  }
-
-  // 2) Ensure credentials exist (skip email — we send one combined founder email)
-  let credResult;
-  try {
-    credResult = await ensureEmailCredentials(userId, email, language, { skipEmail: true });
-  } catch (credErr) {
-    if (String(credErr.message || '').includes('already associated')) {
-      return res.status(409).json({ success: false, error: credErr.message });
-    }
-    logger.error('lifetime100 reserve: credential error', { email, error: credErr.message });
-    return res.status(500).json({ success: false, error: 'Failed to provision account' });
-  }
-
-  // Only include plaintext password in email for newly-created accounts
-  const includeCreds = !!(credResult?.created && credResult?.plainPassword);
-
-  // 3) Atomically reserve a code
-  const reservation = await meruLinkService.reserveRandomLink({
-    product: 'lifetime100',
-    email,
-    userId,
-    minutes: 60,
-  });
-  if (!reservation) {
-    return res.status(409).json({
-      success: false,
-      error: 'All founder codes are currently reserved. Please try again in about an hour.',
-    });
-  }
-
-  // 4) Send combined welcome + code email
-  const activationUrl = `https://app.pnptv.app/lifetime100/activate?code=${encodeURIComponent(reservation.code)}`;
-  try {
-    await EmailService.sendFounderLifetimeEmail({
-      to: email,
-      language,
-      meruCode: reservation.code,
-      meruUrl: reservation.meru_link,
-      loginEmail: email,
-      loginPassword: includeCreds ? credResult.plainPassword : '(use your existing password)',
-      recoveryId: userId,
-      activationUrl,
-    });
-  } catch (emailErr) {
-    // Non-critical — the code is still reserved; user can retry via the page
-    logger.error('lifetime100 reserve: email send failed', { email, code: reservation.code, error: emailErr.message });
-  }
-
-  return res.json({
-    success: true,
-    message: 'Founder code sent to your email. It is valid for 60 minutes.',
-    expiresAt: reservation.reserved_until,
-    meruUrl: reservation.meru_link,
-    code: reservation.code,
-  });
-}));
-
-// POST /api/public/lifetime100/activate — verify Meru payment, claim code, grant membership, log in
-app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHandler(async (req, res) => {
-  const code = String(req.body?.code || '').trim();
-  if (!code || code.length > 100 || !/^[A-Za-z0-9_\-]+$/.test(code)) {
-    return res.status(400).json({ success: false, error: 'A valid code is required' });
-  }
-
-  const meruLinkService = require('../../services/meruLinkService');
-  const meruPaymentService = require('../../services/meruPaymentService');
-  const { getPool } = require('../../config/postgres');
-  const pool = getPool();
-
-  const meruLockKey = `meru:activate:${code}`;
-  const gotLock = await cache.acquireLock(meruLockKey, 30);
-  if (!gotLock) {
-    return res.status(423).json({ success: false, error: 'Activation already in progress for this code. Wait a moment and try again.' });
-  }
-
-  try {
-    // Validate reservation state
-    const reservation = await meruLinkService.getReservation(code);
-    if (!reservation) {
-      return res.status(404).json({ success: false, error: 'Code not found. Double-check that you entered it correctly.' });
-    }
-    if (reservation.status === 'used') {
-      return res.status(409).json({ success: false, error: 'This code has already been redeemed. Contact support if you believe this is an error.' });
-    }
-    if (reservation.status !== 'reserved' || !reservation.reserved_until || new Date(reservation.reserved_until) < new Date()) {
-      return res.status(410).json({ success: false, error: 'This code has expired. Please request a new payment link at /lifetime100.' });
-    }
-    const userId = reservation.reserved_for_user_id;
-    const email = reservation.reserved_for_email;
-    if (!userId) {
-      return res.status(500).json({ success: false, error: 'Reservation is missing an owner. Contact support.' });
-    }
-
-    // Verify payment on Meru (Puppeteer)
-    const verification = await meruPaymentService.verifyPayment(code);
-    if (!verification.isPaid) {
-      return res.status(402).json({ success: false, error: 'Payment not yet completed on Meru. Please complete payment first.' });
-    }
-
-    // Atomic claim — marks status='used'
-    const claim = await meruLinkService.claimReservedCode({ code, userId, username: null, email });
-    if (!claim.success) {
-      return res.status(409).json({ success: false, error: 'This code has already been redeemed or your session expired. Contact support if you completed payment.' });
-    }
-
-    // Grant entitlements first — source of truth, must succeed before touching users table
-    const EntitlementModel = require('../../models/entitlementModel');
-    const EntitlementAccessService = require('../../services/entitlementAccessService');
-    const primeExpiry = new Date();
-    primeExpiry.setDate(primeExpiry.getDate() + 60);
-    try {
-      await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
-        isLifetime: true, source: 'meru', actorId: 'system',
-        reason: 'Meru lifetime100 activation (public flow)',
-      });
-      await EntitlementModel.grantEntitlement(userId, 'prime', {
-        isLifetime: false, durationDays: 60, source: 'meru', actorId: 'system',
-        reason: 'Meru lifetime100 activation — 2 month PRIME bonus (public)',
-      });
-      await EntitlementAccessService.recomputeUserTier(userId);
-      await EntitlementAccessService.invalidateCache(userId);
-    } catch (entErr) {
-      logger.error('public lifetime100 activate: entitlement grant failed', { userId, error: entErr.message });
-    }
-
-    // Sync users table — cosmetic/legacy; never block on failure
-    const UserModel = require('../../models/userModel');
-    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
-    try {
-      const { getClient: _getClient } = require('../../config/postgres');
-      const _txClient = await _getClient();
-      try {
-        await _txClient.query('BEGIN');
-        await _txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
-        // Best-plan-wins: keep NULL (lifetime), keep later date, else set new expiry
-        await _txClient.query(
-          `UPDATE users SET plan_expiry = CASE
-             WHEN plan_expiry IS NULL THEN NULL
-             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
-             ELSE $2::timestamptz
-           END, updated_at = NOW() WHERE id = $1`,
-          [userId, primeExpiry.toISOString()]
-        );
-        await _txClient.query('COMMIT');
-      } catch (txErr) {
-        await _txClient.query('ROLLBACK').catch(() => {});
-        throw txErr;
-      } finally {
-        _txClient.release();
-      }
-    } catch (planExpiryErr) {
-      logger.warn('public lifetime100 activate: plan_expiry update failed (non-critical)', { userId, error: planExpiryErr.message });
-    }
-
-    // Award founder gamification badge (non-blocking)
-    try {
-      const gamificationService = require('../../services/gamificationService');
-      await gamificationService.awardBadge(userId, 'founder', null, 'Lifetime100 founding member');
-    } catch (badgeErr) {
-      logger.warn('lifetime100 public activate: founder badge award failed (non-critical)', { userId, error: badgeErr.message });
-    }
-
-    // Create session so the user is logged in on return
-    try {
-      const { rows: freshUser } = await pool.query(
-        `SELECT id, email, username, first_name, tier, role FROM users WHERE id=$1`,
-        [userId]
-      );
-      if (freshUser.length > 0 && req.session) {
-        req.session.user = {
-          id: freshUser[0].id,
-          telegramId: null,
-          email: freshUser[0].email,
-          username: freshUser[0].username,
-          first_name: freshUser[0].first_name,
-          tier: freshUser[0].tier,
-          role: freshUser[0].role,
-          language: 'es',
-        };
-        await new Promise((resolve) => req.session.save(() => resolve()));
-      }
-    } catch (sessErr) {
-      logger.warn('public lifetime100 activate: session creation failed (non-critical)', { userId, error: sessErr.message });
-    }
-
-    // Record payment history (non-critical)
-    try {
-      const PaymentHistoryService = require('../../services/paymentHistoryService');
-      await PaymentHistoryService.recordPayment({
-        userId, paymentMethod: 'meru', amount: 100, currency: 'USD',
-        planId: 'lifetime100', planName: 'Lifetime Member + 2 Months PRIME',
-        product: 'lifetime100', paymentReference: code,
-        metadata: { activated_via: 'public_webapp', prime_bonus_expires: primeExpiry.toISOString() },
-        ipAddress: req.ip, userAgent: req.get('user-agent'),
-      });
-    } catch (e) {
-      logger.warn('public lifetime100 activate: payment history failed', { code, error: e.message });
-    }
-
-    return res.json({
-      success: true,
-      message: 'Founder membership activated',
-      redirect: '/',
-    });
-  } finally {
-    await cache.releaseLock(meruLockKey).catch(() => {});
-  }
-}));
+// POST /api/public/lifetime100/reserve — Meru retired 2026-08
+app.post('/api/public/lifetime100/reserve', lifetime100ReserveLimiter, (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
 // ── Nequi Negocios (Wompi reusable link) ─────────────────────────────────────
 //
@@ -6387,267 +6091,11 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Meru Lifetime Pass activation (webapp)
-app.post('/api/webapp/activate/meru', requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  if (!user?.id) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
-  }
+// POST /api/webapp/activate/meru — Meru retired 2026-08
+app.post('/api/webapp/activate/meru', requireSessionAuth, (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
-  const { code, email } = req.body;
-  if (!code || typeof code !== 'string' || !code.trim()) {
-    return res.status(400).json({ success: false, error: 'Meru code is required' });
-  }
-  if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required' });
-  }
-
-  const meruCode = code.trim();
-  if (meruCode.length > 100 || !/^[A-Za-z0-9_\-]+$/.test(meruCode)) {
-    return res.status(400).json({ success: false, error: 'Invalid Meru code format' });
-  }
-  const userId = String(user.telegramId || user.telegram_id || user.id);
-  const username = user.username || user.first_name || null;
-  const language = user.language || 'es';
-
-  const meruLockKey = `meru:activate:${meruCode}`;
-  const meruLockAcquired = await cache.acquireLock(meruLockKey, 30);
-  if (!meruLockAcquired) {
-    return res.status(423).json({ success: false, error: 'Activation already in progress for this code. Wait a moment and try again.' });
-  }
-
-  try {
-    // Ensure user has email + password credentials before processing payment
-    try {
-      await ensureEmailCredentials(userId, email.trim(), language);
-      req.session.user = { ...req.session.user, email: email.trim() };
-    } catch (credErr) {
-      if (credErr.message.includes('already associated')) {
-        return res.status(409).json({ success: false, error: credErr.message });
-      }
-      logger.warn('ensureEmailCredentials failed (non-critical)', { userId, error: credErr.message });
-    }
-
-    // Guard: prevent a user from consuming a second code if already on lifetime100
-    if (user.plan_id === 'lifetime100') {
-      return res.status(409).json({ success: false, error: 'Your account already has the Lifetime100 plan activated.' });
-    }
-
-    // 1. Check code exists and is available
-    const meruLinkService = require('../../services/meruLinkService');
-    const availableLinks = await meruLinkService.getAvailableLinks('lifetime100');
-    const matchingLink = availableLinks.find((link) => link.code === meruCode);
-
-    if (!matchingLink) {
-      return res.status(404).json({ success: false, error: 'Code not found or already used' });
-    }
-
-    // 2. Puppeteer verification — confirm payment was made on Meru
-    const meruPaymentService = require('../../services/meruPaymentService');
-    const verification = await meruPaymentService.verifyPayment(meruCode, language);
-
-    if (!verification.isPaid) {
-      return res.status(402).json({ success: false, error: 'Payment not yet completed on Meru. Please complete payment first.' });
-    }
-
-    // 2b. Atomically claim the code BEFORE granting membership — this is the real race gate.
-    // invalidateLinkAfterActivation uses WHERE status = 'active', so only one concurrent
-    // request can win. If 0 rows updated, someone else already claimed it.
-    const claimResult = await meruLinkService.invalidateLinkAfterActivation(meruCode, userId, username);
-    if (!claimResult.success) {
-      return res.status(409).json({ success: false, error: 'Code not found or already used' });
-    }
-
-    // 3. Activate membership — entitlements first, users table sync after
-    const primeExpiry = new Date();
-    primeExpiry.setDate(primeExpiry.getDate() + 60); // 2 months PRIME bonus
-
-    // 3b. Grant entitlements (pnp-member lifetime + prime 60 days) — sole source of truth for access
-    // Must run before any users-table update to avoid trigger failures killing the grant
-    try {
-      const EntitlementModel = require('../../models/entitlementModel');
-      await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
-        isLifetime: true, source: 'meru', actorId: 'system', reason: 'Meru lifetime100 activation',
-      });
-      await EntitlementModel.grantEntitlement(userId, 'prime', {
-        isLifetime: false, durationDays: 60, source: 'meru', actorId: 'system', reason: 'Meru lifetime100 activation — 2 month PRIME bonus',
-      });
-      await EntitlementAccessService.recomputeUserTier(userId);
-      await EntitlementAccessService.invalidateCache(userId);
-    } catch (entErr) {
-      logger.error('Meru entitlement grant failed', { userId, error: entErr.message });
-    }
-
-    // Sync users table — cosmetic/legacy; never block on failure
-    const UserModel = require('../../models/userModel');
-    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
-    const pool = getPool();
-    try {
-      const { getClient: _getClientMeru } = require('../../config/postgres');
-      const _txClientMeru = await _getClientMeru();
-      try {
-        await _txClientMeru.query('BEGIN');
-        await _txClientMeru.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
-        // Best-plan-wins: keep NULL (lifetime), keep later date, else set new expiry
-        await _txClientMeru.query(
-          `UPDATE users SET plan_expiry = CASE
-             WHEN plan_expiry IS NULL THEN NULL
-             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
-             ELSE $2::timestamptz
-           END, updated_at = NOW() WHERE id = $1`,
-          [userId, primeExpiry.toISOString()]
-        );
-        await _txClientMeru.query('COMMIT');
-      } catch (txErr) {
-        await _txClientMeru.query('ROLLBACK').catch(() => {});
-        throw txErr;
-      } finally {
-        _txClientMeru.release();
-      }
-    } catch (planExpiryErr) {
-      logger.warn('Meru webapp activate: plan_expiry update failed (non-critical)', { userId, error: planExpiryErr.message });
-    }
-
-    // Award founder gamification badge (non-blocking)
-    try {
-      const gamificationService = require('../../services/gamificationService');
-      await gamificationService.awardBadge(userId, 'founder', null, 'Lifetime100 founding member');
-    } catch (badgeErr) {
-      logger.warn('Meru webapp activate: founder badge award failed (non-critical)', { userId, error: badgeErr.message });
-    }
-
-    // 4. Mark activation code used in activation_codes table (non-critical; Meru link already claimed above)
-    try {
-      const { markCodeUsed } = require('../handlers/payments/activation');
-      await markCodeUsed(meruCode, userId, username);
-    } catch (e) {
-      logger.warn('Failed to mark activation code used (non-critical)', { code: meruCode, error: e.message });
-    }
-
-    // 5. Record payment history
-    const PaymentHistoryService = require('../../services/paymentHistoryService');
-    try {
-      await PaymentHistoryService.recordPayment({
-        userId,
-        paymentMethod: 'meru',
-        amount: 100,
-        currency: 'USD',
-        planId: 'lifetime100',
-        planName: 'Lifetime Member + 2 Months PRIME',
-        product: 'lifetime100',
-        paymentReference: meruCode,
-        metadata: { activated_via: 'webapp', prime_bonus_expires: primeExpiry.toISOString() },
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent'),
-      });
-    } catch (e) {
-      logger.warn('Failed to record payment history (non-critical)', { code: meruCode, error: e.message });
-    }
-
-    // 6. Audit log + business notification (non-critical)
-    try {
-      const { logActivation } = require('../handlers/payments/activation');
-      await logActivation({ userId, username, code: meruCode, product: 'lifetime100', success: true });
-    } catch (e) {
-      logger.warn('Failed to log activation (non-critical)', { error: e.message });
-    }
-    try {
-      const BusinessNotificationService = require('../../services/businessNotificationService');
-      await BusinessNotificationService.notifyCodeActivation({ userId, username, code: meruCode, product: 'lifetime100' });
-    } catch (e) {
-      logger.warn('Failed to send business notification (non-critical)', { error: e.message });
-    }
-
-    // 7. Telegram DM with PRIME invite link (async fire-and-forget)
-    PaymentService.sendPaymentConfirmationNotification({
-      userId,
-      plan: { id: 'lifetime100', name: 'Lifetime Member + 2 Months PRIME', display_name: 'Lifetime Member + 2 Months PRIME' },
-      transactionId: meruCode,
-      amount: 100,
-      expiryDate: primeExpiry.toISOString(),
-      language,
-      provider: 'meru',
-    }).catch((e) => logger.warn('Failed to send Telegram DM (non-critical)', { error: e.message }));
-
-    // 8. Invoice + welcome emails (email is now always available)
-    const customerEmail = email ? email.trim() : user.email;
-    if (customerEmail) {
-      const InvoiceService = require('../../services/invoiceservice');
-      const EmailService = require('../../services/emailservice');
-
-      // Invoice email
-      (async () => {
-        try {
-          const { buffer: invoicePdf } = await InvoiceService.generateInvoice({
-            invoiceNumber: `MERU-${meruCode}`,
-            customerName: user.first_name || username || 'Valued Customer',
-            planName: 'Lifetime Member + 2 Months PRIME',
-            amount: 100,
-            currency: 'USD',
-            provider: 'meru',
-            transactionId: meruCode,
-            purchaseDate: new Date(),
-            expiryDate: primeExpiry,
-            language,
-          });
-
-          await EmailService.sendInvoiceEmail({
-            to: customerEmail,
-            customerName: user.first_name || username || 'Valued Customer',
-            invoiceNumber: `MERU-${meruCode}`,
-            amount: 100,
-            planName: 'Lifetime Member + 2 Months PRIME',
-            invoicePdf,
-          });
-          logger.info('Meru invoice email sent', { to: customerEmail, code: meruCode });
-        } catch (emailError) {
-          logger.warn('Failed to send invoice email (non-critical)', { error: emailError.message });
-        }
-      })();
-
-      // Welcome email with onboarding guide
-      (async () => {
-        try {
-          const { buffer: guidePdf } = await InvoiceService.generateOnboardingGuide({
-            customerName: user.first_name || username || 'Valued Customer',
-            planName: 'Lifetime Member + 2 Months PRIME',
-            language,
-          });
-
-          await EmailService.sendWelcomeEmail({
-            to: customerEmail,
-            customerName: user.first_name || username || 'Valued Customer',
-            planName: 'Lifetime Member + 2 Months PRIME',
-            duration: 36500, // lifetime
-            expiryDate: primeExpiry,
-            language,
-            onboardingGuidePdf: guidePdf,
-            userUuid: user.id || userId,
-            username: user.username || username,
-            loginMethod: user.last_login_method || 'deep_link'
-          });
-          logger.info('Meru welcome email sent', { to: customerEmail, code: meruCode });
-        } catch (emailError) {
-          logger.warn('Failed to send welcome email (non-critical)', { error: emailError.message });
-        }
-      })();
-    }
-
-    // 9. Update session so frontend reflects PRIME immediately (bonus period)
-    req.session.user = {
-      ...req.session.user,
-      tier: 'PRIME',
-      subscription_status: 'active',
-      plan_id: 'lifetime100',
-    };
-
-    logger.info('Meru lifetime100 activated via webapp', { userId, code: meruCode, primeExpiry: primeExpiry.toISOString() });
-    res.json({ success: true });
-  } finally {
-    await cache.releaseLock(meruLockKey).catch((err) => {
-      logger.warn('Failed to release Meru activation lock', { lockKey: meruLockKey, error: err.message });
-    });
-  }
-}));
 
 // Applies a promo code to a subscription checkout. Called by the crypto
 // checkout endpoints (usdc/subscribe, btc/create, dash/create) so the
@@ -8049,11 +7497,12 @@ app.put('/api/webapp/admin/users/:userId/entitlements/:addOnId/extend', adminGua
 app.post('/api/webapp/admin/users/:userId/make-creator', adminGuard, asyncHandler(webappAdminController.makeCreator));
 app.post('/api/webapp/admin/users/:userId/activate-creator', adminGuard, asyncHandler(webappAdminController.activateCreator));
 app.delete('/api/webapp/admin/users/:userId/make-creator', adminGuard, asyncHandler(webappAdminController.revokeCreator));
-// MeruLink admin
-app.get('/api/webapp/admin/meru-links/stats', requireSessionAuth, adminGuard, asyncHandler(webappAdminController.meruLinkStats));
-app.get('/api/webapp/admin/meru-links', requireSessionAuth, adminGuard, asyncHandler(webappAdminController.listMeruLinks));
-app.post('/api/webapp/admin/meru-links', requireSessionAuth, adminGuard, asyncHandler(webappAdminController.addMeruLinks));
-app.delete('/api/webapp/admin/meru-links/:id', requireSessionAuth, adminGuard, asyncHandler(webappAdminController.deleteMeruLink));
+// MeruLink admin — RETIRED 2026-08
+const _meruRetired = (_req, res) => res.status(410).json({ success: false, error: 'Meru retired.', code: 'MERU_RETIRED' });
+app.get('/api/webapp/admin/meru-links/stats', requireSessionAuth, adminGuard, _meruRetired);
+app.get('/api/webapp/admin/meru-links', requireSessionAuth, adminGuard, _meruRetired);
+app.post('/api/webapp/admin/meru-links', requireSessionAuth, adminGuard, _meruRetired);
+app.delete('/api/webapp/admin/meru-links/:id', requireSessionAuth, adminGuard, _meruRetired);
 // Duplicate account management — superadmin only (merge/rename are destructive)
 const duplicateAccountsController = require('./controllers/duplicateAccountsController');
 app.get('/api/webapp/admin/duplicate-accounts',          superadminGuard, asyncHandler(duplicateAccountsController.listCandidates));
@@ -12136,8 +11585,8 @@ app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res)
   res.json({ success: true, history });
 }));
 
-// POST /api/wallet/buy retired 2026-07-31 — BTCPay/Dash token top-ups removed.
-// Use /api/wallet/nowpayments-buy for crypto or /api/wallet/meru-token-link for Meru.
+// POST /api/wallet/buy retired 2026-07-31 — BTCPay/Dash/Meru token top-ups removed.
+// Use /api/wallet/nowpayments-buy for crypto.
 app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(async (_req, res) => {
   return res.status(410).json({
     success: false,
@@ -12146,108 +11595,17 @@ app.post('/api/wallet/buy', walletBuyLimiter, requireSessionAuth, asyncHandler(a
   });
 }));
 
-// POST /api/wallet/meru-token-link — reserve a Meru payment link for a token package
-// Input: { product: 'tokens_250' | 'tokens_500', email: string }
-app.post('/api/wallet/meru-token-link', requireSessionAuth, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+// POST /api/wallet/meru-token-link — Meru retired 2026-08
+app.post('/api/wallet/meru-token-link', requireSessionAuth, (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
-  const { product, email } = req.body;
-  const VALID_PRODUCTS = { tokens_250: 1500, tokens_500: 3000 };
-  if (!product || !VALID_PRODUCTS[product]) {
-    return res.status(400).json({ success: false, error: 'product must be tokens_250 or tokens_500' });
-  }
-  if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required' });
-  }
-
-  const userId = String(user.telegramId || user.telegram_id || user.id);
-  const meruLinkService = require('../../services/meruLinkService');
-  const reserved = await meruLinkService.reserveRandomLink({ product, email: email.trim(), userId, minutes: 45 });
-
-  if (!reserved) {
-    return res.status(503).json({ success: false, error: 'No Meru links available for this package right now. Please try again later.' });
-  }
-
-  logger.info('[wallet/meru-token-link] Link reserved', { userId, product, code: reserved.code });
-  return res.json({ success: true, meruUrl: reserved.meru_link, code: reserved.code, product, tokens: VALID_PRODUCTS[product] });
-}));
-
-// POST /api/wallet/activate-meru-tokens — verify Meru payment and credit tokens
-// Input: { code: string, email: string, product: 'tokens_250' | 'tokens_500' }
+// POST /api/wallet/activate-meru-tokens — Meru retired 2026-08
 const meruTokenActivateLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, keyGenerator: (req) => req.session?.user?.id || req.ip, standardHeaders: true, legacyHeaders: false });
-app.post('/api/wallet/activate-meru-tokens', requireSessionAuth, meruTokenActivateLimiter, asyncHandler(async (req, res) => {
-  const user = req.session?.user;
-  if (!user?.id) return res.status(401).json({ success: false, error: 'Not authenticated' });
+app.post('/api/wallet/activate-meru-tokens', requireSessionAuth, meruTokenActivateLimiter, (_req, res) => {
+  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
+});
 
-  const { code, email, product } = req.body;
-  const VALID_PRODUCTS = { tokens_250: 1500, tokens_500: 3000 };
-
-  if (!code || typeof code !== 'string' || !/^[A-Za-z0-9_\-]+$/.test(code.trim()) || code.trim().length > 50) {
-    return res.status(400).json({ success: false, error: 'Invalid activation code' });
-  }
-  if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required' });
-  }
-  if (!product || !VALID_PRODUCTS[product]) {
-    return res.status(400).json({ success: false, error: 'Invalid product' });
-  }
-
-  const meruCode = code.trim();
-  const userId = String(user.telegramId || user.telegram_id || user.id);
-  const username = user.username || user.first_name || null;
-  const tokensToCredit = VALID_PRODUCTS[product];
-
-  const lockKey = `meru:token:activate:${meruCode}`;
-  const lockAcquired = await cache.acquireLock(lockKey, 60);
-  if (!lockAcquired) {
-    return res.status(423).json({ success: false, error: 'Activation already in progress. Wait a moment.' });
-  }
-
-  try {
-    const meruLinkService = require('../../services/meruLinkService');
-    const meruPaymentService = require('../../services/meruPaymentService');
-
-    // 1. Check code exists and matches the product
-    const linkResult = await query(
-      `SELECT id, code, meru_link, product, status FROM meru_payment_links WHERE code = $1 LIMIT 1`,
-      [meruCode]
-    );
-    const link = linkResult.rows[0];
-    if (!link) return res.status(404).json({ success: false, error: 'Code not found' });
-    if (link.product !== product) return res.status(400).json({ success: false, error: 'Code does not match the selected package' });
-    if (link.status === 'used' || link.status === 'invalid') return res.status(409).json({ success: false, error: 'This code has already been used' });
-
-    // 2. Puppeteer payment verification
-    const verification = await meruPaymentService.verifyPayment(meruCode, user.language || 'es');
-    if (!verification.isPaid) {
-      return res.status(402).json({ success: false, error: 'Payment not yet completed on Meru. Please complete payment first then try again.' });
-    }
-
-    // 3. Atomically claim the code
-    const claimResult = await meruLinkService.invalidateLinkAfterActivation(meruCode, userId, username);
-    if (!claimResult.success) {
-      return res.status(409).json({ success: false, error: 'Code not found or already used' });
-    }
-
-    // 4. Create a pending token_purchases row (required by creditTokens' idempotency guard)
-    //    then flip it to 'paid' and credit the wallet atomically.
-    const idempotencyKey = `meru:token:${meruCode}`;
-    const usdAmount = tokensToCredit / 6;
-    await DashTokenService.recordPurchase(userId, tokensToCredit, usdAmount, idempotencyKey);
-    const creditResult = await DashTokenService.creditTokens(userId, tokensToCredit, idempotencyKey, {
-      provider: 'meru', product, usdAmount,
-    });
-
-    logger.info('[wallet/activate-meru-tokens] Tokens credited', { userId, product, tokens: tokensToCredit, code: meruCode });
-    return res.json({ success: true, tokens: tokensToCredit, newBalance: creditResult.newBalance });
-  } catch (err) {
-    logger.error('[wallet/activate-meru-tokens] Error', { error: err.message, userId, code: meruCode });
-    return res.status(500).json({ success: false, error: 'Activation failed. Please contact support.' });
-  } finally {
-    await cache.releaseLock(lockKey).catch(() => {});
-  }
-}));
 
 // GET /api/wallet/presale-status — public, returns presale + creator bonus window state
 // End timestamps come from Redis (set alongside the active flag):
@@ -12304,7 +11662,7 @@ app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, as
   const { packageId, payCurrency: rawPayCurrency } = req.body;
   if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
 
-  const ALLOWED_PAY_CURRENCIES = new Set(['btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'usdt', 'usdttrc20', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol', 'dash', 'sol', 'doge']);
+  const ALLOWED_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
   const payCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
 
@@ -12598,20 +11956,86 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) return res.status(400).json({ success: false, error: 'Creator has no subscription price' });
   // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
   const tokenCost = Math.round(priceUsd * 6);
-  // Atomic debit
-  const debitResult = await dbQuery(
-    `UPDATE user_token_wallets
-     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
-     WHERE user_id = $1 AND balance_tokens >= $2
-     RETURNING balance_tokens`,
-    [subscriberId, tokenCost]
-  );
-  if (!debitResult.rows.length) {
-    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [subscriberId]);
-    const current = walletRow.rows[0]?.bal ?? 0;
-    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+
+  // Onboarding tutorial branch — first-time sub to santinofurioso by a user
+  // who just finished onboarding is allowed to spend gifted Ru$h. All other
+  // creator subs stay balance-only (unchanged legacy path). Guardrails prevent
+  // farming: bonus is one-shot per user (onboarding_bonus_granted_at) and the
+  // creator is hard-coded to santinofurioso's id.
+  const SANTINO_FURIOSO_ID = '8599671840';
+  let allowGifted = false;
+  if (String(creatorId) === SANTINO_FURIOSO_ID) {
+    const { rows: bonusRows } = await dbQuery(
+      `SELECT
+         (SELECT onboarding_bonus_granted_at FROM users WHERE id = $1) IS NOT NULL AS has_bonus,
+         (SELECT 1 FROM creator_subscriptions
+             WHERE creator_id = $2 AND subscriber_id = $1 LIMIT 1) IS NOT NULL AS has_prior_sub`,
+      [subscriberId, SANTINO_FURIOSO_ID]
+    );
+    allowGifted = bonusRows[0]?.has_bonus === true && bonusRows[0]?.has_prior_sub === false;
   }
-  const newBalance = Number(debitResult.rows[0].balance_tokens);
+
+  let newBalance, spentGifted = 0, spentBalance = tokenCost;
+  if (allowGifted) {
+    // Use tokenLedgerService.debit to drain gifted first, then balance if needed.
+    // Records the debit in token_ledger with a proper metadata tag for finance.
+    const tokenLedger = require('../../services/tokenLedgerService');
+    try {
+      const debitOut = await tokenLedger.debit({
+        userId: subscriberId,
+        amount: tokenCost,
+        reason: 'membership_purchase',
+        sourceType: 'creator_sub_onboarding',
+        sourceId: String(creatorId),
+        actorId: 'user',
+        allowGifted: true,
+        metadata: { creator: 'santinofurioso', funded_by: 'onboarding_gifted', priceUsd },
+      });
+      newBalance = Number(debitOut.balance_after);
+      spentGifted = Number(debitOut.spent_gifted);
+      spentBalance = Number(debitOut.spent_balance);
+    } catch (err) {
+      if (err.code === 'INSUFFICIENT_FUNDS') {
+        return res.status(402).json({
+          success: false, error: 'Insufficient tokens balance',
+          code: 'INSUFFICIENT_TOKENS', required: tokenCost, current: err.available || 0,
+        });
+      }
+      throw err;
+    }
+  } else {
+    // Legacy path — balance_tokens only, single UPDATE.
+    const debitResult = await dbQuery(
+      `UPDATE user_token_wallets
+       SET balance_tokens = balance_tokens - $2, updated_at = NOW()
+       WHERE user_id = $1 AND balance_tokens >= $2
+       RETURNING balance_tokens`,
+      [subscriberId, tokenCost]
+    );
+    if (!debitResult.rows.length) {
+      // Return BOTH balance and gifted so the frontend can explain WHY:
+      // a user with 180 gifted but 0 balance would otherwise see "you have 0"
+      // and think their money vanished. gifted is scoped to Santino live tips
+      // + santinofurioso first-month sub only (per gifted-spend rules).
+      const walletRow = await dbQuery(
+        `SELECT COALESCE(balance_tokens,0) AS bal, COALESCE(gifted_balance,0) AS gifted
+           FROM user_token_wallets WHERE user_id = $1`,
+        [subscriberId]
+      );
+      const current = walletRow.rows[0]?.bal ?? 0;
+      const gifted = walletRow.rows[0]?.gifted ?? 0;
+      return res.status(402).json({
+        success: false,
+        error: 'Insufficient tokens balance',
+        code: 'INSUFFICIENT_TOKENS',
+        required: tokenCost,
+        current,
+        gifted,
+        giftedLocked: gifted > 0,
+      });
+    }
+    newBalance = Number(debitResult.rows[0].balance_tokens);
+  }
   // Generate a deterministic payment ID so creator_earnings ON CONFLICT works
   const tokenPaymentId = `tokens:csub:${subscriberId}:${creatorId}:${Date.now()}`;
   try {
@@ -12625,12 +12049,22 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
     logger.info('[wallet/pay-creator-sub] Tokens creator sub granted', { subscriberId, creatorId, tokenCost, newBalance });
     return res.json({ success: true, newBalance, priceUsd });
   } catch (subErr) {
-    // Refund
-    await dbQuery(
-      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
-      [subscriberId, tokenCost]
-    ).catch(() => {});
-    logger.error('[wallet/pay-creator-sub] sub failed, Tokens refunded', { subscriberId, creatorId, err: subErr.message });
+    // Refund — restore exactly what was debited (balance + gifted). Wrong
+    // side would silently convert gifted → spendable balance, breaking the
+    // creator-guard invariant.
+    if (spentGifted > 0 || spentBalance > 0) {
+      await dbQuery(
+        `UPDATE user_token_wallets
+           SET balance_tokens = balance_tokens + $2,
+               gifted_balance = LEAST(gifted_balance + $3, 3600),
+               updated_at = NOW()
+         WHERE user_id = $1`,
+        [subscriberId, spentBalance, spentGifted]
+      ).catch(() => {});
+    }
+    logger.error('[wallet/pay-creator-sub] sub failed, Tokens refunded', {
+      subscriberId, creatorId, tokenCost, spentBalance, spentGifted, err: subErr.message,
+    });
     const code = subErr.code || 'SUB_FAILED';
     const statusCode = subErr.statusCode || 500;
     return res.status(statusCode).json({ success: false, error: subErr.message || 'No se pudo activar la suscripción. Tus Tokens han sido reembolsadas.', code });
@@ -13063,7 +12497,7 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
   const { planId, email: rawEmail, returnUrl: rawReturnUrl, payCurrency: rawPayCurrency, promoCode } = req.body;
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
 
-  const ALLOWED_PAY_CURRENCIES = new Set(['btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'usdt', 'usdttrc20', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol', 'dash', 'sol', 'doge']);
+  const ALLOWED_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
 
@@ -13200,7 +12634,7 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     return res.status(400).json({ success: false, error: 'Invalid email address' });
   }
 
-  const ALLOWED_PAY_CURRENCIES_PREPARE = new Set(['btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'usdt', 'usdttrc20', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol', 'dash', 'sol', 'doge']);
+  const ALLOWED_PAY_CURRENCIES_PREPARE = new Set(['eth', 'usdcerc20']);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
 
@@ -15357,6 +14791,295 @@ app.post('/api/privy/link', requireSessionAuth, asyncHandler(async (req, res) =>
     if (err.message === 'privy_id_already_linked') return res.status(409).json({ error: 'privy_id_already_linked' });
     logger.error('[privy-link] unexpected error', { err: err.message, pnptvUserId });
     return res.status(500).json({ error: 'link_failed' });
+  }
+}));
+
+// ── Wallet checkout — unified USDC/Ru$h purchase pipeline ──────────────────
+// POST /api/wallet/checkout/initiate — create a checkout_intent, return the
+// values the frontend needs to construct the Privy sendTransaction (for USDC)
+// or fulfill immediately (for Ru$h rail spend).
+//
+// Body: { rail: 'usdc'|'rush', surface, entitlementSpec: { creator_id?, packageId?, amountUsd?, message? }, metadata? }
+//
+// SECURITY: server resolves canonical price + add_on_id + duration_days from
+// the DB for every surface. Client-supplied `add_on_id`, `is_lifetime`,
+// `duration_days`, `allowGifted` are IGNORED. The only client-influenced
+// amount is for `tip` and `donation` where the user picks the value; those
+// are bounded ($1–$500 tips, $1–$10000 donations). Prevents:
+//   • duration_days SQL-injection into INTERVAL clause
+//   • $0.01 purchase of a $9.99 membership (client trust bypass)
+//   • is_lifetime:true payload for a monthly plan → permanent grant
+//   • allowGifted:true on non-santinofurioso surface → drain gifted pool
+app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const walletCheckoutService = require('../../services/walletCheckoutService');
+  const { query: dbQuery } = require('../../config/postgres');
+  const userId = req.session?.user?.id;
+  const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {} } = req.body || {};
+
+  if (!rail || !['usdc', 'rush'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
+  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation']);
+  if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
+
+  // Resolve canonical price + entitlement spec from the DB. Everything below
+  // this point is server-derived — never client-controlled.
+  let amountUsd, resolvedSpec;
+  try {
+    ({ amountUsd, resolvedSpec } = await _resolveCanonicalPurchase(String(userId), surface, clientSpec, dbQuery));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+
+  // Ru$h rail: allowGifted decided server-side, only for santinofurioso first sub.
+  const allowGifted = await _shouldAllowGifted(String(userId), surface, resolvedSpec, dbQuery);
+
+  try {
+    if (rail === 'usdc') {
+      const result = await walletCheckoutService.initiateUsdcPurchase({
+        userId, surface, amountUsd, entitlementSpec: resolvedSpec, metadata,
+      });
+      return res.json({ ok: true, rail, ...result });
+    }
+    const result = await walletCheckoutService.initiateRushPurchase({
+      userId, surface, amountUsd, entitlementSpec: resolvedSpec, metadata, allowGifted,
+    });
+    return res.json({ ok: true, rail, ...result });
+  } catch (err) {
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({
+        error: 'INSUFFICIENT_FUNDS', required: err.required, available: err.available,
+        gifted: err.giftedAvailable || 0,
+      });
+    }
+    logger.error('[wallet/checkout/initiate] error', { err: err.message, userId, rail, surface });
+    return res.status(500).json({ error: err.message || 'checkout_failed' });
+  }
+}));
+
+async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
+  const throwErr = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
+  const cid = spec?.creator_id ? String(spec.creator_id) : null;
+
+  if (surface === 'tip') {
+    if (!cid) throwErr('creator_id required', 400);
+    if (cid === userId) throwErr('cannot tip yourself', 400);
+    const { rows } = await dbQuery(
+      `SELECT id FROM users WHERE id::text = $1 AND creator_status = 'active'`, [cid]
+    );
+    if (rows.length === 0) throwErr('creator not found or inactive', 404);
+    const amt = Number(spec?.amountUsd);
+    if (!Number.isFinite(amt) || amt < 1 || amt > 500) throwErr('tip amount must be $1–$500', 400);
+    return {
+      amountUsd: Math.round(amt * 100) / 100,
+      resolvedSpec: {
+        creator_id: cid,
+        message: typeof spec?.message === 'string' ? spec.message.slice(0, 500) : null,
+      },
+    };
+  }
+
+  if (surface === 'creator_sub') {
+    if (!cid) throwErr('creator_id required', 400);
+    if (cid === userId) throwErr('cannot subscribe to yourself', 400);
+    const { rows } = await dbQuery(
+      `SELECT id, creator_status, creator_price_usd, creator_locked, creator_subscription_paused
+         FROM users WHERE id::text = $1`, [cid]
+    );
+    if (rows.length === 0 || rows[0].creator_status !== 'active') throwErr('creator not found or inactive', 404);
+    const c = rows[0];
+    if (c.creator_locked) throwErr('creator locked', 423);
+    if (c.creator_subscription_paused) throwErr('subscriptions paused', 423);
+    const price = Number(c.creator_price_usd);
+    if (!(price > 0)) throwErr('creator has no subscription price', 400);
+    return {
+      amountUsd: price,
+      resolvedSpec: {
+        add_on_id: 'creator-subscription',
+        creator_id: cid,
+        duration_days: 30,
+        auto_renew: true,
+      },
+    };
+  }
+
+  if (surface === 'membership' || surface === 'prime') {
+    const planId = surface === 'membership' ? 'member_monthly' : 'monthly-pass';
+    const { rows } = await dbQuery(
+      `SELECT id, price, duration, is_lifetime FROM plans WHERE id = $1 AND active = true`, [planId]
+    );
+    if (rows.length === 0) throwErr('plan not found', 404);
+    const p = rows[0];
+    return {
+      amountUsd: Number(p.price),
+      resolvedSpec: {
+        add_on_id: surface === 'membership' ? 'pnp-member' : 'prime',
+        duration_days: Number.isInteger(Number(p.duration)) ? Math.max(1, Math.min(3650, Number(p.duration))) : 30,
+        is_lifetime: !!p.is_lifetime,
+        auto_renew: !p.is_lifetime,
+      },
+    };
+  }
+
+  if (surface === 'rush') {
+    const pkgId = spec?.packageId ? String(spec.packageId) : null;
+    if (!pkgId) throwErr('packageId required', 400);
+    const DashTokenService = require('../../services/dashTokenService');
+    const pkg = DashTokenService.TOKEN_PACKAGES.find(p => p.id === pkgId);
+    if (!pkg) throwErr('unknown package', 400);
+    return {
+      amountUsd: Number(pkg.usd),
+      resolvedSpec: { tokens: Number(pkg.tokens), packageId: pkg.id },
+    };
+  }
+
+  if (surface === 'donation') {
+    const amt = Number(spec?.amountUsd);
+    if (!Number.isFinite(amt) || amt < 1 || amt > 10000) throwErr('donation amount must be $1–$10000', 400);
+    return {
+      amountUsd: Math.round(amt * 100) / 100,
+      resolvedSpec: { note: typeof spec?.note === 'string' ? spec.note.slice(0, 200) : null },
+    };
+  }
+
+  throwErr('unhandled surface', 400);
+}
+
+async function _shouldAllowGifted(userId, surface, spec, dbQuery) {
+  if (surface !== 'creator_sub') return false;
+  const SANTINO_FURIOSO_ID = '8599671840';
+  if (String(spec?.creator_id) !== SANTINO_FURIOSO_ID) return false;
+  const { rows } = await dbQuery(
+    `SELECT
+       (SELECT onboarding_bonus_granted_at FROM users WHERE id = $1) IS NOT NULL AS has_bonus,
+       (SELECT 1 FROM creator_subscriptions
+           WHERE creator_id = $2 AND subscriber_id = $1 LIMIT 1) IS NOT NULL AS has_prior_sub`,
+    [String(userId), SANTINO_FURIOSO_ID]
+  );
+  return rows[0]?.has_bonus === true && rows[0]?.has_prior_sub === false;
+}
+
+// POST /api/wallet/checkout/verify-tx — called by the frontend after Privy
+// sendTransaction resolves. Uses Alchemy JSON-RPC to fetch the tx receipt +
+// parse the USDC Transfer log, then fulfills the intent. Idempotent: replaying
+// the same tx_hash after a successful fulfillment returns { alreadyConfirmed }.
+//
+// Body: { intentId, txHash }
+app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const walletCheckoutService = require('../../services/walletCheckoutService');
+  const { intentId, txHash } = req.body || {};
+  const userId = req.session?.user?.id;
+  if (!intentId || !txHash) return res.status(400).json({ error: 'intentId + txHash required' });
+
+  // Load the intent to get expected amount + receiving address for RPC verification.
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows } = await dbQuery(
+    `SELECT id, user_id, expected_amount_usdc, receiving_address, status
+       FROM checkout_intents WHERE id = $1 LIMIT 1`,
+    [Number(intentId)]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'intent_not_found' });
+  const intent = rows[0];
+  if (String(intent.user_id) !== String(userId)) return res.status(403).json({ error: 'intent_not_yours' });
+  if (intent.status === 'confirmed') return res.json({ ok: true, alreadyConfirmed: true, intentId });
+
+  // Fetch on-chain tx receipt + parse USDC Transfer log via Alchemy.
+  const receipt = await _fetchUsdcTransferReceipt(txHash, intent.receiving_address);
+  if (!receipt.ok) {
+    return res.status(422).json({ error: receipt.reason, txHash });
+  }
+
+  const result = await walletCheckoutService.verifyAndFulfillUsdc({
+    txHash,
+    fromAddress: receipt.from,
+    amountReceived: receipt.amount,
+  });
+  return res.json(result);
+}));
+
+/**
+ * Fetch a Base tx receipt and extract the USDC Transfer amount to our address.
+ * Returns { ok: true, amount, from } on success or { ok: false, reason } on failure.
+ */
+async function _fetchUsdcTransferReceipt(txHash, expectedRecipient) {
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return { ok: false, reason: 'alchemy_not_configured' };
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'.toLowerCase();
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+  let receipt;
+  try {
+    const rpcRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt', params: [txHash] }),
+    });
+    const j = await rpcRes.json();
+    receipt = j.result;
+  } catch (err) {
+    logger.warn('[wallet/verify-tx] alchemy rpc failed', { err: err.message, txHash });
+    return { ok: false, reason: 'rpc_failed' };
+  }
+  if (!receipt) return { ok: false, reason: 'tx_not_found_or_unconfirmed' };
+  if (receipt.status !== '0x1') return { ok: false, reason: 'tx_reverted' };
+
+  // Find the USDC Transfer log where topic[2] (recipient) matches our receiving_address.
+  const targetPadded = '0x' + String(expectedRecipient).toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const transferLog = (receipt.logs || []).find(l =>
+    String(l.address).toLowerCase() === USDC &&
+    l.topics?.[0]?.toLowerCase() === TRANSFER_TOPIC &&
+    String(l.topics?.[2]).toLowerCase() === targetPadded
+  );
+  if (!transferLog) return { ok: false, reason: 'no_matching_usdc_transfer' };
+
+  // data is uint256 amount, USDC has 6 decimals
+  const rawAmount = BigInt(transferLog.data);
+  const amount = Number(rawAmount) / 1_000_000;
+  const from = '0x' + String(transferLog.topics[1]).toLowerCase().replace(/^0x/, '').slice(-40);
+
+  return { ok: true, amount, from };
+}
+
+// GET /api/wallet/balance/usdc — on-chain USDC balance for the session user's
+// linked wallet. 30s Redis cache. Used by BuyTokensModal to conditionally show
+// the "Pay from wallet" option.
+app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  const { rows } = await dbQuery(
+    `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const address = rows[0]?.wallet_address;
+  if (!address) return res.json({ ok: true, hasWallet: false, usdc: 0 });
+
+  const cacheKey = `wallet:usdc:${address.toLowerCase()}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return res.json({ ok: true, hasWallet: true, address, usdc: Number(cached), cached: true });
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return res.json({ ok: true, hasWallet: true, address, usdc: 0, reason: 'alchemy_not_configured' });
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  // balanceOf(address) selector: 0x70a08231
+  const data = '0x70a08231' + address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  try {
+    const rpcRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: USDC, data }, 'latest'] }),
+    });
+    const j = await rpcRes.json();
+    const hex = j.result || '0x0';
+    const raw = BigInt(hex);
+    const usdc = Number(raw) / 1_000_000;
+    await cache.set(cacheKey, String(usdc), 30).catch(() => {});
+    return res.json({ ok: true, hasWallet: true, address, usdc });
+  } catch (err) {
+    logger.warn('[wallet/balance/usdc] alchemy rpc failed', { err: err.message });
+    return res.json({ ok: true, hasWallet: true, address, usdc: 0, reason: 'rpc_failed' });
   }
 }));
 
@@ -18878,6 +18601,154 @@ const mainStageViewerTokenLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.get('/api/main-stage/viewer-token', mainStageViewerTokenLimiter, mainStageController.viewerToken);
+
+// GET /api/main-stage/cammers — active publishers in main-stage-prime for the
+// community-feed Spotlight rail. Backed by the Redis spotlight queue (updated
+// by mainStageService on cammer join/leave) so no LiveKit RPC per request.
+// Enriches each cammer with the user profile fields the frontend needs to
+// render the 132×176 card + the tap-to-action bottom sheet.
+app.get('/api/main-stage/cammers', mainStageStateLimiter, asyncHandler(async (req, res) => {
+  const { cache } = require('../../config/redis');
+  const CACHE_KEY = 'mainstage:cammers:enriched';
+  const cached = await cache.get(CACHE_KEY).catch(() => null);
+  if (cached) return res.json({ success: true, cammers: cached, cached: true });
+
+  const { getRedis } = require('../../config/redis');
+  const mainStageService = require('../../services/mainStageService');
+  const redis = getRedis();
+
+  const rawIdentities = await redis.lrange('mainstage:spotlight:queue', 0, -1).catch(() => []);
+  const userIds = (rawIdentities || []).filter(id =>
+    id && id !== mainStageService.MEDIA_BOT_IDENTITY &&
+    !String(id).startsWith('guest_') && !String(id).startsWith('viewer_')
+  ).map(String);
+
+  if (userIds.length === 0) {
+    await cache.set(CACHE_KEY, [], 15).catch(() => {});
+    return res.json({ success: true, cammers: [] });
+  }
+
+  // One batch query for the profile fields the card + sheet need.
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows } = await dbQuery(
+    `SELECT u.id, u.username, u.first_name,
+            COALESCE(p.photo_url, u.photo_file_id) AS photo_url,
+            u.creator_status, u.creator_price_usd
+       FROM users u
+       LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+      WHERE u.id::text = ANY($1::text[])`,
+    [userIds]
+  );
+  const byUserId = new Map(rows.map(r => [String(r.id), r]));
+
+  // Preserve queue order + skip users we can't resolve (deleted accounts, etc.)
+  const acceptingResults = await Promise.all(
+    userIds.map(id => redis.get(`user:${id}:accepting_calls`).catch(() => null))
+  );
+
+  const cammers = [];
+  userIds.forEach((id, idx) => {
+    const u = byUserId.get(id);
+    if (!u) return;
+    // System/admin accounts (like the pnptv news bot) should not surface here
+    // even if they somehow ended up in the queue.
+    if (u.creator_status !== 'active') return;
+    const isAccepting = !!(acceptingResults[idx] && acceptingResults[idx] !== '0');
+    cammers.push({
+      userId: String(u.id),
+      slug: (u.username || String(u.id)).toLowerCase(),
+      username: u.username || null,
+      displayName: u.first_name || u.username || 'Creator',
+      photoUrl: u.photo_url || null,
+      creatorPriceUsd: u.creator_price_usd ? Number(u.creator_price_usd) : null,
+      isAcceptingCalls: isAccepting,
+    });
+  });
+
+  await cache.set(CACHE_KEY, cammers, 15).catch(() => {});
+  res.json({ success: true, cammers });
+}));
+
+// GET /api/live/available — unified list of creators available RIGHT NOW.
+// Union of two signals:
+//   1. On Main Stage as cammer (`mainstage:spotlight:queue`)
+//   2. Slack presence = active AND status = "available" — poll worker sets
+//      `user:{id}:accepting_calls` (see workers/index.js slack-avail-poll)
+// Each entry flags `onStage` + `acceptingCalls` so the frontend can badge
+// creators who are BOTH (e.g., "ON STAGE + accepting calls"). 15s cache.
+app.get('/api/live/available', mainStageStateLimiter, asyncHandler(async (req, res) => {
+  const { cache, getRedis } = require('../../config/redis');
+  const CACHE_KEY = 'live:available:enriched';
+  const cached = await cache.get(CACHE_KEY).catch(() => null);
+  if (cached) return res.json({ success: true, creators: cached, cached: true });
+
+  const mainStageService = require('../../services/mainStageService');
+  const redis = getRedis();
+
+  // Signal 1 — Main Stage cammer queue.
+  const stageIdsRaw = await redis.lrange('mainstage:spotlight:queue', 0, -1).catch(() => []);
+  const stageIds = new Set(
+    (stageIdsRaw || []).filter(id =>
+      id && id !== mainStageService.MEDIA_BOT_IDENTITY &&
+      !String(id).startsWith('guest_') && !String(id).startsWith('viewer_')
+    ).map(String)
+  );
+
+  // Signal 2 — creators with active accepting_calls Redis key. Scan is O(N)
+  // across matching keys but the pattern is narrow enough (<500 creators typical).
+  const availIds = new Set();
+  let cursor = '0';
+  do {
+    const [next, batch] = await redis.scan(cursor, 'MATCH', 'user:*:accepting_calls', 'COUNT', '200');
+    for (const key of batch || []) {
+      const id = String(key).slice('user:'.length, -':accepting_calls'.length);
+      if (id) availIds.add(id);
+    }
+    cursor = next;
+  } while (cursor !== '0');
+
+  const allIds = Array.from(new Set([...stageIds, ...availIds]));
+  if (allIds.length === 0) {
+    await cache.set(CACHE_KEY, [], 15).catch(() => {});
+    return res.json({ success: true, creators: [] });
+  }
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows } = await dbQuery(
+    `SELECT u.id, u.username, u.first_name,
+            COALESCE(p.photo_url, u.photo_file_id) AS photo_url,
+            u.creator_status, u.creator_price_usd
+       FROM users u
+       LEFT JOIN performers p ON p.user_id::text = u.id::text AND p.status = 'active'
+      WHERE u.id::text = ANY($1::text[])
+        AND u.creator_status = 'active'`,
+    [allIds]
+  );
+
+  // Sort: on-stage first (most visible + time-sensitive), then accepting-calls.
+  // Within each bucket, alphabetical by displayName for deterministic order.
+  const creators = rows.map((u) => {
+    const idStr = String(u.id);
+    return {
+      userId: idStr,
+      slug: (u.username || idStr).toLowerCase(),
+      username: u.username || null,
+      displayName: u.first_name || u.username || 'Creator',
+      photoUrl: u.photo_url || null,
+      creatorPriceUsd: u.creator_price_usd ? Number(u.creator_price_usd) : null,
+      onStage: stageIds.has(idStr),
+      acceptingCalls: availIds.has(idStr),
+    };
+  }).sort((a, b) => {
+    const rank = (c) => c.onStage ? 0 : (c.acceptingCalls ? 1 : 2);
+    const rd = rank(a) - rank(b);
+    if (rd !== 0) return rd;
+    return (a.displayName || '').localeCompare(b.displayName || '');
+  });
+
+  await cache.set(CACHE_KEY, creators, 15).catch(() => {});
+  res.json({ success: true, creators });
+}));
 
 app.get(
   '/api/main-stage/join-check',

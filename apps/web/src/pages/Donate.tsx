@@ -4,9 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
-import { usePrivy, useWallets, useFundWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base } from "viem/chains";
+
+// CAIP-2 chain id for Base — used by Privy's useAddFunds destination.
+const BASE_CAIP2 = "eip155:8453" as const;
+const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 import {
   getSubscriptionPlans,
   getWalletBalance,
@@ -64,7 +68,7 @@ export default function Donate() {
   // ── Privy ───────────────────────────────────────────────────────────────
   const { ready: privyReady, authenticated: privyAuthed, login: privyLogin } = usePrivy();
   const { wallets } = useWallets();
-  const { fundWallet } = useFundWallet();
+  const { addFunds } = useAddFunds();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
   const walletAddress = embeddedWallet?.address || null;
 
@@ -281,7 +285,10 @@ export default function Donate() {
                 </button>
               ) : privyAuthed && walletAddress ? (
                 <button
-                  onClick={() => fundWallet(walletAddress, { chain: base, asset: "USDC" })}
+                  onClick={() => addFunds({
+                    destination: { address: walletAddress, chain: BASE_CAIP2, asset: USDC_BASE_ADDRESS },
+                    fiat: { defaultAmount: "20" },
+                  }).catch(() => {})}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-[#7B61FF] border border-[#7B61FF]/40 hover:bg-[#7B61FF]/10 transition-all"
                 >
                   {es ? "Añadir USDC" : "Add USDC"}

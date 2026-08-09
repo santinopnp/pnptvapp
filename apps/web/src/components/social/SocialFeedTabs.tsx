@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import Hls from "hls.js";
 import { PostComposer } from "@/components/PostComposer";
 import SocialPostCard from "@/components/social/SocialPostCard";
 import {
@@ -11,94 +10,15 @@ import {
   togglePostLike,
   deleteSocialPost,
   updateProfile,
-  getLiveStreams,
-  getAllPerformers,
+  getMainStageCammers,
   type SocialPostItem,
-  type LiveStream,
-  type FeaturedPerformer,
+  type MainStageCammer,
   type FeedFilter,
   type NewMember,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNearbyDistances } from "@/components/NearbyBadge";
 import { getSocket, connectSocket } from "@/lib/socket";
-
-/**
- * Muted, in-viewport preview of a live HLS stream for the Spotlight cards.
- * Uses hls.js on browsers without native HLS (Chrome/Firefox); Safari plays
- * the m3u8 natively. Only loads when the card is intersecting the viewport
- * so a horizontal-scroll strip doesn't open 8 simultaneous HLS connections.
- */
-function SpotlightPreview({ hlsUrl, poster, alt }: { hlsUrl: string | null; poster: string | null; alt: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [inView, setInView] = useState(false);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.25 }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!inView || !hlsUrl) return;
-    const video = videoRef.current;
-    if (!video) return;
-
-    let hls: Hls | null = null;
-    if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        liveSyncDurationCount: 3,
-        maxBufferLength: 6,
-        backBufferLength: 2,
-        xhrSetup: (xhr) => { xhr.withCredentials = true; },
-      });
-      hls.loadSource(hlsUrl);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = hlsUrl;
-      video.play().catch(() => {});
-    }
-
-    return () => {
-      hls?.destroy();
-      if (video) {
-        video.pause();
-        try { video.removeAttribute("src"); video.load(); } catch { /* noop */ }
-      }
-    };
-  }, [inView, hlsUrl]);
-
-  return (
-    <div ref={wrapRef} className="absolute inset-0" aria-hidden="true">
-      {/* Static poster underneath — visible until video paints, and always
-          when the card is offscreen or hlsUrl is missing. */}
-      {poster && (
-        <img src={poster} alt={alt} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
-      )}
-      {hlsUrl && (
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          autoPlay
-          loop
-          preload="none"
-          className="absolute inset-0 w-full h-full object-cover"
-          poster={poster || undefined}
-        />
-      )}
-    </div>
-  );
-}
 
 export interface SocialFeedTabsProps {
   currentUserId: string;
@@ -227,8 +147,12 @@ export default function SocialFeedTabs({
   // above the feed on every filter tab and even when a hashtag filter is
   // active. Hidden only for hangout-scoped feeds (their audience is already
   // in a private room, the community-wide spotlight would be off-topic).
-  const [liveStreams, setLiveStreams] = useState<LiveStream[]>([]);
-  const [onlinePerformers, setOnlinePerformers] = useState<FeaturedPerformer[]>([]);
+  // Spotlight source: creators currently publishing (cammer role) in the
+  // Main Stage LiveKit room. Replaces the legacy web-streaming + online-
+  // performer twin fetch. Backed by Redis queue on the backend (15s cache),
+  // safe to poll at 20s from the client.
+  const [mainStageCammers, setMainStageCammers] = useState<MainStageCammer[]>([]);
+  const [sheetCammer, setSheetCammer] = useState<MainStageCammer | null>(null);
   const showRails = !hashtagFilter && !hangoutGroupId;
 
   // Custom hashtag filter input. Types a tag → navigates to /?tag=xxx. When
@@ -244,32 +168,15 @@ export default function SocialFeedTabs({
     if (!showRails) return;
     let cancelled = false;
     const load = () => {
-      Promise.all([
-        getLiveStreams().catch(() => null),
-        getAllPerformers().catch(() => null),
-      ]).then(([liveRes, allRes]) => {
+      getMainStageCammers().then((res) => {
         if (cancelled) return;
-        const streams = liveRes?.success ? liveRes.streams.filter((s) => s.isLive) : [];
-        setLiveStreams(streams);
-        // Online performers: heartbeat active AND not currently live (dedupe by
-        // matching hlsUrl / userId / pnptvId against the live-streams list).
-        if (allRes?.success) {
-          const liveIds = new Set(streams.map((s) => String(s.userId || "")).filter(Boolean));
-          const livePnptvIds = new Set(streams.map((s) => String(s.pnptvId || "")).filter(Boolean));
-          const online = allRes.performers.filter((p) => {
-            if (!p.isOnline) return false;
-            const uid = String(p.userId || p.id || "");
-            if (liveIds.has(uid) || livePnptvIds.has(uid)) return false;
-            return true;
-          });
-          setOnlinePerformers(online);
-        } else {
-          setOnlinePerformers([]);
-        }
+        setMainStageCammers(res?.cammers || []);
+      }).catch(() => {
+        if (!cancelled) setMainStageCammers([]);
       });
     };
     load();
-    const iv = setInterval(load, 30_000);
+    const iv = setInterval(load, 20_000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [showRails]);
 
@@ -466,10 +373,11 @@ export default function SocialFeedTabs({
         </div>
       )}
 
-      {/* Spotlight — 132×176 cards: live streams first, then online performers.
-          Live cards autoplay the muted HLS preview; online cards show a static
-          avatar with a green Online badge. */}
-      {showRails && (liveStreams.length > 0 || onlinePerformers.length > 0) && (
+      {/* Spotlight — 132×176 cards for creators currently publishing in Main
+          Stage. Tapping opens an action sheet with "Book private call" +
+          "View profile" — no navigation on tap, since the user is likely to
+          want the sheet options over a plain profile jump. */}
+      {showRails && mainStageCammers.length > 0 && (
         <div className="mb-4">
           <div
             className="mb-2"
@@ -479,56 +387,16 @@ export default function SocialFeedTabs({
           </div>
           <div className="-mx-4 px-4">
             <div className="flex gap-2.5 overflow-x-auto no-scrollbar">
-              {liveStreams.slice(0, 8).map((s) => {
-                const initial = (s.name || "?").charAt(0).toUpperCase();
-                const thumb = s.thumbnailUrl || null;
+              {mainStageCammers.slice(0, 8).map((c) => {
+                const initial = (c.displayName || "?").charAt(0).toUpperCase();
+                const photo = c.photoUrl && (c.photoUrl.startsWith("/") || c.photoUrl.startsWith("http")) ? c.photoUrl : null;
                 return (
                   <button
-                    key={`live-${s.id}`}
-                    onClick={() => navigate(`/live/${s.id}`)}
+                    key={`onstage-${c.userId}`}
+                    onClick={() => setSheetCammer(c)}
                     className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
                     style={{ width: 132, height: 176, borderRadius: 14, background: "linear-gradient(135deg,rgba(212,0,122,0.7),rgba(230,145,56,0.7))" }}
-                    aria-label={`Watch ${s.name} live`}
-                  >
-                    <span
-                      className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold pointer-events-none"
-                      aria-hidden="true"
-                    >
-                      {initial}
-                    </span>
-                    <SpotlightPreview hlsUrl={s.hlsUrl || null} poster={thumb} alt={s.performerName || s.name || "Live"} />
-                    <span
-                      className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
-                      style={{ background: "#D4007A" }}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
-                      LIVE
-                    </span>
-                    {typeof s.viewerCount === "number" && s.viewerCount > 0 && (
-                      <span className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-md text-white text-[10px] font-semibold" style={{ background: "rgba(0,0,0,0.55)" }}>
-                        👁 {s.viewerCount}
-                      </span>
-                    )}
-                    <span
-                      className="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-6 text-white text-xs font-semibold truncate"
-                      style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}
-                    >
-                      {s.performerName || s.name}
-                    </span>
-                  </button>
-                );
-              })}
-              {onlinePerformers.slice(0, 8).map((p) => {
-                const initial = (p.displayName || p.name || "?").charAt(0).toUpperCase();
-                const photo = p.photoUrl && (p.photoUrl.startsWith("/") || p.photoUrl.startsWith("http")) ? p.photoUrl : null;
-                const uidForRoute = p.slug || p.userId || p.id;
-                return (
-                  <button
-                    key={`online-${p.id}`}
-                    onClick={() => navigate(`/profile/${uidForRoute}`)}
-                    className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
-                    style={{ width: 132, height: 176, borderRadius: 14, background: "linear-gradient(135deg,rgba(52,199,89,0.5),rgba(45,212,191,0.35))" }}
-                    aria-label={`Open ${p.displayName} profile`}
+                    aria-label={`Open actions for ${c.displayName}`}
                   >
                     <span
                       className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold pointer-events-none"
@@ -537,30 +405,100 @@ export default function SocialFeedTabs({
                       {initial}
                     </span>
                     {photo && (
-                      <img
-                        src={photo}
-                        alt={p.displayName}
-                        loading="lazy"
-                        className="absolute inset-0 w-full h-full object-cover"
-                      />
+                      <img src={photo} alt={c.displayName} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
                     )}
                     <span
                       className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg"
-                      style={{ background: "#34C759" }}
+                      style={{ background: "#D4007A" }}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-white" aria-hidden="true" />
-                      Online
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />
+                      ON STAGE
                     </span>
                     <span
                       className="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-6 text-white text-xs font-semibold truncate"
                       style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}
                     >
-                      {p.displayName}
+                      {c.displayName}
                     </span>
                   </button>
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cammer action sheet — appears above everything when a Spotlight card
+          is tapped. Book Call CTA uses the existing deep-link pattern
+          (/c/{slug}?action=book&duration=30) so the target profile auto-opens
+          the booking modal on land. */}
+      {sheetCammer && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSheetCammer(null)}
+        >
+          <div className="absolute inset-0 bg-black/70" />
+          <div
+            className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
+            style={{ background: "var(--pnp-surface, #1a1a1f)", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full flex-shrink-0 overflow-hidden bg-gradient-to-br from-pink-500 to-orange-400 flex items-center justify-center text-white text-lg font-bold">
+                {sheetCammer.photoUrl
+                  ? <img src={sheetCammer.photoUrl} alt={sheetCammer.displayName} className="w-full h-full object-cover" />
+                  : (sheetCammer.displayName || "?").charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-bold text-pnp-textPrimary truncate">{sheetCammer.displayName}</p>
+                <p className="text-[11px] font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+                  On Main Stage now
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const slug = sheetCammer.slug;
+                setSheetCammer(null);
+                navigate(`/c/${slug}?action=book&duration=30`);
+              }}
+              disabled={sheetCammer.isAcceptingCalls === false}
+              className="w-full min-h-[52px] rounded-xl font-bold text-white flex items-center justify-center gap-2 transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: sheetCammer.isAcceptingCalls === false ? "#333" : "linear-gradient(135deg,#D4007A,#E69138)" }}
+              title={sheetCammer.isAcceptingCalls === false ? "This creator isn't taking calls right now" : undefined}
+            >
+              <span aria-hidden="true">📞</span>
+              <span>Book private call</span>
+              {sheetCammer.creatorPriceUsd != null && sheetCammer.creatorPriceUsd > 0 && (
+                <span className="text-xs font-semibold opacity-80">· ${sheetCammer.creatorPriceUsd.toFixed(0)}/mo</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const slug = sheetCammer.slug;
+                setSheetCammer(null);
+                navigate(`/c/${slug}`);
+              }}
+              className="w-full min-h-[52px] rounded-xl font-semibold text-pnp-textPrimary bg-white/[0.06] hover:bg-white/[0.10] transition active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <span aria-hidden="true">👤</span>
+              <span>View profile</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSheetCammer(null)}
+              className="w-full text-xs text-pnp-textSecondary hover:text-pnp-textPrimary transition"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

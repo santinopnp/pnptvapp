@@ -20,7 +20,7 @@ import {
 } from "@/lib/api";
 import { useNowPayments } from "@/hooks/useNowPayments";
 import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
-import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
+import { TrustWalletIcon, MetaMaskIcon, WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 export interface CreatorSubscribeWizardProps {
   creatorId: string;
@@ -129,12 +129,10 @@ export default function CreatorSubscribeWizard({
 
   const handleTokens = useCallback(async () => {
     if (inFlight.current) return;
-    if (tokenBalance !== null && tokenBalance < tokenCost) {
-      setError(lang === "es"
-        ? `Ru$h insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.`
-        : `Not enough Ru$h. Need ${tokenCost.toLocaleString()} Ru$h — you have ${tokenBalance.toLocaleString()} Ru$h.`);
-      return;
-    }
+    // Remove the client-side pre-check — the backend is the source of truth
+    // on what's spendable (gifted is allowed for santinofurioso first-month
+    // subs only, but the frontend can't know that reliably). Let the server
+    // decide and surface a precise error message with the gifted breakdown.
     inFlight.current = true;
     setLoading("tokens");
     setError(null);
@@ -147,9 +145,17 @@ export default function CreatorSubscribeWizard({
             ? "Necesitas una membresía Basic para suscribirte a un creador."
             : "You need a Basic membership to subscribe to a creator.");
         } else if (result.code === "INSUFFICIENT_TOKENS") {
-          setError(lang === "es"
-            ? `Ru$h insuficiente. Necesitas ${result.required?.toLocaleString()} F — tienes ${result.current?.toLocaleString()} F.`
-            : `Not enough Ru$h. Need ${result.required?.toLocaleString()} F — you have ${result.current?.toLocaleString()} F.`);
+          // giftedLocked = user has gifted balance but this creator isn't in
+          // the gifted-spend allowlist (i.e., not santinofurioso first sub).
+          if (result.giftedLocked && (result.gifted ?? 0) > 0) {
+            setError(lang === "es"
+              ? `Tienes ${(result.gifted ?? 0).toLocaleString()} Ru$h de regalo, pero solo se puede usar en propinas a Santino o tu primer mes con @santinofurioso. Compra más Ru$h para suscribirte aquí.`
+              : `You have ${(result.gifted ?? 0).toLocaleString()} gifted Ru$h, but it's only spendable on Santino live tips or your first month with @santinofurioso. Buy more Ru$h to subscribe here.`);
+          } else {
+            setError(lang === "es"
+              ? `Ru$h insuficiente. Necesitas ${result.required?.toLocaleString()} — tienes ${(result.current ?? 0).toLocaleString()}.`
+              : `Not enough Ru$h. Need ${result.required?.toLocaleString()} — you have ${(result.current ?? 0).toLocaleString()}.`);
+          }
         } else {
           setError(result.error || (lang === "es" ? "No se pudo activar la suscripción." : "Could not activate subscription."));
         }
@@ -163,7 +169,7 @@ export default function CreatorSubscribeWizard({
       setLoading(null);
       inFlight.current = false;
     }
-  }, [creatorId, tokenBalance, tokenCost, onSuccess, lang, setNpError]);
+  }, [creatorId, onSuccess, lang, setNpError]);
 
   const handleCrypto = useCallback(async (payCurrency: string) => {
     if (inFlight.current) return;
@@ -458,6 +464,21 @@ export default function CreatorSubscribeWizard({
             )}
         </button>
       )}
+
+      {/* Wallet USDC rail — only renders when the user has a Privy wallet.
+          Fires the creator_sub surface with the creator_id + 30-day duration
+          so backend grants a `creator-subscription` entitlement scoped to
+          this creator on confirmation. Creator earnings are credited via
+          walletCheckoutService._fulfillEntitlement's grant path. */}
+      <WalletPayCard
+        surface="creator_sub"
+        amountUsd={priceUsd}
+        entitlementSpec={{ creator_id: creatorId }}
+        metadata={{ creatorName: displayName, creatorUsername: username || null }}
+        label={lang === "es" ? `Pagar $${priceUsd.toFixed(2)} · Suscripción` : `Pay $${priceUsd.toFixed(2)} · Subscription`}
+        lang={lang}
+        onSuccess={() => onSuccess?.()}
+      />
 
       <div>
         <div className="flex items-center justify-between gap-2 mb-1.5">

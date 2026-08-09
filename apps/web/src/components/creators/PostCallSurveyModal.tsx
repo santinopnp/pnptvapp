@@ -16,7 +16,9 @@ interface PostCallSurveyModalProps {
 // outline grey. Capping at 4 (not 5) removes the lukewarm-middle default and
 // forces a decisive rating.
 const FLAME_LEVELS = [1, 2, 3, 4] as const;
-const TIP_QUICK_PICKS = [5, 10, 20] as const;
+// Post-call tips are USD-priced (paid via NowPayments hosted checkout) —
+// $5 / $10 / $15 / $20 / $25 map 1:1 to the Ru$h tip presets 30/60/90/120/150.
+const TIP_QUICK_PICKS = [5, 10, 15, 20, 25] as const;
 
 function FlameIcon({ filled, size = 28 }: { filled: boolean; size?: number }) {
   return (

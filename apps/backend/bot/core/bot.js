@@ -31,7 +31,7 @@ const ADMIN_USER_IDS = [
 const { initializePostgres, testConnection } = require('../../config/postgres');
 const { initializeRedis } = require('../../config/redis');
 const { initializeCoreTables } = require('../../config/ensureCoreTables');
-const meruLinkInitializer = require('../../services/meruLinkInitializer');
+// meruLinkInitializer removed 2026-08 (Meru retired)
 const { initSentry } = require('./plugins/sentry');
 const sessionMiddleware = require('./middleware/session');
 const { userExistsMiddleware } = require('./middleware/userExistsMiddleware');
@@ -345,8 +345,7 @@ const startBot = async () => {
         } catch (coreTablesError) {
           logger.warn(`Core tables initialization failed: ${coreTablesError.message}`);
         }
-        // Initialize Meru Link tracking in background (fire and forget)
-        meruLinkInitializer.initialize();
+        // Meru Link tracking removed 2026-08 (Meru retired)
         // Bootstrap Meilisearch indexes + initial backfill (fire and forget, service may not exist)
         try {
           require('../../services/meilisearchService').reindexAll().catch((e) =>

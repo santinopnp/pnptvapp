@@ -1344,6 +1344,20 @@ class SocialPostService {
       const err = new Error('Author disabled hype for this post'); err.code = 'NOT_SHAREABLE'; err.status = 403; throw err;
     }
 
+    // Daily quota: prime=10, everyone else (free + member)=3. Rolling 24h window.
+    // Enforced via atomic Redis INCR to prevent race between COUNT and INSERT
+    // that would allow concurrent hypes on different posts to bypass the limit.
+    // Un-hype does NOT decrement (a hype consumed the quota; un-doing the
+    // engagement doesn't refund it — otherwise un-hype-and-rehype leaks budget).
+    // Fail-closed on Redis error: without atomic counter, quota can't be
+    // enforced correctly, so we reject the request rather than let it through.
+    const { rows: tierRows } = await query(
+      `SELECT LOWER(COALESCE(tier,'free')) AS tier FROM users WHERE id=$1`,
+      [String(userId)]
+    );
+    const tier = tierRows[0]?.tier || 'free';
+    const dailyLimit = tier === 'prime' ? 10 : 3;
+
     // Toggle: remove the vote if present + active; otherwise upsert a fresh
     // 7-day vote. `expires_at` is refreshed on re-hype so repeat engagement
     // extends the boost window (mirrors YouTube Hype).
@@ -1352,19 +1366,82 @@ class SocialPostService {
       [String(userId), postId]
     );
 
+    const { getRedis } = require('../config/redis');
     let hyped;
+    let dailyUsed;
+    let dailyResetsAt = null;
+
     if (existing[0] && new Date(existing[0].expires_at).getTime() > Date.now()) {
+      // Un-hype path — no quota check, no counter mutation.
       await query(`DELETE FROM post_hypes WHERE user_id=$1::text AND post_id=$2`, [String(userId), postId]);
       hyped = false;
+      // Return current counter state (best-effort; if Redis is down, return null quota)
+      try {
+        const redis = getRedis();
+        const qKey = `hype:quota:${String(userId)}`;
+        const curr = Number(await redis.get(qKey)) || 0;
+        const ttl = await redis.ttl(qKey);
+        dailyUsed = curr;
+        dailyResetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+      } catch (_readErr) {
+        dailyUsed = 0;
+      }
     } else {
-      await query(
-        `INSERT INTO post_hypes (user_id, post_id, weight, created_at, expires_at)
-         VALUES ($1::text, $2, 1, NOW(), NOW() + INTERVAL '7 days')
-         ON CONFLICT (user_id, post_id) DO UPDATE
-           SET weight = 1, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'`,
-        [String(userId), postId]
-      );
+      // NEW hype path — atomic quota check via Redis INCR.
+      let redis;
+      try {
+        redis = getRedis();
+      } catch (redisSetupErr) {
+        const err = new Error('Hype quota service unavailable, try again shortly.');
+        err.code = 'HYPE_QUOTA_UNAVAILABLE';
+        err.status = 503;
+        throw err;
+      }
+      const qKey = `hype:quota:${String(userId)}`;
+      let newCount;
+      try {
+        newCount = await redis.incr(qKey);
+        if (newCount === 1) {
+          await redis.expire(qKey, 86400); // 24h TTL only on first hit
+        }
+      } catch (redisErr) {
+        // Fail closed — cannot enforce quota atomically without Redis
+        const err = new Error('Hype quota service unavailable, try again shortly.');
+        err.code = 'HYPE_QUOTA_UNAVAILABLE';
+        err.status = 503;
+        throw err;
+      }
+
+      if (newCount > dailyLimit) {
+        // Roll back the increment so a rejected hype doesn't consume budget.
+        try { await redis.decr(qKey); } catch (_decrErr) { /* best-effort */ }
+        const ttl = await redis.ttl(qKey);
+        const resetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+        const err = new Error(`Daily hype limit reached (${dailyLimit}/day). Cupo se libera 24h después de tu primer hype.`);
+        err.code = 'HYPE_QUOTA_EXCEEDED';
+        err.status = 429;
+        err.data = { dailyLimit, dailyUsed: dailyLimit, dailyRemaining: 0, resetsAt };
+        throw err;
+      }
+
+      // Quota reserved — commit the hype write.
+      try {
+        await query(
+          `INSERT INTO post_hypes (user_id, post_id, weight, created_at, expires_at)
+           VALUES ($1::text, $2, 1, NOW(), NOW() + INTERVAL '7 days')
+           ON CONFLICT (user_id, post_id) DO UPDATE
+             SET weight = 1, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'`,
+          [String(userId), postId]
+        );
+      } catch (insertErr) {
+        // Insert failed — release the reserved quota slot.
+        try { await redis.decr(qKey); } catch (_decrErr) { /* best-effort */ }
+        throw insertErr;
+      }
       hyped = true;
+      dailyUsed = newCount;
+      const ttl = await redis.ttl(qKey);
+      dailyResetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
     }
 
     // Resync denormalized hype_score from the vote table (cheap — indexed).
@@ -1378,7 +1455,14 @@ class SocialPostService {
       [postId]
     );
 
-    return { hyped, hype_score: scoreRows[0]?.hype_score ?? 0 };
+    return {
+      hyped,
+      hype_score: scoreRows[0]?.hype_score ?? 0,
+      dailyLimit,
+      dailyUsed,
+      dailyRemaining: Math.max(0, dailyLimit - dailyUsed),
+      dailyResetsAt,
+    };
   }
 
   // Top hypers for the "🔥 Hyped by @a, @b and N others" chip. Returns

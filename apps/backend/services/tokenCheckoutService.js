@@ -25,7 +25,9 @@
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const { query, getClient } = require('../config/postgres');
-const { createDashInvoice, createInvoice: createBtcInvoice } = require('../config/btcpay');
+// BTCPay/Dash retired 2026-07-31 — import removed. createDashCheckout() and
+// createBtcCheckout() are kept as stubs below so existing call-sites don't crash.
+// TODO(narrow-crypto): remove those stub methods once callers are cleaned up.
 const DashTokenService = require('./dashTokenService');
 const logger = require('../utils/logger');
 const { cache } = require('../config/redis');
@@ -529,7 +531,7 @@ class TokenCheckoutService {
    *
    * @param {string} userId
    * @param {string} packageId
-   * @param {string|null} [payCurrency]  Optional NowPayments pay_currency (e.g. 'btc', 'btcln')
+   * @param {string|null} [payCurrency]  Optional NowPayments pay_currency ('eth' or 'usdcerc20')
    * @param {boolean} [presaleDiscount]  Apply 10% presale discount to USD charge
    * @returns {Promise<{ invoiceId: string, checkoutUrl: string, tokens: number, usdAmount: number }>}
    */
@@ -555,12 +557,16 @@ class TokenCheckoutService {
     let invoiceUrl;
     let npPayInfo = {};
     try {
+      const ALLOWED_TOKEN_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
+      const validPayCurrency = (payCurrency && ALLOWED_TOKEN_PAY_CURRENCIES.has(String(payCurrency).toLowerCase()))
+        ? String(payCurrency).toLowerCase() : 'usdcerc20';
       const paymentResp = await axios.post(
         `${NOWPAYMENTS_URL}/invoice`,
         {
           price_amount: usdAmount,
           price_currency: 'usd',
-          pay_currency: payCurrency || 'usdcsol',
+          pay_currency: validPayCurrency,
+          pay_currencies: ['eth', 'usdcerc20'],
           order_id: orderId,
           order_description: `${pkg.tokens} PNP Tokens`,
           ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
@@ -570,7 +576,7 @@ class TokenCheckoutService {
       const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
       invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
-      npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: payCurrency || 'usdcsol' };
+      npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency };
     } catch (invoiceErr) {
       logger.error('TokenCheckoutService.createNowPaymentsCheckout: NowPayments error', {
         userId, packageId, payCurrency, error: invoiceErr.response?.data || invoiceErr.message,

@@ -19,8 +19,9 @@ const WEBAPP_URL = process.env.WEBAPP_URL || 'https://pnptv.app';
 const SubscriptionService = require('../../../services/subscriptionService');
 const MessageTemplates = require('../../../services/messageTemplates');
 const BusinessNotificationService = require('../../../services/businessNotificationService');
-const meruPaymentService = require('../../../services/meruPaymentService');
-const meruLinkService = require('../../../services/meruLinkService');
+// meruPaymentService and meruLinkService removed 2026-08 (Meru retired)
+const meruPaymentService = null;
+const meruLinkService = null;
 const PaymentHistoryService = require('../../../services/paymentHistoryService');
 
 const activationStrings = {
@@ -412,131 +413,16 @@ const registerOnboardingHandlers = (bot) => {
       ctx.session.temp.waitingForLifetimeCode = false; // Clear the flag
       await ctx.saveSession();
 
-      try {
-        // Validate code against active links in the database (single source of truth).
-        // The Meru link pool is consolidated under 'lifetime100' (migration 195) —
-        // both the lifetime-pass and lifetime100 plans pull from the same codes.
-        const availableLinks = await meruLinkService.getAvailableLinks('lifetime100');
-        const matchingLink = availableLinks.find(link => link.code === rawCode);
-
-        if (!matchingLink) {
-            await ctx.reply(activationStrings[lang].codeNotFound, {
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback(lang === 'es' ? '🔄 Intentar de Nuevo' : '🔄 Try Again', 'activate_lifetime_send_code')],
-                [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
-              ]),
-            });
-            return;
-        }
-
-        const matchingLinkCode = matchingLink.code;
-
-        await ctx.reply(`Verificando pago para el código: \`${matchingLinkCode}\`...`, { parse_mode: 'Markdown' });
-
-        // Usar Puppeteer para verificar el pago (lee contenido real con JavaScript ejecutado)
-        // Pasar el idioma del usuario para que Meru muestre el mensaje en el idioma correcto
-        const paymentCheck = await meruPaymentService.verifyPayment(matchingLinkCode, lang);
-
-        logger.info('Meru payment verification result', {
-          code: matchingLinkCode,
-          isPaid: paymentCheck.isPaid,
-          userId: ctx.from.id,
-        });
-
-        if (paymentCheck.isPaid) {
-          // Payment confirmed, activate PRIME
-          const userId = ctx.from.id;
-          const planId = 'lifetime-pass'; // Assuming this is the plan ID for Lifetime Pass
-          const product = 'lifetime-pass';
-
-          const activated = await activateMembership({
-            ctx,
-            userId,
-            planId,
-            product,
-            // successMessage will be handled below
-          });
-
-          if (!activated) {
-            await ctx.reply(activationStrings[lang].errorActivating, {
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback(lang === 'es' ? '🏠 Volver al Inicio' : '🏠 Back to Home', 'back_to_main')],
-                [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
-              ]),
-            });
-            return;
-          }
-
-          // Mark code as used
-          await markCodeUsed(matchingLinkCode, userId, ctx.from.username);
-
-          // IMPORTANT: Invalidate the Meru link to prevent reuse
-          const linkInvalidation = await meruLinkService.invalidateLinkAfterActivation(
-            matchingLinkCode,
-            userId,
-            ctx.from.username
-          );
-
-          if (!linkInvalidation.success) {
-            logger.warn('Failed to invalidate Meru link after activation', {
-              code: matchingLinkCode,
-              userId,
-              reason: linkInvalidation.message,
-            });
-          }
-
-          // Record payment in history
-          try {
-            await PaymentHistoryService.recordPayment({
-              userId,
-              paymentMethod: 'meru',
-              amount: 50,  // Standard lifetime pass price
-              currency: 'USD',
-              planId: 'lifetime-pass',
-              planName: 'Lifetime Pass',
-              product: product || 'lifetime-pass',
-              paymentReference: matchingLinkCode,  // Meru link code is the payment reference
-              status: 'completed',
-              metadata: {
-                meru_link: `https://pay.getmeru.com/${matchingLinkCode}`,
-                verification_method: 'puppeteer',
-                language: lang,
-              },
-            });
-          } catch (historyError) {
-            logger.warn('Failed to record Meru payment in history (non-critical):', {
-              error: historyError.message,
-              userId,
-              code: matchingLinkCode,
-            });
-          }
-
-          await logActivation({ userId, username: ctx.from.username, code: matchingLinkCode, product, success: true });
-          BusinessNotificationService.notifyCodeActivation({ userId, username: ctx.from.username, code: matchingLinkCode, product });
-
-          await ctx.reply(
-            activationStrings[lang].paymentExpiredOrPaid.replace('{webappUrl}', WEBAPP_URL),
-            { parse_mode: 'Markdown', disable_web_page_preview: true }
-          );
-          await showMainMenu(ctx); // Show main menu after activation
-        } else {
-          // Payment not confirmed
-          await ctx.reply(activationStrings[lang].paymentNotCompleted, {
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback(lang === 'es' ? '🏠 Volver al Inicio' : '🏠 Back to Home', 'back_to_main')],
-              [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
-            ]),
-          });
-        }
-      } catch (error) {
-        logger.error('Error processing lifetime code activation:', error);
-        await ctx.reply(activationStrings[lang].errorActivating, {
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback(lang === 'es' ? '🏠 Volver al Inicio' : '🏠 Back to Home', 'back_to_main')],
-            [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
-          ]),
-        });
-      }
+      // Meru payment verification retired 2026-08. Direct to support.
+      logger.info('Lifetime code activation via Meru: retired — directing to support', { userId: ctx.from?.id, code: rawCode });
+      const meruRetiredMsg = lang === 'es'
+        ? '❌ Los pagos con Meru ya no están disponibles. Si ya realizaste un pago, contacta a soporte: /support'
+        : '❌ Meru payments are no longer available. If you already paid, contact support: /support';
+      await ctx.reply(meruRetiredMsg, {
+        ...Markup.inlineKeyboard([
+          [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
+        ]),
+      });
       return; // Crucial to return here to prevent further text processing
     }
 
@@ -917,6 +803,19 @@ const completeOnboarding = async (ctx) => {
   }
 };
 const verifyAndActivateMeruPayment = async (ctx, meruCode, lang = 'es') => {
+  // Meru retired 2026-08. Direct users to NowPayments crypto checkout.
+  logger.info('verifyAndActivateMeruPayment: Meru retired — sending support reply', { userId: ctx.from?.id, code: meruCode });
+  const msg = lang === 'es'
+    ? '❌ Los pagos con Meru ya no están disponibles. Si ya pagaste, contacta a soporte: /support'
+    : '❌ Meru payments are no longer available. If you already paid, contact support: /support';
+  await ctx.reply(msg, {
+    ...Markup.inlineKeyboard([
+      [Markup.button.url(lang === 'es' ? '🆘 Contactar Soporte' : '🆘 Contact Support', 'https://t.me/pnptv_support')],
+    ]),
+  });
+};
+
+const _verifyAndActivateMeruPayment_RETIRED = async (ctx, meruCode, lang = 'es') => {
   try {
     const userId = ctx.from.id;
     const username = ctx.from.username || 'unknown';

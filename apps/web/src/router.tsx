@@ -237,7 +237,7 @@ function HangoutInviteRedirect() {
 }
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
-const STREAMS_DEPRECATED = true;
+const STREAMS_DEPRECATED = false;
 
 import { Layout } from "@/components/Layout";
 import { AdminLayout } from "@/components/admin/AdminLayout";
@@ -335,7 +335,7 @@ const SupportDashboard = lazy(() => import("@/pages/admin/SupportDashboard"));
 const AccessMatrix = lazy(() => import("@/pages/admin/AccessMatrix"));
 const CreatorSubscriptions = lazy(() => import("@/pages/admin/CreatorSubscriptions"));
 const XAutoCampaigns = lazy(() => import("@/pages/admin/XAutoCampaigns"));
-const MeruLinks = lazy(() => import("@/pages/admin/MeruLinks"));
+// MeruLinks removed 2026-08 (Meru retired)
 const DuplicateAccounts = lazy(() => import("@/pages/admin/DuplicateAccounts"));
 const PaymentHealth = lazy(() => import("@/pages/admin/PaymentHealth"));
 const CallAnalytics = lazy(() => import("@/pages/admin/CallAnalytics"));
@@ -1031,14 +1031,7 @@ export const router = createBrowserRouter([
           </ModuleLoader>
         ),
       },
-      {
-        path: "meru-links",
-        element: (
-          <ModuleLoader>
-            <MeruLinks />
-          </ModuleLoader>
-        ),
-      },
+      // meru-links route removed 2026-08 (Meru retired)
       {
         path: "duplicate-accounts",
         element: (

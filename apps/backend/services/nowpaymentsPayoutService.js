@@ -65,22 +65,11 @@ async function getCreatorPayoutBalance(userId) {
 // { regex, label } where label is the human-readable name shown on error.
 // Kept minimal — NowPayments does its own validation before dispatch, but a
 // front-line check saves a round trip and gives the creator a clear message.
+// Per-currency address validators — restricted to ETH and USDC-ERC20 only.
+// All other payout lanes (BTC, Dash, USDT-Tron, USDT-Base, SOL, etc.) retired 2026-08-08.
 const ADDRESS_VALIDATORS = {
-  btc:       { re: /^(bc1[a-z0-9]{39,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/, label: 'Bitcoin' },
-  btcln:     { re: /^.{6,}$/,                                                label: 'Bitcoin Lightning' }, // LNURL/LN-address; NowPayments validates
-  eth:       { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'Ethereum' },
-  ltc:       { re: /^(ltc1[a-z0-9]{39,71}|[LM3][a-km-zA-HJ-NP-Z1-9]{25,34})$/, label: 'Litecoin' },
-  xmr:       { re: /^[48][A-Za-z0-9]{94}$/,                                  label: 'Monero' },
-  bch:       { re: /^(bitcoincash:)?[qpQP][a-zA-Z0-9]{41}$|^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/, label: 'Bitcoin Cash' },
-  usdt:      { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDT (Ethereum ERC-20)' },
-  usdttrc20: { re: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,                            label: 'USDT (Tron TRC-20)' },
-  usdtbsc:   { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDT (BSC BEP-20)' },
-  usdc:      { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDC (Ethereum)' },
-  usdcbsc:   { re: /^0x[a-fA-F0-9]{40}$/,                                    label: 'USDC (BSC BEP-20)' },
-  usdcsol:   { re: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,                          label: 'USDC (Solana)' },
-  dash:      { re: /^X[1-9A-HJ-NP-Za-km-z]{33}$/,                            label: 'Dash' },
-  sol:       { re: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,                          label: 'Solana' },
-  doge:      { re: /^D[5-9A-HJ-NP-U1-9][1-9A-HJ-NP-Za-km-z]{32}$/,           label: 'Dogecoin' },
+  eth:       { re: /^0x[a-fA-F0-9]{40}$/,  label: 'Ethereum (ETH)' },
+  usdcerc20: { re: /^0x[a-fA-F0-9]{40}$/,  label: 'USDC (Ethereum ERC-20)' },
 };
 
 async function requestPayout({ userId, address, currency, method }) {
@@ -94,10 +83,8 @@ async function requestPayout({ userId, address, currency, method }) {
 
   if (!address || !address.trim()) throw new Error('Address is required');
 
-  // Currency defaults to the historical usdttrc20 so existing callers that
-  // haven't been updated still work. New callers should pass the exact
-  // NowPayments currency code the creator picked at enrollment.
-  const currencyCode = String(currency || 'usdttrc20').toLowerCase();
+  // Currency defaults to usdcerc20. Only 'eth' and 'usdcerc20' are accepted.
+  const currencyCode = String(currency || 'usdcerc20').toLowerCase();
   const validator = ADDRESS_VALIDATORS[currencyCode];
   if (!validator) {
     throw Object.assign(

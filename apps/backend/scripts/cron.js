@@ -148,26 +148,23 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // Dash/BTCPay reconciliation — every 10 min
-    // Polls BTCPay for stuck pending invoices (missed webhooks) and either
-    // marks them terminal (Expired/Invalid) or logs Settled-but-unprocessed
-    // for operator replay. Idempotent and respects per-run Redis lock.
-    cron.schedule(process.env.DASH_RECONCILE_CRON || '*/10 * * * *', async () => {
+    // Wallet-checkout renewal reminders — daily at 15:00 UTC (10am ET / 7am PT).
+    // Web-pushes wallet-linked pnp-members whose entitlements expire in ≤3 days
+    // with a 1-click renew link. Dedupes per-entitlement per-day so cron can
+    // safely re-fire on process restart. See subscriptionReminderService.
+    cron.schedule(process.env.WALLET_RENEWAL_REMINDER_CRON || '0 15 * * *', async () => {
       try {
-        logger.info('Running Dash/BTCPay reconciliation...');
-        const results = await PaymentRecoveryService.processStuckDashInvoices();
-        logger.info('Dash/BTCPay reconciliation completed', {
-          checked: results.checked,
-          settled: results.settled,
-          expired: results.expired,
-          invalid: results.invalid,
-          stillPending: results.stillPending,
-          errors: results.errors,
-        });
+        const results = await TelegramSubscriptionReminderService.fireWalletRenewalReminders();
+        if (results.picked > 0 || results.error) {
+          logger.info('Wallet renewal reminders cycle done', results);
+        }
       } catch (error) {
-        logger.error('Error in Dash reconciliation cron:', error);
+        logger.error('Error in wallet renewal reminders cron:', error);
       }
     });
+
+    // Dash/BTCPay reconciliation — RETIRED 2026-07-31 (BTCPay removed)
+    // cron.schedule kept as comment so schedule slot is not accidentally reused.
 
     // NOWPayments reconciler — polls NP API for stuck pending/confirming orders
     // Extracts payment_id from the notes column (written on confirming/sending transitions)
@@ -208,45 +205,8 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // Meru lifetime100 reconciliation — every 15 min
-    // Meru does not deliver webhooks; users must come back and POST /activate
-    // after paying. If they don't, the link stays paid forever and we never
-    // grant entitlements. This cron polls Meru for every meru_payment_link in
-    // 'active'/'reserved' state and: auto-heals if reservation owner is known,
-    // alerts ops if orphan (paid by direct-share with no reservation).
-    // 18 stuck payments accumulated over 5 months before this cron existed.
-    cron.schedule(process.env.MERU_RECONCILE_CRON || '7,22,37,52 * * * *', async () => {
-      try {
-        const results = await PaymentRecoveryService.processStuckMeruPayments();
-        logger.info('Meru reconciliation completed', {
-          checked: results.checked,
-          autoHealed: results.autoHealed,
-          orphans: results.orphans,
-          stillUnpaid: results.stillUnpaid,
-          errors: results.errors,
-        });
-      } catch (error) {
-        logger.error('Error in Meru reconciliation cron:', error);
-      }
-    });
-
-    // Meru token-activation reconciliation — every 15 min (offset +2 min from lifetime100)
-    // Same pattern as lifetime100 reconciler but targets product LIKE 'token_pkg_%'.
-    // Only processes rows older than 65 min (reservation window) so active users self-serve.
-    cron.schedule(process.env.MERU_TOKEN_RECONCILE_CRON || '9,24,39,54 * * * *', async () => {
-      try {
-        const results = await PaymentRecoveryService.processStuckTokenActivations();
-        logger.info('Meru token activation reconciliation completed', {
-          checked: results.checked,
-          autoHealed: results.autoHealed,
-          orphans: results.orphans,
-          stillUnpaid: results.stillUnpaid,
-          errors: results.errors,
-        });
-      } catch (error) {
-        logger.error('Error in Meru token activation reconciliation cron:', error);
-      }
-    });
+    // Meru reconciliation — RETIRED 2026-08 (Meru removed)
+    // cron.schedule kept as comment so schedule slots are not accidentally reused.
 
     // Video leak detector — every hour at :17
     // Scans video_fetch_log over the last 60 min for two real leak signatures:
@@ -376,48 +336,8 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // BTCPay webhook URL probe — daily at 06:30 UTC
-    // Catches the exact failure mode that caused the Apr-2026 incident: BTCPay
-    // store webhook silently pointing at a 404 URL. Calls verifyWebhookRegistration
-    // (config/btcpay.js) and dispatches a P0 alert if the configured URL drifts
-    // from the expected handler path.
-    cron.schedule(process.env.BTCPAY_WEBHOOK_PROBE_CRON || '30 6 * * *', async () => {
-      try {
-        // BTCPay/Dash retired 2026-07-31. Probe kept only if operator explicitly
-        // opts back in via BTCPAY_PROBE_ENABLED=1 (host DNS no longer resolves the
-        // internal btcpay-server hostname, so probe would just spam EAI_AGAIN).
-        if (process.env.BTCPAY_PROBE_ENABLED !== '1') return;
-        const btcpay = require(path.join(backendPath, 'config/btcpay'));
-        if (!btcpay.isConfigured) {
-          logger.info('BTCPay webhook probe: BTCPay not configured — skipping');
-          return;
-        }
-        const expectedUrl = `${process.env.WEBAPP_URL || 'http://localhost:3000'}/api/webhooks/btcpay`;
-        const result = await btcpay.verifyWebhookRegistration({ expectedUrl });
-        if (result.ok) {
-          logger.info('BTCPay webhook probe: OK', { url: result.url });
-          return;
-        }
-        logger.error('BTCPay webhook probe: MISCONFIGURED', result);
-        try {
-          const BusinessNotificationService = require(path.join(backendPath, 'services/businessNotificationService'));
-          const reasonLine = result.reason === 'url_mismatch'
-            ? `URL mismatch — expected ${result.expected}, found ${(result.foundUrls || []).join(', ') || '(none)'}`
-            : `Reason: ${result.reason}${result.detail ? ` — ${result.detail}` : ''}`;
-          await BusinessNotificationService.send([
-            '🔴 <b>P0 ALERT — BTCPay webhook misconfigured</b>',
-            '',
-            reasonLine,
-            '',
-            'Action: BTCPay → Settings → Webhooks. Set URL + secret. The Apr-2026 incident took 7 weeks to spot — do not delay.',
-          ].join('\n'));
-        } catch (alertErr) {
-          logger.warn('BTCPay webhook probe alert dispatch failed', { error: alertErr.message });
-        }
-      } catch (error) {
-        logger.error('Error in BTCPay webhook probe cron:', error);
-      }
-    });
+    // BTCPay webhook probe — RETIRED 2026-07-31 (BTCPay removed)
+    // cron.schedule kept as comment so schedule slot is not accidentally reused.
 
     // Full membership cleanup daily at midnight
     // Updates statuses (active/churned/free) and kicks expired users from PRIME channel
@@ -911,18 +831,8 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // Release expired Meru reservations back to the active pool every 5 minutes
-    const meruLinkService = require(path.join(backendPath, 'services/meruLinkService'));
-    cron.schedule(process.env.MERU_RESERVATION_CLEANUP_CRON || '*/5 * * * *', async () => {
-      try {
-        const released = await meruLinkService.releaseExpiredReservations();
-        if (released > 0) {
-          logger.info('Meru reservation cleanup', { released });
-        }
-      } catch (error) {
-        logger.error('Meru reservation cleanup error:', error);
-      }
-    });
+    // Meru reservation cleanup — RETIRED 2026-08 (Meru removed)
+    // cron.schedule kept as comment so schedule slot is not accidentally reused.
 
     // ── 18 U.S.C. § 2257 grace-period enforcement — daily at 09:00 UTC ──────
     // Suspends active creators whose grace deadline has passed and who have not

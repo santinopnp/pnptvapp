@@ -10,8 +10,8 @@ const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS, GIF
 const { applyCreatorBonus } = require('./tokenService');
 
 class PNPLiveTipsService {
-  // Standard tip amounts in Tokens (6 Tokens = $1 USD)
-  static TIP_AMOUNTS = [30, 60, 120, 300, 600];
+  // Standard tip amounts in Ru$h 💎 (6 Ru$h = $1 USD)
+  static TIP_AMOUNTS = [30, 60, 90, 120, 150];
 
   /**
    * Create a new tip

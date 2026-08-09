@@ -89,7 +89,7 @@ export default function Subscribe() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [meruPanelPlanId, setMeruPanelPlanId] = useState<string | null>(null);
+  // Meru state removed 2026-08-08 with the Card button.
   // Per-plan benefits expand state — plans start collapsed (N-06)
   const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
   const togglePlanBenefits = (planId: string) => {
@@ -864,16 +864,10 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
-                <button
-                    onClick={(e) => { e.stopPropagation(); setMeruPanelPlanId(meruPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${meruPanelPlanId === plan.id ? "border-pink-400/60 bg-pink-500/20" : "border-pink-500/40 bg-pink-500/10 hover:bg-pink-500/20"}`}
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-pink-300">
-                      <span>💳</span>
-                      <span>{t.lang === "es" ? "Tarjeta" : "Card"}</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
-                  </button>
+                {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
+                    only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
+                    users route through wallet → fund → USDC via the Privy
+                    onramps (Stripe / MoonPay / Meld / Coinbase). */}
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -929,28 +923,7 @@ export default function Subscribe() {
                     </div>
                   </div>
                 )}
-                {meruPanelPlanId === plan.id && (
-                  <div className="w-full mt-1 p-3 rounded-xl bg-pink-500/8 border border-pink-500/30 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <p className="text-[11px] font-bold text-pink-300 mb-1">💳 {t.lang === "es" ? "Pago con tarjeta vía Meru" : "Card payment via Meru"}</p>
-                    <p className="text-[10px] text-pnp-textSecondary mb-2 leading-relaxed">
-                      {t.lang === "es"
-                        ? `1. Haz clic en el enlace y paga exactamente ${displayPrice} con tu tarjeta, Nequi o PSE.\n2. Envía tu comprobante de pago a support@pnptv.app — aceptamos: factura, captura del comprobante de pago, o captura del estado de cuenta bancario.\n3. Tu membresía se activa en las próximas 12 horas.`
-                        : `1. Click the link and pay exactly ${displayPrice} with your card.\n2. Email your proof of payment to support@pnptv.app — we accept: invoice, payment confirmation screenshot, or bank statement screenshot.\n3. Your membership activates within 12 hours.`}
-                    </p>
-                    <a
-                      href="https://pay.getmeru.com/p/lifetime100-pnptv"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-pink-500 hover:bg-pink-400 text-white text-xs font-bold transition-colors"
-                    >
-                      <span>💳</span>
-                      <span>{t.lang === "es" ? `Pagar ${displayPrice} con tarjeta →` : `Pay ${displayPrice} with card →`}</span>
-                    </a>
-                    <p className="text-[9px] text-pnp-textSecondary/50 mt-1.5 text-center">
-                      {t.lang === "es" ? "No automático · Activación manual en ≤12h" : "Not automatic · Manual activation ≤12h"}
-                    </p>
-                  </div>
-                )}
+                {/* Meru card panel removed 2026-08-08 with the Card button. */}
               </div>
             </div>
             {usdcOrder && selectedPlan === plan.id && (
@@ -1118,16 +1091,10 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
-                <button
-                    onClick={(e) => { e.stopPropagation(); setMeruPanelPlanId(meruPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${meruPanelPlanId === plan.id ? "border-pink-400/60 bg-pink-500/20" : "border-pink-500/40 bg-pink-500/10 hover:bg-pink-500/20"}`}
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-pink-300">
-                      <span>💳</span>
-                      <span>{t.lang === "es" ? "Tarjeta" : "Card"}</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-pink-400 leading-none">{displayPrice}</span>
-                  </button>
+                {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
+                    only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
+                    users route through wallet → fund → USDC via the Privy
+                    onramps (Stripe / MoonPay / Meld / Coinbase). */}
                 {cryptoPickerPlanId === plan.id && (
                   <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -1184,28 +1151,7 @@ export default function Subscribe() {
                     </div>
                   </div>
                 )}
-                {meruPanelPlanId === plan.id && (
-                  <div className="w-full mt-1 p-3 rounded-xl bg-pink-500/8 border border-pink-500/30 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <p className="text-[11px] font-bold text-pink-300 mb-1">💳 {t.lang === "es" ? "Pago con tarjeta vía Meru" : "Card payment via Meru"}</p>
-                    <p className="text-[10px] text-pnp-textSecondary mb-2 leading-relaxed">
-                      {t.lang === "es"
-                        ? `1. Haz clic en el enlace y paga exactamente ${displayPrice} con tu tarjeta, Nequi o PSE.\n2. Envía tu comprobante de pago a support@pnptv.app — aceptamos: factura, captura del comprobante de pago, o captura del estado de cuenta bancario.\n3. Tu membresía se activa en las próximas 12 horas.`
-                        : `1. Click the link and pay exactly ${displayPrice} with your card.\n2. Email your proof of payment to support@pnptv.app — we accept: invoice, payment confirmation screenshot, or bank statement screenshot.\n3. Your membership activates within 12 hours.`}
-                    </p>
-                    <a
-                      href="https://pay.getmeru.com/p/lifetime100-pnptv"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-pink-500 hover:bg-pink-400 text-white text-xs font-bold transition-colors"
-                    >
-                      <span>💳</span>
-                      <span>{t.lang === "es" ? `Pagar ${displayPrice} con tarjeta →` : `Pay ${displayPrice} with card →`}</span>
-                    </a>
-                    <p className="text-[9px] text-pnp-textSecondary/50 mt-1.5 text-center">
-                      {t.lang === "es" ? "No automático · Activación manual en ≤12h" : "Not automatic · Manual activation ≤12h"}
-                    </p>
-                  </div>
-                )}
+                {/* Meru card panel removed 2026-08-08 with the Card button. */}
               </div>
             </div>
             {usdcOrder && selectedPlan === plan.id && (

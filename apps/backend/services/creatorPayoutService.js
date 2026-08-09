@@ -67,10 +67,11 @@ class CreatorPayoutService {
           ce.creator_id,
           COALESCE(SUM(ce.amount_creator), 0)::numeric  AS total_creator,
           ARRAY_AGG(ce.id)                               AS earning_ids,
-          MAX(u.creator_dash_address)                    AS creator_dash_address,
           MAX(u.payout_method)                           AS payout_method,
           MAX(u.fiat_payout_method)                      AS fiat_payout_method,
           MAX(u.fiat_payout_account)                     AS fiat_payout_account,
+          MAX(u.creator_payout_destinations)             AS creator_payout_destinations,
+          COALESCE(MAX(u.payout_reenroll_needed), false) AS payout_reenroll_needed,
           MAX(u.email)                                   AS email,
           MAX(u.username)                                AS username,
           MAX(u.first_name)                              AS first_name,
@@ -137,11 +138,12 @@ class CreatorPayoutService {
       const result = await query(`
         SELECT
           ce.creator_id,
-          COALESCE(SUM(ce.amount_creator), 0)::numeric AS total_available,
-          MAX(u.creator_dash_address) AS creator_dash_address,
-          MAX(u.payout_method)        AS payout_method,
-          MAX(u.fiat_payout_method)   AS fiat_payout_method,
-          MAX(u.fiat_payout_account)  AS fiat_payout_account
+          COALESCE(SUM(ce.amount_creator), 0)::numeric          AS total_available,
+          MAX(u.payout_method)                                   AS payout_method,
+          MAX(u.fiat_payout_method)                              AS fiat_payout_method,
+          MAX(u.fiat_payout_account)                             AS fiat_payout_account,
+          MAX(u.creator_payout_destinations)                     AS creator_payout_destinations,
+          COALESCE(MAX(u.payout_reenroll_needed::int)::bool, false) AS payout_reenroll_needed
         FROM creator_earnings ce
         LEFT JOIN users u ON u.id = ce.creator_id
         WHERE ce.status  = 'available'
@@ -158,8 +160,9 @@ class CreatorPayoutService {
     let reminded = 0;
     for (const creator of rows) {
       const hasFiatMethod = creator.payout_method === 'fiat' && !!creator.fiat_payout_method && !!creator.fiat_payout_account;
-      const hasDashAddress = !!creator.creator_dash_address;
-      if (hasFiatMethod || hasDashAddress) continue;
+      const destinations = creator.creator_payout_destinations || {};
+      const hasCryptoLane = !!(destinations.usdc_erc20?.address || destinations.eth?.address);
+      if (hasFiatMethod || hasCryptoLane) continue;
 
       const amountUsd = parseFloat(creator.total_available);
       try {
@@ -171,7 +174,7 @@ class CreatorPayoutService {
           targetUserId: creator.creator_id,
           entityType: 'creator',
           entityId: String(creator.creator_id),
-          message: `Tu pago de $${amountUsd.toFixed(2)} se procesa el 1ro del mes — agrega tu dirección Dash en Configuración de Creador para recibirlo.`,
+          message: `Tu pago de $${amountUsd.toFixed(2)} se procesa el martes — configura tu dirección USDC (Ethereum) o ETH en Configuración de Creador para recibirlo.`,
           metadata: { pendingAmountUsd: amountUsd },
         });
         reminded++;
@@ -190,13 +193,12 @@ class CreatorPayoutService {
    * Process a single creator's payout.
    *
    * Routing order (first match wins):
-   *   1. payout_method === 'fiat'  → Peer Protocol fiat off-ramp.
-   *   2. creator_dash_address set  → BTCPay Pull Payment in Dash (default crypto path).
-   *   3. nothing configured        → skip + notify creator to set Dash address.
-   *
-   * Migration 123 dropped the legacy creator_wallet_address column entirely —
-   * any historical USDC-only creators now fall through to the "skip + notify"
-   * branch the same as a brand-new creator who hasn't set up payouts yet.
+   *   1. payout_reenroll_needed = true AND no valid crypto lane → skip with nudge.
+   *   2. payout_method === 'fiat'  → Peer Protocol fiat off-ramp.
+   *   3. creator_payout_destinations.bre_b set → fiat off-ramp via bre_b.
+   *   4. creator_payout_destinations.usdc_erc20 set → NowPayments payout.
+   *   5. creator_payout_destinations.eth set → NowPayments payout.
+   *   6. nothing configured → skip + notify creator to set USDC (Ethereum) address.
    *
    * @param {Object} creator - Row from the aggregate query in runMonthlyPayouts
    * @returns {{ skipped: boolean }}
@@ -204,15 +206,15 @@ class CreatorPayoutService {
   static async _processCreatorPayout(creator) {
     const {
       creator_id, total_creator, earning_ids,
-      creator_dash_address,
       payout_method, fiat_payout_method, fiat_payout_account,
+      creator_payout_destinations, payout_reenroll_needed,
       email, username, first_name,
     } = creator;
     const displayName = username || first_name || String(creator_id);
     const amountUsd = parseFloat(total_creator);
+    const destinations = creator_payout_destinations || {};
 
-    // Acquire a per-creator Redis lock to prevent concurrent payout runs (e.g. two overlapping
-    // cron triggers or an admin-triggered run racing with the scheduled run) from double-paying.
+    // Acquire a per-creator Redis lock to prevent concurrent payout runs.
     const payoutLockKey = `payout_lock:${creator_id}`;
     const lockAcquired = await cache.acquireLock(payoutLockKey, 120).catch(() => false);
     if (!lockAcquired) {
@@ -221,36 +223,44 @@ class CreatorPayoutService {
     }
 
     const hasFiatMethod = payout_method === 'fiat' && !!fiat_payout_method && !!fiat_payout_account;
-    const hasDashAddress = !!creator_dash_address;
+    const hasBreB = !!(destinations.bre_b?.handle);
+    const hasUsdcErc20 = !!(destinations.usdc_erc20?.address);
+    const hasEth = !!(destinations.eth?.address);
 
-    if (!hasFiatMethod && !hasDashAddress) {
-      const nudge = `Your payout of $${amountUsd.toFixed(2)} is ready! Add your Dash wallet address in Creator Settings to receive it.`;
-      logger.warn('CreatorPayoutService: creator has no valid payout method, skipping', {
-        creatorId: creator_id,
-      });
+    // Creator had a removed lane and has not re-enrolled with ETH/USDC yet — skip.
+    if (payout_reenroll_needed && !hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
+      logger.warn('CreatorPayoutService: payout skipped — re-enrollment required (removed lane)', { creatorId: creator_id, amountUsd });
       await NotificationEmitter.emit({
-        type: 'system',
-        category: 'commerce',
-        priority: 'high',
-        actorId: null,
-        targetUserId: creator_id,
-        entityType: 'creator',
-        entityId: String(creator_id),
-        message: nudge,
+        type: 'system', category: 'commerce', priority: 'high', actorId: null,
+        targetUserId: creator_id, entityType: 'creator', entityId: String(creator_id),
+        message: `Tu pago de $${amountUsd.toFixed(2)} está listo — agrega tu dirección USDC (Ethereum ERC-20) en Configuración de Creador para recibirlo. Tu método anterior ya no está disponible.`,
+        metadata: { pendingAmountUsd: amountUsd, earningIds: earning_ids, reason: 'reenroll_required' },
+      });
+      return { skipped: true };
+    }
+
+    if (!hasFiatMethod && !hasBreB && !hasUsdcErc20 && !hasEth) {
+      logger.warn('CreatorPayoutService: creator has no valid payout method, skipping', { creatorId: creator_id });
+      await NotificationEmitter.emit({
+        type: 'system', category: 'commerce', priority: 'high', actorId: null,
+        targetUserId: creator_id, entityType: 'creator', entityId: String(creator_id),
+        message: `Your payout of $${amountUsd.toFixed(2)} is ready! Add your USDC (Ethereum ERC-20) wallet address in Creator Settings to receive it.`,
         metadata: { pendingAmountUsd: amountUsd, earningIds: earning_ids },
       });
       return { skipped: true };
     }
 
-    // ── Route 1: Fiat off-ramp (unchanged) ────────────────────────────────────
-    if (hasFiatMethod) {
+    // ── Route 1: Fiat off-ramp ────────────────────────────────────────────────
+    if (hasFiatMethod || hasBreB) {
+      const provider = hasFiatMethod ? fiat_payout_method : 'bre_b';
+      const recipientHandle = hasFiatMethod ? fiat_payout_account : destinations.bre_b.handle;
       let transferResult;
       try {
         const peerProtocolService = require('./peerProtocolService');
         transferResult = await peerProtocolService.sendFiatPayout({
           amount: amountUsd,
-          provider: fiat_payout_method,
-          recipientHandle: fiat_payout_account,
+          provider,
+          recipientHandle,
           creatorId: creator_id,
         });
       } catch (fiatErr) {
@@ -273,24 +283,12 @@ class CreatorPayoutService {
       return { skipped: false };
     }
 
-    // ── Route 2: Dash via BTCPay Pull Payment (default) ──────────────────────
-    if (hasDashAddress) {
-      const { createPullPayment } = require('../config/btcpay');
-      let pullPayment;
-      try {
-        pullPayment = await createPullPayment({
-          amountUsd,
-          creatorId: String(creator_id),
-          description: `PNPtv payout for ${displayName} — ${new Date().toISOString().slice(0, 7)}`,
-          autoApprove: true,
-        });
-      } catch (btcErr) {
-        throw new Error(`BTCPay pull payment creation failed: ${btcErr.message}`);
-      }
+    // ── Route 2: Crypto via NowPayments payout (usdc_erc20 preferred, eth fallback) ──
+    if (hasUsdcErc20 || hasEth) {
+      const cryptoCurrency = hasUsdcErc20 ? 'usdcerc20' : 'eth';
+      const cryptoAddress = hasUsdcErc20 ? destinations.usdc_erc20.address : destinations.eth.address;
 
-      // Reserve the earnings: move 'available' → 'in_payout' atomically. A second
-      // concurrent cron tick that aggregated the same rows will find them gone
-      // and naturally drop them from its batch.
+      // Reserve the earnings: move 'available' → 'in_payout' atomically.
       const { rows: reservedRows } = await query(`
         UPDATE creator_earnings
         SET status = 'in_payout',
@@ -300,68 +298,51 @@ class CreatorPayoutService {
           AND paid_at IS NULL
         RETURNING id
       `, [
-        JSON.stringify({ pullPaymentId: pullPayment.pullPaymentId }),
+        JSON.stringify({ payoutCurrency: cryptoCurrency, payoutAddress: cryptoAddress }),
         earning_ids,
       ]);
 
       if (reservedRows.length === 0) {
-        // Concurrent run reserved them first — release the BTCPay pull payment.
-        logger.warn('CreatorPayoutService: earnings already reserved by concurrent run, archiving pull payment', {
-          creatorId: creator_id, pullPaymentId: pullPayment.pullPaymentId,
-        });
-        try { await require('../config/btcpay').archivePullPayment(pullPayment.pullPaymentId); }
-        catch (_) { /* best-effort */ }
+        logger.warn('CreatorPayoutService: earnings already reserved by concurrent run — skipping', { creatorId: creator_id });
         return { skipped: true };
       }
 
       const reservedIds = reservedRows.map((r) => r.id);
-      const { rows: payoutRows } = await query(`
-        INSERT INTO creator_payouts (creator_id, amount_usd, method, btcpay_pull_payment_id, view_url, status, earning_ids)
-        VALUES ($1, $2, 'dash_btcpay', $3, $4, 'pending', $5)
-        RETURNING id
-      `, [creator_id, amountUsd, pullPayment.pullPaymentId, pullPayment.viewUrl, reservedIds]);
-      const payoutId = payoutRows[0].id;
 
-      // Email the creator the claim link (best-effort — the in-app notification
-      // below is the authoritative channel).
-      if (email) {
-        try {
-          const emailService = require('./emailservice');
-          if (emailService.isEmailSafe && emailService.isEmailSafe(email)) {
-            const html = `
-              <h2>Your PNPtv payout is ready to claim</h2>
-              <p>Hi ${displayName}, your payout of <strong>$${amountUsd.toFixed(2)} USD</strong> in Dash is ready.</p>
-              <p><a href="${pullPayment.viewUrl}" style="display:inline-block;background:#008DE4;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Claim your Dash payout</a></p>
-              <p style="font-size:12px;color:#666">Open the link, paste your Dash wallet address, and the funds will be sent on-chain. The amount in Dash is calculated at claim time using the live USD/DASH rate.</p>
-            `;
-            emailService.send({
-              to: email,
-              subject: `[PNPtv] Your payout of $${amountUsd.toFixed(2)} is ready to claim`,
-              html,
-            }).catch((mailErr) => logger.warn('Payout claim email failed (non-fatal)', { creatorId: creator_id, error: mailErr.message }));
-          }
-        } catch (mailRequireErr) {
-          logger.warn('Could not load emailService for payout email', { error: mailRequireErr.message });
-        }
+      // Dispatch via NowPayments payout API.
+      let npPayoutRow;
+      try {
+        const nowpaymentsPayoutService = require('./nowpaymentsPayoutService');
+        npPayoutRow = await nowpaymentsPayoutService.requestPayout({
+          userId: creator_id,
+          address: cryptoAddress,
+          currency: cryptoCurrency,
+          method: 'crypto',
+        });
+      } catch (npErr) {
+        // Roll earnings back to 'available' so the next cron tick retries.
+        await query(
+          `UPDATE creator_earnings SET status='available' WHERE id = ANY($1) AND status='in_payout' AND paid_at IS NULL`,
+          [reservedIds]
+        ).catch((re) => logger.error('CreatorPayoutService: failed to roll back earnings after NP error', { creatorId: creator_id, error: re.message }));
+        throw new Error(`NowPayments payout failed: ${npErr.message}`);
       }
 
       await NotificationEmitter.emit({
         type: 'payment', category: 'commerce', priority: 'high', actorId: null,
         targetUserId: creator_id, entityType: 'creator', entityId: String(creator_id),
-        message: `Your payout of $${amountUsd.toFixed(2)} (Dash) is ready to claim. Open the link in your email or your creator dashboard.`,
-        metadata: { amountUsd, payoutId, payoutMethod: 'dash_btcpay', viewUrl: pullPayment.viewUrl },
+        message: `Your payout of $${amountUsd.toFixed(2)} (${cryptoCurrency === 'usdcerc20' ? 'USDC' : 'ETH'}) is being processed.`,
+        metadata: { amountUsd, payoutMethod: cryptoCurrency, npPayoutId: npPayoutRow?.nowpayments_payout_id },
       });
 
-      logger.info('CreatorPayoutService: Dash pull payment created', {
-        creatorId: creator_id, displayName, amountUsd,
-        pullPaymentId: pullPayment.pullPaymentId,
-        earningsCount: reservedIds.length,
+      logger.info('CreatorPayoutService: NowPayments payout dispatched', {
+        creatorId: creator_id, displayName, amountUsd, cryptoCurrency,
+        npPayoutId: npPayoutRow?.nowpayments_payout_id, earningsCount: reservedIds.length,
       });
       return { skipped: false };
     }
 
-    // Unreachable — the early guard above returns when neither fiat nor Dash is set.
-    // Kept as a defensive throw so a future routing change can't silently no-op.
+    // Defensive throw — routing guards above should cover all branches.
     throw new Error('CreatorPayoutService: no payout route matched (this should be unreachable)');
   }
 
@@ -402,57 +383,12 @@ class CreatorPayoutService {
   }
 
   /**
-   * Settle a Dash pull payment when BTCPay reports the claim is complete.
-   * Called by the BTCPay webhook handler.
-   *
-   * @param {string} pullPaymentId
-   * @param {object} [meta] - optional payment metadata for audit
+   * Stub — BTCPay/Dash retired 2026-07-31. Called by btcpayWebhookController.js
+   * which is still wired for any in-flight webhooks. Safe no-op.
    */
   static async settleDashPullPayment(pullPaymentId, meta = {}) {
-    const { rows } = await query(
-      `SELECT id, creator_id, amount_usd, earning_ids, status FROM creator_payouts WHERE btcpay_pull_payment_id = $1`,
-      [pullPaymentId]
-    );
-    if (rows.length === 0) {
-      logger.warn('settleDashPullPayment: no creator_payouts row for pullPaymentId', { pullPaymentId });
-      return { settled: false, reason: 'not_found' };
-    }
-    const payout = rows[0];
-
-    if (payout.status === 'completed') {
-      logger.info('settleDashPullPayment: payout already completed (idempotent)', { pullPaymentId });
-      return { settled: false, reason: 'already_settled' };
-    }
-
-    // Atomic flip — only one webhook delivery wins.
-    const { rowCount } = await query(
-      `UPDATE creator_payouts
-       SET status = 'completed', completed_at = NOW(), notes = COALESCE(notes, '') || $2
-       WHERE id = $1 AND status IN ('pending', 'claimed')`,
-      [payout.id, meta?.txHash ? ` tx:${meta.txHash}` : '']
-    );
-    if (rowCount === 0) {
-      logger.info('settleDashPullPayment: lost the race, another delivery completed it first', { pullPaymentId });
-      return { settled: false, reason: 'race_lost' };
-    }
-
-    await this._markEarningsPaid(payout.earning_ids, payout.creator_id, {
-      method: 'dash_btcpay',
-      txRef: meta?.txHash || null,
-      payoutId: payout.id,
-    });
-
-    await NotificationEmitter.emit({
-      type: 'payment', category: 'commerce', priority: 'high', actorId: null,
-      targetUserId: payout.creator_id, entityType: 'creator', entityId: String(payout.creator_id),
-      message: `Your Dash payout of $${parseFloat(payout.amount_usd).toFixed(2)} has been confirmed on-chain.`,
-      metadata: { amountUsd: parseFloat(payout.amount_usd), payoutId: payout.id, payoutMethod: 'dash_btcpay' },
-    });
-
-    logger.info('settleDashPullPayment: completed', {
-      pullPaymentId, creatorId: payout.creator_id, amountUsd: payout.amount_usd,
-    });
-    return { settled: true };
+    logger.info('settleDashPullPayment: no-op — BTCPay/Dash retired 2026-07-31', { pullPaymentId });
+    return { settled: false, reason: 'btcpay_retired' };
   }
 
   // ── Subscription Renewals ──────────────────────────────────────────────────

@@ -948,16 +948,17 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
   let invoiceUrl;
   let npPayInfo = {};
   try {
-    const ALLOWED_CALL_PAY_CURRENCIES = new Set(['btc', 'btcln', 'eth', 'ltc', 'xmr', 'bch', 'usdt', 'usdttrc20', 'usdtbsc', 'usdc', 'usdcbsc', 'usdcsol', 'dash', 'sol', 'doge']);
+    const ALLOWED_CALL_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
     const validCallPayCurrency = (payCurrency && ALLOWED_CALL_PAY_CURRENCIES.has(String(payCurrency).toLowerCase()))
-      ? String(payCurrency).toLowerCase() : null;
+      ? String(payCurrency).toLowerCase() : 'usdcerc20';
 
     const paymentResp = await axios.post(
       `${NOWPAYMENTS_URL}/invoice`,
       {
         price_amount: amountUsd,
         price_currency: 'usd',
-        pay_currency: validCallPayCurrency || 'usdcsol',
+        pay_currency: validCallPayCurrency,
+        pay_currencies: ['eth', 'usdcerc20'],
         order_id: orderId,
         order_description: `${pkg.duration_minutes}-min call — PNPtv`,
         ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
@@ -967,7 +968,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('NowPayments returned no invoice id');
     invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
-    npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency || 'usdcsol' };
+    npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency };
   } catch (invoiceErr) {
     if (booking?.id) {
       await query(`UPDATE bookings SET status = 'expired', updated_at = NOW() WHERE id = $1`, [booking.id]).catch((e) => {

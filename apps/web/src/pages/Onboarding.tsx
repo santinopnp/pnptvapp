@@ -800,7 +800,11 @@ export default function Onboarding() {
       await completeOnboarding();
       await refreshUser().catch(() => {});
       try { sessionStorage.removeItem("pnptv:onboarding:stepIndex"); } catch {}
-      navigate("/", { replace: true });
+      // Post-onboarding tutorial: land users on santinofurioso's profile with
+      // action=subscribe so the profile page auto-selects the monthly plan
+      // and shows the "use your 180 gifted Ru$h" banner. onboarding=1 gates
+      // the banner so returning users don't see it.
+      navigate("/c/santinofurioso?action=subscribe&onboarding=1", { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not complete setup. Please try again.");
     } finally {

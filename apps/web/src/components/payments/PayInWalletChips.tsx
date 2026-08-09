@@ -145,3 +145,211 @@ export function PayInWalletChips({
     </div>
   );
 }
+
+// ── WalletPayCard ─────────────────────────────────────────────────────────
+// Shared "Pay from your wallet" card used across every checkout surface that
+// wants the wallet rail: Subscribe (membership + PRIME), CreatorSubscribeWizard,
+// BookCallModal, and channel/hangout paywalls. Centralised so a UX change (or
+// a bugfix in the sendTransaction path) only needs to happen once. Callers
+// pass the surface + amountUsd + entitlementSpec; the component handles
+// balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
+
+import { useEffect as _useEffect, useState as _useState } from "react";
+import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
+import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
+import { base } from "viem/chains";
+
+// CAIP-2 chain id for Base mainnet — required by Privy's useAddFunds destination
+const _BASE_CAIP2 = "eip155:8453" as const;
+import {
+  initiateWalletCheckout,
+  verifyWalletCheckoutTx,
+  getWalletUsdcBalance,
+  type WalletCheckoutSurface,
+} from "@/lib/api";
+
+const _USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const _USDC_ABI = [{
+  name: "transfer", type: "function" as const,
+  inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
+  outputs: [{ name: "", type: "bool" }],
+}];
+
+export interface WalletPayCardProps {
+  surface: WalletCheckoutSurface;
+  amountUsd: number;
+  entitlementSpec: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  /** Copy label for the pay button, e.g. "Pay $9.99 · Basic" */
+  label?: string;
+  /** Called after Ru$h/entitlement credit lands. Receives the response so
+      caller can navigate or toast as needed. */
+  onSuccess?: (result: { intentId: number; rushCredited?: number; entitlementId?: number | null }) => void;
+  onError?: (err: unknown) => void;
+  lang?: "es" | "en";
+  compact?: boolean;
+}
+
+export function WalletPayCard({
+  surface, amountUsd, entitlementSpec, metadata,
+  label, onSuccess, onError, lang = "en", compact = false,
+}: WalletPayCardProps) {
+  const es = lang === "es";
+  const { authenticated } = usePrivy();
+  const { wallets } = useWallets();
+  const { addFunds } = useAddFunds();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const [usdc, setUsdc] = _useState<number | null>(null);
+  const [loading, setLoading] = _useState(false);
+  const [paying, setPaying] = _useState(false);
+  const [error, setError] = _useState<string | null>(null);
+  const [success, setSuccess] = _useState(false);
+
+  _useEffect(() => {
+    if (!authenticated || !embeddedWallet) return;
+    setLoading(true);
+    getWalletUsdcBalance()
+      .then((r) => setUsdc(r.hasWallet ? r.usdc : null))
+      .catch(() => setUsdc(null))
+      .finally(() => setLoading(false));
+  }, [authenticated, embeddedWallet?.address]);
+
+  if (!authenticated || !embeddedWallet) return null;
+
+  const canAfford = usdc != null && usdc >= amountUsd;
+
+  const handlePay = async () => {
+    if (!embeddedWallet) return;
+    setError(null); setPaying(true);
+    try {
+      // For tip/donation surfaces the server reads amountUsd from
+      // entitlementSpec (client-picked amount, bounded server-side). For
+      // sub/membership/PRIME/rush the server resolves canonical price and
+      // ignores this field entirely. We still send it as top-level metadata
+      // for legacy compatibility but it has no security impact.
+      const specWithAmount = (surface === 'tip' || surface === 'donation')
+        ? { ...entitlementSpec, amountUsd }
+        : entitlementSpec;
+      const intent = await initiateWalletCheckout({
+        rail: "usdc", surface, amountUsd, entitlementSpec: specWithAmount, metadata,
+      });
+      if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
+
+      const provider = await embeddedWallet.getEthereumProvider();
+      const walletClient = createWalletClient({
+        account: embeddedWallet.address as `0x${string}`,
+        chain: base, transport: custom(provider),
+      });
+      const data = encodeFunctionData({
+        abi: _USDC_ABI, functionName: "transfer",
+        args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
+      });
+      const txHash = await walletClient.sendTransaction({
+        to: _USDC_BASE as `0x${string}`, data, value: 0n,
+      });
+      const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
+      if (!verified.ok) throw new Error(verified.reason || "verify_failed");
+      setSuccess(true);
+      setUsdc((prev) => (prev == null ? prev : Math.max(0, prev - amountUsd)));
+      onSuccess?.({
+        intentId: intent.intentId,
+        rushCredited: verified.rushCredited,
+        entitlementId: verified.entitlementId,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const friendly = /User rejected|user denied|cancel/i.test(msg)
+        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        : msg;
+      setError(friendly);
+      onError?.(err);
+    } finally { setPaying(false); }
+  };
+
+  const handleFund = async () => {
+    if (!embeddedWallet) return;
+    setError(null);
+    try {
+      // useAddFunds (Privy v3) surfaces ALL enabled onramps including Stripe,
+      // whereas the legacy useFundWallet excludes Stripe by design. destination
+      // uses CAIP-2 chain id + USDC contract on Base so the funding UI lands
+      // USDC directly (no ETH → USDC swap step).
+      await addFunds({
+        destination: {
+          address: embeddedWallet.address,
+          chain: _BASE_CAIP2,
+          asset: _USDC_BASE,
+        },
+        fiat: {
+          defaultAmount: Math.max(amountUsd, 20).toFixed(0),
+        },
+      });
+      // Refresh balance after fund modal closes (settlement takes 1–2 min).
+      getWalletUsdcBalance().then((r) => setUsdc(r.hasWallet ? r.usdc : null)).catch(() => {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel|closed|reject/i.test(msg)) return;
+      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+    }
+  };
+
+  return (
+    <div
+      className={`rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] p-3 ${compact ? "space-y-2" : "space-y-2.5"}`}
+    >
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
+          <span className="text-lg leading-none">💳</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-pnp-textPrimary">
+            {es ? "Pagar desde tu billetera" : "Pay from your wallet"}
+          </p>
+          <p className="text-[11px] text-pnp-textSecondary">
+            {loading
+              ? (es ? "Consultando saldo…" : "Checking balance…")
+              : usdc == null
+                ? (es ? "Sin saldo USDC" : "No USDC balance")
+                : `${usdc.toFixed(2)} USDC · Base · gas gratis`}
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5">
+          {es ? "¡Pago confirmado!" : "Payment confirmed!"}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={handlePay}
+        disabled={!canAfford || paying || success}
+        className="w-full py-2.5 rounded-lg text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{ background: canAfford && !paying ? "linear-gradient(135deg,#10b981,#059669)" : "#333" }}
+      >
+        {paying
+          ? (es ? "Firmando…" : "Signing…")
+          : (label || (es ? `Pagar $${amountUsd.toFixed(2)}` : `Pay $${amountUsd.toFixed(2)}`))}
+      </button>
+
+      {(!canAfford || usdc == null) && !loading && (
+        <button
+          type="button"
+          onClick={handleFund}
+          className="w-full py-2 rounded-lg text-xs font-bold text-white transition active:scale-[0.98]"
+          style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
+        >
+          {es
+            ? `Cargar billetera con tarjeta →`
+            : `Fund wallet with card →`}
+        </button>
+      )}
+    </div>
+  );
+}

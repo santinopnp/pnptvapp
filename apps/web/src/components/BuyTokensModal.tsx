@@ -18,9 +18,24 @@ import {
   reserveTokenActivation,
   NP_COINS,
   NP_COINS_SUBSCRIBE,
+  initiateWalletCheckout,
+  verifyWalletCheckoutTx,
+  getWalletUsdcBalance,
   type TokenPackage,
   type TokenActivationReserveResult,
 } from "@/lib/api";
+import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
+import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
+import { base } from "viem/chains";
+
+const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_CAIP2 = "eip155:8453" as const;
+const USDC_TRANSFER_ABI = [{
+  name: "transfer",
+  type: "function" as const,
+  inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
+  outputs: [{ name: "", type: "bool" }],
+}];
 import {
   TokenActivationForm,
   loadPersistedActivation,
@@ -83,9 +98,22 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
   const [presaleEndsAt, setPresaleEndsAt] = useState<string | null>(null);
   const [creatorBonusActive, setCreatorBonusActive] = useState(false);
 
+  // Wallet (Privy on Base) — USDC direct-pay state. Fetches on-chain balance
+  // when the modal opens so the "Pay from wallet" card only renders for
+  // packages the user can actually cover.
+  const { authenticated } = usePrivy();
+  const { wallets } = useWallets();
+  const { addFunds } = useAddFunds();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const [walletUsdc, setWalletUsdc] = useState<number | null>(null);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletPaying, setWalletPaying] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletSuccess, setWalletSuccess] = useState<{ tokens: number; newBalance?: number } | null>(null);
+
   // NowPayments (multi-coin + USDT BSC) balance-delta poll state
   const npPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [npCoinPick, setNpCoinPick] = useState<string>("usdtbsc");
+  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
   const [npPickerOpen, setNpPickerOpen] = useState(false);
   const [npPayment, setNpPayment] = useState<{
     invoiceId: string;
@@ -118,7 +146,17 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
         .then((data) => setTokenPackages(data.packages || []))
         .catch(() => setBuyError("Failed to load token packages."))
         .finally(() => setLoadingPackages(false));
+      // Fetch on-chain USDC balance so the wallet-pay card renders correctly.
+      setWalletLoading(true);
+      getWalletUsdcBalance()
+        .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
+        .catch(() => setWalletUsdc(null))
+        .finally(() => setWalletLoading(false));
     } else {
+      setWalletUsdc(null);
+      setWalletPaying(null);
+      setWalletError(null);
+      setWalletSuccess(null);
       // Reset state when closing
       setBuyMethod('select');
       setBuyError(null);
@@ -371,6 +409,149 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
     }
   };
 
+  // ── Wallet pay (USDC on Base via Privy embedded wallet) ──────────────────
+  // Flow: initiate intent → sign USDC.transfer → verify on-chain → credit Ru$h.
+  // Gas is sponsored via Alchemy Gas Manager (policy ID surfaced by the intent),
+  // so users never need ETH for gas.
+  const handleWalletPay = async (pkg: TokenPackage) => {
+    setWalletError(null);
+    setWalletPaying(pkg.id);
+    try {
+      if (!embeddedWallet) throw new Error("wallet_not_ready");
+      const priceUsd = Number(pkg.usd);
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) throw new Error("invalid_price");
+
+      const intent = await initiateWalletCheckout({
+        rail: "usdc",
+        surface: "rush",
+        // Server resolves canonical price + tokens from packageId — client
+        // supplies only the packageId + optional metadata.
+        entitlementSpec: { packageId: pkg.id },
+        metadata: { source: "buy_tokens_modal" },
+      });
+      if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
+
+      const provider = await embeddedWallet.getEthereumProvider();
+      const walletClient = createWalletClient({
+        account: embeddedWallet.address as `0x${string}`,
+        chain: base,
+        transport: custom(provider),
+      });
+
+      const data = encodeFunctionData({
+        abi: USDC_TRANSFER_ABI,
+        functionName: "transfer",
+        args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
+      });
+
+      const txHash = await walletClient.sendTransaction({
+        to: USDC_BASE_ADDRESS as `0x${string}`,
+        data,
+        value: 0n,
+      });
+
+      // Verify on-chain (backend fetches receipt, matches log, credits Ru$h).
+      const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
+      if (!verified.ok) throw new Error(verified.reason || "verify_failed");
+
+      const bal = await getWalletBalance().catch(() => ({ balance: 0 }));
+      setWalletSuccess({ tokens: Number(pkg.tokens), newBalance: bal.balance });
+      setWalletUsdc((prev) => (prev == null ? prev : Math.max(0, prev - priceUsd)));
+      setTimeout(() => {
+        if (onSuccess) onSuccess(bal.balance);
+        onClose();
+      }, 1500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "wallet_pay_failed";
+      // Users cancelling the tx in Privy get a friendlier message.
+      const friendly =
+        /User rejected|user denied|cancel/i.test(msg)
+          ? (t.lang === "es" ? "Cancelaste la transacción." : "You cancelled the transaction.")
+          : msg;
+      setWalletError(friendly);
+    } finally {
+      setWalletPaying(null);
+    }
+  };
+
+  // ── Fund wallet (Privy → MoonPay / Meld / Stripe / Coinbase) ─────────────
+  // Uses useAddFunds (Privy v3 unified funding), which surfaces ALL enabled
+  // onramps in the dashboard — Stripe included. The older useFundWallet API
+  // explicitly excluded Stripe. destination uses CAIP-2 + USDC contract so
+  // funds land as USDC on Base directly (no ETH swap step, no wrong-chain
+  // mistakes).
+  const handleFundWallet = async () => {
+    if (!embeddedWallet) {
+      setWalletError(t.lang === "es"
+        ? "Conecta o crea tu billetera primero."
+        : "Connect or create your wallet first.");
+      return;
+    }
+    setWalletError(null);
+    try {
+      await addFunds({
+        destination: {
+          address: embeddedWallet.address,
+          chain: BASE_CAIP2,
+          asset: USDC_BASE_ADDRESS,
+        },
+        fiat: { defaultAmount: '20' },
+      });
+      // Refresh USDC balance after user closes the funding modal (best-effort;
+      // the actual credit may take 1–2 min for MoonPay/Meld/Stripe to settle).
+      getWalletUsdcBalance()
+        .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
+        .catch(() => {});
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // User cancelled → no error UI needed
+      if (/cancel|closed|reject/i.test(msg)) return;
+      console.warn("[addFunds] failed", err);
+      setWalletError(t.lang === "es"
+        ? `No se pudo abrir el proveedor de pago. ${msg}`
+        : `Could not open the payment provider. ${msg}`);
+    }
+  };
+
+  // ── Fund wallet FOR a specific Ru$h package ───────────────────────────
+  // Opens Privy addFunds with the exact package price pre-filled + Ru$h
+  // amount noted in the metadata. After the user finishes paying with
+  // card/bank, USDC lands in their wallet and we refetch the balance so
+  // they can re-tap the same package to complete the purchase in one
+  // signed transaction. This keeps the two-step model transparent while
+  // letting a single tap kick off the whole flow.
+  const handleFundForPackage = async (pkg: TokenPackage) => {
+    if (!embeddedWallet) {
+      setWalletError(t.lang === "es"
+        ? "Conecta o crea tu billetera primero."
+        : "Connect or create your wallet first.");
+      return;
+    }
+    setWalletError(null);
+    const price = Number(pkg.usd);
+    try {
+      await addFunds({
+        destination: {
+          address: embeddedWallet.address,
+          chain: BASE_CAIP2,
+          asset: USDC_BASE_ADDRESS,
+        },
+        fiat: { defaultAmount: price.toFixed(2) },
+      });
+      // Refresh USDC balance so the same package button flips from "pay by
+      // card" (pink) to "pay from wallet" (emerald) once funds settle.
+      const r = await getWalletUsdcBalance().catch(() => null);
+      if (r && r.hasWallet) setWalletUsdc(r.usdc);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel|closed|reject/i.test(msg)) return;
+      console.warn("[addFunds:pkg] failed", err);
+      setWalletError(t.lang === "es"
+        ? `No se pudo abrir el pago para $${price}. ${msg}`
+        : `Could not open payment for $${price}. ${msg}`);
+    }
+  };
+
   if (!isOpen) return null;
 
   const es = t.lang === "es";
@@ -451,6 +632,96 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
             <p className="text-xs text-pnp-textSecondary mb-3">
               Selecciona cómo quieres comprar Ru$h ⚡💲.
             </p>
+
+            {/* ── Wallet pay (USDC on Base via Privy) — top of the list ─────
+                Only rendered when the user has a linked wallet. Split into two
+                UX affordances: direct pay when there's USDC balance, and
+                fund-with-card when there isn't (routes to MoonPay/Meld/Stripe
+                inside Privy). One-click package picker inline so the user
+                never has to leave this card. */}
+            {authenticated && embeddedWallet && (
+              <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] p-3 space-y-2.5 mb-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
+                    <span className="text-lg leading-none">💳</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-pnp-textPrimary">
+                      {t.lang === "es" ? "Pagar desde tu billetera" : "Pay from your wallet"}
+                    </p>
+                    <p className="text-[11px] text-pnp-textSecondary">
+                      {walletLoading
+                        ? (t.lang === "es" ? "Consultando saldo…" : "Checking balance…")
+                        : walletUsdc == null
+                          ? (t.lang === "es" ? "Sin saldo USDC detectado" : "No USDC balance detected")
+                          : `${walletUsdc.toFixed(2)} USDC · Base · gas gratis`}
+                    </p>
+                  </div>
+                </div>
+
+                {walletError && (
+                  <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+                    {walletError}
+                  </div>
+                )}
+                {walletSuccess && (
+                  <div className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5">
+                    +{walletSuccess.tokens} Ru$h 💎 {t.lang === "es" ? "acreditados" : "credited"}
+                  </div>
+                )}
+
+                {/* Package picker — one-click-per-package. When wallet USDC
+                    is insufficient, click routes to Privy addFunds with the
+                    exact amount preselected so the user pays that specific
+                    Ru$h package via Stripe / MoonPay / Meld / Coinbase in
+                    a single card-payment step. */}
+                {tokenPackages.length > 0 && (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {tokenPackages.filter(pkg => Number(pkg.usd) >= 30).map((pkg) => {
+                      const price = Number(pkg.usd);
+                      const canAfford = walletUsdc != null && walletUsdc >= price;
+                      const isPaying = walletPaying === pkg.id;
+                      // Click behaviour:
+                      //   - enough USDC in wallet → sign USDC transfer, credit Ru$h instantly
+                      //   - not enough USDC     → open Privy addFunds for that exact $ amount,
+                      //                             card/bank pays, USDC lands in wallet, user
+                      //                             re-taps to complete (single-shot flow next
+                      //                             iteration).
+                      const onClick = () => canAfford
+                        ? handleWalletPay(pkg)
+                        : handleFundForPackage(pkg);
+                      const subLabel = isPaying
+                        ? (t.lang === "es" ? "Firmando…" : "Signing…")
+                        : canAfford
+                          ? `$${price.toFixed(2)} USDC`
+                          : (t.lang === "es" ? `$${price.toFixed(0)} · Tarjeta` : `$${price.toFixed(0)} · Card`);
+                      return (
+                        <button
+                          key={pkg.id}
+                          type="button"
+                          onClick={onClick}
+                          disabled={isPaying || walletSuccess !== null}
+                          className={`flex flex-col items-start gap-0.5 px-2.5 py-2.5 rounded-lg border text-left transition ${
+                            isPaying
+                              ? "border-white/10 bg-white/[0.03] opacity-50 cursor-not-allowed"
+                              : canAfford
+                                ? "border-emerald-400/40 bg-emerald-500/5 hover:bg-emerald-500/10 active:scale-[0.98]"
+                                : "border-pink-400/40 bg-pink-500/8 hover:bg-pink-500/15 active:scale-[0.98]"
+                          }`}
+                        >
+                          <span className="text-xs font-bold text-white leading-tight">
+                            {Number(pkg.tokens).toLocaleString()} Ru$h 💎
+                          </span>
+                          <span className={`text-[10px] leading-none ${canAfford ? "text-pnp-textSecondary" : "text-pink-300"}`}>
+                            {subLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Crypto — NowPayments multi-coin with inline coin picker */}
             <div className={`rounded-xl border transition-colors ${npPickerOpen ? "border-green-500/40 bg-green-500/5" : "border-pnp-border bg-pnp-surface"}`}>
@@ -1047,8 +1318,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
                       key={pkg.id}
                       onClick={() => {
                         if (buyMethod === 'btc') return handleBuyTokensBtc(pkg);
-                        if (buyMethod === 'np') return handleBuyTokensNowPayments(pkg, npCoinPick || 'btc');
-                        if (buyMethod === 'np_usdc') return handleBuyTokensNowPayments(pkg, 'usdtbsc');
+                        if (buyMethod === 'np') return handleBuyTokensNowPayments(pkg, npCoinPick || 'usdcbase');
+                        if (buyMethod === 'np_usdc') return handleBuyTokensNowPayments(pkg, 'usdcbase');
                         return handleBuyTokens(pkg);
                       }}
                       disabled={buyingPackage === pkg.id}

@@ -2621,12 +2621,19 @@ function StreamInner() {
                     </>)}
                   </div>
                   {tipError && (
-                    <div className="flex items-center justify-between gap-2 mt-1">
-                      <p className="text-[10px] text-pnp-error">{tipError}</p>
-                      {tipPaymentTab === "tokens" && tokenBalance !== null && (
-                        <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
-                          Comprar Ru$h ⚡💲 →
-                        </button>
+                    <div className="mt-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] text-pnp-error">{tipError}</p>
+                        {tipPaymentTab === "tokens" && tokenBalance !== null && (
+                          <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
+                            Comprar Ru$h 💎 →
+                          </button>
+                        )}
+                      </div>
+                      {tipPaymentTab === "tokens" && tokenBalance !== null && typeof window !== "undefined" && !(window as any).ethereum && !/TrustWallet|MetaMaskMobile|Rainbow/i.test(navigator.userAgent) && (
+                        <a href="/crypto-guide" className="block text-[10px] font-semibold" style={{ color: "#B8A5FF" }}>
+                          🪄 ¿Primera vez? Instala una wallet en 2 min →
+                        </a>
                       )}
                     </div>
                   )}
@@ -3003,12 +3010,19 @@ function StreamInner() {
                     </>)}
                   </div>
                   {tipError && (
-                    <div className="flex items-center justify-between gap-2 mt-1">
-                      <p className="text-[10px] text-pnp-error">{tipError}</p>
-                      {tipPaymentTab === "tokens" && tokenBalance !== null && (
-                        <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
-                          Comprar Ru$h ⚡💲 →
-                        </button>
+                    <div className="mt-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] text-pnp-error">{tipError}</p>
+                        {tipPaymentTab === "tokens" && tokenBalance !== null && (
+                          <button onClick={() => setShowTopUp(true)} className="flex-shrink-0 text-[10px] font-bold text-pnp-accent hover:underline">
+                            Comprar Ru$h 💎 →
+                          </button>
+                        )}
+                      </div>
+                      {tipPaymentTab === "tokens" && tokenBalance !== null && typeof window !== "undefined" && !(window as any).ethereum && !/TrustWallet|MetaMaskMobile|Rainbow/i.test(navigator.userAgent) && (
+                        <a href="/crypto-guide" className="block text-[10px] font-semibold" style={{ color: "#B8A5FF" }}>
+                          🪄 ¿Primera vez? Instala una wallet en 2 min →
+                        </a>
                       )}
                     </div>
                   )}

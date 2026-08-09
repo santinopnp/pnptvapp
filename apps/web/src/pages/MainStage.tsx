@@ -15,6 +15,7 @@ import { useMusicPlayer } from "@/hooks/useMusicPlayer";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { SpotlightGrid } from "@/components/mainstage/SpotlightGrid";
+import { TipSantinoTrigger } from "@/components/mainstage/TipSantinoTrigger";
 import { CinemaGrid } from "@/components/mainstage/CinemaGrid";
 import { EqualGrid } from "@/components/mainstage/EqualGrid";
 import { MEDIA_IDENTITY } from "@/components/mainstage/CinemaGrid";
@@ -280,6 +281,9 @@ function MainStageInner({
           playNextCooldown={playNextCooldown}
         />
       )}
+
+      {/* Tip Santino — Main Stage launch window (auto-expires 2026-08-10 05:00 UTC) */}
+      <TipSantinoTrigger isParticipant={isParticipant} />
     </>
   );
 }

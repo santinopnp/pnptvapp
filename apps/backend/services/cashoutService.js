@@ -2,12 +2,14 @@
 
 /**
  * cashoutService.js
- * Creator cash-out off-ramp. Five lanes (migration 284):
- *   1. meru       — Meru handle (phone/username); manual operator settlement
- *   2. btc        — Bitcoin mainnet address; manual settlement via BTCPay
- *   3. dash       — Dash mainnet address; manual settlement via BTCPay
- *   4. usdt_tron  — USDT TRC-20 address; manual settlement from treasury
- *   5. usdt_base  — USDT on Base (EVM); manual settlement from treasury
+ * Creator cash-out off-ramp. Active lanes (migration 364):
+ *   1. usdc_erc20 — USDC on Ethereum ERC-20; manual settlement from treasury
+ *   2. eth        — Ethereum mainnet address; manual settlement from treasury
+ *   3. bre_b      — bre_b fiat; manual operator settlement (Colombia)
+ *   4. cashapp    — Cash App $cashtag; manual operator settlement
+ *   5. wise       — Wise email; manual operator settlement
+ *
+ * Retired lanes (2026-08-08, migration 364): meru, btc, dash, usdt_tron, usdt_base
  *
  * All public methods throw structured errors with a `.code` property so
  * route handlers can map them to HTTP status codes without string matching.
@@ -40,49 +42,11 @@ function err(code, msg, status = 400) {
 }
 
 /**
- * Validate a TRC-20 wallet address (Tron).
- * TRC-20 addresses start with 'T' and are exactly 34 base58 characters.
- */
-function isValidTrc20Address(address) {
-  return typeof address === 'string' && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
-}
-
-/**
- * Validate an EVM (Ethereum/Base/Polygon) wallet address.
- * 0x followed by 40 hex chars.
+ * Validate an EVM (Ethereum) wallet address — 0x followed by 40 hex chars.
+ * Used for both 'eth' and 'usdc_erc20' lanes.
  */
 function isValidEvmAddress(address) {
   return typeof address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(address);
-}
-
-/**
- * Validate a Bitcoin mainnet address. Accepts:
- *   - bech32: bc1q… (P2WPKH 42 chars) or bc1p… (P2TR 62 chars)
- *   - legacy: 1… (P2PKH) or 3… (P2SH), 26–35 base58 chars
- * Rejects testnet (tb1, m/n, 2…).
- */
-function isValidBtcAddress(address) {
-  if (typeof address !== 'string') return false;
-  const a = address.trim();
-  if (/^bc1[ac-hj-np-z02-9]{6,87}$/.test(a)) return true;
-  if (/^[13][1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a)) return true;
-  return false;
-}
-
-/**
- * Validate a Dash mainnet address (base58, starts with X for P2PKH or 7 for P2SH).
- */
-function isValidDashAddress(address) {
-  return typeof address === 'string' && /^[X7][1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
-}
-
-/**
- * Validate a Meru handle (phone in international format OR alphanumeric username).
- */
-function isValidMeruHandle(handle) {
-  if (typeof handle !== 'string') return false;
-  const h = handle.trim();
-  return /^(\+?[0-9]{7,15}|[a-zA-Z0-9._-]{3,50})$/.test(h);
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -149,7 +113,7 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       `Single cashout request cannot exceed $${MAX_CASHOUT_USD_PER_REQUEST.toFixed(2)}.`
     );
   }
-  const validLanes = ['meru', 'btc', 'dash', 'usdt_tron', 'usdt_base'];
+  const validLanes = ['usdc_erc20', 'eth', 'bre_b', 'cashapp', 'wise'];
   if (!validLanes.includes(lane)) {
     throw err('INVALID_LANE', `lane must be one of: ${validLanes.join(', ')}`);
   }
@@ -174,8 +138,16 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   );
   const stored = destCheck.rows[0]?.creator_payout_destinations || {};
   if (stored[lane]) {
-    const storedVal = lane === 'meru' ? stored[lane]?.handle : stored[lane]?.address;
-    const submittedVal = lane === 'meru' ? destination.handle : destination.address;
+    const storedVal = (lane === 'bre_b' || lane === 'cashapp')
+      ? stored[lane]?.handle
+      : lane === 'wise'
+        ? stored[lane]?.email
+        : stored[lane]?.address;
+    const submittedVal = (lane === 'bre_b' || lane === 'cashapp')
+      ? destination.handle
+      : lane === 'wise'
+        ? destination.email
+        : destination.address;
     if (storedVal && storedVal !== submittedVal) {
       throw err('DESTINATION_MISMATCH', 'Destination does not match your saved payout address.', 400);
     }
@@ -325,43 +297,37 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
 /**
  * Validate the destination payload for a given lane. Throws on bad shape.
  * Lane-specific shapes:
- *   meru      → { handle: string }
- *   btc       → { address: string }
- *   dash      → { address: string }
- *   usdt_tron → { address: string }   (TRC-20 T…)
- *   usdt_base → { address: string }   (EVM 0x…)
+ *   usdc_erc20 → { address: string }   (EVM 0x…)
+ *   eth        → { address: string }   (EVM 0x…)
+ *   bre_b      → { handle: string }    (Colombia bre_b handle)
+ *   cashapp    → { handle: string }    ($cashtag or phone)
+ *   wise       → { email: string }     (Wise registered email)
  */
 function validateLaneDestination(lane, destination) {
-  if (lane === 'meru') {
-    if (!isValidMeruHandle(destination.handle)) {
-      throw err(
-        'INVALID_DESTINATION',
-        'Meru destination must be { handle: string } — phone in international format or alphanumeric username.'
-      );
-    }
-    return;
-  }
-  if (lane === 'btc') {
-    if (!isValidBtcAddress(destination.address)) {
-      throw err('INVALID_DESTINATION', 'BTC destination must be { address: bc1…|1…|3… } mainnet address.');
-    }
-    return;
-  }
-  if (lane === 'dash') {
-    if (!isValidDashAddress(destination.address)) {
-      throw err('INVALID_DESTINATION', 'Dash destination must be { address: X… } mainnet address.');
-    }
-    return;
-  }
-  if (lane === 'usdt_tron') {
-    if (!isValidTrc20Address(destination.address)) {
-      throw err('INVALID_DESTINATION', 'USDT-TRON destination must be { address: T… } TRC-20 address.');
-    }
-    return;
-  }
-  if (lane === 'usdt_base') {
+  if (lane === 'usdc_erc20' || lane === 'eth') {
     if (!isValidEvmAddress(destination.address)) {
-      throw err('INVALID_DESTINATION', 'USDT-Base destination must be { address: 0x… } EVM address.');
+      throw err('INVALID_DESTINATION', `${lane === 'eth' ? 'ETH' : 'USDC-ERC20'} destination must be { address: 0x… } Ethereum mainnet address.`);
+    }
+    return;
+  }
+  if (lane === 'bre_b') {
+    const h = String(destination.handle || '').trim();
+    if (!h || h.length < 3 || h.length > 50) {
+      throw err('INVALID_DESTINATION', 'bre_b destination must be { handle: string } — account handle or phone.');
+    }
+    return;
+  }
+  if (lane === 'cashapp') {
+    const h = String(destination.handle || '').trim();
+    if (!h || h.length < 2 || h.length > 50) {
+      throw err('INVALID_DESTINATION', 'Cash App destination must be { handle: string } — $cashtag or phone.');
+    }
+    return;
+  }
+  if (lane === 'wise') {
+    const e = String(destination.email || '').trim();
+    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 254) {
+      throw err('INVALID_DESTINATION', 'Wise destination must be { email: string } — Wise registered email.');
     }
     return;
   }

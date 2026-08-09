@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
-const STREAMS_DEPRECATED = true;
+const STREAMS_DEPRECATED = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Classic nav — unchanged, shown to all users except the preview account

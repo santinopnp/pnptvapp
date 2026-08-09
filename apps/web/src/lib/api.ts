@@ -16,13 +16,15 @@ export const NP_COINS = [
 ] as const;
 export type NpCoinCode = (typeof NP_COINS)[number]["code"];
 
+// Only the two currencies PNPtv actually charges + settles on: USDC + ETH,
+// both on Base (matches the Privy embedded-wallet checkout rail). Reducing
+// the picker eliminates user confusion around network selection, aligns the
+// legacy NowPayments fallback with the primary wallet flow, and matches
+// where our receiving address expects funds — a mis-network deposit gets
+// stuck at NowPayments' side and creates a support ticket.
 export const NP_COINS_SUBSCRIBE = [
-  { code: "usdtbsc",   label: "USDT", network: "BNB Smart Chain", icon: "₮", color: "#26a17b", recommended: true },
-  { code: "usdcbsc",   label: "USDC", network: "BNB Smart Chain", icon: "$",  color: "#2775ca" },
-  { code: "usdtmatic", label: "USDT", network: "Polygon",         icon: "₮",  color: "#8247e5" },
-  { code: "usdcsol",   label: "USDC", network: "Solana",          icon: "$",  color: "#14f195" },
-  { code: "eth",       label: "ETH",  network: "Ethereum",        icon: "Ξ",  color: "#627eea" },
-  { code: "usdttrc20", label: "USDT", network: "TRON",            icon: "₮",  color: "#26a17b" },
+  { code: "usdcbase",  label: "USDC", network: "Base", icon: "$", color: "#2775ca", recommended: true },
+  { code: "ethbase",   label: "ETH",  network: "Base", icon: "Ξ", color: "#627eea" },
 ] as const;
 export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
 
@@ -72,12 +74,14 @@ export class ApiError extends Error {
   public readonly code: string | undefined;
   public readonly status: number;
   public readonly details: ApiAccessDetails;
-  constructor(message: string, status: number, code?: string, details: ApiAccessDetails = {}) {
+  public readonly data: Record<string, unknown>;
+  constructor(message: string, status: number, code?: string, details: ApiAccessDetails = {}, data: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.data = data;
   }
 }
 
@@ -172,7 +176,7 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
           upgradeUrl: typeof error.upgradeUrl === "string" ? error.upgradeUrl : undefined,
           cooldownSeconds: typeof error.cooldownSeconds === "number" ? error.cooldownSeconds : undefined,
         };
-        throw new ApiError(errorMessage, res.status, errorCode, details);
+        throw new ApiError(errorMessage, res.status, errorCode, details, error);
       }
 
       return res.json();
@@ -851,7 +855,7 @@ export interface RecentTip {
   payment_status: string;
 }
 
-export const TIP_AMOUNTS = [30, 60, 120, 300, 600] as const;
+export const TIP_AMOUNTS = [30, 60, 90, 120, 150] as const;
 
 export function sendTip(
   performerId: string,
@@ -917,7 +921,7 @@ export function paySubscriptionWithTokens(planId: string): Promise<{ success: bo
   return request("/api/wallet/pay-subscription", { method: "POST", body: { planId } });
 }
 
-export function payCreatorSubWithTokens(creatorId: string): Promise<{ success: boolean; newBalance: number; priceUsd?: number; error?: string; code?: string; required?: number; current?: number }> {
+export function payCreatorSubWithTokens(creatorId: string): Promise<{ success: boolean; newBalance: number; priceUsd?: number; error?: string; code?: string; required?: number; current?: number; gifted?: number; giftedLocked?: boolean }> {
   return request("/api/wallet/pay-creator-sub", { method: "POST", body: { creatorId } });
 }
 
@@ -1481,6 +1485,112 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
   return res.json();
 }
 
+export type WalletCheckoutRail = "usdc" | "rush";
+export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation";
+
+export interface WalletCheckoutInitiateResult {
+  ok: true;
+  rail: WalletCheckoutRail;
+  intentId: number;
+  // USDC rail fields
+  receivingAddress?: string;
+  usdcContract?: string;
+  amountUsdc?: number;
+  expiresAt?: string;
+  gasPolicyId?: string | null;
+  // Ru$h rail fields
+  spentBalance?: number;
+  spentGifted?: number;
+  entitlementId?: number | null;
+}
+
+export async function initiateWalletCheckout(opts: {
+  rail: WalletCheckoutRail;
+  surface: WalletCheckoutSurface;
+  /** For tips + donations, user picks the amount ($1–$500 tips, $1–$10000 donations).
+      For subs/memberships/PRIME/rush packages the server resolves canonical price
+      from the DB — client-supplied amountUsd is ignored (send it in entitlementSpec.amountUsd
+      for tip/donation surfaces if needed). */
+  amountUsd?: number;
+  /** Server-validated. Accepted fields per surface:
+      - tip:        { creator_id, amountUsd, message? }
+      - creator_sub:{ creator_id }
+      - rush:       { packageId }
+      - membership: {}        (uses member_monthly plan)
+      - prime:      {}        (uses monthly-pass plan)
+      - donation:   { amountUsd, note? }
+      Other fields (add_on_id, duration_days, is_lifetime, allowGifted) are ignored — server-resolved. */
+  entitlementSpec: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}): Promise<WalletCheckoutInitiateResult> {
+  const res = await fetch(`${API_BASE}/api/wallet/checkout/initiate`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err });
+  }
+  return res.json();
+}
+
+export async function verifyWalletCheckoutTx(intentId: number, txHash: string): Promise<{
+  ok: boolean; intentId: number; entitlementId?: number | null; rushCredited?: number; alreadyConfirmed?: boolean; reason?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/wallet/checkout/verify-tx`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ intentId, txHash }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err });
+  }
+  return res.json();
+}
+
+export interface MainStageCammer {
+  userId: string;
+  slug: string;
+  username: string | null;
+  displayName: string;
+  photoUrl: string | null;
+  creatorPriceUsd: number | null;
+  isAcceptingCalls: boolean;
+}
+
+export async function getMainStageCammers(): Promise<{ success: true; cammers: MainStageCammer[] }> {
+  const res = await fetch(`${API_BASE}/api/main-stage/cammers`, { credentials: "include" });
+  if (!res.ok) return { success: true, cammers: [] };
+  return res.json();
+}
+
+export interface AvailableCreator {
+  userId: string;
+  slug: string;
+  username: string | null;
+  displayName: string;
+  photoUrl: string | null;
+  creatorPriceUsd: number | null;
+  onStage: boolean;
+  acceptingCalls: boolean;
+}
+
+export async function getAvailableCreators(): Promise<{ success: true; creators: AvailableCreator[] }> {
+  const res = await fetch(`${API_BASE}/api/live/available`, { credentials: "include" });
+  if (!res.ok) return { success: true, creators: [] };
+  return res.json();
+}
+
+export async function getWalletUsdcBalance(): Promise<{ ok: true; hasWallet: boolean; address?: string; usdc: number; cached?: boolean; reason?: string }> {
+  const res = await fetch(`${API_BASE}/api/wallet/balance/usdc`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
 export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true; privyId: string; walletAddress: string | null }> {
   const res = await fetch(`${API_BASE}/api/privy/link`, {
     method: "POST",
@@ -1922,7 +2032,14 @@ export function togglePostLike(postId: number): Promise<{ liked: boolean; likes_
   return request(`/api/webapp/social/posts/${postId}/like`, { method: "POST" });
 }
 
-export function togglePostHype(postId: number): Promise<{ hyped: boolean; hype_score: number }> {
+export function togglePostHype(postId: number): Promise<{
+  hyped: boolean;
+  hype_score: number;
+  dailyLimit?: number;
+  dailyUsed?: number;
+  dailyRemaining?: number;
+  dailyResetsAt?: string | null;
+}> {
   return request(`/api/webapp/social/posts/${postId}/hype`, { method: "POST" });
 }
 
