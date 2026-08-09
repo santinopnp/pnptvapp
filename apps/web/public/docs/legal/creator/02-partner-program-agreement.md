@@ -77,7 +77,7 @@ Capitalized terms used but not defined in this Agreement have the meanings given
 
 **5.1. Revenue Split.** For all Net Revenue attributable to the Creator's Content or services, the Creator is entitled to **seventy percent (70%)** and PNPtv! retains **thirty percent (30%)**. Payment-processor fees are deducted from gross revenue **before** the 70/30 split (i.e., both Parties share proportionally in processor cost).
 
-**5.2. Ru$h Token Rate.** The internal currency is **Ru$h**. The base rate is **1 USD = 6 Ru$h**. Package bonus tiers (e.g., pkg_50 = 315 Ru$h, pkg_100 = 660 Ru$h, pkg_500 = 3,450 Ru$h) may apply as posted from time to time. When Creator earnings are settled from Ru$h to USD, the base rate applies unless a superseding rate is displayed on the platform at the time of the transaction.
+**5.2. Ru$h Token Rate.** The internal currency is **Ru$h**. The base rate is **1 USD = 6 Ru$h**. Package bonus tiers (e.g., pkg_50 = 315 Ru$h, pkg_100 = 648 Ru$h, pkg_500 = 3,360 Ru$h) may apply as posted from time to time. When Creator earnings are settled from Ru$h to USD, the base rate applies unless a superseding rate is displayed on the platform at the time of the transaction.
 
 **5.3. Gifted Tokens Do Not Accrue.** Gifted Tokens spent on the Creator's Content or services **do not** generate Creator earnings. Only purchased Ru$h tokens (i.e., tokens acquired by members with fiat or crypto) generate Creator earnings. This rule is enforced in the platform's token ledger service and is not subject to case-by-case override. **Exception:** as of the Effective Date, Gifted Tokens may be spent on live tips to Santino and Lex only, pursuant to a separate internal policy; that exception does not create Creator earnings for any other Creator.
 

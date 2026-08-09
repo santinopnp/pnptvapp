@@ -10,15 +10,21 @@ const logger = require('../utils/logger');
 
 // Ru$h packages — 6 Ru$h 💎 = $1 USD base rate. $30 minimum: below that,
 // onramp fees (Stripe / MoonPay / Meld) eat >10% of the purchase, breaking the
-// value prop. pkg_10 / pkg_25 retired 2026-08-08 for that reason. Whales get
-// 15%+ bonus at $1000 tier and 25%+ at $5000 tier.
+// value prop. pkg_10 / pkg_25 retired 2026-08-08 for that reason.
+//
+// Bonus curve trimmed 2026-08-09 — previous 25% at pkg_5000 was unsustainable
+// once onramp fees + creator payouts were factored in, and pkg_1000 was flat
+// at 15% (same as pkg_500) so nobody had a reason to step up. New curve is
+// monotonically decreasing $/Ru$h across every tier and caps whales at 18%,
+// still competitive with adult-cam benchmarks (Chaturbate ~5%, Stripchat
+// ~15% peak).
 const TOKEN_PACKAGES = [
   { id: 'pkg_30',   tokens: 180,   usd: 30,   bonus: 0,    label: '180 Ru$h 💎' },
-  { id: 'pkg_50',   tokens: 315,   usd: 50,   bonus: 15,   label: '315 Ru$h 💎 (+15 bonus)' },
-  { id: 'pkg_100',  tokens: 660,   usd: 100,  bonus: 60,   label: '660 Ru$h 💎 (+60 bonus)' },
-  { id: 'pkg_500',  tokens: 3450,  usd: 500,  bonus: 450,  label: '3,450 Ru$h 💎 (+450 bonus)' },
+  { id: 'pkg_50',   tokens: 315,   usd: 50,   bonus: 15,   label: '315 Ru$h 💎 (+15 bonus, 5%)' },
+  { id: 'pkg_100',  tokens: 648,   usd: 100,  bonus: 48,   label: '648 Ru$h 💎 (+48 bonus, 8%)' },
+  { id: 'pkg_500',  tokens: 3360,  usd: 500,  bonus: 360,  label: '3,360 Ru$h 💎 (+360 bonus, 12%)' },
   { id: 'pkg_1000', tokens: 6900,  usd: 1000, bonus: 900,  label: '6,900 Ru$h 💎 (+900 bonus, 15%)' },
-  { id: 'pkg_5000', tokens: 37500, usd: 5000, bonus: 7500, label: '37,500 Ru$h 💎 (+7,500 bonus, 25%)' },
+  { id: 'pkg_5000', tokens: 35400, usd: 5000, bonus: 5400, label: '35,400 Ru$h 💎 (+5,400 bonus, 18%)' },
 ];
 
 class DashTokenService {
