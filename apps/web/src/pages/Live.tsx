@@ -24,11 +24,13 @@ import {
   unsubscribeFromSlotReminder,
   getSlotNotifyStatus,
   listCreatorMedia,
+  getAvailableCreators,
   type FeaturedPerformer,
   type LiveStream,
   type LiveScheduleSlot,
   type TokenPackage,
   type CreatorMediaItem,
+  type AvailableCreator,
 } from "@/lib/api";
 import { PerformerDrawer } from "@/components/live/PerformerDrawer";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, useForYou } from "@/components/Layout";
@@ -177,6 +179,22 @@ export default function Live() {
   // Album thumbnail cache: creatorId → first 2 thumbs
   const [albumThumbs, setAlbumThumbs] = useState<Record<string, CreatorMediaItem[]>>({});
   const thumbLoadedRef = useRef<Set<string>>(new Set());
+
+  // Available Now — Main Stage cammers ∪ Slack-available creators. Poll 20s.
+  const [availableCreators, setAvailableCreators] = useState<AvailableCreator[]>([]);
+  const [sheetCreator, setSheetCreator] = useState<AvailableCreator | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      getAvailableCreators().then((r) => {
+        if (cancelled) return;
+        setAvailableCreators(r?.creators || []);
+      }).catch(() => { if (!cancelled) setAvailableCreators([]); });
+    };
+    load();
+    const iv = setInterval(load, 20_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
 
   // Next Up schedule hero
   const [nextSlot, setNextSlot] = useState<LiveScheduleSlot | null>(null);
@@ -575,6 +593,149 @@ export default function Live() {
           ⭐ All Models
         </button>
       </div>
+
+      {/* ── Available Now — Main Stage cammers + Slack-available creators.
+          Highest-intent surface on /live: creators who can be reached RIGHT
+          NOW, either watching them on Main Stage or booking a private call.
+          Tap a card → action sheet with Book / Watch / Profile. */}
+      {availableCreators.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#34C759" }} aria-hidden="true" />
+            <span style={{ fontSize: 11, letterSpacing: "0.08em", color: "#a1a1a3", textTransform: "uppercase", fontWeight: 700 }}>
+              {t.lang === "es" ? "Disponibles ahora" : "Available now"}
+            </span>
+            <span className="text-[10px] text-pnp-textSecondary/70">{availableCreators.length}</span>
+          </div>
+          <div className="-mx-4 px-4">
+            <div className="flex gap-2.5 overflow-x-auto no-scrollbar">
+              {availableCreators.map((c) => {
+                const initial = (c.displayName || "?").charAt(0).toUpperCase();
+                const photo = c.photoUrl && (c.photoUrl.startsWith("/") || c.photoUrl.startsWith("http")) ? c.photoUrl : null;
+                const primaryBadge = c.onStage
+                  ? { text: "ON STAGE", bg: "#D4007A", pulse: true }
+                  : { text: "AVAILABLE", bg: "#34C759", pulse: false };
+                return (
+                  <button
+                    key={`avail-${c.userId}`}
+                    onClick={() => setSheetCreator(c)}
+                    className="relative flex-shrink-0 overflow-hidden text-left active:scale-[0.98] transition-transform"
+                    style={{
+                      width: 132, height: 176, borderRadius: 14,
+                      background: c.onStage
+                        ? "linear-gradient(135deg,rgba(212,0,122,0.7),rgba(230,145,56,0.7))"
+                        : "linear-gradient(135deg,rgba(52,199,89,0.55),rgba(45,212,191,0.35))",
+                    }}
+                    aria-label={`Open actions for ${c.displayName}`}
+                  >
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-4xl font-bold pointer-events-none" aria-hidden="true">
+                      {initial}
+                    </span>
+                    {photo && <img src={photo} alt={c.displayName} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />}
+                    <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-white text-[10px] font-bold shadow-lg" style={{ background: primaryBadge.bg }}>
+                      {primaryBadge.pulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" aria-hidden="true" />}
+                      {primaryBadge.text}
+                    </span>
+                    {c.onStage && c.acceptingCalls && (
+                      <span className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md text-white text-[9px] font-semibold" style={{ background: "rgba(52,199,89,0.9)" }}>📞</span>
+                    )}
+                    <span className="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-6 text-white text-xs font-semibold truncate" style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}>
+                      {c.displayName}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Creator action sheet — Book Call / Watch on Main Stage / View Profile */}
+      {sheetCreator && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSheetCreator(null)}
+        >
+          <div className="absolute inset-0 bg-black/70" />
+          <div
+            className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
+            style={{ background: "var(--pnp-surface, #1a1a1f)", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full flex-shrink-0 overflow-hidden bg-gradient-to-br from-pink-500 to-orange-400 flex items-center justify-center text-white text-lg font-bold">
+                {sheetCreator.photoUrl
+                  ? <img src={sheetCreator.photoUrl} alt={sheetCreator.displayName} className="w-full h-full object-cover" />
+                  : (sheetCreator.displayName || "?").charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-bold text-pnp-textPrimary truncate">{sheetCreator.displayName}</p>
+                <p className="text-[11px] font-semibold flex items-center gap-1.5">
+                  {sheetCreator.onStage && (
+                    <span className="flex items-center gap-1 text-pink-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" aria-hidden="true" />
+                      On Main Stage
+                    </span>
+                  )}
+                  {sheetCreator.acceptingCalls && (
+                    <span className="flex items-center gap-1 text-emerald-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                      Accepting calls
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const slug = sheetCreator.slug;
+                setSheetCreator(null);
+                navigate(`/c/${slug}?action=book&duration=30`);
+              }}
+              className="w-full min-h-[52px] rounded-xl font-bold text-white flex items-center justify-center gap-2 transition active:scale-[0.98]"
+              style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+            >
+              <span aria-hidden="true">📞</span>
+              <span>Book private call</span>
+              {sheetCreator.creatorPriceUsd != null && sheetCreator.creatorPriceUsd > 0 && (
+                <span className="text-xs font-semibold opacity-80">· ${sheetCreator.creatorPriceUsd.toFixed(0)}/mo</span>
+              )}
+            </button>
+
+            {sheetCreator.onStage && (
+              <button
+                type="button"
+                onClick={() => { setSheetCreator(null); navigate("/main-stage"); }}
+                className="w-full min-h-[48px] rounded-xl font-semibold text-white bg-pink-600/40 hover:bg-pink-600/60 transition active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <span aria-hidden="true">🎬</span>
+                <span>Watch on Main Stage</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const slug = sheetCreator.slug;
+                setSheetCreator(null);
+                navigate(`/c/${slug}`);
+              }}
+              className="w-full min-h-[52px] rounded-xl font-semibold text-pnp-textPrimary bg-white/[0.06] hover:bg-white/[0.10] transition active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <span aria-hidden="true">👤</span>
+              <span>View profile</span>
+            </button>
+
+            <button type="button" onClick={() => setSheetCreator(null)} className="w-full text-xs text-pnp-textSecondary hover:text-pnp-textPrimary transition">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Token wallet CTA — balance + buy + crypto-guide onramp ── */}
       {isAuthenticated && (() => {
