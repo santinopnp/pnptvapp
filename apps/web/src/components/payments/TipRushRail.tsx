@@ -41,6 +41,14 @@ interface TipRushRailProps {
   variant?: "compact" | "full";
   showMessage?: boolean;
   showBalance?: boolean;
+  /**
+   * When true, gifted_balance counts as spendable for the insufficient-check
+   * and balance display. Only pass true if the recipient is in the backend's
+   * GIFTED_ALLOWED_PERFORMER_USER_IDS (currently Santino only) — otherwise
+   * the backend will reject with 402 even though the UI looks like it should
+   * work.
+   */
+  allowGifted?: boolean;
   /** Called after a successful tip. */
   onSuccess?: (newBalance: number | null) => void;
   onClose?: () => void;
@@ -66,6 +74,7 @@ export function TipRushRail({
   variant = "full",
   showMessage = true,
   showBalance = true,
+  allowGifted = false,
   onSuccess,
   onClose,
   className,
@@ -77,17 +86,31 @@ export function TipRushRail({
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<"success" | "error" | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
-  const [balance, setBalance] = useState<number | null>(null);
+  const [regularBalance, setRegularBalance] = useState<number | null>(null);
+  const [giftedBalance, setGiftedBalance] = useState<number | null>(null);
   const [showTopUp, setShowTopUp] = useState(false);
   const [needsTopUp, setNeedsTopUp] = useState(false);
   const hasWallet = useMemo(() => hasInjectedWallet(), []);
+
+  // Spendable Ru$h: gifted counts only when the recipient is gifted-allowed
+  // (Santino). Otherwise the backend rejects even if gifted covers the amount.
+  const balance = useMemo(() => {
+    if (regularBalance === null && giftedBalance === null) return null;
+    const reg = regularBalance ?? 0;
+    const gif = giftedBalance ?? 0;
+    return allowGifted ? reg + gif : reg;
+  }, [regularBalance, giftedBalance, allowGifted]);
 
   // Load current Ru$h balance so users can see what they have before tipping.
   useEffect(() => {
     if (!showBalance) return;
     let cancelled = false;
     getWalletBalance()
-      .then((r) => { if (!cancelled && r.success) setBalance(r.balance); })
+      .then((r) => {
+        if (cancelled || !r.success) return;
+        setRegularBalance(r.regularBalance);
+        setGiftedBalance(r.giftedBalance);
+      })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [showBalance]);
@@ -108,8 +131,16 @@ export function TipRushRail({
         const res = await sendTip(creatorId, amount, message.trim() || undefined);
         if (res.success) {
           setResult("success");
+          // Live tip endpoint only returns the post-debit regular balance; refetch
+          // to keep gifted in sync (it may have drained for Santino/Lex tips).
+          getWalletBalance()
+            .then((w) => {
+              if (!w.success) return;
+              setRegularBalance(w.regularBalance);
+              setGiftedBalance(w.giftedBalance);
+            })
+            .catch(() => {});
           const newBal = typeof res.newBalance === "number" ? res.newBalance : null;
-          if (newBal !== null) setBalance(newBal);
           onSuccess?.(newBal);
         } else {
           setResult("error");
@@ -118,7 +149,8 @@ export function TipRushRail({
       } else {
         const res = await tipTokens(creatorId, amount, message.trim() || undefined);
         if (res.success) {
-          setBalance(res.newBalance);
+          setRegularBalance(res.newBalance);
+          if (typeof res.newGiftedBalance === "number") setGiftedBalance(res.newGiftedBalance);
           setResult("success");
           onSuccess?.(res.newBalance);
         } else {
@@ -344,7 +376,7 @@ export function TipRushRail({
         isOpen={showTopUp}
         onClose={() => setShowTopUp(false)}
         onSuccess={(newBalance) => {
-          setBalance(newBalance);
+          setRegularBalance(newBalance);
           setNeedsTopUp(false);
           setShowTopUp(false);
         }}

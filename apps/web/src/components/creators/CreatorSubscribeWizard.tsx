@@ -11,16 +11,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ApiError,
-  NP_COINS_SUBSCRIBE,
   getCreatorSubscriptionPreview,
   getCreatorSubscriptionStatus,
   getWalletBalance,
   payCreatorSubWithTokens,
 } from "@/lib/api";
-import { useNowPayments } from "@/hooks/useNowPayments";
-import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
-import { TrustWalletIcon, MetaMaskIcon, WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 export interface CreatorSubscribeWizardProps {
   creatorId: string;
@@ -72,28 +68,15 @@ export default function CreatorSubscribeWizard({
   returnUrl,
   accessType = "subscription",
 }: CreatorSubscribeWizardProps) {
-  const key = storageKey || `pnp_creator_sub_${creatorId}`;
+  // NowPayments retired 2026-08-09 — creator subscription flows exclusively
+  // through WalletPayCard (USDC on Base). storageKey / returnUrl no longer
+  // used; kept in props for backwards compatibility.
+  void storageKey;
+  void returnUrl;
 
-  // NowPayments hook — handles order create + poll + resume from storage.
-  // Its onSuccess fires when the poller sees `completed`.
-  const {
-    order,
-    isSuccess: paymentSuccess,
-    isConfirming,
-    startPayment,
-    cancelOrder,
-    error: npError,
-    setError: setNpError,
-  } = useNowPayments({
-    storageKey: key,
-    returnUrl,
-    onSuccess: () => onSuccess(),
-  });
-
-  const [loading, setLoading] = useState<"crypto" | "tokens" | "verify" | null>(null);
+  const [loading, setLoading] = useState<"tokens" | "verify" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
-  const [showAllCoins, setShowAllCoins] = useState(false);
   // Compliance hold: creator hasn't uploaded 4-min exclusive minimum yet.
   const [complianceHeld, setComplianceHeld] = useState(false);
   const inFlight = useRef(false);
@@ -125,7 +108,7 @@ export default function CreatorSubscribeWizard({
   const tokenCost = Math.round(priceUsd * 6);
   const displayName = creatorName || (username ? `@${username}` : "creator");
 
-  const combinedError = error || npError;
+  const combinedError = error;
 
   const handleTokens = useCallback(async () => {
     if (inFlight.current) return;
@@ -136,7 +119,6 @@ export default function CreatorSubscribeWizard({
     inFlight.current = true;
     setLoading("tokens");
     setError(null);
-    setNpError(null);
     try {
       const result = await payCreatorSubWithTokens(creatorId);
       if (!result.success) {
@@ -145,8 +127,6 @@ export default function CreatorSubscribeWizard({
             ? "Necesitas una membresía Basic para suscribirte a un creador."
             : "You need a Basic membership to subscribe to a creator.");
         } else if (result.code === "INSUFFICIENT_TOKENS") {
-          // giftedLocked = user has gifted balance but this creator isn't in
-          // the gifted-spend allowlist (i.e., not santinofurioso first sub).
           if (result.giftedLocked && (result.gifted ?? 0) > 0) {
             setError(lang === "es"
               ? `Tienes ${(result.gifted ?? 0).toLocaleString()} Ru$h de regalo, pero solo se puede usar en propinas a Santino o tu primer mes con @santinofurioso. Compra más Ru$h para suscribirte aquí.`
@@ -169,81 +149,13 @@ export default function CreatorSubscribeWizard({
       setLoading(null);
       inFlight.current = false;
     }
-  }, [creatorId, onSuccess, lang, setNpError]);
-
-  const handleCrypto = useCallback(async (payCurrency: string) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setLoading("crypto");
-    setError(null);
-    setNpError(null);
-    try {
-      const res = await startPayment(
-        "creator_monthly",
-        undefined,
-        creatorId,
-        false, // one-shot 30-day pass — /prepare handles creator_monthly; /subscribe rejects it
-        payCurrency,
-      );
-      if (!res.success) {
-        setError(res.error || (lang === "es" ? "No se pudo iniciar el pago." : "Failed to start payment."));
-      }
-    } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "";
-      const cryptoErrors: Record<string, { en: string; es: string }> = {
-        MEMBER_REQUIRED: {
-          en: "You need a Basic membership to subscribe with crypto.",
-          es: "Necesitas una membresía Basic para suscribirte con crypto.",
-        },
-        CREATOR_LOCKED: {
-          en: "This creator isn't accepting subscriptions right now.",
-          es: "Este creador no está aceptando suscripciones por el momento.",
-        },
-        SUBSCRIPTIONS_PAUSED: {
-          en: "This creator has paused new memberships.",
-          es: "Este creador pausó sus suscripciones temporalmente.",
-        },
-      };
-      const map = cryptoErrors[msg];
-      setError(map ? map[lang] : (msg || (lang === "es" ? "Algo salió mal. Intenta de nuevo." : "Something went wrong. Try again.")));
-    } finally {
-      setLoading(null);
-      inFlight.current = false;
-    }
-  }, [creatorId, startPayment, lang, setNpError]);
-
-  const handleVerify = useCallback(async () => {
-    setLoading("verify");
-    setError(null);
-    try {
-      const s = await getCreatorSubscriptionStatus(creatorId);
-      if (s.subscribed) {
-        setComplianceHeld(!!s.complianceHeld);
-        onSuccess();
-      } else {
-        setError(lang === "es"
-          ? "Tu pago aún no se ha confirmado. Espera un momento e intenta de nuevo."
-          : "Payment not confirmed yet. Wait a moment and try again.");
-      }
-    } catch {
-      setError(lang === "es" ? "No se pudo verificar." : "Could not verify.");
-    } finally {
-      setLoading(null);
-    }
   }, [creatorId, onSuccess, lang]);
 
-  // When the NowPayments poller flips paymentSuccess=true, refetch status to
-  // detect compliance-held state (creator hasn't uploaded the 4-min minimum).
-  // Without this the wizard would show "Subscription active" while every
-  // downstream gate returns "no access", which is the exact bug this fixes.
-  useEffect(() => {
-    if (!paymentSuccess) return;
-    let cancelled = false;
-    getCreatorSubscriptionStatus(creatorId)
-      .then((s) => { if (!cancelled) setComplianceHeld(!!s.complianceHeld); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [paymentSuccess, creatorId]);
+  // handleVerify + paymentSuccess side-effect retired 2026-08-09 — wallet
+  // checkout is synchronous so the WalletPayCard onSuccess callback is
+  // authoritative; there is no separate crypto-poll to wait on.
+  void getCreatorSubscriptionStatus;
+  void setComplianceHeld;
 
   // ── Step 0: confirmation with price + exclusive content preview ─────────
   if (!confirmed) {
@@ -344,68 +256,11 @@ export default function CreatorSubscribeWizard({
     );
   }
 
-  // ── Success view (tokens or crypto confirmed) ────────────────────────────
-  if (paymentSuccess) {
-    if (complianceHeld) {
-      return (
-        <div
-          className={`rounded-2xl ${compact ? "p-4" : "p-5"} text-center space-y-2`}
-          style={{ background: "rgba(255,159,10,0.14)", border: "1px solid rgba(255,159,10,0.3)", color: "#FF9F0A" }}
-        >
-          <p className="text-sm font-bold">
-            {lang === "es" ? "Pago recibido — en espera" : "Payment received — on hold"}
-          </p>
-          <p className="text-xs opacity-90">
-            {lang === "es"
-              ? `Tu suscripción se activará automáticamente cuando ${displayName} suba el contenido exclusivo mínimo requerido. No necesitas hacer nada más — te avisaremos.`
-              : `Your subscription will activate automatically once ${displayName} uploads the required minimum exclusive content. Nothing more to do — we'll notify you.`}
-          </p>
-        </div>
-      );
-    }
-    return (
-      <div
-        className={`rounded-2xl ${compact ? "p-4" : "p-5"} text-center space-y-2`}
-        style={{ background: "rgba(52,199,89,0.14)", border: "1px solid rgba(52,199,89,0.3)", color: "#34C759" }}
-      >
-        <p className="text-sm font-bold">✓ {lang === "es" ? "Suscripción activa" : "Subscription active"}</p>
-        <p className="text-xs opacity-80">
-          {lang === "es"
-            ? `Ya tienes acceso completo a ${displayName}: perfil, canal, hangout privado y DMs.`
-            : `You now have full access to ${displayName}: profile, channel, private hangout, and DMs.`}
-        </p>
-      </div>
-    );
-  }
+  // Success is delegated to onSuccess() from the WalletPayCard / tokens
+  // callback — no separate success view here anymore. The parent surface
+  // (feed banner / paywall / DM upsell) is responsible for hiding the wizard.
 
-  // ── Waiting for crypto confirmation ──────────────────────────────────────
-  if (order) {
-    return (
-      <div className="space-y-2">
-        <NowPaymentsWaitingPanel
-          order={order}
-          isSuccess={paymentSuccess}
-          isConfirming={isConfirming}
-          onCancel={cancelOrder}
-          lang={lang}
-          payCurrency={order.payCurrency}
-          productKind="subscription"
-        />
-        <button
-          onClick={handleVerify}
-          disabled={loading === "verify"}
-          className="w-full py-2 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-          style={{ background: "var(--pnp-accent, #D4007A)" }}
-        >
-          {loading === "verify"
-            ? (lang === "es" ? "Verificando…" : "Verifying…")
-            : (lang === "es" ? "Ya pagué — verificar" : "I paid — verify now")}
-        </button>
-      </div>
-    );
-  }
-
-  // ── Coin picker + tokens button ──────────────────────────────────────────
+  // ── Wallet + tokens payment options ──────────────────────────────────────
   return (
     <div
       className={`rounded-2xl ${compact ? "p-3" : "p-4"} space-y-3`}
@@ -480,70 +335,15 @@ export default function CreatorSubscribeWizard({
         onSuccess={() => onSuccess?.()}
       />
 
-      <div>
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <p className="text-[11px] font-semibold" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {lang === "es" ? "O paga con crypto — bajas comisiones" : "Or pay with crypto — low fees"}
-          </p>
-          <a
-            href="/crypto-guide"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-          >
-            {lang === "es" ? "¿Qué red? →" : "Which network? →"}
-          </a>
-        </div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {NP_COINS_SUBSCRIBE.map((coin) => (
-            <button
-              key={coin.code}
-              disabled={loading !== null}
-              onClick={() => handleCrypto(coin.code)}
-              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
-            >
-              <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-white">{coin.label}</span>
-                  {"recommended" in coin && coin.recommended && (
-                    <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                  )}
-                </div>
-                <span className="text-[9px] leading-none" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{coin.network}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-        <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
-          <span className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            {lang === "es" ? "Abre en:" : "Open in:"}
-          </span>
-          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
-            <MetaMaskIcon size={14} /> MetaMask
-          </span>
-          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
-            <TrustWalletIcon size={14} /> Trust Wallet
-          </span>
-        </div>
-      </div>
+      {/* NP crypto picker retired 2026-08-09 — Wallet is now the only crypto
+          path. Fund the wallet with card / Apple Pay / Google Pay via Privy
+          inside WalletPayCard above. */}
 
       <p className="text-[10px] text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
         {lang === "es"
           ? "Acceso por 30 días. Sin renovación automática."
           : "30-day access. No auto-renewal."}
       </p>
-
-      {/* Hide the "show all coins" toggle until we wire NP_COINS full grid. Placeholder for phase 2. */}
-      {false && (
-        <button
-          onClick={() => setShowAllCoins(true)}
-          className="text-[10px] underline decoration-dotted"
-          style={{ color: "var(--pnp-accent, #D4007A)" }}
-        >
-          {lang === "es" ? "Ver todas las monedas" : "See all coins"}
-        </button>
-      )}
     </div>
   );
 }

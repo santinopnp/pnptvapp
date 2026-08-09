@@ -8,12 +8,12 @@ const { query, getClient } = require('../config/postgres');
 const { cache } = require('../config/redis');
 const logger = require('../utils/logger');
 
-// Ru$h packages — 6 Ru$h 💎 = $1 USD base rate
-// Bonus Ru$h rewarded on larger packs to incentivize bulk purchases.
-// Whales get 15%+ bonus at $1000 tier and 25%+ at $5000 tier.
+// Ru$h packages — 6 Ru$h 💎 = $1 USD base rate. $30 minimum: below that,
+// onramp fees (Stripe / MoonPay / Meld) eat >10% of the purchase, breaking the
+// value prop. pkg_10 / pkg_25 retired 2026-08-08 for that reason. Whales get
+// 15%+ bonus at $1000 tier and 25%+ at $5000 tier.
 const TOKEN_PACKAGES = [
-  { id: 'pkg_10',   tokens: 60,    usd: 10,   bonus: 0,    label: '60 Ru$h 💎' },
-  { id: 'pkg_25',   tokens: 156,   usd: 25,   bonus: 6,    label: '156 Ru$h 💎 (+6 bonus)' },
+  { id: 'pkg_30',   tokens: 180,   usd: 30,   bonus: 0,    label: '180 Ru$h 💎' },
   { id: 'pkg_50',   tokens: 315,   usd: 50,   bonus: 15,   label: '315 Ru$h 💎 (+15 bonus)' },
   { id: 'pkg_100',  tokens: 660,   usd: 100,  bonus: 60,   label: '660 Ru$h 💎 (+60 bonus)' },
   { id: 'pkg_500',  tokens: 3450,  usd: 500,  bonus: 450,  label: '3,450 Ru$h 💎 (+450 bonus)' },

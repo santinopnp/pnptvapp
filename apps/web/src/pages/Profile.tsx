@@ -72,11 +72,10 @@ import FollowListModal from "@/components/profile/FollowListModal";
 import CreatorEnrollmentWizard, { TIER_CONFIG, type TierId } from "@/components/profile/CreatorEnrollmentWizard";
 import MonetizeContentCard from "@/components/profile/MonetizeContentCard";
 import { BookCallModal } from "@/components/creators/BookCallModal";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { NearbyBadge, useNearbyToggle } from "@/components/NearbyBadge";
 import { getDistanceToUser, NP_COINS_SUBSCRIBE } from "@/lib/api";
-import { useNowPayments } from "@/hooks/useNowPayments";
-import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 import { useAcceptingCalls } from "@/hooks/useAcceptingCalls";
 
 
@@ -343,34 +342,8 @@ export default function Profile() {
   const [coverUploading, setCoverUploading] = useState(false);
   const subscribeButtonRef = useRef<HTMLDivElement>(null);
 
-  const {
-    order: usdcOrder,
-    isSuccess: usdcPaymentSuccess,
-    startPayment: startNowPayments,
-    cancelOrder: cancelNowPayments,
-    error: nowpaymentsError,
-  } = useNowPayments({
-    storageKey: "pnp_pending_creator_sub_order",
-    onSuccess: async () => {
-      // Webhook may not have fired yet — poll subscription status up to 5 times
-      // Use effectiveParamId (stable from useParams) since profile state may be stale in this closure
-      const creatorId = effectiveParamId || "";
-      if (!creatorId) { setShowSubscribeModal(false); return; }
-      for (let i = 0; i < 5; i++) {
-        await new Promise(r => setTimeout(r, i === 0 ? 2000 : 3000));
-        try {
-          const subRes = await getCreatorSubscriptionStatus(creatorId);
-          if (subRes.subscribed) {
-            setIsSubscribed(true);
-            setSubscriptionExpiresAt(subRes.subscription?.expires_at ?? null);
-            setShowSubscribeModal(false);
-            return;
-          }
-        } catch (_) { /* continue polling */ }
-      }
-      setShowSubscribeModal(false); // close regardless after retries
-    },
-  });
+  // NowPayments hook fully retired 2026-08-09. CreatorSubscribeWizard handles
+  // wallet + tokens directly and calls its own onSuccess synchronously.
 
   // Scroll lock — applies whenever any local modal is open
   useEffect(() => {
@@ -839,71 +812,9 @@ export default function Profile() {
     setSubscribeLoading(false);
   };
 
-  const handleSubscribePayment = async () => {
-    if (!profile || subscribePaymentLoading) return;
-    setSubscribePaymentLoading(true);
-    setSubscribeError(null);
-    try {
-      const creatorId = profile.id || effectiveParamId!;
-      const trimmed = subscribeEmail.trim();
-      if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) || trimmed.length > 254) {
-        setSubscribeEmailError("Please enter a valid email address");
-        setSubscribePaymentLoading(false);
-        return;
-      }
-      setSubscribeEmailError(null);
-
-      if (subscribeProvider === "usdc" || subscribeProvider === "usdc_sol") {
-        const payCurrency = subscribeProvider === "usdc_sol" ? "usdcsol" : (npCoinPick || "usdcbase");
-        const res = await startNowPayments("creator_monthly", trimmed, creatorId, false, payCurrency);
-        if (!res?.success) {
-          setSubscribeError((res as any)?.error || nowpaymentsError || p.failedToCreatePayment);
-        }
-        // On success: usdcOrder is set and NowPaymentsWaitingPanel renders automatically
-      } else if (subscribeProvider === "btc") {
-        // Bitcoin via BTCPay Server
-        const btcRes = await createBtcSubscription("creator_monthly", creatorId);
-        if (btcRes.success && btcRes.checkoutUrl) {
-          const pw = 560, ph = 780;
-          const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-          const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-          window.open(
-            assertPaymentUrl(btcRes.checkoutUrl),
-            "btcpay_btc_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
-          );
-          setSubscribePaymentId(btcRes.invoiceId);
-          setSubscribeAwaitingPayment(true);
-        } else {
-          setSubscribeError(btcRes.error || p.failedToCreatePayment);
-        }
-      }
-    } catch (err) {
-      setSubscribeError(err instanceof Error ? err.message : p.paymentError);
-    }
-    setSubscribePaymentLoading(false);
-  };
-
-  const handleCheckSubscriptionStatus = async () => {
-    if (!profile) return;
-    try {
-      const creatorId = profile.id || effectiveParamId!;
-      const subRes = await getCreatorSubscriptionStatus(creatorId);
-      if (subRes.success && subRes.subscribed) {
-        setIsSubscribed(true);
-        setSubscriptionExpiresAt(subRes.subscription?.expires_at ?? null);
-        setShowSubscribeModal(false);
-        setSubscribeAwaitingPayment(false);
-        setSubscribePaymentId(null);
-      } else {
-        setSubscribeError(p.paymentNotConfirmed);
-        setTimeout(() => setSubscribeError(null), 4000);
-      }
-    } catch {
-      setSubscribeError(p.couldNotVerifyStatus);
-      setTimeout(() => setSubscribeError(null), 3000);
-    }
-  };
+  // handleSubscribePayment + handleCheckSubscriptionStatus removed 2026-08-09.
+  // Creator subscribe now delegates to <CreatorSubscribeWizard/> which owns the
+  // whole payment flow (Wallet USDC on Base + Ru$h tokens).
 
   const handleAuthorTap = (authorId: string) => {
     if (authorId === String(user?.id)) {
@@ -2131,219 +2042,37 @@ export default function Profile() {
         </div>
       )}
 
-      {/* ── Creator Subscription Payment Modal ── */}
-      {showSubscribeModal && profile && (() => {
-        const modalTc = TIER_CONFIG[profile.creatorType as TierId] ?? TIER_CONFIG.ice;
-        const accentColor   = modalTc.color;
-        const accentRgb     = modalTc.rgb;
-        const gradientBg    = modalTc.gradient;
-        return (
+      {/* Creator Subscription Payment Modal — routes through CreatorSubscribeWizard
+          so all crypto goes via the wallet. NP inline flow retired 2026-08-09. */}
+      {showSubscribeModal && profile && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
           style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }}
           onClick={() => { setShowSubscribeModal(false); setSubscribeAwaitingPayment(false); setSubscribePaymentId(null); setSubscribeError(null); }}
         >
           <div
-            className="w-full max-w-sm rounded-t-2xl sm:rounded-2xl flex flex-col gap-4"
-            style={{
-              background: "var(--pnp-surface)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              maxHeight: "90dvh",
-              overflowY: "auto",
-              padding: "1.5rem 1.5rem max(1.5rem, env(safe-area-inset-bottom)) 1.5rem",
-            }}
+            className="w-full max-w-sm rounded-t-2xl sm:rounded-2xl"
+            style={{ background: "var(--pnp-surface)", border: "1px solid rgba(255,255,255,0.08)", maxHeight: "90dvh", overflowY: "auto", padding: "1rem 1rem max(1rem, env(safe-area-inset-bottom)) 1rem" }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label="Subscribe to creator"
           >
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-white">
-                {p.subscribeTo} {profile.firstName || profile.username || "Creator"}
-              </h2>
-              <button
-                onClick={() => { setShowSubscribeModal(false); setSubscribeAwaitingPayment(false); setSubscribePaymentId(null); setSubscribeError(null); }}
-                className="w-7 h-7 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors"
-                aria-label="Close"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Price info */}
-            <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: `rgba(${accentRgb},0.08)`, border: `1px solid rgba(${accentRgb},0.2)` }}>
-              <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: gradientBg }}>
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-white">${profile.creatorPriceUsd ?? 15}{p.perMonth}</p>
-                <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary)" }}>{p.exclusiveCreatorAccess}</p>
-              </div>
-            </div>
-
-            {usdcOrder ? (
-              /* NowPayments waiting panel — auto-closes on success via onSuccess callback */
-              <NowPaymentsWaitingPanel
-                order={usdcOrder}
-                isSuccess={usdcPaymentSuccess}
-                onCancel={() => { cancelNowPayments(); setSubscribeError(null); }}
-                lang={t.lang}
-                payCurrency={usdcOrder?.payCurrency}
-              />
-            ) : !subscribeAwaitingPayment ? (
-              <>
-                {/* Payment method selector */}
-                <div>
-                  <p className="text-xs font-medium mb-2" style={{ color: "var(--pnp-text-secondary)" }}>{p.paymentMethod}</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {usdcAvailable !== false && (
-                      <button
-                        type="button"
-                        onClick={() => setSubscribeProvider("usdc")}
-                        className="py-2.5 rounded-lg text-sm font-medium text-center border transition-colors"
-                        style={subscribeProvider === "usdc"
-                          ? { background: "rgba(38,161,123,0.20)", color: "#26a17b", borderColor: "rgba(38,161,123,0.5)" }
-                          : { background: "rgba(38,161,123,0.06)", color: "#26a17b", borderColor: "rgba(38,161,123,0.2)" }}
-                      >
-                        🪙 Crypto
-                      </button>
-                    )}
-                    {usdcAvailable !== false && (
-                      <button
-                        type="button"
-                        onClick={() => setSubscribeProvider("usdc_sol")}
-                        title="Tether (USDT) on BNB Smart Chain — works with MetaMask, Trust Wallet, Binance"
-                        className="py-2.5 rounded-lg text-sm font-medium text-center border transition-colors"
-                        style={subscribeProvider === "usdc_sol"
-                          ? { background: "rgba(38,161,123,0.20)", color: "#26a17b", borderColor: "rgba(38,161,123,0.5)" }
-                          : { background: "rgba(38,161,123,0.06)", color: "#26a17b", borderColor: "rgba(38,161,123,0.2)" }}
-                      >
-                        ₮ USDT (BSC)
-                      </button>
-                    )}
-                    {btcAvailable && (
-                      <button
-                        type="button"
-                        onClick={() => setSubscribeProvider("btc")}
-                        className="py-2.5 rounded-lg text-sm font-medium text-center border transition-colors"
-                        style={subscribeProvider === "btc"
-                          ? { background: "rgba(247,147,26,0.20)", color: "#F7931A", borderColor: "rgba(247,147,26,0.5)" }
-                          : { background: "rgba(247,147,26,0.06)", color: "#F7931A", borderColor: "rgba(247,147,26,0.2)" }}
-                      >
-                        ₿ Bitcoin
-                      </button>
-                    )}
-                  </div>
-                  {subscribeProvider === "usdc" && (
-                    <div className="mt-2 p-2 rounded-lg bg-white/5 border border-white/10 animate-in fade-in duration-150">
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <p className="text-[9px] text-pnp-textSecondary/60">Choose coin:</p>
-                        <a
-                          href="/crypto-guide"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="shrink-0 text-[9px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-                        >
-                          Which network? →
-                        </a>
-                      </div>
-                      <div className="flex gap-1.5 flex-wrap">
-                        {NP_COINS_SUBSCRIBE.map((coin) => (
-                          <button
-                            key={coin.code}
-                            type="button"
-                            onClick={() => setNpCoinPick(coin.code)}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${npCoinPick === coin.code ? "border-green-400/60 bg-green-500/20 text-pnp-textPrimary" : "border-white/15 bg-white/5 text-pnp-textSecondary hover:bg-white/10"}`}
-                          >
-                            <span style={{ color: coin.color }}>{coin.icon}</span>
-                            <span>{coin.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Email input */}
-                <div>
-                  <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary)" }}>{p.emailForReceipt}</label>
-                  <input
-                    type="email"
-                    value={subscribeEmail}
-                    onChange={(e) => { setSubscribeEmail(e.target.value); setSubscribeEmailError(null); }}
-                    placeholder={p.emailPlaceholder}
-                    className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none transition-colors"
-                    style={{
-                      background: "rgba(255,255,255,0.06)",
-                      border: subscribeEmailError ? "1px solid #FF453A" : "1px solid rgba(255,255,255,0.1)",
-                    }}
-                    autoComplete="email"
-                    inputMode="email"
-                  />
-                  {subscribeEmailError && (
-                    <p className="text-xs mt-1" style={{ color: "#FF453A" }}>{subscribeEmailError}</p>
-                  )}
-                </div>
-
-                {(subscribeError || nowpaymentsError) && (
-                  <p className="text-xs text-center" style={{ color: "#FF453A" }}>{subscribeError || nowpaymentsError}</p>
-                )}
-
-                <button
-                  onClick={handleSubscribePayment}
-                  disabled={subscribePaymentLoading}
-                  className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-                  style={{ background: gradientBg }}
-                >
-                  {subscribePaymentLoading ? p.openingPayment : p.payPerMonth.replace('${price}', String(profile.creatorPriceUsd ?? 15))}
-                </button>
-              </>
-            ) : (
-              <>
-                {/* Awaiting payment state (Dash / BTC via BTCPay) */}
-                <div className="flex flex-col items-center gap-3 py-2">
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: `rgba(${accentRgb},0.12)`, border: `1px solid rgba(${accentRgb},0.25)` }}>
-                    <svg className="w-6 h-6 animate-spin" style={{ color: accentColor }} fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-white text-center">{p.waitingForPaymentConfirmation}</p>
-                  <p className="text-xs text-center" style={{ color: "var(--pnp-text-secondary)" }}>
-                    {p.completePaymentInTab}
-                  </p>
-                </div>
-
-                {subscribeError && (
-                  <p className="text-xs text-center" style={{ color: "#FF453A" }}>{subscribeError}</p>
-                )}
-
-                <button
-                  onClick={handleCheckSubscriptionStatus}
-                  className="w-full py-3 rounded-xl text-sm font-semibold text-white border transition-colors"
-                  style={{ background: "rgba(255,255,255,0.06)", borderColor: "rgba(255,255,255,0.12)" }}
-                >
-                  {p.iCompletedPayment}
-                </button>
-
-                <button
-                  onClick={() => { setSubscribeAwaitingPayment(false); setSubscribePaymentId(null); setSubscribeError(null); }}
-                  className="text-xs text-center"
-                  style={{ color: "var(--pnp-text-secondary)" }}
-                >
-                  {p.goBack}
-                </button>
-              </>
-            )}
+            <CreatorSubscribeWizard
+              creatorId={String(profile.id)}
+              creatorName={profile.firstName || null}
+              username={profile.username || null}
+              priceUsd={Number(profile.creatorPriceUsd ?? 15)}
+              lang={t.lang as "es" | "en"}
+              onSuccess={() => {
+                setIsSubscribed(true);
+                setShowSubscribeModal(false);
+              }}
+              onClose={() => { setShowSubscribeModal(false); setSubscribeAwaitingPayment(false); setSubscribePaymentId(null); setSubscribeError(null); }}
+            />
           </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* ── Tag-in-a-post composer (active creator → active creator only) ── */}
       {showTagComposer && profile && !isOwnProfile && (

@@ -58,9 +58,9 @@ const SKIP_TELEGRAM_CLI = process.argv.includes('--skip-telegram');
 // Recurring runs use a separate tag so the 30-day cooldown query catches both.
 const SOURCE_TAG_LEGACY    = 'rescue-lifetime100-2026-06-26';
 const SOURCE_TAG_RECURRING = 'rescue-lifetime100-recurring';
-const PRICE_USD        = 95;
+const PRICE_USD        = 100;
 const PLAN_ID          = 'lifetime100';
-const PAY_CURRENCY     = 'btc';
+// PAY_CURRENCY retired 2026-08-09 — wallet checkout owns coin selection.
 const WEBAPP_URL       = process.env.WEBAPP_URL || 'https://pnptv.app';
 const NOWPAYMENTS_URL  = 'https://api.nowpayments.io/v1';
 const NOWPAYMENTS_KEY  = process.env.NOWPAYMENTS_API_KEY;
@@ -86,21 +86,13 @@ function buildTelegramMessage(lang, invoiceUrl) {
 
 Vi que intentaste suscribirte a PNPtv pero el pago no se completó. Antes de que se te olvide, te tengo algo:
 
-🔥 <b>ACCESO DE POR VIDA — $95</b> (regular $100)
+🔥 <b>ACCESO DE POR VIDA — $100</b>
 Pagas una vez. Acceso para siempre. Todo lo que viene en PNPtv ya está incluido.
 
-<b>Esta semana en PNPtv:</b>
-• 🎬 Video exclusivo nuevo recién subido al área PRIME
-• 👋 2 creadores nuevos se unieron — <b>MR_8502</b> y <b>Martin_jhosep</b>, ya con contenido fresco
+Ahora es mucho más fácil: paga con tu <b>tarjeta, Apple Pay o Google Pay</b> desde tu Billetera PNPtv. Sin apps de wallet, sin frases raras, sin QR. Un toque.
 
-👉 <b>TU LINK PERSONAL DE PAGO:</b>
+👉 <b>ABRE TU PAGO:</b>
 ${invoiceUrl}
-
-¿No tienes Bitcoin todavía? Es de verdad fácil:
-1. Abre https://checkout.banxa.com
-2. Compra $100 de Bitcoin (BTC) — el extra cubre la comisión de Banxa
-3. Copia la dirección que verás en tu link arriba y pégala como destino
-4. Listo. Tu PRIME se activa automático cuando llega el pago.
 
 Si te trabas en algún paso, escríbeme aquí mismo.
 
@@ -113,21 +105,13 @@ PNPtv`
 
 I noticed you tried to subscribe to PNPtv but the payment didn't go through. Before you forget about it, here's what I've got for you:
 
-🔥 <b>LIFETIME ACCESS — $95</b> (regular $100)
+🔥 <b>LIFETIME ACCESS — $100</b>
 Pay once. Yours forever. Everything coming to PNPtv is already included.
 
-<b>This week on PNPtv:</b>
-• 🎬 Fresh exclusive video just dropped in the PRIME area
-• 👋 2 new creators joined — <b>MR_8502</b> and <b>Martin_jhosep</b>, already posting
+We made it much easier now: pay with your <b>card, Apple Pay or Google Pay</b> through your PNPtv Wallet. No wallet apps, no seed phrases, no QR codes. One tap.
 
-👉 <b>YOUR PERSONAL PAYMENT LINK:</b>
+👉 <b>OPEN YOUR CHECKOUT:</b>
 ${invoiceUrl}
-
-No Bitcoin yet? Honestly it's easy:
-1. Open https://checkout.banxa.com
-2. Buy $100 of Bitcoin (BTC) — the extra covers Banxa's fee
-3. Copy the wallet address shown on your link above and paste it as the destination
-4. Done. Your PRIME activates automatically when the payment lands.
 
 If you get stuck at any step, just reply here.
 
@@ -137,14 +121,14 @@ PNPtv`
 }
 
 const EMAIL_SUBJECT = {
-  es: '🔥 Tu acceso de por vida a PNPtv te espera — $95',
-  en: '🔥 Your PNPtv lifetime access is waiting — $95',
+  es: '🔥 Tu acceso de por vida a PNPtv te espera — $100',
+  en: '🔥 Your PNPtv lifetime access is waiting — $100',
 };
 
 function buildEmailHtml(lang, invoiceUrl) {
   const es = lang === 'es';
-  const head = es ? 'ACCESO DE POR VIDA — $95' : 'LIFETIME ACCESS — $95';
-  const reg  = es ? '(regular $100)' : '(regular $100)';
+  const head = es ? 'ACCESO DE POR VIDA — $100' : 'LIFETIME ACCESS — $100';
+  const reg  = '';
   const lead = es
     ? 'Vi que intentaste suscribirte a PNPtv pero el pago no se completó. Antes de que se te olvide, te dejo abierto algo:'
     : "I noticed you tried to subscribe to PNPtv but the payment didn't go through. Before you forget about it, here's what I've got for you:";
@@ -156,20 +140,20 @@ function buildEmailHtml(lang, invoiceUrl) {
   const bullet2 = es
     ? '👋 2 creadores nuevos — <b>MR_8502</b> y <b>Martin_jhosep</b>, ya con contenido'
     : '👋 2 new creators — <b>MR_8502</b> and <b>Martin_jhosep</b>, already posting';
-  const ctaLabel = es ? 'Pagar ahora — $95' : 'Pay now — $95';
-  const banxaTitle = es ? '¿No tienes Bitcoin?' : 'No Bitcoin yet?';
+  const ctaLabel = es ? 'Pagar ahora — $100' : 'Pay now — $100';
+  const banxaTitle = es ? 'Cómo funciona' : 'How it works';
   const banxaSteps = es
     ? [
-        'Abre <a href="https://checkout.banxa.com" style="color:#5ED1C4;">checkout.banxa.com</a>',
-        'Compra $100 de Bitcoin (BTC) — el extra cubre la comisión de Banxa',
-        'Copia la dirección que verás en tu link y pégala como destino',
-        'Listo. Tu PRIME se activa automático cuando llega el pago.',
+        'Abre el link y verás tu Billetera PNPtv',
+        'Recarga con tarjeta, Apple Pay o Google Pay ($100)',
+        'Toca "Pagar" — un solo toque',
+        'Listo. Tu Lifetime PRIME se activa al instante.',
       ]
     : [
-        'Open <a href="https://checkout.banxa.com" style="color:#5ED1C4;">checkout.banxa.com</a>',
-        "Buy $100 of Bitcoin (BTC) — the extra covers Banxa's fee",
-        'Copy the wallet address shown on your link and paste it as the destination',
-        'Done. Your PRIME activates automatically when the payment lands.',
+        'Open the link — your PNPtv Wallet is right there',
+        'Fund with card, Apple Pay or Google Pay ($100)',
+        'Tap "Pay" — one single tap',
+        'Done. Your Lifetime PRIME activates instantly.',
       ];
   const signOff = es ? 'Si te trabas, escríbenos.' : 'If you get stuck, just reply.';
   const footer  = es
@@ -218,38 +202,28 @@ function buildEmailHtml(lang, invoiceUrl) {
 
 // ── NowPayments ──────────────────────────────────────────────────────────────
 
-async function createNpInvoice(userId, customerEmail, { dryRun }) {
-  const orderId = `pnptv-nowp-life100-rescue-${userId}-${Date.now()}`;
-  if (dryRun) {
-    return { orderId, invoiceUrl: `https://nowpayments.io/payment/?iid=DRYRUN-${orderId.slice(-12)}`, nowpaymentsInvoiceId: null };
-  }
-  const resp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
-    price_amount: PRICE_USD,
-    price_currency: 'usd',
-    pay_currency: PAY_CURRENCY,
-    order_id: orderId,
-    order_description: 'PNPtv Lifetime Access — Santino rescue',
-    ipn_callback_url: `${WEBAPP_URL}/api/webhooks/nowpayments`,
-    ...(customerEmail ? { customer_email: customerEmail } : {}),
-  }, {
-    headers: { 'x-api-key': NOWPAYMENTS_KEY, 'Content-Type': 'application/json' },
-    timeout: 15000,
-  });
-  const invoiceId = resp.data.id;
-  if (!invoiceId) throw new Error('NowPayments: no invoice id in response');
+async function createNpInvoice(userId, _customerEmail, { dryRun: _dryRun }) {
+  // NowPayments retired 2026-08-09. Rescue now deep-links users into the
+  // wallet-based /subscribe page. No per-user invoice is created — the wallet
+  // checkout owns pricing, entitlement grant, and confirmation.
+  const orderId = `pnptv-wallet-life100-rescue-${userId}-${Date.now()}`;
   return {
     orderId,
-    invoiceUrl: `https://nowpayments.io/payment/?iid=${invoiceId}`,
-    nowpaymentsInvoiceId: String(invoiceId),
+    invoiceUrl: `${WEBAPP_URL}/subscribe?plan=lifetime80&src=rescue`,
+    nowpaymentsInvoiceId: null,
   };
 }
 
-async function insertOrderRow({ userId, orderId, invoiceUrl, nowpaymentsInvoiceId, customerEmail, sourceTag, dryRun }) {
+async function insertOrderRow({ userId, orderId, invoiceUrl, customerEmail, sourceTag, dryRun }) {
   if (dryRun) return;
+  // Kept as a rescue-attempt breadcrumb so the 30-day cooldown query still
+  // matches. Provider is 'wallet_deep_link' + status 'sent' so the NowPayments
+  // reconciler never picks it up. Actual purchase creates its own
+  // checkout_intents row when the user completes wallet checkout.
   await query(
     `INSERT INTO dash_subscription_orders
        (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+     VALUES ($1, $2, $3, $4, $5, 'sent', $6)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [
       userId,
@@ -258,12 +232,10 @@ async function insertOrderRow({ userId, orderId, invoiceUrl, nowpaymentsInvoiceI
       PRICE_USD,
       orderId,
       JSON.stringify({
-        provider: 'nowpayments',
+        provider: 'wallet_deep_link',
         flow: 'lifetime100',
         source: sourceTag,
         invoiceUrl,
-        nowpaymentsInvoiceId,
-        payCurrency: PAY_CURRENCY,
       }),
     ]
   );

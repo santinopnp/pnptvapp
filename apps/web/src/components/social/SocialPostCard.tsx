@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const PRIME_PLANS = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
@@ -14,7 +15,7 @@ import FreeTierOverlay from "@/components/FreeTierOverlay";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
-import { useInlineNpCheckout } from "@/hooks/useNowPayments";
+// NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 import {
@@ -456,10 +457,19 @@ export default function SocialPostCard({
     setCreatorUpsellDismissed(true);
   };
 
-  // Inline NowPayments checkout — used by PRIME CTAs only (Santino/Lex/direct-PRIME).
-  // Opens NP popup directly; if the viewer has never seen the crypto guide,
-  // we show it as a modal first.
-  const inlineCheckout = useInlineNpCheckout();
+  // PRIME CTAs deep-link into /subscribe (wallet flow) — no popup, no NP.
+  const navigate = useNavigate();
+  const inlineCheckout = {
+    launching: false,
+    error: null as string | null,
+    showGuide: false,
+    start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
+      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+    },
+    dismissGuide: () => {},
+    confirmGuideAndStart: () => {},
+    skipGuideAndStart: () => {},
+  };
 
   // Creator-subscription CTAs reveal the canonical CreatorSubscribeWizard
   // inline — same widget the creator-profile "Subscribe" button opens. This

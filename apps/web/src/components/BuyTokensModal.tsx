@@ -1,32 +1,17 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
-import { QRCodeSVG } from "qrcode.react";
-import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
 import {
-  getWalletBalance,
   getTokenPackages,
-  buyTokens,
-  buyTokensWithBtc,
-  buyTokensWithNowPayments,
-  getNowPaymentsOrderStatus,
-  getBtcAvailable,
-  getBtcSubscriptionStatus,
-  getDashPaymentDetails,
-  getDashSubscriptionStatus,
-  getPresaleStatus,
-  assertPaymentUrl,
-  reserveTokenActivation,
-  NP_COINS,
-  NP_COINS_SUBSCRIBE,
   initiateWalletCheckout,
   verifyWalletCheckoutTx,
   getWalletUsdcBalance,
+  activateTokenCode,
   type TokenPackage,
-  type TokenActivationReserveResult,
 } from "@/lib/api";
 import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
+import { WalletCheckoutHero } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -36,13 +21,6 @@ const USDC_TRANSFER_ABI = [{
   inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
   outputs: [{ name: "", type: "bool" }],
 }];
-import {
-  TokenActivationForm,
-  loadPersistedActivation,
-  clearPersistedActivation,
-} from "@/components/TokenActivationForm";
-import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
-
 
 interface BuyTokensModalProps {
   isOpen: boolean;
@@ -51,484 +29,105 @@ interface BuyTokensModalProps {
   dpnsHandle?: string | null;
 }
 
-export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTokensModalProps) {
+export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHandle }: BuyTokensModalProps) {
   const t = useI18n();
-  const [buyMethod, setBuyMethod] = useState<'select' | 'dash' | 'btc' | 'np' | 'np_usdc' | 'meru'>('select');
-
-  // Meru card/bank payment state (new activation-code flow)
-  // packageKey values come from DashTokenService.TOKEN_PACKAGES (pkg_10 / pkg_25 / pkg_50 / pkg_100 / pkg_500)
-  const [meruProduct, setMeruProduct] = useState<string | null>(null);
-  const [meruEmail, setMeruEmail] = useState('');
-  const [meruReserving, setMeruReserving] = useState(false);
-  const [meruError, setMeruError] = useState<string | null>(null);
-  const [meruReservation, setMeruReservation] = useState<TokenActivationReserveResult | null>(null);
-  const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
-  const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
-  const [buyError, setBuyError] = useState<string | null>(null);
-  const [loadingPackages, setLoadingPackages] = useState(false);
-
-  // Dash in-app payment state
-  const [dashPayment, setDashPayment] = useState<{
-    invoiceId: string;
-    checkoutUrl: string;
-    destination?: string;
-    amount?: string;
-    invoiceAmount?: number;
-    loading: boolean;
-    error?: string;
-    createdAt: number;
-  } | null>(null);
-  const [dashCopied, setDashCopied] = useState(false);
-  const [dashSecondsLeft, setDashSecondsLeft] = useState(900);
-  const [dashPaymentSuccess, setDashPaymentSuccess] = useState(false);
-  const dashPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dashCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // BTC popup + poll state
-  const btcPopupRef = useRef<Window | null>(null);
-  const btcPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [btcPayment, setBtcPayment] = useState<{ invoiceId: string; checkoutUrl: string } | null>(null);
-  const [btcSuccess, setBtcSuccess] = useState(false);
-  const [btcPolling, setBtcPolling] = useState(false);
-  const [btcAvailable, setBtcAvailable] = useState(false);
-  const [dashAvailable, setDashAvailable] = useState(false);
-
-  // Presale + creator bonus state
-  const [presaleActive, setPresaleActive] = useState(false);
-  const [presaleEndsAt, setPresaleEndsAt] = useState<string | null>(null);
-  const [creatorBonusActive, setCreatorBonusActive] = useState(false);
-
-  // Wallet (Privy on Base) — USDC direct-pay state. Fetches on-chain balance
-  // when the modal opens so the "Pay from wallet" card only renders for
-  // packages the user can actually cover.
-  const { authenticated } = usePrivy();
+  const es = t.lang === "es";
+  const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+
+  const [packages, setPackages] = useState<TokenPackage[]>([]);
+  const [loadingPackages, setLoadingPackages] = useState(false);
+
   const [walletUsdc, setWalletUsdc] = useState<number | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
-  const [walletPaying, setWalletPaying] = useState<string | null>(null);
-  const [walletError, setWalletError] = useState<string | null>(null);
-  const [walletSuccess, setWalletSuccess] = useState<{ tokens: number; newBalance?: number } | null>(null);
+  const [payingPackageId, setPayingPackageId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<{ tokens: number } | null>(null);
 
-  // NowPayments (multi-coin + USDT BSC) balance-delta poll state
-  const npPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
-  const [npPickerOpen, setNpPickerOpen] = useState(false);
-  const [npPayment, setNpPayment] = useState<{
-    invoiceId: string;
-    checkoutUrl: string;
-    nowpaymentsInvoiceId?: string;
-    payCurrency?: string;
-    usdAmount?: number;
-    tokens?: number;
-  } | null>(null);
-  const [npSuccess, setNpSuccess] = useState(false);
-  const [npPolling, setNpPolling] = useState(false);
+  // Activation-code redemption (users who received a code out-of-band, e.g. via
+  // support, ops top-up, or a legacy card checkout). Not a purchase path we
+  // advertise — collapsed by default.
+  const [activationExpanded, setActivationExpanded] = useState(false);
+  const [activationCode, setActivationCode] = useState("");
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [activationSuccess, setActivationSuccess] = useState<number | null>(null);
 
-  useEffect(() => {
-    getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
-    getPresaleStatus().then((r) => {
-      if (r.presale?.active) {
-        setPresaleActive(true);
-        setPresaleEndsAt(r.presale.endsAt);
-      }
-      if (r.creatorBonus?.active) {
-        setCreatorBonusActive(true);
-      }
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      setLoadingPackages(true);
-      getTokenPackages()
-        .then((data) => setTokenPackages(data.packages || []))
-        .catch(() => setBuyError("Failed to load token packages."))
-        .finally(() => setLoadingPackages(false));
-      // Fetch on-chain USDC balance so the wallet-pay card renders correctly.
-      setWalletLoading(true);
-      getWalletUsdcBalance()
-        .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
-        .catch(() => setWalletUsdc(null))
-        .finally(() => setWalletLoading(false));
-    } else {
-      setWalletUsdc(null);
-      setWalletPaying(null);
-      setWalletError(null);
-      setWalletSuccess(null);
-      // Reset state when closing
-      setBuyMethod('select');
-      setBuyError(null);
-      setBuyingPackage(null);
-      setDashPayment(null);
-      setDashCopied(false);
-      setDashSecondsLeft(900);
-      setDashPaymentSuccess(false);
-      if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-      if (dashCountdownRef.current) { clearInterval(dashCountdownRef.current); dashCountdownRef.current = null; }
-      setBtcPayment(null);
-      setBtcSuccess(false);
-      setBtcPolling(false);
-      if (btcPollRef.current) { clearInterval(btcPollRef.current); btcPollRef.current = null; }
-      btcPopupRef.current?.close();
-      btcPopupRef.current = null;
-      setNpPayment(null);
-      setNpSuccess(false);
-      setNpPolling(false);
-      if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-      setMeruProduct(null);
-      setMeruEmail('');
-      setMeruReserving(false);
-      setMeruError(null);
-      setMeruReservation(null);
-    }
-  }, [isOpen]);
-
-  // When modal opens, check localStorage for a pending activation from a previous session
+  // Load packages on open
   useEffect(() => {
     if (!isOpen) return;
-    const pending = loadPersistedActivation();
-    if (pending) {
-      setBuyMethod('meru');
-      setMeruReservation(pending);
-    }
+    setLoadingPackages(true);
+    getTokenPackages()
+      .then((res) => {
+        if (res.success && Array.isArray(res.packages)) setPackages(res.packages);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingPackages(false));
   }, [isOpen]);
 
-  // Countdown timer for Dash invoice (15-minute expiry)
+  // Load USDC balance on open + when wallet changes
   useEffect(() => {
-    if (!dashPayment) {
-      if (dashCountdownRef.current) {
-        clearInterval(dashCountdownRef.current);
-        dashCountdownRef.current = null;
-      }
-      return;
-    }
-    const tick = () => {
-      const elapsed = Math.floor((Date.now() - dashPayment.createdAt) / 1000);
-      const remaining = Math.max(0, 900 - elapsed);
-      setDashSecondsLeft(remaining);
-      if (remaining === 0) {
-        if (dashCountdownRef.current) {
-          clearInterval(dashCountdownRef.current);
-          dashCountdownRef.current = null;
-        }
-        if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-      }
-    };
-    tick();
-    dashCountdownRef.current = setInterval(tick, 1000);
-    return () => {
-      if (dashCountdownRef.current) {
-        clearInterval(dashCountdownRef.current);
-        dashCountdownRef.current = null;
-      }
-    };
-  }, [dashPayment]);
+    if (!isOpen || !authenticated || !embeddedWallet) { setWalletUsdc(null); return; }
+    setWalletLoading(true);
+    getWalletUsdcBalance()
+      .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
+      .catch(() => setWalletUsdc(null))
+      .finally(() => setWalletLoading(false));
+  }, [isOpen, authenticated, embeddedWallet?.address]);
 
-  const handleBuyTokens = async (pkg: TokenPackage) => {
-    setBuyingPackage(pkg.id);
-    setBuyError(null);
-    try {
-      // Dash — show in-app payment widget instead of popup
-      const result = await buyTokens(pkg.id);
-      const safeUrl = assertPaymentUrl(result.checkoutUrl);
-      setDashPayment({ invoiceId: result.invoiceId, checkoutUrl: safeUrl, loading: true, createdAt: Date.now() });
-      setDashSecondsLeft(900);
-      setBuyingPackage(null);
+  if (!isOpen) return null;
 
-      // Fetch payment details for in-app widget
-      getDashPaymentDetails(result.invoiceId)
-        .then((details) => {
-          if (details.success) {
-            setDashPayment((prev) => prev ? {
-              ...prev,
-              destination: details.destination,
-              amount: details.amount,
-              invoiceAmount: details.invoiceAmount ?? undefined,
-              loading: false,
-            } : prev);
-          } else {
-            setDashPayment((prev) => prev ? { ...prev, loading: false, error: "Could not load payment details" } : prev);
-          }
-        })
-        .catch(() => {
-          setDashPayment((prev) => prev ? { ...prev, loading: false, error: "Could not load payment details" } : prev);
-        });
-
-      // Poll for payment confirmation using the invoice status, not wallet balance.
-      // Wallet balance is pre-existing and would produce false positives for users who
-      // already have tokens.
-      const pollInvoiceId = result.invoiceId;
-      dashPollRef.current = setInterval(async () => {
-        try {
-          const statusRes = await getDashSubscriptionStatus(pollInvoiceId);
-          if (statusRes.status === 'completed') {
-            if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-            setDashPaymentSuccess(true);
-            // Fetch the updated balance to pass to onSuccess.
-            const balRes = await getWalletBalance().catch(() => ({ balance: 0 }));
-            setTimeout(() => {
-              if (onSuccess) onSuccess(balRes.balance);
-              onClose();
-            }, 1500);
-          } else if (statusRes.status === 'expired' || statusRes.status === 'invalid') {
-            if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-              setDashPayment((prev) => prev ? { ...prev, error: 'Invoice expired. Please try again.' } : prev);
-            }
-          } catch { /* network hiccup — keep polling */ }
-        }, 5000);
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      if (msg.includes("not available") || msg.includes("not configured")) {
-        setBuyError(t.live.errorDashUnavailable);
-      } else if (msg.includes("temporarily unavailable")) {
-        setBuyError(t.live.errorPaymentServerDown);
-      } else {
-        setBuyError(msg || t.live.errorFailedToOpenCheckout);
-      }
-    } finally {
-      setBuyingPackage(null);
-    }
+  const refreshBalance = () => {
+    if (!authenticated || !embeddedWallet) return;
+    getWalletUsdcBalance().then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null)).catch(() => {});
   };
 
-  const handleBuyTokensBtc = async (pkg: TokenPackage) => {
-    setBuyingPackage(pkg.id);
-    setBuyError(null);
-    try {
-      const result = await buyTokensWithBtc(pkg.id);
-      if (!result.success || !result.invoiceId) {
-        setBuyError(result.error || "Failed to create Bitcoin invoice. Please try again.");
-        setBuyingPackage(null);
-        return;
-      }
-      const checkoutUrl = result.checkoutUrl;
-      setBtcPayment({ invoiceId: result.invoiceId, checkoutUrl });
-      setBtcPolling(true);
-      setBtcSuccess(false);
-      const pw = 560, ph = 780;
-      const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-      const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-      btcPopupRef.current = window.open(
-        checkoutUrl,
-        'btcpay_btc_checkout',
-        `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
-      );
-      const pollInvoiceId = result.invoiceId;
-      if (btcPollRef.current) clearInterval(btcPollRef.current);
-      btcPollRef.current = setInterval(async () => {
-        try {
-          const statusRes = await getBtcSubscriptionStatus(pollInvoiceId);
-          if (statusRes.completed) {
-            if (btcPollRef.current) { clearInterval(btcPollRef.current); btcPollRef.current = null; }
-            btcPopupRef.current?.close();
-            btcPopupRef.current = null;
-            setBtcPolling(false);
-            setBtcSuccess(true);
-            const balRes = await getWalletBalance().catch(() => ({ balance: 0 }));
-            setTimeout(() => {
-              if (onSuccess) onSuccess(balRes.balance);
-              onClose();
-            }, 1500);
-          } else if (statusRes.failed) {
-            if (btcPollRef.current) { clearInterval(btcPollRef.current); btcPollRef.current = null; }
-            setBtcPolling(false);
-            setBtcPayment(null);
-            setBuyError('Invoice expired or failed. Please try again.');
-          }
-        } catch { /* network hiccup — keep polling */ }
-      }, 10000);
-    } catch (err: unknown) {
-      setBuyError(err instanceof Error ? err.message : "Failed to create Bitcoin invoice.");
-    } finally {
-      setBuyingPackage(null);
-    }
-  };
-
-  const handleBuyTokensNowPayments = async (pkg: TokenPackage, payCurrency?: string) => {
-    setBuyingPackage(pkg.id);
-    setBuyError(null);
-    try {
-      const result = await buyTokensWithNowPayments(pkg.id, payCurrency);
-      if (!result.success || !result.invoiceId || !result.checkoutUrl) {
-        setBuyError(result.error || "Failed to create crypto invoice. Please try again.");
-        setBuyingPackage(null);
-        return;
-      }
-      const safeUrl = assertPaymentUrl(result.checkoutUrl);
-      setNpPayment({
-        invoiceId: result.invoiceId,
-        checkoutUrl: safeUrl,
-        nowpaymentsInvoiceId: result.nowpaymentsInvoiceId || undefined,
-        payCurrency: payCurrency || undefined,
-        usdAmount: pkg.usd,
-        tokens: pkg.tokens,
-      });
-      setNpPolling(true);
-      setNpSuccess(false);
-
-      // Poll the DSO status by order id every 6s. Order-based signal avoids
-      // the false-positive where an unrelated credit (tip, admin grant, refund)
-      // fires the success handler mid-purchase. 30-min cap.
-      const pollOrderId = result.invoiceId;
-      if (npPollRef.current) clearInterval(npPollRef.current);
-      const startedAt = Date.now();
-      const maxDurationMs = 30 * 60 * 1000;
-      npPollRef.current = setInterval(async () => {
-        if (Date.now() - startedAt >= maxDurationMs) {
-          if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-          setNpPolling(false);
-          return;
-        }
-        try {
-          const st = await getNowPaymentsOrderStatus(pollOrderId);
-          if (st.completed) {
-            if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-            setNpPolling(false);
-            setNpSuccess(true);
-            // Refresh balance once for the success callback + parent handler.
-            const bal = await getWalletBalance().catch(() => ({ balance: 0 }));
-            setTimeout(() => {
-              if (onSuccess) onSuccess(bal.balance);
-              onClose();
-            }, 1500);
-          } else if (st.failed) {
-            if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-            setNpPolling(false);
-            setBuyError(t.lang === "es"
-              ? "El pago no se pudo confirmar. Intenta con otro método."
-              : "Payment could not be confirmed. Try another method.");
-          }
-        } catch { /* keep polling */ }
-      }, 6000);
-    } catch (err: unknown) {
-      setBuyError(err instanceof Error ? err.message : "Failed to create crypto invoice.");
-    } finally {
-      setBuyingPackage(null);
-    }
-  };
-
-  // ── Wallet pay (USDC on Base via Privy embedded wallet) ──────────────────
-  // Flow: initiate intent → sign USDC.transfer → verify on-chain → credit Ru$h.
-  // Gas is sponsored via Alchemy Gas Manager (policy ID surfaced by the intent),
-  // so users never need ETH for gas.
   const handleWalletPay = async (pkg: TokenPackage) => {
-    setWalletError(null);
-    setWalletPaying(pkg.id);
+    if (!embeddedWallet) return;
+    const price = Number(pkg.usd);
+    setError(null); setPayingPackageId(pkg.id);
     try {
-      if (!embeddedWallet) throw new Error("wallet_not_ready");
-      const priceUsd = Number(pkg.usd);
-      if (!Number.isFinite(priceUsd) || priceUsd <= 0) throw new Error("invalid_price");
-
       const intent = await initiateWalletCheckout({
         rail: "usdc",
         surface: "rush",
-        // Server resolves canonical price + tokens from packageId — client
-        // supplies only the packageId + optional metadata.
-        entitlementSpec: { packageId: pkg.id },
-        metadata: { source: "buy_tokens_modal" },
+        amountUsd: price,
+        entitlementSpec: { tokens: Number(pkg.tokens), packageId: pkg.id },
+        metadata: { source: "buy_tokens_modal", packageId: pkg.id },
       });
       if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
 
       const provider = await embeddedWallet.getEthereumProvider();
       const walletClient = createWalletClient({
         account: embeddedWallet.address as `0x${string}`,
-        chain: base,
-        transport: custom(provider),
+        chain: base, transport: custom(provider),
       });
-
       const data = encodeFunctionData({
-        abi: USDC_TRANSFER_ABI,
-        functionName: "transfer",
+        abi: USDC_TRANSFER_ABI, functionName: "transfer",
         args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
       });
-
       const txHash = await walletClient.sendTransaction({
-        to: USDC_BASE_ADDRESS as `0x${string}`,
-        data,
-        value: 0n,
+        to: USDC_BASE_ADDRESS as `0x${string}`, data, value: 0n,
       });
-
-      // Verify on-chain (backend fetches receipt, matches log, credits Ru$h).
       const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
       if (!verified.ok) throw new Error(verified.reason || "verify_failed");
-
-      const bal = await getWalletBalance().catch(() => ({ balance: 0 }));
-      setWalletSuccess({ tokens: Number(pkg.tokens), newBalance: bal.balance });
-      setWalletUsdc((prev) => (prev == null ? prev : Math.max(0, prev - priceUsd)));
-      setTimeout(() => {
-        if (onSuccess) onSuccess(bal.balance);
-        onClose();
-      }, 1500);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "wallet_pay_failed";
-      // Users cancelling the tx in Privy get a friendlier message.
-      const friendly =
-        /User rejected|user denied|cancel/i.test(msg)
-          ? (t.lang === "es" ? "Cancelaste la transacción." : "You cancelled the transaction.")
-          : msg;
-      setWalletError(friendly);
-    } finally {
-      setWalletPaying(null);
-    }
-  };
-
-  // ── Fund wallet (Privy → MoonPay / Meld / Stripe / Coinbase) ─────────────
-  // Uses useAddFunds (Privy v3 unified funding), which surfaces ALL enabled
-  // onramps in the dashboard — Stripe included. The older useFundWallet API
-  // explicitly excluded Stripe. destination uses CAIP-2 + USDC contract so
-  // funds land as USDC on Base directly (no ETH swap step, no wrong-chain
-  // mistakes).
-  const handleFundWallet = async () => {
-    if (!embeddedWallet) {
-      setWalletError(t.lang === "es"
-        ? "Conecta o crea tu billetera primero."
-        : "Connect or create your wallet first.");
-      return;
-    }
-    setWalletError(null);
-    try {
-      await addFunds({
-        destination: {
-          address: embeddedWallet.address,
-          chain: BASE_CAIP2,
-          asset: USDC_BASE_ADDRESS,
-        },
-        fiat: { defaultAmount: '20' },
-      });
-      // Refresh USDC balance after user closes the funding modal (best-effort;
-      // the actual credit may take 1–2 min for MoonPay/Meld/Stripe to settle).
-      getWalletUsdcBalance()
-        .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
-        .catch(() => {});
+      const credited = verified.rushCredited ?? Number(pkg.tokens);
+      setSuccess({ tokens: credited });
+      refreshBalance();
+      if (onSuccess) onSuccess(credited);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // User cancelled → no error UI needed
-      if (/cancel|closed|reject/i.test(msg)) return;
-      console.warn("[addFunds] failed", err);
-      setWalletError(t.lang === "es"
-        ? `No se pudo abrir el proveedor de pago. ${msg}`
-        : `Could not open the payment provider. ${msg}`);
-    }
+      setError(/User rejected|user denied|cancel/i.test(msg)
+        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        : msg);
+    } finally { setPayingPackageId(null); }
   };
 
-  // ── Fund wallet FOR a specific Ru$h package ───────────────────────────
-  // Opens Privy addFunds with the exact package price pre-filled + Ru$h
-  // amount noted in the metadata. After the user finishes paying with
-  // card/bank, USDC lands in their wallet and we refetch the balance so
-  // they can re-tap the same package to complete the purchase in one
-  // signed transaction. This keeps the two-step model transparent while
-  // letting a single tap kick off the whole flow.
   const handleFundForPackage = async (pkg: TokenPackage) => {
-    if (!embeddedWallet) {
-      setWalletError(t.lang === "es"
-        ? "Conecta o crea tu billetera primero."
-        : "Connect or create your wallet first.");
-      return;
-    }
-    setWalletError(null);
+    if (!embeddedWallet) return;
     const price = Number(pkg.usd);
+    setError(null);
     try {
       await addFunds({
         destination: {
@@ -536,858 +135,245 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle }: BuyTo
           chain: BASE_CAIP2,
           asset: USDC_BASE_ADDRESS,
         },
-        fiat: { defaultAmount: price.toFixed(2) },
+        fiat: { defaultAmount: price.toFixed(0) },
       });
-      // Refresh USDC balance so the same package button flips from "pay by
-      // card" (pink) to "pay from wallet" (emerald) once funds settle.
-      const r = await getWalletUsdcBalance().catch(() => null);
-      if (r && r.hasWallet) setWalletUsdc(r.usdc);
+      refreshBalance();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
-      console.warn("[addFunds:pkg] failed", err);
-      setWalletError(t.lang === "es"
-        ? `No se pudo abrir el pago para $${price}. ${msg}`
-        : `Could not open payment for $${price}. ${msg}`);
+      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
     }
   };
 
-  if (!isOpen) return null;
+  const handleRedeemCode = async () => {
+    const trimmedCode = activationCode.trim();
+    if (!trimmedCode) {
+      setActivationError(es ? "Ingresa tu código de activación." : "Enter your activation code.");
+      return;
+    }
+    setActivationError(null); setActivationLoading(true);
+    try {
+      const res = await activateTokenCode({ activationCode: trimmedCode });
+      if (!res.ok) {
+        setActivationError(es ? "Código no válido o ya usado." : "Invalid or already-used code.");
+      } else {
+        setActivationSuccess(res.tokensCredited);
+        if (onSuccess) onSuccess(res.newBalance);
+      }
+    } catch (err) {
+      setActivationError(err instanceof Error ? err.message : (es ? "Error al canjear el código." : "Failed to redeem code."));
+    } finally {
+      setActivationLoading(false);
+    }
+  };
 
-  const es = t.lang === "es";
-  const headerTitle = buyMethod === 'select'
-    ? (es ? 'Comprar Ru$h ⚡💲' : 'Buy Ru$h ⚡💲')
-    : (es ? 'Elige tu paquete' : 'Choose your package');
+  const eligiblePackages = packages.filter((p) => Number(p.usd) >= 30);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
+      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="buy-tokens-title"
-      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
-      tabIndex={-1}
+      aria-label={es ? "Comprar Ru$h" : "Buy Ru$h"}
+      onClick={onClose}
     >
+      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
       <div
-        className="w-full max-w-lg bg-pnp-background border border-pnp-border rounded-t-2xl p-6"
+        className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[92dvh] flex flex-col"
+        style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(16,185,129,0.25)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal header — shared between both steps */}
-        <div className="flex items-center justify-between mb-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/5 flex-shrink-0">
           <div className="flex items-center gap-2">
-            {buyMethod !== 'select' && !btcPayment && !npPayment && (
-              <button
-                onClick={() => { setBuyMethod('select'); setBuyError(null); }}
-                className="flex items-center justify-center min-w-[44px] min-h-[44px] w-11 h-11 rounded-full bg-pnp-surface hover:bg-pnp-surfaceHover transition-colors"
-                aria-label={es ? 'Volver a métodos de pago' : 'Back to payment method selection'}
-              >
-                <svg className="w-4 h-4 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-            )}
-            <h2 id="buy-tokens-title" className="text-base font-bold text-pnp-textPrimary">
-              {headerTitle}
-            </h2>
+            <span className="text-xl">💎</span>
+            <p className="text-base font-bold text-white">{es ? "Comprar Ru$h" : "Buy Ru$h"}</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="flex items-center justify-center min-w-[44px] min-h-[44px] w-11 h-11 rounded-full text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface transition-colors"
-            aria-label={es ? 'Cerrar' : 'Close'}
+            aria-label={es ? "Cerrar" : "Close"}
+            className="w-8 h-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-lg"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            ×
           </button>
         </div>
 
-        {/* Step 1: Payment method selector */}
-        {buyMethod === 'select' && (
-          <div className="space-y-2">
-            {/* Presale banner — discount only applies to NowPayments methods */}
-            {presaleActive && (
-              <div
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-1 text-xs font-semibold animate-pulse"
-                style={{ background: "linear-gradient(90deg, rgba(212,0,122,0.18), rgba(230,145,56,0.18))", border: "1px solid rgba(212,0,122,0.35)", color: "#f9a8d4" }}
-              >
-                <span style={{ fontSize: 15 }}>🔥</span>
-                <span>
-                  {t.lang === "es"
-                    ? "Presale −10% en cripto (multimoneda o USDT-BSC)"
-                    : "Presale −10% on crypto (multi-coin or USDT-BSC)"}
-                </span>
+        {/* Body — scrollable */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Hero — one-off marketing pitch shared with every other checkout surface. */}
+          <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
+
+          {/* Wallet state summary */}
+          {authenticated && embeddedWallet ? (
+            <div
+              className="rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] px-3 py-2 flex items-center gap-3"
+            >
+              <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
+                <span className="text-lg leading-none">💳</span>
               </div>
-            )}
-            {/* Creator weekend bonus banner (visible to all — awareness) */}
-            {creatorBonusActive && (
-              <div
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-1 text-xs font-semibold"
-                style={{ background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.35)", color: "#6ee7b7" }}
-              >
-                <span style={{ fontSize: 15 }}>🚀</span>
-                <span>Grand Launch Weekend — Creadores ganan +10% este fin de semana</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide">
+                  {es ? "Tu billetera" : "Your wallet"}
+                </p>
+                <p className="text-sm font-bold text-white tabular-nums">
+                  {walletLoading
+                    ? (es ? "Consultando…" : "Checking…")
+                    : walletUsdc == null
+                      ? (es ? "Sin saldo USDC" : "No USDC balance")
+                      : `${walletUsdc.toFixed(2)} USDC · Base`}
+                </p>
               </div>
-            )}
-            <p className="text-xs text-pnp-textSecondary mb-3">
-              Selecciona cómo quieres comprar Ru$h ⚡💲.
-            </p>
-
-            {/* ── Wallet pay (USDC on Base via Privy) — top of the list ─────
-                Only rendered when the user has a linked wallet. Split into two
-                UX affordances: direct pay when there's USDC balance, and
-                fund-with-card when there isn't (routes to MoonPay/Meld/Stripe
-                inside Privy). One-click package picker inline so the user
-                never has to leave this card. */}
-            {authenticated && embeddedWallet && (
-              <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] p-3 space-y-2.5 mb-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
-                    <span className="text-lg leading-none">💳</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-pnp-textPrimary">
-                      {t.lang === "es" ? "Pagar desde tu billetera" : "Pay from your wallet"}
-                    </p>
-                    <p className="text-[11px] text-pnp-textSecondary">
-                      {walletLoading
-                        ? (t.lang === "es" ? "Consultando saldo…" : "Checking balance…")
-                        : walletUsdc == null
-                          ? (t.lang === "es" ? "Sin saldo USDC detectado" : "No USDC balance detected")
-                          : `${walletUsdc.toFixed(2)} USDC · Base · gas gratis`}
-                    </p>
-                  </div>
-                </div>
-
-                {walletError && (
-                  <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
-                    {walletError}
-                  </div>
-                )}
-                {walletSuccess && (
-                  <div className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5">
-                    +{walletSuccess.tokens} Ru$h 💎 {t.lang === "es" ? "acreditados" : "credited"}
-                  </div>
-                )}
-
-                {/* Package picker — one-click-per-package. When wallet USDC
-                    is insufficient, click routes to Privy addFunds with the
-                    exact amount preselected so the user pays that specific
-                    Ru$h package via Stripe / MoonPay / Meld / Coinbase in
-                    a single card-payment step. */}
-                {tokenPackages.length > 0 && (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {tokenPackages.filter(pkg => Number(pkg.usd) >= 30).map((pkg) => {
-                      const price = Number(pkg.usd);
-                      const canAfford = walletUsdc != null && walletUsdc >= price;
-                      const isPaying = walletPaying === pkg.id;
-                      // Click behaviour:
-                      //   - enough USDC in wallet → sign USDC transfer, credit Ru$h instantly
-                      //   - not enough USDC     → open Privy addFunds for that exact $ amount,
-                      //                             card/bank pays, USDC lands in wallet, user
-                      //                             re-taps to complete (single-shot flow next
-                      //                             iteration).
-                      const onClick = () => canAfford
-                        ? handleWalletPay(pkg)
-                        : handleFundForPackage(pkg);
-                      const subLabel = isPaying
-                        ? (t.lang === "es" ? "Firmando…" : "Signing…")
-                        : canAfford
-                          ? `$${price.toFixed(2)} USDC`
-                          : (t.lang === "es" ? `$${price.toFixed(0)} · Tarjeta` : `$${price.toFixed(0)} · Card`);
-                      return (
-                        <button
-                          key={pkg.id}
-                          type="button"
-                          onClick={onClick}
-                          disabled={isPaying || walletSuccess !== null}
-                          className={`flex flex-col items-start gap-0.5 px-2.5 py-2.5 rounded-lg border text-left transition ${
-                            isPaying
-                              ? "border-white/10 bg-white/[0.03] opacity-50 cursor-not-allowed"
-                              : canAfford
-                                ? "border-emerald-400/40 bg-emerald-500/5 hover:bg-emerald-500/10 active:scale-[0.98]"
-                                : "border-pink-400/40 bg-pink-500/8 hover:bg-pink-500/15 active:scale-[0.98]"
-                          }`}
-                        >
-                          <span className="text-xs font-bold text-white leading-tight">
-                            {Number(pkg.tokens).toLocaleString()} Ru$h 💎
-                          </span>
-                          <span className={`text-[10px] leading-none ${canAfford ? "text-pnp-textSecondary" : "text-pink-300"}`}>
-                            {subLabel}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Crypto — NowPayments multi-coin with inline coin picker */}
-            <div className={`rounded-xl border transition-colors ${npPickerOpen ? "border-green-500/40 bg-green-500/5" : "border-pnp-border bg-pnp-surface"}`}>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-center">
+              <p className="text-sm font-semibold text-white mb-2">
+                {es ? "Crea tu billetera para continuar" : "Create your wallet to continue"}
+              </p>
+              <p className="text-[11px] text-white/60 mb-3 leading-snug">
+                {es
+                  ? "Una billetera integrada gratuita te permite comprar Ru$h con tarjeta y usarlo en toda la app."
+                  : "A free embedded wallet lets you buy Ru$h with your card and spend it anywhere on the app."}
+              </p>
               <button
-                onClick={() => setNpPickerOpen(!npPickerOpen)}
-                className="w-full flex items-center gap-4 p-4 active:scale-[0.99] transition-all text-left min-h-[64px]"
+                type="button"
+                onClick={() => login()}
+                className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
+                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
               >
-                <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(34,197,94,0.15)" }}>
-                  <span className="text-lg leading-none">🪙</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-pnp-textPrimary">Crypto</p>
-                  <p className="text-xs text-pnp-textSecondary truncate">
-                    {npPickerOpen && npCoinPick
-                      ? `${es ? "Seleccionado" : "Selected"}: ${NP_COINS_SUBSCRIBE.find(c => c.code === npCoinPick)?.label || npCoinPick.toUpperCase()}`
-                      : "USDT · USDC · ETH · Trust · MetaMask"}
-                  </p>
-                </div>
-                <svg className={`w-4 h-4 flex-shrink-0 text-pnp-textSecondary transition-transform ${npPickerOpen ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
+                {es ? "Crear billetera" : "Create wallet"}
               </button>
-              {npPickerOpen && (
-                <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {/* Coin grid — matches the Prime/Subscribe checkout token pattern
-                      (2-col cards, coin-color icon, label + network, ★ for recommended). */}
-                  <div className="flex items-center justify-between gap-2 mb-2.5">
-                    <p className="text-[11px] font-semibold text-pnp-textSecondary">
-                      {es ? "Elige tu token:" : "Choose your token:"}
-                    </p>
-                    <a
-                      href="/crypto-guide"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-                    >
-                      {es ? "¿Qué red? →" : "Which network? →"}
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 mb-2">
-                    {NP_COINS_SUBSCRIBE.map((coin) => {
-                      const selected = npCoinPick === coin.code;
-                      return (
-                        <button
-                          key={coin.code}
-                          type="button"
-                          onClick={() => setNpCoinPick(coin.code)}
-                          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-colors text-left ${selected ? "border-green-400/60 bg-green-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"}`}
-                        >
-                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold text-white">{coin.label}</span>
-                              {"recommended" in coin && coin.recommended && (
-                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                              )}
-                            </div>
-                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-2 mb-3 text-center flex items-center justify-center gap-1.5 flex-wrap">
-                    <span className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                      {es ? "Abre en:" : "Open in:"}
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
-                      <MetaMaskIcon size={14} /> MetaMask
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
-                      <TrustWalletIcon size={14} /> Trust Wallet
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => { setNpPickerOpen(false); setBuyMethod('np'); }}
-                    className="w-full py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98]"
-                    style={{ background: "linear-gradient(90deg, #26a17b, #00c896)" }}
-                  >
-                    {es ? "Continuar con " : "Continue with "}
-                    {NP_COINS_SUBSCRIBE.find(c => c.code === npCoinPick)?.label || (NP_COINS.find(c => c.code === npCoinPick)?.label ?? npCoinPick.toUpperCase())} →
-                  </button>
+            </div>
+          )}
+
+          {/* Error / success */}
+          {error && (
+            <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2">
+              +{success.tokens.toLocaleString()} Ru$h 💎 {es ? "acreditados" : "credited"}
+            </div>
+          )}
+
+          {/* Package grid — pick a Ru$h pack. When wallet has enough USDC we
+              sign a direct transfer. Otherwise we open Privy's fund modal with
+              the exact amount preselected so the user pays with card / Apple /
+              Google Pay in a single step. */}
+          {authenticated && embeddedWallet && (
+            <div>
+              <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide mb-2">
+                {es ? "Elige un paquete" : "Choose a package"}
+              </p>
+              {loadingPackages ? (
+                <p className="text-xs text-white/40 text-center py-6">{es ? "Cargando paquetes…" : "Loading packages…"}</p>
+              ) : eligiblePackages.length === 0 ? (
+                <p className="text-xs text-white/40 text-center py-6">
+                  {es ? "No hay paquetes disponibles." : "No packages available."}
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {eligiblePackages.map((pkg) => {
+                    const price = Number(pkg.usd);
+                    const canAfford = walletUsdc != null && walletUsdc >= price;
+                    const isPaying = payingPackageId === pkg.id;
+                    const disabled = isPaying || success !== null;
+                    const onClick = () => canAfford ? handleWalletPay(pkg) : handleFundForPackage(pkg);
+                    const subLabel = isPaying
+                      ? (es ? "Firmando…" : "Signing…")
+                      : canAfford
+                        ? `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`
+                        : `$${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`;
+                    return (
+                      <button
+                        key={pkg.id}
+                        type="button"
+                        disabled={disabled}
+                        onClick={onClick}
+                        className={`flex flex-col items-start gap-1 px-3 py-3 rounded-lg border text-left transition ${
+                          disabled
+                            ? "border-white/10 bg-white/[0.03] opacity-50 cursor-not-allowed"
+                            : canAfford
+                              ? "border-emerald-400/40 bg-emerald-500/8 hover:bg-emerald-500/15 active:scale-[0.98]"
+                              : "border-pink-400/40 bg-pink-500/8 hover:bg-pink-500/15 active:scale-[0.98]"
+                        }`}
+                      >
+                        <span className="text-sm font-bold text-white leading-tight">
+                          {Number(pkg.tokens).toLocaleString()} Ru$h 💎
+                        </span>
+                        <span className={`text-[10px] leading-none ${canAfford ? "text-white/70" : "text-pink-300"}`}>
+                          {subLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-            </div>
-
-            {/* USDT BSC */}
-            <button
-              onClick={() => setBuyMethod('np_usdc')}
-              title="Tether (USDT) on BNB Smart Chain — works with MetaMask, Trust Wallet, Binance"
-              className="w-full flex items-center gap-4 p-4 rounded-xl border border-pnp-border bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-emerald-400/40 active:scale-[0.99] transition-all text-left min-h-[64px]"
-            >
-              <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(38,161,123,0.15)" }}>
-                <span className="text-lg leading-none font-bold" style={{ color: "#26a17b" }}>₮</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-pnp-textPrimary">USDT (BNB Chain)</p>
-                <p className="text-xs text-pnp-textSecondary truncate">Tether on BSC — MetaMask, Trust Wallet, Binance</p>
-              </div>
-              <svg className="w-4 h-4 flex-shrink-0 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-
-            {/* Dash crypto — only shown when dashd is synced and DASH-CHAIN is operational */}
-            {dashAvailable && <button
-              onClick={() => setBuyMethod('dash')}
-              className="w-full flex items-center gap-4 p-4 rounded-xl border border-pnp-border bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-sky-400/40 active:scale-[0.99] transition-all text-left min-h-[64px]"
-            >
-              <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(0,140,231,0.15)" }}>
-                <svg className="w-5 h-5" style={{ color: "#008CE7" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-pnp-textPrimary">Buy with More Privacy</p>
-                <p className="text-xs text-pnp-textSecondary truncate">Dash cryptocurrency</p>
-              </div>
-              <svg className="w-4 h-4 flex-shrink-0 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>}
-
-            {/* Bitcoin / Lightning — only shown when BTCPay has BTC configured */}
-            {/* Card / PSE via Meru (Colombia bank transfers + cards) */}
-            <button
-              onClick={() => setBuyMethod('meru')}
-              className="w-full flex items-center gap-4 p-4 rounded-xl border border-pink-500/30 bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-pink-400/50 active:scale-[0.99] transition-all text-left min-h-[64px]"
-            >
-              <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(212,0,122,0.15)" }}>
-                <svg className="w-5 h-5" style={{ color: "#D4007A" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-sm font-semibold text-pnp-textPrimary">Tarjeta / PSE</p>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}>NUEVO</span>
-                </div>
-                <p className="text-xs text-pnp-textSecondary truncate">Paga con tarjeta o PSE vía Meru</p>
-              </div>
-              <svg className="w-4 h-4 flex-shrink-0 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-
-            {btcAvailable && <button
-              onClick={() => setBuyMethod('btc')}
-              className="w-full flex items-center gap-4 p-4 rounded-xl border border-pnp-border bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-orange-400/40 active:scale-[0.99] transition-all text-left min-h-[64px]"
-            >
-              <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(247,147,26,0.15)" }}>
-                <span className="text-lg leading-none" style={{ color: "#F7931A" }}>₿</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-pnp-textPrimary">Bitcoin</p>
-                <p className="text-xs text-pnp-textSecondary truncate">BTC on-chain or Lightning Network</p>
-              </div>
-              <svg className="w-4 h-4 flex-shrink-0 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>}
-          </div>
-        )}
-
-        {/* Dash in-app payment widget */}
-        {dashPayment && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 rounded-full bg-[#008DE4] animate-pulse" />
-              <span className="text-sm font-medium text-pnp-textPrimary">Waiting for Dash payment...</span>
-            </div>
-
-            {dashPaymentSuccess ? (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-base font-semibold text-green-400">¡Ru$h agregado!</p>
-                <p className="text-xs text-pnp-textSecondary">Tu Ru$h ⚡💲 ya está disponible.</p>
-              </div>
-            ) : dashSecondsLeft === 0 ? (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <p className="text-sm font-medium text-red-400">Invoice expired</p>
-                <p className="text-xs text-pnp-textSecondary text-center">The 15-minute payment window has closed.</p>
-                <button
-                  onClick={() => { setDashPayment(null); setDashCopied(false); setDashSecondsLeft(900); }}
-                  className="mt-1 px-4 py-2 rounded-lg bg-[#008DE4] text-white text-xs font-semibold hover:bg-[#0070b8] transition-colors"
-                >
-                  Try Again
-                </button>
-              </div>
-            ) : dashPayment.loading ? (
-              <div className="flex flex-col items-center py-6 gap-3">
-                <svg className="animate-spin h-6 w-6 text-[#008DE4]" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                <p className="text-xs text-pnp-textSecondary">Loading payment details...</p>
-              </div>
-            ) : dashPayment.destination && dashPayment.amount ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="bg-white p-3 rounded-xl">
-                  <QRCodeSVG
-                    value={`dash:${dashPayment.destination}?amount=${dashPayment.amount}`}
-                    size={160}
-                    level="M"
-                  />
-                </div>
-                <p className="text-[10px] text-pnp-textSecondary">Scan with your Dash wallet</p>
-
-                <div className="text-center">
-                  <p className="text-lg font-bold text-white">{dashPayment.amount} DASH</p>
-                  {dashPayment.invoiceAmount != null && (
-                    <p className="text-xs text-pnp-textSecondary">~${dashPayment.invoiceAmount.toFixed(2)} USD</p>
-                  )}
-                </div>
-
-                {/* Countdown timer */}
-                <p className={`text-xs font-mono tabular-nums ${
-                  dashSecondsLeft <= 60
-                    ? "text-red-400"
-                    : dashSecondsLeft <= 300
-                    ? "text-orange-400"
-                    : "text-pnp-textSecondary"
-                }`}>
-                  {String(Math.floor(dashSecondsLeft / 60)).padStart(2, "0")}:{String(dashSecondsLeft % 60).padStart(2, "0")} remaining
-                </p>
-
-                <div className="w-full">
-                  <div
-                    className="flex items-center gap-2 rounded-lg px-3 py-2"
-                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                  >
-                    <code className="flex-1 text-[10px] text-white/80 break-all font-mono">{dashPayment.destination}</code>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(dashPayment.destination!).catch(() => {});
-                        setDashCopied(true);
-                        setTimeout(() => setDashCopied(false), 2000);
-                      }}
-                      className="flex-shrink-0 text-xs font-semibold px-2 py-1 rounded transition-colors"
-                      style={{ color: dashCopied ? "#34C759" : "#008DE4" }}
-                    >
-                      {dashCopied ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                </div>
-
-                <p className="text-xs text-pnp-textSecondary text-center">
-                  Send the exact amount to the address above. This page updates automatically.
-                </p>
-
-                <a
-                  href={dashPayment.checkoutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs hover:underline"
-                  style={{ color: "#008DE4" }}
-                >
-                  Open in BTCPay
-                </a>
-              </div>
-            ) : (
-              <>
-                <p className="text-xs text-pnp-textSecondary mb-3">{dashPayment.error || "Could not load payment details."}</p>
-                <a
-                  href={dashPayment.checkoutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block w-full text-center py-2.5 rounded-xl bg-[#008DE4] text-white text-sm font-semibold hover:bg-[#0070b8] transition-colors"
-                >
-                  Open Dash Checkout
-                </a>
-              </>
-            )}
-
-            {!dashPaymentSuccess && dashSecondsLeft > 0 && (
-            <button
-              onClick={() => {
-                setDashPayment(null);
-                setDashCopied(false);
-                setDashSecondsLeft(900);
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-              }}
-              className="w-full text-xs text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors py-1"
-            >
-              Cancel
-            </button>
-            )}
-          </div>
-        )}
-
-        {/* BTC waiting panel */}
-        {btcPayment && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#F7931A" }} />
-              <span className="text-sm font-medium text-pnp-textPrimary">Waiting for Bitcoin payment...</span>
-            </div>
-
-            {btcSuccess ? (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-base font-semibold text-green-400">¡Ru$h agregado!</p>
-                <p className="text-xs text-pnp-textSecondary">Tu Ru$h ⚡💲 ya está disponible.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4 py-4">
-                <p className="text-sm text-pnp-textSecondary text-center">
-                  Complete your payment in the BTCPay checkout window. This page will update automatically.
-                </p>
-                {btcPolling && (
-                  <div className="flex items-center gap-2 text-xs text-pnp-textSecondary">
-                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <span>Checking payment status...</span>
-                  </div>
-                )}
-                <div className="flex gap-2 w-full">
-                  <a
-                    href={btcPayment.checkoutUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 text-center py-2.5 rounded-xl text-sm font-semibold transition-colors"
-                    style={{ background: "rgba(247,147,26,0.15)", color: "#F7931A", border: "1px solid rgba(247,147,26,0.3)" }}
-                  >
-                    Open Checkout
-                  </a>
-                  <button
-                    onClick={() => {
-                      if (btcPollRef.current) { clearInterval(btcPollRef.current); btcPollRef.current = null; }
-                      btcPopupRef.current?.close();
-                      btcPopupRef.current = null;
-                      setBtcPayment(null);
-                      setBtcPolling(false);
-                    }}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
-                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* NowPayments (Crypto / USDT BSC) waiting panel */}
-        {npPayment && (
-          <NowPaymentsWaitingPanel
-            order={{
-              orderId: npPayment.invoiceId,
-              planName: t.lang === "es" ? "Compra de Ru$h" : "Ru$h Purchase",
-              usdAmount: npPayment.usdAmount || 0,
-              invoiceUrl: npPayment.checkoutUrl,
-              createdAt: Date.now(),
-              nowpaymentsInvoiceId: npPayment.nowpaymentsInvoiceId || "",
-              payCurrency: npPayment.payCurrency || null,
-            }}
-            isSuccess={npSuccess}
-            onCancel={() => {
-              setNpPayment(null);
-              setNpPolling(false);
-              setNpSuccess(false);
-              if (npPollRef.current) { clearInterval(npPollRef.current); npPollRef.current = null; }
-            }}
-            lang={t.lang}
-            payCurrency={npPayment.payCurrency}
-            productKind="tokens"
-          />
-        )}
-
-        {/* Step 2 — Meru card/bank payment flow */}
-        {buyMethod === 'meru' && (
-          <div className="space-y-4">
-            {/* ── Activation code screen (shown after reservation succeeds) ── */}
-            {meruReservation ? (
-              <TokenActivationForm
-                reservation={meruReservation}
-                onSuccess={(newBalance) => {
-                  if (onSuccess) onSuccess(newBalance);
-                }}
-                onReset={() => {
-                  setMeruReservation(null);
-                  setMeruProduct(null);
-                  setMeruEmail('');
-                  setMeruError(null);
-                }}
-                onClose={onClose}
-              />
-            ) : (
-              /* ── Package + email selection (entry screen) ── */
-              <>
-                <p className="text-xs text-pnp-textSecondary leading-relaxed">
-                  {es
-                    ? "Selecciona tu paquete y paga con tarjeta o PSE vía Meru. Te enviaremos un código de activación que puedes usar aquí mismo para acreditar tu Ru$h ⚡💲."
-                    : "Pick a package and pay by card or PSE via Meru. We'll send you an activation code you can use right here to credit your Ru$h ⚡💲."}
-                </p>
-
-                {/* Package cards — Meru-only card packs (1,500 / 3,000 tokens for $250 / $500,
-                    6 tokens per $1). Product IDs must match TokenActivationService.TOKEN_PACKAGES
-                    + meru_payment_links.product. */}
-                <div className="grid grid-cols-2 gap-3">
-                  {([
-                    { product: 'tokens_250', tokens: 1500, sub: es ? 'Paquete Starter' : 'Starter Pack', priceUsd: 250 },
-                    { product: 'tokens_500', tokens: 3000, sub: es ? 'Paquete Plus' : 'Plus Pack', priceUsd: 500 },
-                  ]).map((pkg) => (
-                    <button
-                      key={pkg.product}
-                      type="button"
-                      onClick={() => { setMeruProduct(pkg.product); setMeruError(null); }}
-                      className={`p-4 rounded-xl border text-left transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500 ${meruProduct === pkg.product ? 'border-pink-500/60 bg-pink-500/10' : 'border-pnp-border bg-pnp-surface hover:border-pink-400/40 hover:bg-pnp-surfaceHover'}`}
-                    >
-                      <p className="text-2xl font-extrabold leading-none mb-1" style={{ color: "#D4007A" }}>{pkg.tokens}</p>
-                      <p className="text-xs text-pnp-textSecondary font-medium mb-0.5">Ru$h ⚡💲</p>
-                      <p className="text-[10px] text-pnp-textSecondary">{pkg.sub}</p>
-                      <p className="text-xs font-bold text-pnp-textPrimary mt-1.5">${pkg.priceUsd}</p>
-                      {meruProduct === pkg.product && (
-                        <div className="mt-2 flex items-center gap-1">
-                          <div className="w-3.5 h-3.5 rounded-full bg-pink-500 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 10 10" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M2 5l2 2 4-4" />
-                            </svg>
-                          </div>
-                          <span className="text-[10px] font-semibold" style={{ color: "#D4007A" }}>
-                            {es ? "Seleccionado" : "Selected"}
-                          </span>
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Email input — shown once a package is selected */}
-                {meruProduct && (
-                  <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div>
-                      <label
-                        htmlFor="meru-email"
-                        className="block text-xs font-semibold text-pnp-textSecondary mb-1.5"
-                      >
-                        {es ? "Tu correo electrónico" : "Your email address"}
-                      </label>
-                      <input
-                        id="meru-email"
-                        type="email"
-                        inputMode="email"
-                        autoComplete="email"
-                        value={meruEmail}
-                        onChange={(e) => { setMeruEmail(e.target.value); setMeruError(null); }}
-                        placeholder={es ? "ejemplo@correo.com" : "you@example.com"}
-                        className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary/40 focus:outline-none focus:border-pink-500/60 transition-colors"
-                        disabled={meruReserving}
-                        aria-describedby={meruError ? "meru-error" : "meru-email-hint"}
-                        aria-invalid={!!meruError}
-                      />
-                      <p id="meru-email-hint" className="text-[10px] text-pnp-textSecondary mt-1">
-                        {es
-                          ? "Te enviaremos el código de activación a este correo."
-                          : "We'll send the activation code to this address."}
-                      </p>
-                    </div>
-
-                    {meruError && (
-                      <p id="meru-error" role="alert" className="text-xs text-red-400">
-                        {meruError}
-                      </p>
-                    )}
-
-                    {/* 503 NO_LINKS_AVAILABLE fallback note */}
-                    {meruError && meruError.toLowerCase().includes("unavailable") && (
-                      <p className="text-[11px] text-pnp-textSecondary text-center">
-                        {es
-                          ? "Puedes usar cripto (Bitcoin, USDT, etc.) como alternativa."
-                          : "You can use crypto (Bitcoin, USDT, etc.) as an alternative."}
-                      </p>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!meruProduct || meruReserving) return;
-                        const trimEmail = meruEmail.trim();
-                        if (!trimEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimEmail)) {
-                          setMeruError(es ? 'Ingresa un correo electrónico válido' : 'Enter a valid email address');
-                          return;
-                        }
-                        setMeruReserving(true);
-                        setMeruError(null);
-                        try {
-                          const res = await reserveTokenActivation({
-                            packageKey: meruProduct,
-                            language: es ? "es" : "en",
-                            email: trimEmail,
-                          });
-                          setMeruReservation(res);
-                        } catch (err: unknown) {
-                          const msg = err instanceof Error ? err.message : null;
-                          const is503 = msg?.includes("503") || msg?.includes("NO_LINKS_AVAILABLE") || msg?.toLowerCase().includes("unavailable");
-                          const is429 = msg?.includes("429") || msg?.toLowerCase().includes("many request") || msg?.toLowerCase().includes("rate");
-                          if (is503) {
-                            setMeruError(es
-                              ? "Pago con tarjeta temporalmente no disponible. Intenta con cripto."
-                              : "Card payment temporarily unavailable. Try a crypto method.");
-                          } else if (is429) {
-                            setMeruError(es
-                              ? "Demasiados intentos. Espera un momento e intenta de nuevo."
-                              : "Too many attempts. Wait a moment and try again.");
-                          } else {
-                            setMeruError(msg || (es
-                              ? "Error al obtener enlace. Intenta de nuevo."
-                              : "Failed to get payment link. Try again."));
-                          }
-                        } finally {
-                          setMeruReserving(false);
-                        }
-                      }}
-                      disabled={meruReserving || !meruEmail.trim()}
-                      aria-label={es ? "Obtener enlace de pago" : "Get payment link"}
-                      className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                      style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
-                    >
-                      {meruReserving && (
-                        <svg className="animate-spin h-4 w-4 text-white flex-shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                      )}
-                      {meruReserving
-                        ? (es ? "Generando enlace…" : "Getting link…")
-                        : (es ? "Obtener enlace de pago →" : "Get payment link →")}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Step 2: Package grid after method selected */}
-        {buyMethod !== 'select' && buyMethod !== 'meru' && !dashPayment && !btcPayment && !npPayment && (
-          <>
-            {/* Presale banner on package selection step */}
-            {presaleActive && (buyMethod === 'np' || buyMethod === 'np_usdc') && (
-              <div
-                className="flex items-center gap-2 px-3 py-2 rounded-xl mb-3 text-xs font-semibold"
-                style={{ background: "linear-gradient(90deg, rgba(212,0,122,0.18), rgba(230,145,56,0.18))", border: "1px solid rgba(212,0,122,0.35)", color: "#f9a8d4" }}
-              >
-                <span>🔥</span>
-                <span>
-                  {t.lang === "es"
-                    ? "Presale activa — −10% de descuento aplicado"
-                    : "Presale active — −10% discount applied"}
-                </span>
-              </div>
-            )}
-            {/* Method explanation */}
-            <p className="text-xs text-pnp-textSecondary mb-4 leading-relaxed">
-              {buyMethod === 'btc'
-                ? 'Pay with Bitcoin (on-chain or Lightning) via BTCPay Server. A popup will open for checkout.'
-                : buyMethod === 'np'
-                ? 'Pay with BTC, ETH, USDC, or 100+ other coins via NowPayments. A popup will open for checkout.'
-                : buyMethod === 'np_usdc'
-                ? 'Pay with Tether (USDT) on BNB Chain — works with MetaMask, Trust Wallet & Binance. A popup will open for checkout.'
-                : 'Pay with Dash cryptocurrency via BTCPay Server. Maximum privacy — fully anonymous, no account needed.'}
-            </p>
-
-            {buyError && <p className="text-xs text-pnp-error mb-3">{buyError}</p>}
-
-            {loadingPackages ? (
-              <p className="text-sm text-pnp-textSecondary text-center py-6">{t.live.loadingPackages}</p>
-            ) : tokenPackages.length === 0 ? (
-              <p className="text-sm text-pnp-textSecondary text-center py-6">No packages available.</p>
-            ) : (
-              <>
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                {tokenPackages.map((pkg) => {
-                  const bonusTokens = pkg.bonus ?? 0;
-                  const isNp = buyMethod === 'np' || buyMethod === 'np_usdc';
-                  const showPresale = presaleActive && isNp;
-                  const displayUsd = showPresale
-                    ? Math.round(pkg.usd * 0.9 * 100) / 100
-                    : pkg.usd;
-                  return (
-                    <button
-                      key={pkg.id}
-                      onClick={() => {
-                        if (buyMethod === 'btc') return handleBuyTokensBtc(pkg);
-                        if (buyMethod === 'np') return handleBuyTokensNowPayments(pkg, npCoinPick || 'usdcbase');
-                        if (buyMethod === 'np_usdc') return handleBuyTokensNowPayments(pkg, 'usdcbase');
-                        return handleBuyTokens(pkg);
-                      }}
-                      disabled={buyingPackage === pkg.id}
-                      className="p-3 rounded-xl border border-pnp-border bg-pnp-surface hover:bg-pnp-surfaceHover hover:border-pnp-accent/50 active:scale-[0.98] transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
-                    >
-                      <div className="flex items-start justify-between gap-1 mb-0.5">
-                        <p className="text-lg font-bold text-pnp-textPrimary leading-tight">{pkg.tokens.toLocaleString()}</p>
-                        {bonusTokens > 0 && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 leading-tight whitespace-nowrap" style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A" }}>
-                            +{bonusTokens.toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-                      {bonusTokens > 0 && (
-                        <p
-                          className="text-[9px] leading-tight mb-1"
-                          style={{ color: "#D4007A" }}
-                          title={es
-                            ? "Este Ru$h de bono solo puede gastarse en streams y contenido de Santino."
-                            : "This bonus Ru$h can only be spent on Santino streams and content."}
-                        >
-                          +{bonusTokens.toLocaleString()} {es ? "solo Santino" : "Santino only"}
-                        </p>
-                      )}
-                      <p className="text-[11px] text-pnp-textSecondary mb-1">Ru$h 💎</p>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <p className="text-sm font-bold text-pnp-textPrimary leading-none">
-                          ${displayUsd.toFixed(2)}
-                        </p>
-                        {showPresale && (
-                          <>
-                            <span className="text-[10px] text-pnp-textSecondary line-through leading-none">
-                              ${pkg.usd.toFixed(2)}
-                            </span>
-                            <span className="text-[8px] font-bold px-1 rounded leading-tight" style={{ background: "rgba(212,0,122,0.2)", color: "#f9a8d4" }}>-10%</span>
-                          </>
-                        )}
-                      </div>
-                      {buyingPackage === pkg.id && (
-                        <p className="text-[10px] text-pnp-textSecondary mt-1">{t.live.opening}</p>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-[10px] text-pnp-textSecondary text-center leading-relaxed mb-3">
-                Facturado por <span className="font-medium" style={{ color: "var(--pnp-text-primary, #fff)" }}>EasyBots</span> · Aparece como{" "}
-                <span className="font-medium" style={{ color: "var(--pnp-text-primary, #fff)" }}>EasyBots</span> o{" "}
-                <span className="font-medium" style={{ color: "var(--pnp-text-primary, #fff)" }}>NowPayments</span> en tu estado de cuenta.{" "}
-                Compra final, no reembolsable.
+              <p className="text-[10px] text-white/40 mt-2 text-center">
+                {es
+                  ? "1 USD = 6 Ru$h (base). Los paquetes grandes incluyen bono."
+                  : "1 USD = 6 Ru$h (base). Larger packs include a bonus."}
               </p>
-              </>
-            )}
+            </div>
+          )}
 
-            {/* Dash-specific DPNS info — only shown for the Dash method */}
-            {buyMethod === 'dash' && (
-              <div className="flex items-start gap-2 p-3 rounded-lg bg-pnp-surface border border-pnp-border/50">
-                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#008CE7" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-[11px] text-pnp-textSecondary">
-                  {t.live.buyTokensCheckoutNote}
-                  {dpnsHandle && t.live.yourDashIdentity(dpnsHandle)}
-                </p>
+          {/* Activation-code redemption — collapsed. Users only reach this when
+              they were given a code out-of-band (support top-up, legacy card
+              path, or partner promo). Not advertised as a purchase route. */}
+          <div className="border-t border-white/5 pt-3">
+            <button
+              type="button"
+              onClick={() => setActivationExpanded((v) => !v)}
+              className="w-full text-center text-xs text-white/50 hover:text-white/80 transition py-1"
+            >
+              {es ? "¿Tienes un código de activación?" : "Have an activation code?"}
+              <span
+                className="ml-1 inline-block transition-transform"
+                style={{ transform: activationExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
+              >▾</span>
+            </button>
+
+            {activationExpanded && (
+              <div className="mt-2 p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+                {activationSuccess != null ? (
+                  <p className="text-xs font-semibold text-emerald-300 text-center py-2">
+                    +{activationSuccess.toLocaleString()} Ru$h 💎 {es ? "acreditados" : "credited"}
+                  </p>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={activationCode}
+                      onChange={(e) => setActivationCode(e.target.value.toUpperCase())}
+                      placeholder={es ? "Código (ej: RUSH-XXXX-XXXX)" : "Code (e.g. RUSH-XXXX-XXXX)"}
+                      className="w-full px-3 py-2 mb-2 rounded-md text-sm font-mono uppercase tracking-wide bg-white/[0.06] border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/50"
+                    />
+                    {activationError && (
+                      <p className="text-[11px] text-red-300 mb-2">{activationError}</p>
+                    )}
+                    <button
+                      type="button"
+                      disabled={activationLoading || !activationCode.trim()}
+                      onClick={handleRedeemCode}
+                      className="w-full py-2 rounded-md text-sm font-bold text-white transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+                    >
+                      {activationLoading ? (es ? "Canjeando…" : "Redeeming…") : (es ? "Canjear código" : "Redeem code")}
+                    </button>
+                  </>
+                )}
               </div>
             )}
-          </>
-        )}
+          </div>
+
+          <p className="text-[10px] text-white/40 leading-relaxed text-center pt-1">
+            {es
+              ? "Solo tu billetera puede firmar transacciones. PNPtv nunca tiene acceso a tus fondos."
+              : "Only your wallet can sign transactions. PNPtv never has access to your funds."}
+          </p>
+        </div>
       </div>
     </div>
   );

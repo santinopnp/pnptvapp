@@ -28,7 +28,9 @@ import {
 } from "@/lib/api";
 import { translateText } from "@/lib/feedI18n";
 import { SharePostModal } from "@/components/SharePostModal";
-import { useInlineNpCheckout } from "@/hooks/useNowPayments";
+// NP inline PRIME checkout retired 2026-08-09 — PRIME CTAs now deep-link
+// into /subscribe (which uses the wallet). Local shim below preserves the
+// JSX call sites without pulling in the NP hook.
 import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
 // NearbyBadge removed — PostCard shows city name inline instead
@@ -325,8 +327,18 @@ export default function PostCard({
   const photoUrl = resolvePhotoUrl(post.author_photo);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
-  // Inline NP checkout — used by PRIME CTAs only (Santino/Lex/direct-PRIME).
-  const inlineCheckout = useInlineNpCheckout();
+  // PRIME CTAs deep-link into /subscribe (wallet flow) — no popup, no NP.
+  const inlineCheckout = {
+    launching: false,
+    error: null as string | null,
+    showGuide: false,
+    start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
+      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+    },
+    dismissGuide: () => {},
+    confirmGuideAndStart: () => {},
+    skipGuideAndStart: () => {},
+  };
   // Creator-sub CTAs reveal the canonical CreatorSubscribeWizard inline —
   // same widget the creator-profile "Subscribe" pill opens.
   const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);

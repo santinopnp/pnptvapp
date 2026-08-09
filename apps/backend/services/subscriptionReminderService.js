@@ -366,9 +366,9 @@ Type /subscribe to enable automatic monthly renewal.`;
 
     let picked = 0, sent = 0, deduped = 0, skipped = 0;
     try {
-      // Only remind wallet-linked users (no wallet = they'd need to fund one
-      // first before they can renew via USDC anyway; email/telegram remain the
-      // fallback via the legacy TelegramSubscriptionReminderService).
+      // Since NP retirement 2026-08-09, everyone renews via the wallet —
+      // users without wallet_address get one auto-created on Privy sign-in
+      // when they land on /subscribe. So drop the wallet_address filter.
       const { rows } = await query(
         `SELECT ue.id, ue.user_id, ue.add_on_id, ue.expires_at, ue.creator_id,
                 u.username, u.first_name
@@ -378,7 +378,6 @@ Type /subscribe to enable automatic monthly renewal.`;
             AND ue.is_lifetime = false
             AND ue.is_consumed = false
             AND ue.expires_at BETWEEN NOW() + INTERVAL '12 hours' AND NOW() + INTERVAL '3 days'
-            AND u.wallet_address IS NOT NULL
             AND u.tier != 'banned'`
       );
       picked = rows.length;
@@ -398,7 +397,7 @@ Type /subscribe to enable automatic monthly renewal.`;
         try {
           const delivered = await PushService.sendToUser(row.user_id, {
             title: `⏰ Your ${label} expires soon`,
-            body: `Tap to renew with 1 click from your wallet — ${hoursLeft}h left.`,
+            body: `Renew in one tap — pay with card or wallet balance. ${hoursLeft}h left.`,
             url: row.add_on_id === 'creator-subscription' && row.creator_id
               ? `/c/${row.creator_id}?action=subscribe`
               : '/subscribe',

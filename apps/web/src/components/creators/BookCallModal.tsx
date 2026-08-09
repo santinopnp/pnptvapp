@@ -43,12 +43,12 @@ import {
   type MyCallCredit,
 } from "@/lib/api";
 import type { CreatorCardCreator } from "./CreatorCard";
-import { PayInWalletChips } from "@/components/payments/PayInWalletChips";
+import { PayInWalletChips, WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "nowpayments" | "nowpayments_usdc" | "btc" | "tokens";
+type Provider = "wallet" | "tokens" | "nowpayments" | "nowpayments_usdc" | "btc";
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -166,7 +166,7 @@ export function BookCallModal({
   const [isAcceptingCalls, setIsAcceptingCalls] = useState(false);
   const [duration, setDuration] = useState<30 | 60>(initialDuration);
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
-  const [provider, setProvider] = useState<Provider>("nowpayments");
+  const [provider, setProvider] = useState<Provider>("wallet");
   // Coin choice inside the "Crypto" pill — matches Prime/Subscribe checkout token grid.
   // Defaults to USDC on Base (recommended, matches our wallet checkout rail).
   const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
@@ -284,7 +284,7 @@ export function BookCallModal({
     setIsOnline(initialIsOnline);
     setDuration(initialDuration);
     setSelectedSlot(null);
-    setProvider("nowpayments");
+    setProvider("wallet");
     setEmail("");
     setClientNotes("");
     setCheckoutError(null);
@@ -1384,43 +1384,21 @@ export function BookCallModal({
         </div>
       </div>
 
-      {/* Payment method selector */}
+      {/* Payment method selector — Wallet (USDC on Base) + Ru$h tokens.
+          NP/USDT/BTC providers retired 2026-08-09. */}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider mb-2.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.creator.paymentMethodLabel}</p>
         <div className="flex gap-2 flex-wrap">
           <button
             type="button"
-            onClick={() => setProvider("nowpayments")}
+            onClick={() => setProvider("wallet")}
             className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-            style={provider === "nowpayments"
-              ? { background: "rgba(212,0,122,0.16)", border: "1.5px solid #D4007A", color: "#D4007A" }
+            style={provider === "wallet"
+              ? { background: "rgba(16,185,129,0.16)", border: "1.5px solid #10b981", color: "#34d399" }
               : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
           >
-            ⚡ Crypto
+            💳 Wallet
           </button>
-          <button
-            type="button"
-            onClick={() => setProvider("nowpayments_usdc")}
-            title="Tether (USDT) on BNB Smart Chain — works with MetaMask, Trust Wallet, Binance"
-            className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-            style={provider === "nowpayments_usdc"
-              ? { background: "rgba(38,161,123,0.16)", border: "1.5px solid #26a17b", color: "#26a17b" }
-              : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-          >
-            ₮ USDT
-          </button>
-          {btcAvailable && (
-            <button
-              type="button"
-              onClick={() => setProvider("btc")}
-              className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-              style={provider === "btc"
-                ? { background: "rgba(247,147,26,0.16)", border: "1.5px solid #F7931A", color: "#F7931A" }
-                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-            >
-              ₿ BTC
-            </button>
-          )}
           {tokenBalance !== null && tokenBalance > 0 && (
             <button
               type="button"
@@ -1438,6 +1416,28 @@ export function BookCallModal({
           <p className="text-[11px] text-[#FF69B4] mt-1.5">
             Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 6).toLocaleString()} Ru$h · Saldo: {tokenBalance?.toLocaleString() ?? "—"} Ru$h
           </p>
+        )}
+        {provider === "wallet" && activePackage && (
+          <div className="mt-3">
+            <WalletPayCard
+              surface="call"
+              amountUsd={effectivePriceUsd}
+              entitlementSpec={{
+                packageId: activePackage.id,
+                creator_id: creator.id,
+                startAt: selectedSlot?.startUtc,
+                endAt: selectedSlot?.endUtc,
+                clientNotes: clientNotes.trim() || undefined,
+              }}
+              metadata={{ source: "book_call_modal" }}
+              label={t.lang === "es" ? `Pagar $${effectivePriceUsd.toFixed(2)}` : `Pay $${effectivePriceUsd.toFixed(2)}`}
+              lang={t.lang as "es" | "en"}
+              onSuccess={() => {
+                setConfirmedStartAt(selectedSlot?.startUtc ?? null);
+                setStep("SUCCESS");
+              }}
+            />
+          </div>
         )}
 
         {/* Crypto coin picker — same 2-col token grid pattern as Prime/Subscribe checkout */}
@@ -1710,8 +1710,8 @@ export function BookCallModal({
         </div>
       )}
 
-      {/* Submit */}
-      {!((provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && (checkoutLoading || dashTimedOut)) && (
+      {/* Submit — hidden for wallet (WalletPayCard has its own pay button). */}
+      {provider !== "wallet" && !((provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && (checkoutLoading || dashTimedOut)) && (
         <button
           type="button"
           disabled={checkoutLoading || !activePackage}

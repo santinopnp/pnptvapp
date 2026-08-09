@@ -203,9 +203,9 @@ class SubscriptionReminderEmailService {
   <li>⭐ Contenido premium</li>
 </ul>
 
-<p><strong>Renueva ahora</strong> y continúa disfrutando de todos los beneficios PRIME.</p>
+<p><strong>Renueva en un toque.</strong> Ahora puedes pagar con tarjeta, Apple Pay o Google Pay desde tu Billetera PNPtv — sin apps de wallet, sin frases raras.</p>
 
-<a href="https://pnptv.app/subscribe" style="background-color: #FF00CC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Renovar Suscripción</a>
+<a href="https://pnptv.app/subscribe" style="background-color: #FF00CC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Renovar en un toque</a>
 
 <p>Si tienes preguntas, contacta con nuestro equipo de soporte.</p>
 
@@ -225,9 +225,9 @@ class SubscriptionReminderEmailService {
   <li>⭐ Premium content</li>
 </ul>
 
-<p><strong>Renew now</strong> to continue enjoying all PRIME benefits.</p>
+<p><strong>Renew in one tap.</strong> You can now pay with your card, Apple Pay or Google Pay through your PNPtv Wallet — no wallet apps, no seed phrases.</p>
 
-<a href="https://pnptv.app/subscribe" style="background-color: #FF00CC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Renew Subscription</a>
+<a href="https://pnptv.app/subscribe" style="background-color: #FF00CC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Renew in one tap</a>
 
 <p>If you have questions, contact our support team.</p>
 

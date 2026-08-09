@@ -146,6 +146,39 @@ export function PayInWalletChips({
   );
 }
 
+// ── WalletCheckoutHero ────────────────────────────────────────────────────
+// Marketing pitch shown above any WalletPayCard entry point the first time
+// a user encounters wallet checkout. Named `Hero` because it's the one and
+// only value prop — "crypto that feels normal" — and every checkout surface
+// should share the exact copy so the message compounds. Wrap in a dismissible
+// container when needed; the component itself is stateless.
+export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "es" | "en"; compact?: boolean }) {
+  const es = lang === "es";
+  return (
+    <div
+      className={`rounded-xl border border-white/10 ${compact ? "p-3" : "p-4"}`}
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(212,0,122,0.10), rgba(230,145,56,0.10), rgba(16,185,129,0.10))",
+      }}
+    >
+      <p className={`${compact ? "text-sm" : "text-base"} font-bold text-white leading-tight`}>
+        {es ? "Cripto que por fin se siente normal." : "Crypto that finally feels normal."}
+      </p>
+      <p className={`${compact ? "text-[11px] mt-1" : "text-xs mt-1.5"} text-white/75 leading-snug`}>
+        {es
+          ? "Recarga tu Billetera PNPtv con tu tarjeta, Apple Pay o Google Pay en menos de un minuto — y úsala en toda la app. Un saldo, un toque."
+          : "Top up your PNPtv Wallet with your card, Apple Pay or Google Pay in under a minute — then spend it anywhere on the app. One balance, one tap."}
+      </p>
+      <p className={`${compact ? "text-[10px] mt-1.5" : "text-[11px] mt-2"} text-white/55 leading-snug`}>
+        {es
+          ? "Úsalo para PRIME, Ru$h, propinas a cammers, videollamadas privadas, canales exclusivos, hangouts pagos y cada nueva función. Sin apps de wallet, sin frases semilla, sin QR raros."
+          : "Use it for PRIME, Ru$h tokens, tips to cammers, private video calls, exclusive channels, paid hangouts, and every future paid feature. No wallet apps, no seed phrases, no weird QR codes."}
+      </p>
+    </div>
+  );
+}
+
 // ── WalletPayCard ─────────────────────────────────────────────────────────
 // Shared "Pay from your wallet" card used across every checkout surface that
 // wants the wallet rail: Subscribe (membership + PRIME), CreatorSubscribeWizard,
@@ -350,6 +383,249 @@ export function WalletPayCard({
             : `Fund wallet with card →`}
         </button>
       )}
+    </div>
+  );
+}
+
+// ── WalletHomeSheet ──────────────────────────────────────────────────────
+// Full wallet UI opened from the floating 💎 FAB. Shows both currencies
+// (USDC on Base + Ru$h token balance with gifted breakdown), the on-chain
+// address (copy + Basescan link), and action buttons: Fund with card, Buy
+// Ru$h (drills into BuyTokensModal), Send USDC (external send). Auto-refresh
+// on open + on drill-in return. Lazy-loaded from Layout.tsx.
+
+import { lazy as _lazy, Suspense as _Suspense } from "react";
+import { getWalletBalance as _getWalletBalance } from "@/lib/api";
+const _LazyBuyTokensModal = _lazy(() =>
+  import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
+);
+
+export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
+  const { authenticated, login } = usePrivy();
+  const { wallets } = useWallets();
+  const { addFunds } = useAddFunds();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const address = embeddedWallet?.address || null;
+
+  const [usdc, setUsdc] = _useState<number | null>(null);
+  const [rush, setRush] = _useState<{ regular: number; gifted: number } | null>(null);
+  const [loading, setLoading] = _useState(true);
+  const [copied, setCopied] = _useState(false);
+  const [showBuyModal, setShowBuyModal] = _useState(false);
+  const [error, setError] = _useState<string | null>(null);
+
+  const refresh = () => {
+    setLoading(true);
+    Promise.all([
+      getWalletUsdcBalance().catch(() => null),
+      _getWalletBalance().catch(() => null),
+    ]).then(([u, r]) => {
+      if (u && u.hasWallet) setUsdc(u.usdc); else setUsdc(null);
+      if (r && r.success) setRush({ regular: r.regularBalance || 0, gifted: r.giftedBalance || 0 });
+    }).finally(() => setLoading(false));
+  };
+  _useEffect(() => { refresh(); }, [address]);
+  _useEffect(() => {
+    if (!showBuyModal) refresh();
+  }, [showBuyModal]);
+
+  const copyAddress = () => {
+    if (!address) return;
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    }).catch(() => {});
+  };
+
+  const handleFund = async () => {
+    if (!address) { setError("Connect or create your wallet first."); return; }
+    setError(null);
+    try {
+      await addFunds({
+        destination: { address, chain: _BASE_CAIP2, asset: _USDC_BASE },
+        fiat: { defaultAmount: "30" },
+      });
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel|closed|reject/i.test(msg)) return;
+      setError(`Payment provider error: ${msg}`);
+    }
+  };
+
+  const openInBasescan = () => {
+    if (address) window.open(`https://basescan.org/address/${address}`, "_blank", "noopener,noreferrer");
+  };
+
+  const shortAddress = address
+    ? `${address.slice(0, 6)}…${address.slice(-4)}`
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Wallet"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div
+        className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[92dvh] flex flex-col"
+        style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(16,185,129,0.25)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">💎</span>
+            <p className="text-base font-bold text-white">Wallet</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close wallet"
+            className="w-8 h-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-lg"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Body — scrollable */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {!authenticated || !embeddedWallet ? (
+            <div className="text-center py-8 space-y-3">
+              <p className="text-4xl">👛</p>
+              <p className="text-sm font-bold text-white">Create your wallet</p>
+              <p className="text-[11px] text-white/60 leading-relaxed max-w-xs mx-auto">
+                A free embedded wallet lets you receive USDC, tip creators, and buy Ru$h with card.
+              </p>
+              <button
+                type="button"
+                onClick={() => login()}
+                className="mt-3 min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
+                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+              >
+                Create wallet
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Balances */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* USDC */}
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.06] p-3">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-4 h-4 rounded-full bg-[#2775ca] text-white text-[9px] font-bold flex items-center justify-center">$</div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">USDC</span>
+                  </div>
+                  <p className="mt-1 text-xl font-bold text-white tabular-nums">
+                    {loading ? "…" : (usdc == null ? "—" : usdc.toFixed(2))}
+                  </p>
+                  <p className="text-[10px] text-white/50 mt-0.5">on Base</p>
+                </div>
+                {/* Ru$h */}
+                <div className="rounded-xl border border-pink-400/30 bg-pink-500/[0.06] p-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">💎</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Ru$h</span>
+                  </div>
+                  <p className="mt-1 text-xl font-bold text-white tabular-nums">
+                    {loading ? "…" : (rush == null ? "—" : (rush.regular + rush.gifted).toLocaleString())}
+                  </p>
+                  <p className="text-[10px] text-white/50 mt-0.5">
+                    {rush && rush.gifted > 0 ? `+${rush.gifted} gifted` : "spendable balance"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Wallet address */}
+              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Wallet address · Base</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs font-mono text-white/90 truncate">{shortAddress}</code>
+                  <button
+                    type="button"
+                    onClick={copyAddress}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-white/[0.08] text-white/80 hover:bg-white/[0.14] transition min-h-[32px]"
+                  >
+                    {copied ? "Copied ✓" : "Copy"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openInBasescan}
+                    aria-label="View on Basescan"
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-white/[0.08] text-white/80 hover:bg-white/[0.14] transition min-h-[32px]"
+                  >
+                    ↗
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
+                  {error}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleFund}
+                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                  style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                >
+                  <span className="text-lg leading-none">💳</span>
+                  <span className="text-[11px]">Fund with card</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBuyModal(true)}
+                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                  style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+                >
+                  <span className="text-lg leading-none">💎</span>
+                  <span className="text-[11px]">Buy Ru$h</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openInBasescan}
+                  className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                >
+                  <span className="text-lg leading-none">📜</span>
+                  <span className="text-[11px]">Activity</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={refresh}
+                  className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                >
+                  <span className="text-lg leading-none">🔄</span>
+                  <span className="text-[11px]">Refresh</span>
+                </button>
+              </div>
+
+              {/* Note */}
+              <p className="text-[10px] text-white/40 leading-relaxed text-center pt-1">
+                Only your wallet can sign transactions. PNPtv never has access to your funds.
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* BuyTokensModal drill-in — lazy-loaded above; overlays this sheet */}
+        {showBuyModal && (
+          <_Suspense fallback={null}>
+            <_LazyBuyTokensModal
+              isOpen={showBuyModal}
+              onClose={() => setShowBuyModal(false)}
+              onSuccess={() => refresh()}
+              dpnsHandle={null}
+            />
+          </_Suspense>
+        )}
+      </div>
     </div>
   );
 }

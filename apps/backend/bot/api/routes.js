@@ -11720,10 +11720,21 @@ app.get('/api/wallet/presale-status', limiter, asyncHandler(async (req, res) => 
   }
 }));
 
-// POST /api/wallet/buy-nowpayments — create a NowPayments invoice for token purchase
-// Presale: when pnpapp:presale:active Redis key is set, charges 90% of USD price (10% off)
-// but credits full token amount — giving users more tokens per dollar.
-app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+// POST /api/wallet/buy-nowpayments — RETIRED 2026-08-09. Wallet USDC on Base
+// via /api/wallet/usdc/initiate + verify is the only inbound crypto rail.
+// Returns 410 Gone so any stale client (mobile app cache, resumed session)
+// gets a clear signal to reload; existing in-flight orders continue to
+// fulfil through the webhook + reconciler for ~14 days.
+app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
+    code: 'NOWPAYMENTS_RETIRED',
+  });
+});
+
+// (Legacy handler follows as dead code — kept for grep archaeology.)
+app.post('/__np_retired_stub__buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const { packageId, payCurrency: rawPayCurrency } = req.body;
   if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
@@ -12552,9 +12563,16 @@ const usdcSubscribeLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// POST /api/webapp/payments/usdc/subscribe — create NOWPayments invoice for recurring plans
-// Accepts optional payCurrency ('btc', 'btcln', etc.) to pre-select payment currency.
-app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscribeLimiter, asyncHandler(async (req, res) => {
+// RETIRED 2026-08-09 — NowPayments hosted invoice replaced by wallet checkout.
+app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscribeLimiter, (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
+    code: 'NOWPAYMENTS_RETIRED',
+  });
+});
+
+app.post('/__np_retired_stub__usdc-subscribe', requireSessionAuth, usdcSubscribeLimiter, asyncHandler(async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
     return res.status(503).json({ success: false, error: 'USDC payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
   }
@@ -12685,9 +12703,16 @@ app.post('/api/webapp/payments/usdc/subscribe', requireSessionAuth, usdcSubscrib
   return res.json({ success: true, orderId, invoiceUrl, planName: planDisplayName, usdAmount, ...npPayInfo });
 }));
 
-// POST /api/webapp/payments/usdc/prepare — create a NowPayments hosted invoice for any plan.
-// Accepts optional payCurrency ('btc', 'btcln', etc.) to pre-select payment currency.
-app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
+// RETIRED 2026-08-09 — NowPayments hosted invoice replaced by wallet checkout.
+app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
+    code: 'NOWPAYMENTS_RETIRED',
+  });
+});
+
+app.post('/__np_retired_stub__usdc-prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
     return res.status(503).json({ success: false, error: 'USDC payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
   }
@@ -13078,10 +13103,12 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
 
   const tokenLedger = require('../../services/tokenLedgerService');
   const { getClient: getPgClient } = require('../../config/postgres');
+  const { GIFTED_ALLOWED_PERFORMER_USER_IDS } = require('../../config/monetizationConfig');
+  const allowGifted = GIFTED_ALLOWED_PERFORMER_USER_IDS.includes(recipientUserId);
 
   // Idempotency / duplicate-click guard — 5 s NX lock per (payer, recipient, amount)
   const lockKey = `tip_lock:${payerUserId}:${recipientUserId}:${parsedAmount}`;
-  const lockAcquired = await cache.set(lockKey, '1', 'EX', 5, 'NX');
+  const lockAcquired = await cache.setNX(lockKey, '1', 5);
   if (!lockAcquired) {
     return res.status(429).json({ success: false, error: 'DUPLICATE_TIP', message: 'Duplicate tip request. Please wait a moment.' });
   }
@@ -13098,7 +13125,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
       userId: payerUserId,
       amount: parsedAmount,
       reason: 'live_tip_send',
-      allowGifted: false,
+      allowGifted,
       sourceType: 'creator_tip',
       sourceId: orderId,
       actorId: payerUserId,
@@ -13156,6 +13183,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     amountTokens: parsedAmount,
     recipientUsername,
     newBalance: debitResult.balance_after,
+    newGiftedBalance: debitResult.gifted_after,
   });
 }));
 
@@ -14968,17 +14996,28 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   }
 
   if (surface === 'membership' || surface === 'prime') {
-    const planId = surface === 'membership' ? 'member_monthly' : 'monthly-pass';
+    // Accept explicit planId from the client. Validates against the plans
+    // table + tier so a client can't buy a $250 lifetime PRIME plan via the
+    // $9.99 membership surface. Default to the canonical plan per surface
+    // when unspecified (backwards-compatible with early /initiate callers).
+    const defaultPlan = surface === 'membership' ? 'member_monthly' : 'monthly-pass';
+    const requestedPlanId = spec?.planId ? String(spec.planId) : defaultPlan;
     const { rows } = await dbQuery(
-      `SELECT id, price, duration, is_lifetime FROM plans WHERE id = $1 AND active = true`, [planId]
+      `SELECT id, tier, price, duration, is_lifetime FROM plans WHERE id = $1 AND active = true`,
+      [requestedPlanId]
     );
-    if (rows.length === 0) throwErr('plan not found', 404);
+    if (rows.length === 0) throwErr('plan not found or inactive', 404);
     const p = rows[0];
+    const tierLower = String(p.tier || '').toLowerCase();
+    const expectedTier = surface === 'membership' ? 'member' : 'prime';
+    if (tierLower !== expectedTier) throwErr(`plan tier mismatch (expected ${expectedTier}, got ${tierLower || 'unknown'})`, 400);
+    const priceNum = Number(p.price);
+    if (!(priceNum > 0)) throwErr('plan has no price', 400);
     return {
-      amountUsd: Number(p.price),
+      amountUsd: priceNum,
       resolvedSpec: {
         add_on_id: surface === 'membership' ? 'pnp-member' : 'prime',
-        duration_days: Number.isInteger(Number(p.duration)) ? Math.max(1, Math.min(3650, Number(p.duration))) : 30,
+        duration_days: Number.isInteger(Number(p.duration)) ? Math.max(1, Math.min(36600, Number(p.duration))) : 30,
         is_lifetime: !!p.is_lifetime,
         auto_renew: !p.is_lifetime,
       },

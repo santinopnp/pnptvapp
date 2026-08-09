@@ -11,8 +11,6 @@ import {
   trackEvent,
   redeemActivationCode,
   assertPaymentUrl,
-  NP_COINS,
-  NP_COINS_SUBSCRIBE,
   getWalletBalance,
   paySubscriptionWithTokens,
   type SubscriptionPlan,
@@ -21,10 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useI18n } from "@/lib/i18n";
-import { TrustWalletIcon, MetaMaskIcon } from "@/components/payments/PayInWalletChips";
-
-import { useNowPayments } from "@/hooks/useNowPayments";
-import { NowPaymentsWaitingPanel } from "@/components/payments/NowPaymentsWaitingPanel";
+import { WalletPayCard, WalletCheckoutHero } from "@/components/payments/PayInWalletChips";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d"]);
@@ -120,20 +115,14 @@ export default function Subscribe() {
   const pollingStartRef = useRef<number | null>(null);
   const [pollingOverFiveMin, setPollingOverFiveMin] = useState(false);
 
-  // Crypto nudge — shown after any payment failure
-  const [showCryptoNudge, setShowCryptoNudge] = useState(false);
-
   function failWithNudge(msg: string) {
     setError(msg);
-    setShowCryptoNudge(true);
   }
 
-  // USDC / USDT / BTC stablecoin+crypto state (NOWPayments hook)
   const [usdcAvailable, setUsdcAvailable] = useState<boolean | null>(null);
-  const [nowpaymentsWarning, setNowpaymentsWarning] = useState(false);
-
-  // BTCPay/Dash/Lightning retired 2026-07-31 — BTC/Dash state removed
-  const [cryptoPickerPlanId, setCryptoPickerPlanId] = useState<string | null>(null);
+  // Wallet-USDC-on-Base checkout — expands the WalletPayCard for the picked plan.
+  // Server resolves canonical price + duration via planId — client just passes it.
+  const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
   const [tokenSuccess, setTokensSuccess] = useState<string | null>(null);
 
@@ -143,26 +132,8 @@ export default function Subscribe() {
   const [activationSubmitting, setActivationSubmitting] = useState(false);
   const [activationSuccess, setActivationSuccess] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
-  const {
-    order: usdcOrder,
-    isPolling: usdcPolling,
-    isSuccess: usdcPaymentSuccess,
-    isConfirming: usdcConfirming,
-    startPayment: startNowPayments,
-    cancelOrder: cancelNowPayments,
-    error: nowpaymentsError,
-    setError: setNowpaymentsError,
-  } = useNowPayments({
-    storageKey: "pnp_pending_usdc_order",
-    returnUrl: "/subscribe",
-    onSuccess: async () => {
-      await refreshUser();
-      setTimeout(() => {
-        setPaymentSuccess(true);
-        trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "nowpayments" });
-      }, 500);
-    },
-  });
+  // NowPayments hook retired 2026-08-09 — Wallet (USDC on Base) is the only
+  // crypto path now. Any resumed NP order from sessionStorage is ignored.
 
   useEffect(() => {
     getSubscriptionPlans()
@@ -221,17 +192,7 @@ export default function Subscribe() {
 
   }, [searchParams]);
 
-  useEffect(() => {
-    if (nowpaymentsError && (
-      nowpaymentsError.toLowerCase().includes("unavailable") ||
-      nowpaymentsError.toLowerCase().includes("service") ||
-      nowpaymentsError.toLowerCase().includes("network") ||
-      nowpaymentsError.toLowerCase().includes("timeout") ||
-      nowpaymentsError.toLowerCase().includes("down")
-    )) {
-      setNowpaymentsWarning(true);
-    }
-  }, [nowpaymentsError]);
+  // NP-error → warning-banner side effect retired 2026-08-09.
 
   // Validate a promo code server-side. For base-plan promos, we lock the
   // selected plan to the promo's base plan so the displayed price matches.
@@ -309,14 +270,14 @@ export default function Subscribe() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlan]);
 
-  // Auto-scroll to inline crypto panel when a new order is created
+  // Auto-scroll to the inline wallet-USDC panel when it opens for a plan.
   useEffect(() => {
-    if (usdcOrder?.orderId && orderPanelRef.current) {
+    if (walletPanelPlanId && orderPanelRef.current) {
       setTimeout(() => {
         orderPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }, 100);
     }
-  }, [usdcOrder?.orderId]);
+  }, [walletPanelPlanId]);
 
   function clearPromo() {
     setAppliedPromo(null);
@@ -386,41 +347,7 @@ export default function Subscribe() {
     };
   }, [pollingPaymentId, refreshUser]);
 
-  async function handleQuickCheckout(planId: string, payCurrency?: string) {
-    if (submitting) return;
-    setSelectedPlan(planId);
-    setError(null);
-    setShowCryptoNudge(false);
-    setSubmitting(true);
-    try {
-      const result = await startNowPayments(planId, user?.email || undefined, undefined, false, payCurrency, appliedPromo?.code);
-      if (!result.success) {
-        setError(result.error || s.failedToCreateUsdcInvoice);
-      }
-    } catch (err: unknown) {
-      failWithNudge(err instanceof Error ? err.message : s.paymentErrorGeneric);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleCryptoSubscribe(planId: string, payCurrency?: string) {
-    if (submitting) return;
-    setSelectedPlan(planId);
-    setError(null);
-    setSubmitting(true);
-    try {
-      const result = await startNowPayments(planId, user?.email || undefined, undefined, true, payCurrency, appliedPromo?.code);
-      if (!result.success) {
-        setError(result.error || (t.lang === "es" ? "No se pudo crear la suscripción. Intenta de nuevo." : "Failed to create subscription. Please try again."));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : (t.lang === "es" ? "No se pudo crear la suscripción. Intenta de nuevo." : "Failed to create subscription. Please try again."));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
+  // handleQuickCheckout + handleCryptoSubscribe removed 2026-08-09 — NP retired.
   // handleBitcoinCheckout, handleDashCheckout removed 2026-07-31 — BTCPay/Dash retired.
 
   async function handleTokensSubscribe(planId: string, planPrice: number) {
@@ -670,6 +597,13 @@ export default function Subscribe() {
         </div>
       </a>
 
+      {/* Wallet-first pitch — one balance, one tap, no wallet apps. Rendered
+          above the promo/plan grid so users know how checkout works before
+          they pick a plan. */}
+      <div className="mb-4">
+        <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
+      </div>
+
       {/* Promo code banner — applied state */}
       {appliedPromo && (
         <div
@@ -748,8 +682,8 @@ export default function Subscribe() {
           const cryptoDisplayPrice = formatPrice(plan.price, "USD");
 
           const planDays = plan.duration_days || plan.duration || 30;
-          const isPanelActive = !!(usdcOrder && selectedPlan === plan.id);
-          const isDimmed = (!!(usdcOrder && !usdcPaymentSuccess)) && selectedPlan !== plan.id;
+          const isPanelActive = false;
+          const isDimmed = false;
           return (
             <div key={plan.id} className={`transition-all duration-200 ${isDimmed ? "opacity-50 pointer-events-none" : ""}`}>
             <div
@@ -835,22 +769,9 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons */}
+              {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
+                  path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {usdcAvailable !== false && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(cryptoPickerPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors disabled:opacity-50 ${cryptoPickerPlanId === plan.id ? "border-green-400/60 bg-green-500/20" : "border-green-500/40 bg-green-500/10 hover:bg-green-500/20"}`}
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-green-300">
-                      <span>🪙</span>
-                      <span>Crypto</span>
-                      <span className="text-[9px] text-green-400/70">▾</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-green-400 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
                 {tokenBalance !== null && tokenBalance > 0 && (
                   <button
                     disabled={submitting}
@@ -864,82 +785,45 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
+                {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
+                    Server resolves canonical price via planId so client can't
+                    fudge amount. */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${walletPanelPlanId === plan.id ? "border-emerald-400/60 bg-emerald-500/20" : "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"}`}
+                >
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
+                    <span>💳</span>
+                    <span>Wallet</span>
+                    <span className="text-[9px] text-emerald-400/70">▾</span>
+                  </span>
+                  <span className="text-[11px] font-bold text-emerald-400 leading-none">USDC · Base</span>
+                </button>
                 {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
                     only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
                     users route through wallet → fund → USDC via the Privy
                     onramps (Stripe / MoonPay / Meld / Coinbase). */}
-                {cryptoPickerPlanId === plan.id && (
-                  <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between gap-2 mb-2.5">
-                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu cripto:" : "Choose your crypto:"}</p>
-                      <div className="flex items-center gap-3">
-                        <a
-                          href="/crypto-guide"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-                        >
-                          {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
-                        </a>
-                        <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {NP_COINS_SUBSCRIBE.map((coin) => (
-                        <button
-                          key={coin.code}
-                          disabled={submitting}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCryptoPickerPlanId(null);
-                            handleQuickCheckout(plan.id, coin.code);
-                          }}
-                          className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
-                        >
-                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold text-white">{coin.label}</span>
-                              {"recommended" in coin && coin.recommended && (
-                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                              )}
-                            </div>
-                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] text-pnp-textSecondary">
-                        {t.lang === "es" ? "Abre en:" : "Open in:"}
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
-                        <MetaMaskIcon size={14} /> MetaMask
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
-                        <TrustWalletIcon size={14} /> Trust Wallet
-                      </span>
-                    </div>
+                {walletPanelPlanId === plan.id && (
+                  <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
+                    <WalletPayCard
+                      surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
+                      amountUsd={parseFloat(String(plan.price))}
+                      entitlementSpec={{ planId: plan.id }}
+                      metadata={{ source: "subscribe_page", planId: plan.id }}
+                      label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
+                      lang={(t.lang as "es" | "en")}
+                      onSuccess={() => {
+                        setWalletPanelPlanId(null);
+                        // Reload to reflect the new entitlement everywhere.
+                        setTimeout(() => { window.location.href = "/"; }, 1200);
+                      }}
+                      compact
+                    />
                   </div>
                 )}
-                {/* Meru card panel removed 2026-08-08 with the Card button. */}
+                {/* NP crypto picker + hosted-invoice panel removed 2026-08-09. */}
               </div>
             </div>
-            {usdcOrder && selectedPlan === plan.id && (
-              <div ref={orderPanelRef}>
-                <NowPaymentsWaitingPanel
-                  order={usdcOrder!}
-                  isSuccess={usdcPaymentSuccess}
-                  isConfirming={usdcConfirming}
-                  onCancel={cancelNowPayments}
-                  lang={t.lang}
-                  wrapperClassName="rounded-t-none border-t-0"
-                  payCurrency={usdcOrder?.payCurrency}
-                />
-              </div>
-            )}
-            {/* BTC/Dash/Lightning panels removed 2026-07-31 — providers retired */}
             </div>
           );
         })}
@@ -954,8 +838,8 @@ export default function Subscribe() {
           const planDays = plan.duration_days || plan.duration || 30;
           const cryptoDisplayPrice = formatPrice(plan.price, "USD");
 
-          const isPanelActive = !!(usdcOrder && selectedPlan === plan.id);
-          const isDimmed = (!!(usdcOrder && !usdcPaymentSuccess)) && selectedPlan !== plan.id;
+          const isPanelActive = false;
+          const isDimmed = false;
           const primeBtnClass = [
             "w-full text-left p-4 border-2 transition-all duration-200",
             isPanelActive ? "rounded-t-xl rounded-b-none" : "rounded-xl",
@@ -1062,22 +946,9 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons */}
+              {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
+                  path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {usdcAvailable !== false && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(cryptoPickerPlanId === plan.id ? null : plan.id); }}
-                    className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors disabled:opacity-50 ${cryptoPickerPlanId === plan.id ? "border-green-400/60 bg-green-500/20" : "border-green-500/40 bg-green-500/10 hover:bg-green-500/20"}`}
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-green-300">
-                      <span>{RECURRING_PLANS.has(plan.id) ? "🔄" : "🪙"}</span>
-                      <span>Crypto</span>
-                      <span className="text-[9px] text-green-400/70">▾</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-green-400 leading-none">{cryptoDisplayPrice}</span>
-                  </button>
-                )}
                 {tokenBalance !== null && tokenBalance > 0 && (
                   <button
                     disabled={submitting}
@@ -1091,109 +962,49 @@ export default function Subscribe() {
                     <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
                   </button>
                 )}
+                {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
+                    Server resolves canonical price via planId so client can't
+                    fudge amount. */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${walletPanelPlanId === plan.id ? "border-emerald-400/60 bg-emerald-500/20" : "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"}`}
+                >
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
+                    <span>💳</span>
+                    <span>Wallet</span>
+                    <span className="text-[9px] text-emerald-400/70">▾</span>
+                  </span>
+                  <span className="text-[11px] font-bold text-emerald-400 leading-none">USDC · Base</span>
+                </button>
                 {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
                     only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
                     users route through wallet → fund → USDC via the Privy
                     onramps (Stripe / MoonPay / Meld / Coinbase). */}
-                {cryptoPickerPlanId === plan.id && (
-                  <div className="w-full mt-2 rounded-xl border border-green-500/20 bg-[#0a1f0a] p-3 animate-in fade-in slide-in-from-top-1 duration-200" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-between gap-2 mb-2.5">
-                      <p className="text-[11px] font-semibold text-pnp-textSecondary">{t.lang === "es" ? "Elige tu cripto:" : "Choose your crypto:"}</p>
-                      <div className="flex items-center gap-3">
-                        <a
-                          href="/crypto-guide"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-                        >
-                          {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
-                        </a>
-                        <button onClick={(e) => { e.stopPropagation(); setCryptoPickerPlanId(null); }} className="text-pnp-textSecondary/40 hover:text-pnp-textSecondary text-sm transition-colors">✕</button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {NP_COINS_SUBSCRIBE.map((coin) => (
-                        <button
-                          key={coin.code}
-                          disabled={submitting}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCryptoPickerPlanId(null);
-                            if (RECURRING_PLANS.has(plan.id)) handleCryptoSubscribe(plan.id, coin.code);
-                            else handleQuickCheckout(plan.id, coin.code);
-                          }}
-                          className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
-                        >
-                          <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold text-white">{coin.label}</span>
-                              {"recommended" in coin && coin.recommended && (
-                                <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                              )}
-                            </div>
-                            <span className="text-[9px] text-pnp-textSecondary/60 leading-none">{coin.network}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 text-center flex items-center justify-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] text-pnp-textSecondary">
-                        {t.lang === "es" ? "Abre en:" : "Open in:"}
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/5 px-2 py-0.5 rounded-md border border-white/10">
-                        <MetaMaskIcon size={14} /> MetaMask
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300 bg-blue-600/15 px-2 py-0.5 rounded-md border border-blue-500/30">
-                        <TrustWalletIcon size={14} /> Trust Wallet
-                      </span>
-                    </div>
+                {walletPanelPlanId === plan.id && (
+                  <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
+                    <WalletPayCard
+                      surface={MEMBER_PLAN_IDS.has(plan.id) ? "membership" : "prime"}
+                      amountUsd={parseFloat(String(plan.price))}
+                      entitlementSpec={{ planId: plan.id }}
+                      metadata={{ source: "subscribe_page", planId: plan.id }}
+                      label={t.lang === "es" ? `Pagar $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}` : `Pay $${parseFloat(String(plan.price)).toFixed(2)} · ${plan.name || plan.id}`}
+                      lang={(t.lang as "es" | "en")}
+                      onSuccess={() => {
+                        setWalletPanelPlanId(null);
+                        // Reload to reflect the new entitlement everywhere.
+                        setTimeout(() => { window.location.href = "/"; }, 1200);
+                      }}
+                      compact
+                    />
                   </div>
                 )}
-                {/* Meru card panel removed 2026-08-08 with the Card button. */}
+                {/* NP crypto picker + hosted-invoice panel removed 2026-08-09. */}
               </div>
             </div>
-            {usdcOrder && selectedPlan === plan.id && (
-              <div ref={orderPanelRef}>
-                <NowPaymentsWaitingPanel
-                  order={usdcOrder!}
-                  isSuccess={usdcPaymentSuccess}
-                  isConfirming={usdcConfirming}
-                  onCancel={cancelNowPayments}
-                  lang={t.lang}
-                  wrapperClassName="rounded-t-none border-t-0"
-                  payCurrency={usdcOrder?.payCurrency}
-                />
-              </div>
-            )}
-            {/* BTC/Dash/Lightning panels removed 2026-07-31 — providers retired */}
             </div>
           );
         })}
       </div>
-
-      {nowpaymentsWarning && (
-        <div className="mb-4 p-3 rounded-xl text-sm flex items-start gap-2.5" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
-          <span className="text-base flex-shrink-0">⚠️</span>
-          <div>
-            <p className="font-semibold text-red-400 mb-0.5">
-              {t.lang === "es" ? "Pagos crypto temporalmente no disponibles" : "Crypto payments temporarily unavailable"}
-            </p>
-            <p className="text-xs text-pnp-textSecondary">
-              {t.lang === "es"
-                ? "El proveedor de pagos está respondiendo lento. Intenta de nuevo en 5 minutos."
-                : "The payment provider is responding slowly. Please try again in 5 minutes."}
-            </p>
-            <button
-              onClick={() => setNowpaymentsWarning(false)}
-              className="mt-1.5 text-[11px] text-pnp-textSecondary underline"
-            >
-              {t.lang === "es" ? "Cerrar" : "Dismiss"}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Payment polling indicator */}
       {pollingPaymentId && (
@@ -1232,33 +1043,12 @@ export default function Subscribe() {
         </div>
       )}
 
-      {/* Crypto nudge — shown after payment failure */}
-      {showCryptoNudge && usdcAvailable && selectedPlan && !usdcOrder && (
-        <div className="mb-3 rounded-xl border border-green-500/40 bg-green-500/10 p-4">
-          <p className="text-sm font-bold text-green-300 mb-0.5">
-            {t.lang === "es" ? "¿Problema con tu tarjeta? Paga con cripto" : "Card not working? Pay with crypto"}
-          </p>
-          <p className="text-xs text-pnp-textSecondary mb-3">
-            {t.lang === "es"
-              ? "BTC, ETH, USDT y +100 monedas vía NowPayments."
-              : "BTC, ETH, USDT + 100 coins via NowPayments."}
-          </p>
-          <button
-            disabled={submitting}
-            onClick={() => handleQuickCheckout(selectedPlan, "usdc")}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold text-white disabled:opacity-50 transition-colors"
-            style={{ background: "linear-gradient(90deg, #16a34a, #15803d)" }}
-          >
-            <span>🪙</span>
-            {t.lang === "es" ? "Pagar con Cripto" : "Pay with Crypto"}
-          </button>
-        </div>
-      )}
+      {/* Crypto nudge removed 2026-08-09 — Wallet is now the only crypto path. */}
 
       {/* Error banner */}
-      {(error || nowpaymentsError) && (
+      {error && (
         <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-400 text-center whitespace-pre-line">
-          {error || nowpaymentsError}
+          {error}
         </div>
       )}
 

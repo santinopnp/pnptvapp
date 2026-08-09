@@ -873,7 +873,7 @@ export function tipTokens(
   recipientId: string,
   amountTokens: number,
   message?: string,
-): Promise<{ success: boolean; amountTokens: number; recipientUsername: string; newBalance: number }> {
+): Promise<{ success: boolean; amountTokens: number; recipientUsername: string; newBalance: number; newGiftedBalance?: number }> {
   return request("/api/webapp/tip-tokens", {
     method: "POST",
     body: { recipientId, amountTokens, ...(message ? { message } : {}) },
@@ -1486,7 +1486,7 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
 }
 
 export type WalletCheckoutRail = "usdc" | "rush";
-export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation";
+export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip";
 
 export interface WalletCheckoutInitiateResult {
   ok: true;

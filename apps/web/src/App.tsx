@@ -400,7 +400,7 @@ export default function App() {
                       defaultChain: base,
                       supportedChains: [base],
                       loginMethods: ["telegram", "twitter", "wallet"],
-                      embeddedWallets: { createOnLogin: "users-without-wallets" },
+                      embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
                       appearance: { theme: "dark", accentColor: "#D4007A" },
                     }}
                   >

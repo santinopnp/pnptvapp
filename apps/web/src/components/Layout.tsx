@@ -2169,9 +2169,55 @@ function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
       <Suspense fallback={null}>
         <CristinaWidget compact={showCompact} />
       </Suspense>
+      <WalletFloater />
     </>
   );
 }
+
+// Wallet FAB — bottom-right floating button. Tap opens the WalletHomeSheet,
+// which shows a proper wallet UI: USDC + Ru$h balances, on-chain wallet
+// address (copy + Basescan), fund-with-card, buy Ru$h, and a drill-in to
+// the BuyTokensModal for legacy provider fallbacks. Auto-hides on carve-out
+// surfaces where it would visually collide with call/tip controls.
+function WalletFloater() {
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+  const path = location.pathname;
+  if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
+  if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label="Open wallet"
+        className="fixed z-40 flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+        style={{
+          bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+          right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+          width: 52, height: 52,
+          background: "linear-gradient(135deg,#10b981,#059669)",
+          color: "white",
+          fontSize: 22,
+        }}
+      >
+        💎
+      </button>
+      {open && (
+        <Suspense fallback={null}>
+          <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+        </Suspense>
+      )}
+    </>
+  );
+}
+
+// Lazy-load the wallet sheet — heavy (Privy hooks + viem + BuyTokensModal
+// drill-in). Only downloads on first FAB tap so the base bundle stays lean.
+const LazyWalletHomeSheet = lazy(async () => {
+  const mod = await import("@/components/payments/PayInWalletChips");
+  return { default: mod.WalletHomeSheet };
+});
 
 // REMOVED 2026-05-01 — FloatingMainStagePlayer (220×130 fixed PiP video).
 // Replaced by MainStageLiveBanner mounted on Home / Live / Chat pages.
