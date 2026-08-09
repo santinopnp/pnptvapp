@@ -48,6 +48,12 @@ const MARQUEE_END_PAD_PX = 12; // ensure the last character clears the edge
 const UPDATE_MESSAGES: RawMessage[] = [
   {
     category: "UPDATE",
+    en: "🔥 TONIGHT 9:30 PM COL — Party on Main Stage: Santino · SOTUME · Deus 💊 →",
+    es: "🔥 HOY 9:30 PM COL — Party en Main Stage: Santino · SOTUME · Deus 💊 →",
+    href: "/main-stage",
+  },
+  {
+    category: "UPDATE",
     en: "💎 Ru$h is here! PNPtv!'s new in-house currency — bulk bonuses up to +25%. Tap to top up →",
     es: "💎 ¡Llegó Ru$h! La nueva moneda interna de PNPtv! — bonos de hasta +25%. Toca para recargar →",
     href: "/wallet",

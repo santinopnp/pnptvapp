@@ -8793,6 +8793,37 @@ export function playNextMainStage(): Promise<{ cooldownSeconds?: number }> {
   ).then(({ cooldownSeconds }) => ({ cooldownSeconds }));
 }
 
+export interface MainStagePin {
+  id: string;
+  text: string;
+  sender: string;
+  timestamp: number;
+  expiresAt: number;
+}
+
+export function getMainStagePin(): Promise<MainStagePin | null> {
+  return request<{ success: boolean; pin: MainStagePin | null }>(
+    "/api/main-stage/pin"
+  ).then(({ pin }) => pin);
+}
+
+export function setMainStagePin(input: {
+  text: string;
+  sender?: string;
+  ttlSeconds?: number;
+}): Promise<MainStagePin> {
+  return request<{ success: boolean; pin: MainStagePin }>(
+    "/api/main-stage/pin",
+    { method: "POST", body: input }
+  ).then(({ pin }) => pin);
+}
+
+export function clearMainStagePin(): Promise<void> {
+  return request<{ success: boolean }>("/api/main-stage/pin", {
+    method: "DELETE",
+  }).then(() => undefined);
+}
+
 export function previewMainStageInvite(code: string): Promise<MainStageInvitePreview> {
   return request<{ success: boolean } & MainStageInvitePreview>(
     `/api/main-stage/invites/preview/${encodeURIComponent(code)}`

@@ -387,6 +387,14 @@ function initSocketIO(io) {
     logger.info('socketHandlers: mainStageService.setIo wired');
   }
 
+  // Wire the Main Stage host-bot service (experiment 2026-08-09 → 08-12).
+  try {
+    const hostBot = require('../../services/mainStageHostBotService');
+    if (typeof hostBot.setIo === 'function') hostBot.setIo(io);
+  } catch (_hbWireErr) {
+    logger.warn('socketHandlers: mainStageHostBotService wire failed', { error: _hbWireErr.message });
+  }
+
   // HIGH-03: Start the ban-event subscriber once, passing the io instance
   _initBanSubscriber(io);
   // Auth middleware: reject connections with no valid session
@@ -505,6 +513,21 @@ function initSocketIO(io) {
       socket.join('mainstage');
     }
 
+    // Host-bot A/B split — sockets in bucket A join `mainstage:hostbot`
+    // and receive Cristina's auto msgs; bucket B never sees them.
+    try {
+      const hostBot = require('../../services/mainStageHostBotService');
+      const inMainstage = socket.rooms && socket.rooms.has('mainstage');
+      if (inMainstage) {
+        const split = await hostBot.getSplit();
+        if (hostBot.bucketOf(user.id, split) === 'A') {
+          socket.join('mainstage:hostbot');
+        }
+      }
+    } catch (_hbBucketErr) {
+      // Fail closed for the experiment — no auto msg is better than a mis-bucketed one.
+    }
+
     // Send the current state to the joining socket and tell everyone the
     // viewer count moved. Debounced inside the service so a connection burst
     // doesn't spam the room.
@@ -513,6 +536,11 @@ function initSocketIO(io) {
       _ms.getState().then(state => {
         socket.emit('mainstage:state', state);
       }).catch(() => {});
+      if (typeof _ms.getPinnedAnnouncement === 'function') {
+        _ms.getPinnedAnnouncement().then(pin => {
+          if (pin) socket.emit('mainstage:chat-pinned', pin);
+        }).catch(() => {});
+      }
       if (typeof _ms.notifyViewersChanged === 'function') _ms.notifyViewersChanged();
     }
     socket.once('disconnect', () => {
@@ -609,6 +637,11 @@ function initSocketIO(io) {
         timestamp: now,
       };
       io.to('mainstage').emit('mainstage:chat-message', msg);
+      // Feed the host-bot activity tracker so it suppresses auto msgs when
+      // real chat is flowing.
+      try {
+        require('../../services/mainStageHostBotService').trackHumanMessage();
+      } catch (_) {}
     });
 
     // mainstage:reaction-send — emoji reaction, 1/2s rate limit per user

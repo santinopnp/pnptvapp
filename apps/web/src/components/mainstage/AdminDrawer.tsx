@@ -3,6 +3,8 @@ import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useI18n } from "@/lib/i18n";
 import { useMainStage } from "@/hooks/useMainStage";
 import { getFeaturedPrimeVideos, getAssetUrl, type PrimeVideo } from "@/lib/directus";
+import { getMainStagePin, setMainStagePin, clearMainStagePin, type MainStagePin } from "@/lib/api";
+import { getSocket } from "@/lib/socket";
 import InvitePanel from "@/components/mainstage/InvitePanel";
 import type { MainStageState } from "@/hooks/useMainStage";
 import type { CammerInfo } from "@/components/mainstage/ParticipantCollector";
@@ -536,12 +538,136 @@ export function AdminPanelContent({
         </section>
         </div>
 
+        {/* Pinned announcement — admin-only. Late-joiners on the Main Stage
+            chat see the current pin on connect and every pin/clear broadcasts
+            over the mainstage:chat-pinned socket event. */}
+        {isAdmin && (
+          <section>
+            <div className="h-px bg-white/[0.06] mb-4" />
+            <PinPanel />
+          </section>
+        )}
+
         {/* Invite Panel — admin-only, always visible (outside the aria-hidden block) */}
         {isAdmin && (
           <section>
             <div className="h-px bg-white/[0.06] mb-4" />
             <InvitePanel />
           </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Inline admin panel for the pinned chat announcement. Kept inline per
+// the repo's no-new-files rule for small admin surfaces. Loads the current
+// pin, listens to the mainstage:chat-pinned socket event so other admins'
+// changes appear live, and provides Pin / Clear buttons.
+function PinPanel() {
+  const [pin, setPin] = useState<MainStagePin | null>(null);
+  const [text, setText] = useState<string>("");
+  const [ttlHours, setTtlHours] = useState<number>(24);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [err, setErr] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    getMainStagePin().then((p) => { if (!cancelled) setPin(p); }).catch(() => {});
+    const socket = getSocket();
+    const onPinned = (payload: MainStagePin | null) => { if (!cancelled) setPin(payload); };
+    socket.on("mainstage:chat-pinned", onPinned);
+    return () => { cancelled = true; socket.off("mainstage:chat-pinned", onPinned); };
+  }, []);
+
+  const handlePin = useCallback(async () => {
+    const clean = text.trim();
+    if (!clean) { setErr("Enter pin text"); return; }
+    setSaving(true); setErr("");
+    try {
+      const ttlSeconds = Math.max(60, Math.min(7 * 24 * 3600, Math.round(ttlHours * 3600)));
+      const saved = await setMainStagePin({ text: clean, ttlSeconds });
+      setPin(saved);
+      setText("");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Pin failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [text, ttlHours]);
+
+  const handleClear = useCallback(async () => {
+    setSaving(true); setErr("");
+    try {
+      await clearMainStagePin();
+      setPin(null);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Clear failed");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const expiresIn = pin?.expiresAt ? Math.max(0, Math.floor((pin.expiresAt - Date.now()) / 60000)) : 0;
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-white/50 text-[10px] font-bold uppercase tracking-widest">Pinned announcement</h3>
+
+      {pin && (
+        <div className="rounded-xl px-3 py-2.5 bg-white/[0.05] border border-white/10">
+          <p className="text-[11px] font-bold text-white/85 leading-tight break-words">{pin.text}</p>
+          <p className="text-[10px] text-white/45 mt-1">
+            by {pin.sender} · {expiresIn >= 60 ? `${Math.round(expiresIn / 60)}h left` : `${expiresIn}m left`}
+          </p>
+        </div>
+      )}
+
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value.slice(0, 500))}
+        placeholder={pin ? "Replace pin…" : "New pinned message (max 500 chars)"}
+        rows={3}
+        className="w-full px-3 py-2 rounded-xl text-xs text-white placeholder-white/30 bg-white/[0.06] border border-white/10 focus:outline-none focus:border-pnp-accent/50 resize-none"
+      />
+
+      <div className="flex items-center gap-2">
+        <label className="text-[10px] text-white/50 flex-shrink-0">TTL</label>
+        <select
+          value={ttlHours}
+          onChange={(e) => setTtlHours(parseFloat(e.target.value))}
+          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg text-[11px] text-white bg-white/[0.06] border border-white/10 focus:outline-none"
+        >
+          <option value={1}>1 hour</option>
+          <option value={4}>4 hours</option>
+          <option value={12}>12 hours</option>
+          <option value={24}>24 hours</option>
+          <option value={72}>3 days</option>
+          <option value={168}>7 days</option>
+        </select>
+      </div>
+
+      {err && <p className="text-[10px] text-pnp-error">{err}</p>}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handlePin}
+          disabled={saving || !text.trim()}
+          className="flex-1 min-h-[40px] rounded-xl text-xs font-bold text-white transition-all active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+        >
+          {saving ? "Saving…" : pin ? "Replace pin" : "Pin"}
+        </button>
+        {pin && (
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={saving}
+            className="flex-shrink-0 min-h-[40px] px-4 rounded-xl text-xs font-semibold transition-all active:scale-[0.97] bg-pnp-error/[0.12] border border-pnp-error/25 text-pnp-error disabled:opacity-40"
+          >
+            Clear
+          </button>
         )}
       </div>
     </div>

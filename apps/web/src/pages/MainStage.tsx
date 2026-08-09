@@ -8,14 +8,13 @@ import {
 import { ConnectionState, RoomEvent } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, type MainStageJoinCheck, type TopicLite } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { SpotlightGrid } from "@/components/mainstage/SpotlightGrid";
-import { TipSantinoTrigger } from "@/components/mainstage/TipSantinoTrigger";
 import { CinemaGrid } from "@/components/mainstage/CinemaGrid";
 import { EqualGrid } from "@/components/mainstage/EqualGrid";
 import { MEDIA_IDENTITY } from "@/components/mainstage/CinemaGrid";
@@ -34,6 +33,7 @@ import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
 import { TheaterCurtains } from "@/components/mainstage/TheaterCurtains";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 // ── Guest credential shape (written by MainStageGuestJoin, consumed once here) ─
 
@@ -282,13 +282,19 @@ function MainStageInner({
         />
       )}
 
-      {/* Tip Santino — Main Stage launch window (auto-expires 2026-08-10 05:00 UTC) */}
-      <TipSantinoTrigger isParticipant={isParticipant} />
     </>
   );
 }
 
-interface ChatMessage { id: string; userId: string | number; displayName: string; text: string; timestamp: number; }
+interface ChatMessage {
+  id: string;
+  userId: string | number;
+  displayName: string;
+  text: string;
+  timestamp: number;
+  kind?: 'auto';
+  cta?: { label: string; action?: 'open-tip'; href?: string } | null;
+}
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
 function fmtMmSs(secs: number): string {
@@ -373,6 +379,9 @@ export default function MainStage() {
   const [giftedBalance, setGiftedBalance] = useState<number>(0);
   const [bonusGiftBalance, setBonusGiftBalance] = useState<number>(0);
   const [showBuyTokens, setShowBuyTokens] = useState(false);
+  const [showTipSheet, setShowTipSheet] = useState(false);
+  const [tipAmount, setTipAmount] = useState<number>(10);
+  const [tipMessage, setTipMessage] = useState<string>("");
   // Seed with known community topics so the strip is always visible immediately,
   // even before the fetch resolves or if both network calls fail.
   const [mainTopics, setMainTopics] = useState<TopicLite[]>([
@@ -415,6 +424,31 @@ export default function MainStage() {
   const [chatInput, setChatInput] = useState("");
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
+
+  // Pinned admin announcement — persists for late-joiners. Backend delivers
+  // via GET /api/main-stage/pin on mount AND a `mainstage:chat-pinned` socket
+  // event on connect / when admin edits. Users can dismiss it locally.
+  const [pin, setPin] = useState<MainStagePin | null>(null);
+  const [dismissedPinId, setDismissedPinId] = useState<string | null>(() => {
+    try { return localStorage.getItem("mainstage:pin:dismissed"); } catch { return null; }
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    getMainStagePin().then((p) => { if (!cancelled) setPin(p); }).catch(() => {});
+    const socket = getSocket();
+    const onPinned = (p: MainStagePin | null) => setPin(p || null);
+    socket.on('mainstage:chat-pinned', onPinned);
+    return () => { cancelled = true; socket.off('mainstage:chat-pinned', onPinned); };
+  }, []);
+
+  const dismissPin = useCallback(() => {
+    if (!pin) return;
+    try { localStorage.setItem("mainstage:pin:dismissed", pin.id); } catch {}
+    setDismissedPinId(pin.id);
+  }, [pin]);
+
+  const visiblePin = pin && pin.id !== dismissedPinId && Date.now() < pin.expiresAt ? pin : null;
 
   useEffect(() => {
     const socket = getSocket();
@@ -1327,6 +1361,21 @@ export default function MainStage() {
               Viewer
             </span>
           )}
+          {/* 💸 Tip button — always visible on mobile + desktop for signed-in
+              non-Santino users. Recipient defaults to the spotlighted cammer;
+              falls back to Santino (SANTINO_USER_ID) when nobody is on stage. */}
+          {!isGuestMode && user?.id && String(user.id) !== "8599671840" &&
+           String(state?.spotlight?.cammer || "") !== String(user.id) && (
+            <button
+              onClick={() => setShowTipSheet(true)}
+              aria-label="Send tip"
+              className="flex items-center gap-1 px-3 py-1 rounded-full text-white text-xs font-bold min-h-[44px] active:scale-95 transition-all border border-white/20"
+              style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.9),rgba(230,145,56,0.9))" }}
+            >
+              <span aria-hidden="true">💸</span>
+              <span>Tip</span>
+            </button>
+          )}
           {!isGuestMode && !isViewerMode && tokenBalance !== null && (
             <button
               onClick={() => setShowBuyTokens(true)}
@@ -1881,6 +1930,33 @@ export default function MainStage() {
                 </button>
               ))}
             </div>
+            {/* Pinned admin announcement — sticky at top of chat sidebar so
+                late-joiners always see the latest platform update. */}
+            {visiblePin && (
+              <div
+                className="flex-shrink-0 flex items-start gap-2 px-3 py-2"
+                style={{
+                  background: "linear-gradient(135deg,rgba(212,0,122,0.14),rgba(123,97,255,0.14))",
+                  borderBottom: "1px solid rgba(212,0,122,0.28)",
+                }}
+              >
+                <span aria-hidden className="text-[13px] leading-tight mt-0.5">📌</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/50">
+                    {visiblePin.sender}
+                  </p>
+                  <p className="text-[12px] leading-snug text-white/92 break-words">{visiblePin.text}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissPin}
+                  aria-label="Dismiss pinned announcement"
+                  className="flex-shrink-0 text-white/40 hover:text-white/90 text-sm leading-none px-1"
+                >
+                  ×
+                </button>
+              </div>
+            )}
             {/* Scrollable messages */}
             <div
               ref={sidebarScrollRef}
@@ -1894,6 +1970,7 @@ export default function MainStage() {
               ) : (
                 chatMessages.map((msg) => {
                   const isMe = user && String(msg.userId) === String(user.id);
+                  const isAuto = msg.kind === 'auto';
                   return (
                     <div
                       key={msg.id}
@@ -1903,24 +1980,64 @@ export default function MainStage() {
                       <div
                         className="inline-flex flex-col px-2.5 py-1 rounded-2xl self-start max-w-full"
                         style={{
-                          background: isMe
-                            ? "linear-gradient(135deg,rgba(212,0,122,0.55),rgba(123,97,255,0.45))"
-                            : "rgba(255,255,255,0.06)",
+                          background: isAuto
+                            ? "linear-gradient(135deg,rgba(123,97,255,0.30),rgba(212,0,122,0.20))"
+                            : isMe
+                              ? "linear-gradient(135deg,rgba(212,0,122,0.55),rgba(123,97,255,0.45))"
+                              : "rgba(255,255,255,0.06)",
                           backdropFilter: "blur(8px)",
-                          border: isMe ? "1px solid rgba(212,0,122,0.30)" : "1px solid rgba(255,255,255,0.06)",
+                          border: isAuto
+                            ? "1px solid rgba(123,97,255,0.35)"
+                            : isMe
+                              ? "1px solid rgba(212,0,122,0.30)"
+                              : "1px solid rgba(255,255,255,0.06)",
                         }}
                       >
-                        <span
-                          className="text-[10px] font-bold leading-tight"
-                          style={{
-                            background: isMe ? "rgba(255,255,255,0.9)" : "linear-gradient(90deg,#FF6BB0,#A990FF)",
-                            WebkitBackgroundClip: "text",
-                            WebkitTextFillColor: "transparent",
-                          }}
-                        >
-                          {msg.displayName}
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="text-[10px] font-bold leading-tight"
+                            style={{
+                              background: isMe ? "rgba(255,255,255,0.9)" : "linear-gradient(90deg,#FF6BB0,#A990FF)",
+                              WebkitBackgroundClip: "text",
+                              WebkitTextFillColor: "transparent",
+                            }}
+                          >
+                            {msg.displayName}
+                          </span>
+                          {isAuto && (
+                            <span
+                              className="text-[8px] font-bold px-1 py-0.5 rounded"
+                              style={{
+                                background: "rgba(123,97,255,0.35)",
+                                color: "#E8DFFF",
+                                letterSpacing: "0.5px",
+                              }}
+                            >
+                              AUTO
+                            </span>
+                          )}
                         </span>
                         <span className="text-[12px] leading-snug text-white/90 break-words">{msg.text}</span>
+                        {msg.cta && (
+                          msg.cta.action === 'open-tip' ? (
+                            <button
+                              type="button"
+                              onClick={() => setShowTipSheet(true)}
+                              className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
+                            >
+                              {msg.cta.label}
+                            </button>
+                          ) : msg.cta.href ? (
+                            <a
+                              href={msg.cta.href}
+                              className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
+                            >
+                              {msg.cta.label}
+                            </a>
+                          ) : null
+                        )}
                       </div>
                     </div>
                   );
@@ -1994,6 +2111,97 @@ export default function MainStage() {
         dpnsHandle={null}
       />
 
+      {/* Tip sheet — recipient defaults to the spotlighted cammer, falls back
+          to Santino when nobody is on stage. Same TipSheet UX as hangout/DM
+          tip flows; sends USDC on Base via wallet, 100% to the creator. */}
+      {showTipSheet && (() => {
+        const tipRecipientId = state?.spotlight?.cammer || "8599671840";
+        const isFallback = !state?.spotlight?.cammer;
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setShowTipSheet(false)}
+          >
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
+              style={{ background: "rgba(19, 16, 26, 0.98)", border: "1px solid rgba(212,0,122,0.35)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div>
+                <p className="text-base font-bold text-white">
+                  💸 {isFallback ? "Tip Santino" : "Tip on-stage creator"}
+                </p>
+                <p className="text-[11px] text-white/60 mt-0.5">
+                  {isFallback
+                    ? "No cammer on stage right now — your tip goes to Santino. USDC on Base, gas-sponsored, instant."
+                    : "USDC on Base. Gas-sponsored. 100% goes to the creator, instantly."}
+                </p>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {[5, 10, 25, 50].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setTipAmount(amt)}
+                    className={`py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                      tipAmount === amt
+                        ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
+                        : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
+                    }`}
+                  >
+                    ${amt}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                step={1}
+                value={tipAmount}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value || "0", 10);
+                  if (Number.isFinite(v) && v > 0) setTipAmount(Math.min(500, v));
+                }}
+                className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+                placeholder="Custom amount ($)"
+              />
+              <input
+                type="text"
+                maxLength={140}
+                value={tipMessage}
+                onChange={(e) => setTipMessage(e.target.value)}
+                className="w-full py-2 px-3 rounded-lg text-xs text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+                placeholder="Add a message (optional)"
+              />
+              <WalletPayCard
+                surface="tip"
+                amountUsd={tipAmount}
+                entitlementSpec={{
+                  creator_id: tipRecipientId,
+                  message: tipMessage.trim() || undefined,
+                }}
+                metadata={{ context: "main_stage", fallback: isFallback ? "santino" : undefined }}
+                label={`Send $${tipAmount} tip`}
+                lang="en"
+                onSuccess={() => setTimeout(() => setShowTipSheet(false), 1200)}
+                compact
+              />
+              <button
+                type="button"
+                onClick={() => setShowTipSheet(false)}
+                className="w-full text-xs text-white/50 hover:text-white/80 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── YouTube-style chat messages overlay ─────────────────────────────── */}
       <style>{`
         @keyframes mainstage-float-up {
@@ -2059,6 +2267,38 @@ export default function MainStage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pinned announcement — mobile overlay. Sits above the chat-overlay
+          messages so late-joiners always see the latest admin update even
+          when they've collapsed chat. Dismissible per-session. */}
+      {visiblePin && !isViewerMode && (
+        <div
+          className="absolute left-3 right-3 z-40 flex items-start gap-2 px-3 py-2 rounded-xl lg:hidden"
+          style={{
+            top: "calc(64px + env(safe-area-inset-top, 0px))",
+            background: "linear-gradient(135deg,rgba(212,0,122,0.92),rgba(123,97,255,0.92))",
+            border: "1px solid rgba(255,255,255,0.20)",
+            backdropFilter: "blur(10px)",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+          }}
+        >
+          <span aria-hidden className="text-[13px] leading-tight mt-0.5">📌</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-white/85">
+              {visiblePin.sender}
+            </p>
+            <p className="text-[12px] leading-snug text-white break-words">{visiblePin.text}</p>
+          </div>
+          <button
+            type="button"
+            onClick={dismissPin}
+            aria-label="Dismiss pinned announcement"
+            className="flex-shrink-0 text-white/70 hover:text-white text-base leading-none px-1"
+          >
+            ×
+          </button>
         </div>
       )}
 

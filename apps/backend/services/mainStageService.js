@@ -59,6 +59,11 @@ const PLAYLIST_KEY     = 'mainstage:playlist';
 // automatically become stale when the video changes without explicit cleanup.
 const SKIP_VOTES_TTL_S = 1800;
 
+// Pinned admin announcement — one JSON blob late-joiners fetch on connect.
+const PIN_KEY          = 'mainstage:pinned';
+const PIN_MAX_LEN      = 500;
+const PIN_MAX_TTL_S    = 7 * 24 * 3600;
+
 // Directus endpoints for background Prime Video auto-rotation
 const DIRECTUS_INTERNAL_URL = (process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055').replace(/\/$/, '');
 const DIRECTUS_PUBLIC_URL   = (process.env.DIRECTUS_PUBLIC_URL   || 'https://cms.pnptv.app').replace(/\/$/, '');
@@ -1188,6 +1193,48 @@ async function stopRotation() {
  * @param {string} action
  * @param {object} [payload]
  */
+// ── Pinned announcement ──────────────────────────────────────────────────────
+// Late-joiners to Main Stage miss ephemeral chat broadcasts. `getPinnedAnnouncement`
+// returns whatever admin has set (null if none/expired). `setPinnedAnnouncement`
+// stores it in Redis with a TTL and broadcasts the update to everyone in the
+// 'mainstage' Socket.IO room. Also emitted to newly-connected sockets.
+async function getPinnedAnnouncement() {
+  try {
+    const raw = await getRedis().get(PIN_KEY);
+    if (!raw) return null;
+    const pin = JSON.parse(raw);
+    if (pin?.expiresAt && Date.now() > Number(pin.expiresAt)) {
+      await getRedis().del(PIN_KEY).catch(() => {});
+      return null;
+    }
+    return pin;
+  } catch (err) {
+    logger.warn('[MainStage] getPinnedAnnouncement failed', { error: err.message });
+    return null;
+  }
+}
+
+async function setPinnedAnnouncement({ text, sender, ttlSeconds } = {}) {
+  const clean = String(text || '').replace(/<[^>]*>/g, '').trim().slice(0, PIN_MAX_LEN);
+  if (!clean) throw new Error('Pin text is required');
+  const ttl = Math.max(60, Math.min(PIN_MAX_TTL_S, parseInt(ttlSeconds, 10) || 86_400));
+  const pin = {
+    id: crypto.randomBytes(8).toString('hex'),
+    text: clean,
+    sender: String(sender || 'PNPtv'),
+    timestamp: Date.now(),
+    expiresAt: Date.now() + ttl * 1000,
+  };
+  await getRedis().set(PIN_KEY, JSON.stringify(pin), 'EX', ttl);
+  if (_io) _io.to('mainstage').emit('mainstage:chat-pinned', pin);
+  return pin;
+}
+
+async function clearPinnedAnnouncement() {
+  await getRedis().del(PIN_KEY).catch(() => {});
+  if (_io) _io.to('mainstage').emit('mainstage:chat-pinned', null);
+}
+
 async function logAdminAction(userId, action, payload = null) {
   try {
     const pool = getPool();
@@ -1270,4 +1317,7 @@ module.exports = {
   voteSkip,
   getSkipVotes,
   broadcastSkipVoteUpdate,
+  getPinnedAnnouncement,
+  setPinnedAnnouncement,
+  clearPinnedAnnouncement,
 };

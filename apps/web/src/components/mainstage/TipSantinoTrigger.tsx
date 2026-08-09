@@ -96,6 +96,7 @@ export function TipSantinoTrigger({ isParticipant }: Props) {
               variant="full"
               showMessage
               showBalance
+              allowGifted
               onSuccess={() => {
                 setTimeout(() => setOpen(false), 1600);
               }}

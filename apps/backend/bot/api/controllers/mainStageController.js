@@ -727,6 +727,43 @@ const playNext = asyncHandler(async (req, res) => {
   return res.json({ success: true });
 });
 
+// ── Pinned announcement ──────────────────────────────────────────────────────
+// Publicly readable so late-joiners on any surface can show it; write/clear
+// are admin-only and enforced at the route level.
+const getPin = asyncHandler(async (_req, res) => {
+  const pin = await mainStageService.getPinnedAnnouncement();
+  return res.json({ success: true, pin });
+});
+
+const setPin = asyncHandler(async (req, res) => {
+  const userId = req.user?.id;
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  const ttlSeconds = req.body?.ttlSeconds ? parseInt(req.body.ttlSeconds, 10) : undefined;
+  const senderName = typeof req.body?.sender === 'string' && req.body.sender.trim()
+    ? req.body.sender.trim().slice(0, 60)
+    : 'PNPtv Admin';
+  const clean = text.replace(/<[^>]*>/g, '').trim();
+  if (!clean) {
+    return res.status(400).json({ success: false, error: 'text required' });
+  }
+  const pin = await mainStageService.setPinnedAnnouncement({
+    text: clean,
+    sender: senderName,
+    ttlSeconds,
+  });
+  await mainStageService.logAdminAction(userId, 'pin_set', { pinId: pin.id, ttlSeconds: ttlSeconds ?? null });
+  logger.info('[MainStage] pinned announcement set', { userId, pinId: pin.id });
+  return res.json({ success: true, pin });
+});
+
+const clearPin = asyncHandler(async (req, res) => {
+  const userId = req.user?.id;
+  await mainStageService.clearPinnedAnnouncement();
+  await mainStageService.logAdminAction(userId, 'pin_clear', null);
+  logger.info('[MainStage] pinned announcement cleared', { userId });
+  return res.json({ success: true });
+});
+
 module.exports = {
   token,
   viewerToken,
@@ -742,4 +779,7 @@ module.exports = {
   shuffle,
   voteSkip,
   playNext,
+  getPin,
+  setPin,
+  clearPin,
 };

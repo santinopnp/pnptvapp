@@ -18900,6 +18900,24 @@ app.post(
   mainStageController.moderate
 );
 
+// Pinned announcement — readable by anyone (used by clients on connect to catch
+// up on the current pin), writable only by admin/superadmin.
+app.get('/api/main-stage/pin', mainStageStateLimiter, mainStageController.getPin);
+app.post(
+  '/api/main-stage/pin',
+  requireSessionAuth,
+  roleGuard('admin', 'superadmin'),
+  mainStageAdminLimiter,
+  mainStageController.setPin
+);
+app.delete(
+  '/api/main-stage/pin',
+  requireSessionAuth,
+  roleGuard('admin', 'superadmin'),
+  mainStageAdminLimiter,
+  mainStageController.clearPin
+);
+
 // ── Main Stage Guest Invites ──────────────────────────────────────────────────
 
 const mainStageInvitesController = require('./controllers/mainStageInvitesController');

@@ -2346,6 +2346,15 @@ const startBot = async () => {
       logger.warn(`Main Stage rotation initialization failed: ${error.message}`);
     }
 
+    // Main Stage Host Bot — Cristina posts nudges/wellness in chat (exp 2026-08).
+    // Enable/disable at runtime: `redis SET pnpapp:mainstage:host_bot:enabled 1`
+    try {
+      require('../../services/mainStageHostBotService').start();
+      logger.info('✓ Main Stage host-bot armed (gated by Redis flag)');
+    } catch (error) {
+      logger.warn(`Main Stage host-bot init failed: ${error.message}`);
+    }
+
     // Main Stage media broadcaster (env-gated; FFmpeg → LiveKit WHIP)
     if (String(process.env.MAIN_STAGE_MEDIA_ENABLED ?? 'true').toLowerCase() !== 'false') {
       try {
