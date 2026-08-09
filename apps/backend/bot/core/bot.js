@@ -2355,6 +2355,15 @@ const startBot = async () => {
       logger.warn(`Main Stage host-bot init failed: ${error.message}`);
     }
 
+    // Suspicious-members daily scan — posts a triage summary to
+    // #suspicious-review at 08:00 America/Bogota. No auto-actions.
+    // Requires SLACK_BOT_TOKEN + SLACK_CHANNEL_SUSPICIOUS_REVIEW env vars.
+    try {
+      require('../../services/suspiciousMembersScanService').start();
+    } catch (error) {
+      logger.warn(`Suspicious-members scan init failed: ${error.message}`);
+    }
+
     // Main Stage media broadcaster (env-gated; FFmpeg → LiveKit WHIP)
     if (String(process.env.MAIN_STAGE_MEDIA_ENABLED ?? 'true').toLowerCase() !== 'false') {
       try {
