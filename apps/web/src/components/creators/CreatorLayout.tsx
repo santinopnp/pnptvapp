@@ -60,13 +60,14 @@ type CreatorNavLabelKey =
   | "navMyBenefits" | "navTools";
 
 // roles: which creator_role values may see this nav item. Omit = always show.
-const navItems: Array<{
+type NavItem = {
   to: string;
   labelKey: CreatorNavLabelKey;
   end?: boolean;
   icon: string;
   roles?: CreatorRoleClient[];
-}> = [
+};
+const navItems: NavItem[] = [
   {
     to: "/creators",
     labelKey: "navDashboard",
@@ -84,12 +85,12 @@ const navItems: Array<{
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
   // PNP Live streaming — hidden while STREAMS_DEPRECATED is true.
-  ...(!STREAMS_DEPRECATED ? [{
+  ...(!STREAMS_DEPRECATED ? ([{
     to: "/creators/live",
     labelKey: "navStartWebcamming",
     icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z",
     roles: ["performer", "both"],
-  }] : []),
+  }] satisfies NavItem[]) : []),
   {
     to: "/creators/availability",
     labelKey: "navPrivateCalls",
