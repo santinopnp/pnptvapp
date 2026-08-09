@@ -15045,6 +15045,39 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
     };
   }
 
+  if (surface === 'call') {
+    if (!cid) throwErr('creator_id required', 400);
+    if (cid === userId) throwErr('cannot book yourself', 400);
+    const pkgIdRaw = spec?.packageId;
+    if (pkgIdRaw === undefined || pkgIdRaw === null) throwErr('packageId required', 400);
+    const pkgId = Number(pkgIdRaw);
+    if (!Number.isInteger(pkgId) || pkgId <= 0) throwErr('packageId must be a positive integer', 400);
+    const { rows } = await dbQuery(
+      `SELECT p.id, p.price_usd, p.duration_minutes, p.creator_id, p.is_active,
+              (SELECT id FROM performers WHERE user_id = p.creator_id LIMIT 1) AS performer_id
+         FROM call_packages p WHERE p.id = $1`,
+      [pkgId]
+    );
+    if (rows.length === 0) throwErr('package not found', 404);
+    const pkg = rows[0];
+    if (!pkg.is_active) throwErr('package inactive', 400);
+    if (String(pkg.creator_id) !== cid) throwErr('package does not belong to creator', 400);
+    if (!pkg.performer_id) throwErr('creator has no performer profile', 400);
+    const priceNum = Number(pkg.price_usd);
+    if (!(priceNum > 0)) throwErr('package has no price', 400);
+    return {
+      amountUsd: priceNum,
+      resolvedSpec: {
+        packageId: pkg.id,
+        creator_id: cid,
+        startAt: spec?.startAt ? String(spec.startAt) : null,
+        endAt: spec?.endAt ? String(spec.endAt) : null,
+        clientNotes: typeof spec?.clientNotes === 'string' ? spec.clientNotes.slice(0, 1000) : null,
+        email: typeof spec?.email === 'string' ? spec.email.slice(0, 320) : null,
+      },
+    };
+  }
+
   throwErr('unhandled surface', 400);
 }
 

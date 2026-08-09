@@ -346,7 +346,99 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   if (surface === 'tip') {
     return _fulfillTip(client, { payerUserId: userId, entitlementSpec, provider, intentId, amountUsd });
   }
+  if (surface === 'call') {
+    return _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  }
   return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId });
+}
+
+/**
+ * Fulfill a wallet-USDC call package purchase. Creates the payments row
+ * (status='completed'), grants call credits, and — when slot times are on
+ * the spec — inserts a confirmed bookings row. All in the outer transaction
+ * so replayed webhooks are naturally deduped by the checkout_intents FOR
+ * UPDATE lock plus call_credits.payment_id UNIQUE.
+ */
+async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd }) {
+  const { v4: uuidv4 } = require('uuid');
+  const { packageId, creator_id, startAt = null, endAt = null, clientNotes = null, email = null } =
+    entitlementSpec || {};
+  if (!packageId) throw new Error('_fulfillCallBooking: packageId required');
+  if (!creator_id) throw new Error('_fulfillCallBooking: creator_id required');
+
+  const pkgRes = await client.query(
+    `SELECT id, sku, quantity, duration_minutes, price_usd, creator_id, is_active
+       FROM call_packages WHERE id = $1`,
+    [packageId]
+  );
+  if (pkgRes.rows.length === 0) throw new Error(`_fulfillCallBooking: package ${packageId} not found`);
+  const pkg = pkgRes.rows[0];
+  if (!pkg.is_active) throw new Error(`_fulfillCallBooking: package ${packageId} inactive`);
+  if (String(pkg.creator_id) !== String(creator_id)) {
+    throw new Error(`_fulfillCallBooking: package ${packageId} does not belong to creator ${creator_id}`);
+  }
+
+  const paymentId = uuidv4();
+  const meta = {
+    type: 'call_package',
+    packageId: pkg.id,
+    packageSku: pkg.sku,
+    creatorId: pkg.creator_id,
+    email: email || null,
+    intentId,
+    ...(startAt && endAt ? { startTimeUtc: startAt, endTimeUtc: endAt, clientNotes } : {}),
+  };
+  await client.query(
+    `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
+       VALUES ($1, $1, $2, NULL, $3, $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,
+    [paymentId, String(userId), provider, Number(amountUsd), JSON.stringify(meta)]
+  );
+
+  const creditRes = await client.query(
+    `INSERT INTO call_credits (member_id, creator_id, package_id, quantity_total, payment_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (payment_id) DO NOTHING
+       RETURNING id`,
+    [String(userId), pkg.creator_id, pkg.id, pkg.quantity, paymentId]
+  );
+  const creditId = creditRes.rows[0]?.id || null;
+
+  let bookingId = null;
+  if (startAt && endAt) {
+    const performerRes = await client.query(
+      `SELECT id FROM performers WHERE user_id = $1 LIMIT 1`,
+      [String(pkg.creator_id)]
+    );
+    const performerId = performerRes.rows[0]?.id;
+    if (performerId) {
+      const priceCents = Math.round(Number(pkg.price_usd) * 100);
+      const bookingRes = await client.query(
+        `INSERT INTO bookings
+           (user_id, performer_id, package_id, payment_id, credit_id,
+            start_time_utc, end_time_utc, status, call_type,
+            duration_minutes, price_cents, currency, client_notes)
+         VALUES ($1,$2,$3,$4,$5,$6::timestamptz,$7::timestamptz,
+                 'confirmed','video',$8,$9,'USD',$10::text)
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [
+          String(userId), performerId, pkg.id, paymentId, creditId,
+          startAt, endAt, pkg.duration_minutes, priceCents,
+          clientNotes ? String(clientNotes).slice(0, 1000) : null,
+        ]
+      );
+      bookingId = bookingRes.rows[0]?.id || null;
+    }
+  }
+
+  return {
+    entitlementId: null,
+    rushCredited: 0,
+    giftedCredited: 0,
+    callCreditId: creditId,
+    bookingId,
+    paymentId,
+  };
 }
 
 /**

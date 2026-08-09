@@ -228,7 +228,7 @@ export function WalletPayCard({
   label, onSuccess, onError, lang = "en", compact = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
-  const { authenticated } = usePrivy();
+  const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
@@ -247,7 +247,46 @@ export function WalletPayCard({
       .finally(() => setLoading(false));
   }, [authenticated, embeddedWallet?.address]);
 
-  if (!authenticated || !embeddedWallet) return null;
+  // Not signed into Privy yet — show the sign-in CTA rather than silently
+  // rendering nothing (that regression left every non-Privy user with no
+  // way to pay after we retired the NP/BTC/USDT fallback pills 2026-08-09).
+  if (!authenticated) {
+    return (
+      <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-3">
+        <p className="text-xs font-semibold text-emerald-300 mb-2">
+          {es ? "Necesitas tu Billetera PNPtv" : "PNPtv Wallet required"}
+        </p>
+        <p className="text-[11px] leading-snug text-pnp-textSecondary mb-3">
+          {es
+            ? "Un toque, sin apps de wallet ni frases raras. Se crea al instante."
+            : "One tap, no wallet apps or seed phrases. Created instantly."}
+        </p>
+        <button
+          type="button"
+          onClick={() => login()}
+          className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-opacity active:opacity-80"
+          style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+        >
+          {es ? "Crear / abrir mi Billetera" : "Create / open my Wallet"}
+        </button>
+      </div>
+    );
+  }
+  // Signed in, wallet still provisioning (Privy embedded wallet takes a
+  // second on first sign-in). Show a spinner instead of silent null.
+  if (!embeddedWallet) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 flex items-center gap-3">
+        <svg className="w-4 h-4 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <p className="text-xs text-pnp-textSecondary">
+          {es ? "Preparando tu billetera…" : "Setting up your wallet…"}
+        </p>
+      </div>
+    );
+  }
 
   const canAfford = usdc != null && usdc >= amountUsd;
 
