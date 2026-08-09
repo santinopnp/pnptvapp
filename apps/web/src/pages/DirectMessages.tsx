@@ -231,6 +231,8 @@ interface DmCallSurfaceProps {
   livekitUrl: string;
   roomName: string;
   partnerName: string;
+  /** Peer's user id — enables the in-call 💸 Tip button (hidden when omitted). */
+  partnerUserId?: string | null;
   onClose: () => void;
 }
 
@@ -238,7 +240,7 @@ interface DmCallSurfaceProps {
 // group calls so toolbar / device selector / layout / mute-on-join all match.
 // Wrapped in a fixed overlay so the call floats above the chat (same UX role
 // the old draggable panel served).
-function DmCallSurface({ token, livekitUrl, roomName, partnerName, onClose }: DmCallSurfaceProps) {
+function DmCallSurface({ token, livekitUrl, roomName, partnerName, partnerUserId = null, onClose }: DmCallSurfaceProps) {
   return (
     <div className="fixed inset-0 z-[95] flex items-stretch justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4">
       <div className="flex w-full max-w-3xl flex-col">
@@ -250,6 +252,8 @@ function DmCallSurface({ token, livekitUrl, roomName, partnerName, onClose }: Dm
           startedBy={partnerName || null}
           onClose={onClose}
           onCallEnded={onClose}
+          tipRecipientId={partnerUserId}
+          tipRecipientName={partnerName || null}
         />
       </div>
     </div>
@@ -2168,6 +2172,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
           livekitUrl={activeCall.livekitUrl}
           roomName={activeCall.roomName}
           partnerName={partnerName}
+          partnerUserId={userId}
           onClose={closeActiveCall}
         />
       )}

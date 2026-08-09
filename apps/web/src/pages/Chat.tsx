@@ -3793,6 +3793,11 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
           isModerator={isOwnerOrMod}
           onCallError={(msg) => setCallError(msg)}
           onCallEnded={() => { setShowTelegramDock(false); setCallToken(null); setCallRoomName(null); }}
+          // Tip → whoever started the call (hangout owner in a private
+          // hangout). Hidden when viewer is the caller to avoid a
+          // "cannot tip yourself" round-trip.
+          tipRecipientId={callStartedBy && String(callStartedBy) !== String(user?.id) ? callStartedBy : null}
+          tipRecipientName={callStartedBy && String(callStartedBy) !== String(user?.id) ? callStartedBy : null}
         />
 
         {/* Pre-join card — camera preview + mic/cam toggles + device picker */}
@@ -5949,7 +5954,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   <div className="flex gap-3 items-center">
                     <div className="w-10 h-10 flex-shrink-0 relative">
                       {(group as any).avatarUrl ? (
-                        <img src={(group as any).avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-1" style={{ ringColor: "rgba(230,145,56,0.4)" }} />
+                        <img src={(group as any).avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover ring-1 ring-[rgba(230,145,56,0.4)]" />
                       ) : (
                         <div
                           className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
