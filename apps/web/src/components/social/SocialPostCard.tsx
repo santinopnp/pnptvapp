@@ -894,6 +894,16 @@ export default function SocialPostCard({
                 Exclusive
               </span>
             )}
+            {/* AI-generated disclosure — self-declared or admin-flagged */}
+            {post.is_ai_generated && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: "rgba(167,139,250,0.15)", color: "#A78BFA" }}
+                title="Contains AI-generated content"
+              >
+                🤖 AI
+              </span>
+            )}
             {/* Verified creator badge */}
             {post.author_creator_verified && (
               <svg

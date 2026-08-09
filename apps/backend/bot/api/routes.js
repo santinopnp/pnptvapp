@@ -7004,6 +7004,27 @@ app.get('/api/webapp/creators/earnings-summary', requireSessionAuth, asyncHandle
 }));
 app.get('/api/webapp/admin/posts', adminGuard, asyncHandler(webappAdminController.listPosts));
 app.delete('/api/webapp/admin/posts/:id', adminGuard, asyncHandler(webappAdminController.deletePost));
+
+// PATCH /api/webapp/admin/posts/:id/ai-flag — admin toggle for the AI-generated
+// disclosure badge. Body: { isAiGenerated: boolean }. Used when an admin flags
+// content that a user posted without disclosing it was AI-generated (or clears
+// a false positive). Writes to social_posts.is_ai_generated.
+app.patch('/api/webapp/admin/posts/:id/ai-flag', adminGuard, asyncHandler(async (req, res) => {
+  const postId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(postId) || postId <= 0) {
+    return res.status(400).json({ error: 'invalid post id' });
+  }
+  const value = req.body?.isAiGenerated === true || req.body?.isAiGenerated === 'true';
+  const { rows } = await query(
+    `UPDATE social_posts SET is_ai_generated = $1, updated_at = NOW()
+       WHERE id = $2 AND is_deleted = false
+       RETURNING id, is_ai_generated`,
+    [value, postId]
+  );
+  if (rows.length === 0) return res.status(404).json({ error: 'post not found' });
+  return res.json({ success: true, post: rows[0] });
+}));
+
 app.get('/api/webapp/admin/hangouts', adminGuard, asyncHandler(webappAdminController.listHangouts));
 app.delete('/api/webapp/admin/hangouts/:id', adminGuard, asyncHandler(webappAdminController.endHangout));
 
@@ -16445,21 +16466,10 @@ const checkoutLimiter = rateLimit({
 });
 
 
-// NowPayments (crypto) checkout for call packages — accepts optional payCurrency ('btc', 'btcln', etc.)
-app.post('/api/webapp/book-call/checkout/nowpayments',
-  requireSessionAuth, checkoutLimiter,
-  asyncHandler(callBookingController.createCheckoutNowPayments));
-
-// BTCPay BTC+Lightning checkout for call packages (hidden on frontend until BTC node is configured)
-app.post('/api/webapp/book-call/checkout/btc',
-  requireSessionAuth, checkoutLimiter,
-  asyncHandler(callBookingController.createCheckoutBtc));
-
-// BTCPay Dash checkout for call packages
-app.post('/api/webapp/book-call/checkout/dash',
-  requireSessionAuth, checkoutLimiter,
-  asyncHandler(callBookingController.createCheckoutDash));
-
+// Call-booking payment rails: only Ru$h tokens (below) and Wallet USDC (handled
+// by /api/webapp/wallet-checkout/*) as of 2026-08-09. NowPayments/BTC/Dash
+// checkout routes for call packages retired — UI no longer reaches them.
+//
 // Token checkout for call packages (instant, no payment gateway)
 app.post('/api/webapp/book-call/checkout/tokens',
   requireSessionAuth, checkoutLimiter,

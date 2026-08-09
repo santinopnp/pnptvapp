@@ -269,6 +269,7 @@ export function PostComposer({
   const textareaId = `${baseId}-textarea`;
   const exclusiveId = `${baseId}-exclusive`;
   const shareableId = `${baseId}-shareable`;
+  const aiGeneratedId = `${baseId}-ai-generated`;
   const dropzoneId = `${baseId}-dropzone`;
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -283,6 +284,7 @@ export function PostComposer({
   const [canPostExclusive, setCanPostExclusive] = useState(false);
   const [isExclusive, setIsExclusive] = useState(false);
   const [isShareable, setIsShareable] = useState(true);
+  const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [xHasWriteScope, setXHasWriteScope] = useState(false);
   const [crossPostX, setCrossPostX] = useState(false);
   const [videoTitle, setVideoTitle] = useState("");
@@ -579,6 +581,7 @@ export function PostComposer({
     setUploadProgress(null);
     setIsExclusive(false);
     setIsShareable(true);
+    setIsAiGenerated(false);
     setCrossPostX(false);
     setVideoTitle("");
     setVideoDescription("");
@@ -612,6 +615,7 @@ export function PostComposer({
             files.forEach((f) => formData.append("media", f.file));
             if (isExclusive) formData.append("isExclusive", "true");
             if (!isShareable) formData.append("isShareable", "false");
+            if (isAiGenerated) formData.append("isAiGenerated", "true");
             if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
             if (hangoutGroupId) formData.append("hangoutGroupId", String(hangoutGroupId));
             if (category) formData.append("category", category);
@@ -681,6 +685,7 @@ export function PostComposer({
             content: trimmed,
             isExclusive,
             isShareable,
+            isAiGenerated,
             hangoutGroupId: hangoutGroupId ?? null,
             category: category ?? null,
             channelId: selectedChannelId ?? null,
@@ -695,6 +700,7 @@ export function PostComposer({
               formData.append("media", singleFile);
               if (isExclusive) formData.append("isExclusive", "true");
               if (!isShareable) formData.append("isShareable", "false");
+              if (isAiGenerated) formData.append("isAiGenerated", "true");
               if (videoTitle.trim()) formData.append("videoTitle", videoTitle.trim());
               if (videoDescription.trim()) formData.append("videoDescription", videoDescription.trim());
               if (selectedChannelId !== null) formData.append("channelId", String(selectedChannelId));
@@ -745,6 +751,7 @@ export function PostComposer({
             content: trimmed,
             isExclusive: isExclusive,
             isShareable: isShareable,
+            ...(isAiGenerated ? { isAiGenerated: true } : {}),
             ...(selectedChannelId !== null ? { channelId: selectedChannelId } : {}),
             ...(hangoutGroupId ? { hangoutGroupId } : {}),
             ...(category ? { category } : {}),
@@ -774,7 +781,7 @@ export function PostComposer({
     } finally {
       setIsPosting(false);
     }
-  }, [text, files, isPosting, isExclusive, isShareable, crossPostX, videoTitle, videoDescription, selectedChannelId, hangoutGroupId, category, taggedPerformers, isActiveCreator, onPostCreated, clearForm]);
+  }, [text, files, isPosting, isExclusive, isShareable, isAiGenerated, crossPostX, videoTitle, videoDescription, selectedChannelId, hangoutGroupId, category, taggedPerformers, isActiveCreator, onPostCreated, clearForm]);
 
   // ── Keyboard submit (Ctrl/Cmd + Enter) ────────────────────────────────────
   const handleKeyDown = useCallback(
@@ -1404,6 +1411,20 @@ export function PostComposer({
               )}
             </div>
           )}
+
+          {/* AI-generated disclosure — everyone can flag. Self-declared,
+              non-punitive; renders a 🤖 badge on the card. Off by default. */}
+          <div className="mt-2">
+            <ToggleSwitch
+              id={aiGeneratedId}
+              checked={isAiGenerated}
+              onChange={setIsAiGenerated}
+              disabled={isPosting}
+              activeColor="#A78BFA"
+              label={tFeed.lang === "es" ? "Contiene contenido generado por IA" : "Contains AI-generated content"}
+              icon={<span className="text-base leading-none" aria-hidden="true">🤖</span>}
+            />
+          </div>
 
           {/* Channel selector — active creators with channels only */}
           {isActiveCreator && channels.length > 0 && (

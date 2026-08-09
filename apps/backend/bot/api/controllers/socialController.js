@@ -220,7 +220,7 @@ async function resolveTaggedPerformers(ids) {
 
 const createPost = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const { content, isExclusive, isShareable, hangoutGroupId: rawHangoutGroupId, category: rawCategory, taggedPerformerIds: rawTaggedIds } = req.body;
+  const { content, isExclusive, isShareable, hangoutGroupId: rawHangoutGroupId, category: rawCategory, taggedPerformerIds: rawTaggedIds, isAiGenerated } = req.body;
   if (!content || !content.trim()) return res.status(400).json({ error: 'Content required' });
   const taggedPerformerIds = parseTaggedPerformerIds(rawTaggedIds);
 
@@ -396,7 +396,7 @@ const createPost = async (req, res) => {
       });
     }
 
-    const post = await SocialPostService.createPost(user.id, content.trim(), null, null, replyToId, repostOfId, false, exclusive, shareable, null, null, null, hangoutGroupId, null, rawCategory || null);
+    const post = await SocialPostService.createPost(user.id, content.trim(), null, null, replyToId, repostOfId, false, exclusive, shareable, null, null, null, hangoutGroupId, null, rawCategory || null, isAiGenerated === true);
 
     // Assign to channel + refresh post_count atomically (single statement so a
     // partial failure can't leave counter out of sync with the post's channel_id).
@@ -785,7 +785,7 @@ const postToMastodon = async (req, res) => {
 
 const createPostWithMedia = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const { content, isExclusive, isShareable, videoTitle, videoDescription, category: rawCategory, taggedPerformerIds: rawTaggedIds } = req.body;
+  const { content, isExclusive, isShareable, videoTitle, videoDescription, category: rawCategory, taggedPerformerIds: rawTaggedIds, isAiGenerated } = req.body;
   const taggedPerformerIds = parseTaggedPerformerIds(rawTaggedIds);
 
   // Media-attached post: content may be empty (caption-less photo/video is valid).
@@ -1147,7 +1147,7 @@ const createPostWithMedia = async (req, res) => {
     }
 
     const post = await SocialPostService.createPost(
-      user.id, content.toString().trim(), mediaUrl, mediaType, replyToId, repostOfId, false, exclusive, shareable, videoThumbnailUrl, vTitle, vDesc, hangoutGroupId, null, rawCategory || null
+      user.id, content.toString().trim(), mediaUrl, mediaType, replyToId, repostOfId, false, exclusive, shareable, videoThumbnailUrl, vTitle, vDesc, hangoutGroupId, null, rawCategory || null, isAiGenerated === true
     );
 
     // Assign to channel + refresh post_count atomically (see notes above).
@@ -1249,7 +1249,7 @@ const VIDEO_EXT_MAP = { 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/3
 
 const createPostWithMultiMedia = async (req, res) => {
   const user = authGuard(req, res); if (!user) return;
-  const { content, isExclusive, isShareable, category: rawCategory, taggedPerformerIds: rawTaggedIds } = req.body;
+  const { content, isExclusive, isShareable, category: rawCategory, taggedPerformerIds: rawTaggedIds, isAiGenerated } = req.body;
   const taggedPerformerIds = parseTaggedPerformerIds(rawTaggedIds);
 
   // Media-attached post: content may be empty (caption-less multi-photo post is valid).
@@ -1533,11 +1533,11 @@ const createPostWithMultiMedia = async (req, res) => {
     const result = await dbQuery(
       `INSERT INTO social_posts
          (user_id, content, media_url, media_type, media_urls, reply_to_id, repost_of_id,
-          is_wof, is_exclusive, is_shareable, content_tier, channel_id, category)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, $12)
+          is_wof, is_exclusive, is_shareable, content_tier, channel_id, category, is_ai_generated)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9, $10, $11, $12, $13)
        RETURNING id, content, media_url, media_type, media_urls, video_thumbnail_url,
                  reply_to_id, repost_of_id, channel_id,
-                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, category`,
+                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, category, is_ai_generated`,
       [
         user.id,
         content.toString().trim(),
@@ -1551,6 +1551,7 @@ const createPostWithMultiMedia = async (req, res) => {
         contentTier,
         channelId || null,
         resolvedCategory,
+        isAiGenerated === true || isAiGenerated === 'true',
       ]
     );
 
@@ -1829,9 +1830,11 @@ const bulkCreateVideos = async (req, res) => {
   const rawCaptions = req.body.captions;
   const rawExclusive = req.body.isExclusive;
   const rawShareable = req.body.isShareable;
+  const rawAiGenerated = req.body.isAiGenerated;
   const captions = Array.isArray(rawCaptions) ? rawCaptions : (rawCaptions ? [rawCaptions] : []);
   const exclusiveArr = Array.isArray(rawExclusive) ? rawExclusive : (rawExclusive ? [rawExclusive] : []);
   const shareableArr = Array.isArray(rawShareable) ? rawShareable : (rawShareable ? [rawShareable] : []);
+  const aiGeneratedArr = Array.isArray(rawAiGenerated) ? rawAiGenerated : (rawAiGenerated ? [rawAiGenerated] : []);
 
   const uploadDir = path.join(__dirname, '../../../../../public/uploads/posts');
   await fs.mkdir(uploadDir, { recursive: true });
@@ -1844,6 +1847,7 @@ const bulkCreateVideos = async (req, res) => {
     const caption = (captions[i] || '').trim() || '🎬';
     const exclusive = exclusiveArr[i] === 'true';
     const shareable = shareableArr[i] !== 'false';
+    const isAiGenerated = aiGeneratedArr[i] === 'true' || aiGeneratedArr[i] === true;
 
     if (caption.length > 5000) {
       await fs.unlink(file.path).catch(() => {});
@@ -1915,7 +1919,8 @@ const bulkCreateVideos = async (req, res) => {
       }
 
       const post = await SocialPostService.createPost(
-        user.id, caption, mediaUrl, 'video', null, null, false, exclusive, shareable, videoThumbnailUrl
+        user.id, caption, mediaUrl, 'video', null, null, false, exclusive, shareable, videoThumbnailUrl,
+        null, null, null, null, null, isAiGenerated
       );
 
       const authorPhoto = await getUserPhotoFromDb(user.id) || user.photoUrl || null;

@@ -32,10 +32,11 @@ export type NpSubscribeCoinCode = (typeof NP_COINS_SUBSCRIBE)[number]["code"];
 // Never expand without explicit approval.
 export const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
   "8599671840",  // Santino
+  "8f5f4dd1-7bdb-4571-b026-e09d91113c91",  // PNPLatinoBoy (Lex) — reactivated 2026-08-09
 ]);
 
 // Creators whose pay buttons are live before the June 1 launch gate lifts
-const LAUNCH_UNLOCKED = new Set(['SantinoFurioso'].map(u => u.toLowerCase()));
+const LAUNCH_UNLOCKED = new Set(['SantinoFurioso', 'PNPLATINOBOY'].map(u => u.toLowerCase()));
 export const LAUNCH_DATE = new Date('2026-06-01T00:00:00-05:00');
 export function isCreatorPayLocked(username?: string | null): boolean {
   if (new Date() >= LAUNCH_DATE) return false;
@@ -1209,6 +1210,11 @@ export interface SocialPostItem {
   repost_author_username?: string;
   repost_author_first_name?: string;
   is_wof?: boolean;
+  // Self-declared (or admin-flagged) that this post contains AI-generated
+  // content. Renders a 🤖 AI badge on the card. Never inferred — only true
+  // when the author checked the box in the composer, or an admin toggled it
+  // via /api/webapp/admin/posts/:id/ai-flag.
+  is_ai_generated?: boolean;
   // Video metadata
   video_title?: string | null;
   video_description?: string | null;
@@ -1898,13 +1904,14 @@ export function createSocialPost(
   mediaFiles?: File | File[],
   isExclusive?: boolean,
   isShareable?: boolean,
-  options?: { metadata?: ChannelPromoMetadata | CommunityHypeMetadata; videoThumbnailUrl?: string; channelId?: number },
+  options?: { metadata?: ChannelPromoMetadata | CommunityHypeMetadata; videoThumbnailUrl?: string; channelId?: number; isAiGenerated?: boolean },
 ): Promise<{ success: boolean; post: SocialPostItem }> {
   const filesArray = mediaFiles
     ? Array.isArray(mediaFiles)
       ? mediaFiles
       : [mediaFiles]
     : [];
+  const aiFlag = options?.isAiGenerated === true;
 
   if (filesArray.length > 1) {
     // Multi-image path — up to 4 files
@@ -1913,6 +1920,7 @@ export function createSocialPost(
     filesArray.forEach((f) => formData.append("media", f));
     if (isExclusive) formData.append("isExclusive", "true");
     if (isShareable === false) formData.append("isShareable", "false");
+    if (aiFlag) formData.append("isAiGenerated", "true");
     return fetch(`${API_BASE}/api/webapp/social/posts/with-multi-media`, {
       method: "POST",
       credentials: "include",
@@ -1933,6 +1941,7 @@ export function createSocialPost(
     formData.append("media", filesArray[0]);
     if (isExclusive) formData.append("isExclusive", "true");
     if (isShareable === false) formData.append("isShareable", "false");
+    if (aiFlag) formData.append("isAiGenerated", "true");
     return fetch(`${API_BASE}/api/webapp/social/posts/with-media`, {
       method: "POST",
       credentials: "include",
@@ -1953,10 +1962,19 @@ export function createSocialPost(
       content,
       isExclusive: isExclusive ?? false,
       isShareable: isShareable ?? true,
+      ...(aiFlag ? { isAiGenerated: true } : {}),
       ...(options?.metadata ? { metadata: options.metadata } : {}),
       ...(options?.videoThumbnailUrl ? { videoThumbnailUrl: options.videoThumbnailUrl } : {}),
       ...(options?.channelId ? { channelId: String(options.channelId) } : {}),
     },
+  });
+}
+
+// Admin toggle for the 🤖 AI badge. Backing endpoint enforces admin role.
+export function adminSetPostAiFlag(postId: number, isAiGenerated: boolean): Promise<{ success: boolean; post: { id: number; is_ai_generated: boolean } }> {
+  return request(`/api/webapp/admin/posts/${postId}/ai-flag`, {
+    method: "PATCH",
+    body: { isAiGenerated },
   });
 }
 
@@ -7557,40 +7575,8 @@ export function createCallCheckout(
   });
 }
 
-export function createCallCheckoutNowPayments(
-  packageId: number,
-  startTimeUtc?: string,
-  endTimeUtc?: string,
-  payCurrency?: string,
-  clientNotes?: string,
-  email?: string
-): Promise<{ success: boolean; invoiceUrl: string; paymentId: string; amountUsd: number; fullAmountUsd?: number; giftedTokensApplied?: number; giftedDiscountUsd?: number; expiresAt?: string; bookingId?: string; orderId?: string }> {
-  const body: Record<string, unknown> = { packageId };
-  if (startTimeUtc) body.startTimeUtc = startTimeUtc;
-  if (endTimeUtc) body.endTimeUtc = endTimeUtc;
-  if (payCurrency) body.payCurrency = payCurrency;
-  if (clientNotes) body.clientNotes = clientNotes;
-  if (email) body.email = email;
-  return request("/api/webapp/book-call/checkout/nowpayments", {
-    method: "POST",
-    body,
-  });
-}
-export function createCallCheckoutBtc(
-  packageId: number,
-  startTimeUtc?: string,
-  endTimeUtc?: string,
-  clientNotes?: string,
-  email?: string
-): Promise<{ success: boolean; invoiceId: string; checkoutUrl: string; amountUsd: number; bookingId?: string; paymentId?: string }> {
-  const body: Record<string, unknown> = { packageId };
-  if (startTimeUtc) body.startTimeUtc = startTimeUtc;
-  if (endTimeUtc) body.endTimeUtc = endTimeUtc;
-  if (clientNotes) body.clientNotes = clientNotes;
-  if (email) body.email = email;
-  return request("/api/webapp/book-call/checkout/btc", { method: "POST", body });
-}
-
+// createCallCheckoutNowPayments and createCallCheckoutBtc removed 2026-08-09 —
+// call-booking flow uses Wallet USDC (Privy) or Ru$h tokens only.
 // createCallCheckoutDash removed 2026-07-31 — Dash/BTCPay retired.
 
 export interface MyCallCredit {
@@ -9360,6 +9346,7 @@ export async function finalizeSocialMuxPost(params: {
   content: string;
   isExclusive?: boolean;
   isShareable?: boolean;
+  isAiGenerated?: boolean;
   hangoutGroupId?: number | null;
   category?: string | null;
   channelId?: number | null;

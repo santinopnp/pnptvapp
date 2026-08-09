@@ -226,7 +226,7 @@ class SocialPostService {
     const { rows } = await query(
       `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
               sp.content_type, sp.x_embed_url, sp.channel_id,
-              sp.source_channel, sp.hangout_group_id, sp.category,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
               sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
@@ -439,7 +439,7 @@ class SocialPostService {
                 sp.video_thumbnail_url, sp.video_title, sp.video_description,
                 sp.metadata, sp.mux_playback_id, sp.mux_status,
                 sp.content_type, sp.x_embed_url, sp.channel_id,
-                sp.source_channel, sp.hangout_group_id, sp.category,
+                sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
                 sp.reply_to_id, sp.repost_of_id,
                 sp.likes_count, sp.reposts_count, sp.replies_count,
                 sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
@@ -840,7 +840,7 @@ class SocialPostService {
     const { rows } = await query(
       `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
               sp.content_type, sp.x_embed_url, sp.channel_id,
-              sp.source_channel, sp.category,
+              sp.source_channel, sp.category, sp.is_ai_generated,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_wof, sp.created_at,
               u.id as author_id, u.username as author_username,
@@ -1132,7 +1132,7 @@ class SocialPostService {
 
   // ── Create Post ───────────────────────────────────────────────────────────
 
-  static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null) {
+  static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null, isAiGenerated = false) {
     // Ephemeral Telegram bot file URLs expire in ~1 hour. Force callers to
     // download to /uploads/ first so the post keeps working long-term.
     if (mediaUrl && /^https?:\/\/api\.telegram\.org\/file\//i.test(mediaUrl)) {
@@ -1146,11 +1146,11 @@ class SocialPostService {
       ? category
       : SocialPostService._classifyByKeywords(content);
     const { rows } = await query(
-      `INSERT INTO social_posts (user_id, content, media_url, media_type, reply_to_id, repost_of_id, is_wof, is_exclusive, is_shareable, video_thumbnail_url, content_tier, video_title, video_description, hangout_group_id, source_message_id, category)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO social_posts (user_id, content, media_url, media_type, reply_to_id, repost_of_id, is_wof, is_exclusive, is_shareable, video_thumbnail_url, content_tier, video_title, video_description, hangout_group_id, source_message_id, category, is_ai_generated)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING id, content, media_url, media_type, video_thumbnail_url, video_title, video_description, reply_to_id, repost_of_id,
-                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, hangout_group_id, source_message_id, category`,
-      [userId, content, mediaUrl, mediaType, replyToId || null, repostOfId || null, isWof, isExclusive, isShareable, videoThumbnailUrl || null, contentTier, videoTitle || null, videoDescription || null, hangoutGroupId || null, sourceMessageId || null, resolvedCategory]
+                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, hangout_group_id, source_message_id, category, is_ai_generated`,
+      [userId, content, mediaUrl, mediaType, replyToId || null, repostOfId || null, isWof, isExclusive, isShareable, videoThumbnailUrl || null, contentTier, videoTitle || null, videoDescription || null, hangoutGroupId || null, sourceMessageId || null, resolvedCategory, isAiGenerated === true]
     );
     const post = rows[0];
 
@@ -1799,7 +1799,7 @@ class SocialPostService {
     // ── SELECT + FROM template (shared) ────────────────────────────────────
     const SELECT = `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
               sp.content_type, sp.x_embed_url, sp.channel_id,
-              sp.source_channel, sp.hangout_group_id, sp.category,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
               sp.reply_to_id, sp.repost_of_id,
               sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
               sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,

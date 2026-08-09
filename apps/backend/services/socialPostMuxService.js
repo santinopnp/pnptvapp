@@ -146,6 +146,7 @@ async function finalizeMuxPost(userId, params) {
     content,
     isExclusive = false,
     isShareable = true,
+    isAiGenerated = false,
     hangoutGroupId = null,
     category = null,
     channelId = null,
@@ -186,7 +187,8 @@ async function finalizeMuxPost(userId, params) {
     null,        // videoDescription
     hangoutGroupId,
     null,        // sourceMessageId
-    category
+    category,
+    !!isAiGenerated
   );
 
   await query(

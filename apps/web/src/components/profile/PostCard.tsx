@@ -6,7 +6,7 @@ import { useI18n } from "@/lib/i18n";
 
 // Creators whose free videos get a PRIME upsell banner below the player.
 // Add IDs here to promote additional creators.
-const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957"]); // Santino (SantinoFurioso + pnptv alt)
+const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"]); // Santino (SantinoFurioso + pnptv alt) + PNPLatinoBoy (Lex)
 
 const PRIME_PLANS = [
   { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
@@ -816,6 +816,20 @@ export default function PostCard({
                   />
                 </svg>
                 {p.exclusiveLabel}
+              </span>
+            )}
+            {/* AI-generated disclosure — self-declared or admin-flagged */}
+            {post.is_ai_generated && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  background: "rgba(167,139,250,0.15)",
+                  color: "#A78BFA",
+                  border: "1px solid rgba(167,139,250,0.3)",
+                }}
+                title="Contains AI-generated content"
+              >
+                🤖 AI
               </span>
             )}
 
