@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { PrivyProvider } from "@privy-io/react-auth";
-import { base } from "viem/chains";
+import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/hooks/useNotifications";
 import { MusicPlayerProvider } from "@/hooks/useMusicPlayer";
@@ -398,7 +398,10 @@ export default function App() {
                     appId={import.meta.env.VITE_PRIVY_APP_ID as string}
                     config={{
                       defaultChain: base,
-                      supportedChains: [base],
+                      // Mainnet is included so users can bridge stranded ETH/USDC
+                      // out of Ethereum → Base without needing to export the key
+                      // or install MetaMask. The wallet UI still defaults to Base.
+                      supportedChains: [base, mainnet],
                       loginMethods: ["telegram", "twitter", "wallet"],
                       embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
                       appearance: { theme: "dark", accentColor: "#D4007A" },

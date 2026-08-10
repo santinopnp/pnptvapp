@@ -1011,3 +1011,168 @@ services:
           memory: 1536m
           cpus: '1.0'
     # No healthcheck — Next.js startup takes 2+ min
+  # ============================================
+  # MCP Gateway — Lex's Claude connectors
+  # ============================================
+  # Three MCP servers (Postgres/Filesystem/Slack) exposed as HTTP StreamableHttp
+  # for Anthropic Claude custom connectors. Auth is enforced upstream at
+  # nginx (bearer token). See feedback_mcp_gateway_lex.md and /opt/mcp/README.
+  # ============================================
+
+  mcp-postgres:
+    image: pnptv-mcp:latest
+    container_name: mcp-postgres
+    restart: unless-stopped
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-postgres/dist/index.js postgresql://lex_readonly:${LEX_DB_PASS}@pg-pnptv:5432/pnptvbot
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3010"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-filesystem:
+    image: pnptv-mcp:latest
+    container_name: mcp-filesystem
+    restart: unless-stopped
+    volumes:
+      - /opt/pnptvapp:/repo:ro
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js /repo
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3011"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-slack:
+    image: pnptv-mcp:latest
+    container_name: mcp-slack
+    restart: unless-stopped
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_TEAM_ID: T0BLXGDDLDV
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-slack/dist/index.js
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3012"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-oauth:
+    image: mcp-oauth:latest
+    container_name: mcp-oauth
+    restart: unless-stopped
+    environment:
+      PORT: "3013"
+      LEX_MCP_CLIENT_ID: ${LEX_MCP_CLIENT_ID}
+      LEX_MCP_CLIENT_SECRET: ${LEX_MCP_CLIENT_SECRET}
+      LEX_MCP_TOKEN: ${LEX_MCP_TOKEN}
+      PUBLIC_BASE: https://pnptv.app
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.15'
+
+  mcp-admin:
+    image: mcp-admin:latest
+    container_name: mcp-admin
+    restart: unless-stopped
+    environment:
+      PORT: "3015"
+      PG_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/pnptvbot"
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      OFFICIAL_USER_ID: "8552451957"
+      LEX_USER_ID: "8f5f4dd1-7bdb-4571-b026-e09d91113c91"
+      OPS_ADMIN_CHANNEL: "C0BP14DLNHJ"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-notion:
+    image: pnptv-mcp:latest
+    container_name: mcp-notion
+    restart: unless-stopped
+    environment:
+      OPENAPI_MCP_HEADERS: '{"Authorization":"Bearer ${NOTION_TOKEN}","Notion-Version":"2022-06-28"}'
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3014"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'

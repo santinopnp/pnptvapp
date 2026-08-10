@@ -652,16 +652,16 @@ const joinGroup = async (req, res) => {
     const group = rows[0];
     const isOwner = String(group.creator_id) === String(user.id);
 
-    // Private hangouts block direct joins — EXCEPT PRIME co-founder hangouts (719/785)
-    // which gate by entitlement rather than invite. PRIME members self-join; non-PRIME
-    // get a 402 from the entitlement check below instead of a generic 403.
+    // Private hangouts block direct joins — EXCEPT PRIME co-founder hangout 719
+    // which gates by entitlement rather than invite. PRIME members self-join;
+    // non-PRIME get a 402 from the entitlement check below instead of a 403.
     if (!group.is_public && !isOwner && !isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
       return res.status(403).json({ error: 'This group is invite-only' });
     }
 
     // Access gate — channel-linked hangouts use channel access rules; standalone use is_paid
     if (!isOwner) {
-      // PRIME co-founder hangouts (Santino's + Lex's, plus their child topics):
+      // PRIME co-founder hangout (Santino's #719, plus child topics):
       // PRIME monthly-and-up only. Trials + week passes do NOT qualify.
       if (isPrimeCoFounderHangout(groupId, group.parent_group_id)) {
         const EntitlementAccessService = require('../../../services/entitlementAccessService');

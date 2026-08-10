@@ -1,4 +1,6 @@
 > **DRAFT — Pending review — Applies to all Partner Program creators as of [effective date TBD]**
+>
+> **UPDATE 2026-08-10 — PENDING EXTERNAL LEGAL REVIEW.** Sections 2.1, 2.2, 4.7, and the "Automated detection ladder" callout under Section 5 were expanded on 2026-08-10 to enumerate the specific competitor platforms, link aggregators, and off-platform payment channels the automated detection system watches for, and to describe the tech-enforced strike ladder (mute / hold-for-review) that runs in parallel with the contractual ladder in Section 5. The technical enforcement is **live** from 2026-08-10 as a community-guideline matter; contractual consequences (revenue-share adjustment, liquidated damages) activate only after external counsel signs off on this update and the document is version-bumped.
 
 # PNPtv! Anti-Poaching & Non-Circumvention Policy
 
@@ -30,13 +32,15 @@ Esta Política prohíbe **desviar miembros de PNPtv! fuera de la plataforma** pa
 
 ### 2.1. Off-platform payment diversion.
 
-Directing a PNPtv! member to pay you for services via:
+Directing a PNPtv! member to pay you for services via any channel where PNPtv! is not the counterparty and does not receive its revenue share. Non-exhaustive list of what the automated anti-leakage detection system flags immediately (per Section 4.7):
 
-- OnlyFans, Fansly, JustForFans, Faphouse, Fanvue, or any other adult creator platform;
-- PayPal, Venmo, Zelle, Cash App, Wise, Revolut, or any other peer-to-peer payment service;
-- Direct crypto wallet transfer (Bitcoin, USDT, Ethereum, Solana, USDC, any other) outside the PNPtv! payment flow;
-- Bank transfer, wire transfer, ACH;
-- Gift cards, Amazon wishlists, Throne / Bad Dragon / third-party wishlist services **when solicited from a PNPtv! member as an alternative to on-platform tipping** (a passive wishlist link on your public social media is not the same thing — see Section 3.2);
+- **Competitor content / cam / escort platforms:** OnlyFans, Fansly, Fanvue, JustForFans, LoyalFans, ManyVids, FanCentro, Faphouse, Chaturbate, Stripchat, MyFreeCams, CAM4, BongaCams, Flirt4Free, Streamate, iWantClips, Clips4Sale, PornHub Model / ModelHub, AVN Stars, Unlockd, AdmireMe, Slushy, RentMen, A4A / Adam4Adam.
+- **Link aggregators** used to funnel PNPtv! audience to any of the above: Linktree, Beacons, AllMyLinks, Bio.link, Carrd, Snipfeed, LinkMe.bio, Campsite.bio, Shor.by.
+- **US fintech / peer-to-peer:** PayPal, PayPal.me, Venmo, Zelle, Cash App / Cashtag, Wise, Revolut.
+- **LatAm fintech / instant transfer:** Nequi, Daviplata, Bre-B, RappiPay, Mercado Pago, Pix (Brazil).
+- **Wire / off-rail:** Bank transfer, wire transfer, ACH, Western Union, MoneyGram.
+- **Direct crypto wallet transfer** outside the PNPtv! payment flow: Bitcoin, USDT, Ethereum, Solana, USDC, TRC20/ERC20/BEP20 chains, any other. Posting a raw wallet address (`0x…` EVM address, `bc1…` Bitcoin address) or phrases like "send USDC to my wallet" is treated as solicitation.
+- **Gift cards, Amazon wishlists, Throne / Bad Dragon / third-party wishlist services** **when solicited from a PNPtv! member as an alternative to on-platform tipping** (a passive wishlist link on your public social media is not the same thing — see Section 3.2).
 - Any other channel where PNPtv! is not the counterparty and does not receive its revenue share.
 
 ### 2.2. Off-platform advertising to PNPtv! members.
@@ -124,6 +128,32 @@ PNPtv! detects circumvention through:
 - **Payment reconciliation gaps** — patterns where a creator's discovery traffic and DM engagement are high but on-platform monetization is disproportionately low often indicate diversion.
 
 Detection is not surveillance for surveillance's sake. It is enforcement of the trust framework so that creators who play by the rules are not competing against creators who don't.
+
+### 4.7. Automated content detection & strike ladder (technical layer, live 2026-08-10).
+
+In addition to the human-review detection paths in Section 4, PNPtv! runs an automated content scanner on **every write** to platform surfaces (bio, DMs, Main Stage chat, hangout chat, posts, channel descriptions, display name, username). The scanner catches the platform names, handles, URLs, aggregator links, and payment-channel phrasing enumerated in Section 2.1, including common obfuscation patterns (dots, spaces, digit-swaps like `0nly f4ns`, hyphenation, punctuation gaps).
+
+**On match:**
+
+- The offending content is **blocked at the source** — it never appears to the recipient, chat room, or public view.
+- A **strike record** is written to `anti_leakage_strikes` with the user id, source surface, matched terms, evidence excerpt (truncated to 500 chars), and category (`off_platform_competitor` or `off_platform_payment`).
+- A **Slack alert** is posted to `#moderation` (or `SLACK_MODERATION_CHANNEL` env target) so ops sees every match in near real-time, with a redacted evidence excerpt.
+
+**Ladder for Partner Program Creators** (rolling 30-day window):
+
+- **Strike 1:** written warning in Slack `#ext-[handle]` from Creator Relations. No mute, no payout hold. Coaching moment.
+- **Strike 2:** elevated warning in Slack `#ext-[handle]`. Creators are **not** auto-muted (silencing a creator harms their income); instead a payout **manual-review hold** is applied (payout hold layer is Sprint 2 — until then, ops holds payout by hand). Ops schedules a 15-minute check-in call.
+- **Strike 3:** **hold for review** — no auto-ban. Payout hold sustained. Ops meeting scheduled within 5 business days. Contractual escalation under Section 5 (revenue-share adjustment, suspension, or termination for cause) is decided by Santino or designee.
+
+**Ladder for regular members** (non-Creator users):
+
+- **Strike 1:** warning + content stripped.
+- **Strike 2:** 24-hour platform-wide mute (chat + DMs) via Redis TTL.
+- **Strike 3:** automatic platform ban via PlatformBanService.
+
+**Admins are exempt** from the scan so ops staff can reference platform names when moderating tickets.
+
+**Rolling window resets 30 days after each strike.** Cleared strikes (admin dismissal via the admin queue) do not count toward the counter and do not appear in the ladder.
 
 ---
 

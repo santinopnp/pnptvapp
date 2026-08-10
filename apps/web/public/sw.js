@@ -108,8 +108,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'PNPtv!';
   const options = {
     body: data.body || '',
-    icon: data.icon || '/Logo2-50.png',
-    badge: '/Logo2-50.png',
+    icon: data.icon || '/icon-192.png',
+    badge: '/badge-diamond.png',
     tag: data.tag || undefined,
     renotify: !!data.tag,
     vibrate: [200, 100, 200],

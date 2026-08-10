@@ -1,6 +1,8 @@
 const { query } = require('../../../config/postgres');
 const logger = require('../../../utils/logger');
 const DmService = require('../../../services/dmService');
+const { assertCleanText } = require('../../../services/contentModerationFilter');
+const WarningService = require('../../../services/warningService');
 
 // Check if a photo path is a valid web URL (not a Telegram file ID)
 const isValidPhotoUrl = (p) => p && typeof p === 'string' && (p.startsWith('/') || p.startsWith('http'));
@@ -232,6 +234,51 @@ async function sendMessage(req, res) {
 
     const senderRole = req.session?.user?.role || '';
     const isAdminSender = senderRole === 'admin' || senderRole === 'superadmin';
+
+    // Block DM send if sender is under an active anti-leakage mute (24h Redis TTL).
+    // Admins bypass the mute so support can still respond during a strike window.
+    if (!isAdminSender && await WarningService.isAntiLeakageMuted(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is temporarily muted (24h) for repeated off-platform solicitation. DMs will resume automatically.',
+        code: 'ANTI_LEAKAGE_MUTED',
+      });
+    }
+
+    // Anti-leakage content scan (competitor platforms + off-platform payment).
+    // Admins are exempt so support/ops can reference platforms by name when
+    // triaging tickets. All other forbidden categories (CSAM, drug sales, etc.)
+    // are enforced further down inside DmService, so we only scan here for the
+    // anti-leakage categories to avoid duplicate 400s.
+    if (!isAdminSender) {
+      try {
+        assertCleanText(content, 'message');
+      } catch (err) {
+        if (err && err.code === 'FORBIDDEN_CONTENT') {
+          if (err.isAntiLeakage) {
+            // Fire-and-forget strike + Slack alert. Do not await so a Slack
+            // outage cannot slow the 400 response back to the client.
+            WarningService.logAntiLeakageStrike({
+              userId,
+              sourceType: 'dm',
+              sourceRef: String(recipientId),
+              evidenceText: content,
+              matchedTerms: err.terms || [],
+            }).catch((e) => logger.error('DM anti-leakage strike log failed', { userId, error: e.message }));
+            return res.status(400).json({
+              success: false,
+              error: err.message,
+              code: 'LEAKAGE_DETECTED',
+              categories: err.categories,
+            });
+          }
+          // Non-leakage forbidden content: let DmService or downstream handlers
+          // catch it — this hook is anti-leakage-only.
+        } else {
+          throw err;
+        }
+      }
+    }
 
     try {
       const message = await DmService.sendMessage(userId, recipientId, { content }, { isAdmin: isAdminSender });

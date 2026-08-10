@@ -32,7 +32,8 @@ const BATCH_SIZE = 100;
 function tierFor(row) {
   if (row.role === 'superadmin' || row.role === 'admin') return 'co_founder';
   if (row.role === 'star') return 'star';
-  return 'creator';
+  if (row.creator_status === 'approved' || row.creator_status === 'active' || row.role === 'creator' || row.performer_status === 'active') return 'creator';
+  return null;
 }
 
 /**
@@ -40,7 +41,7 @@ function tierFor(row) {
  * @param {boolean} [opts.delta=false] — when true, restrict to creators
  *   whose row changed OR who had earnings activity in the last 25h.
  */
-async function _loadCreators({ delta = false } = {}) {
+async function _loadCreators({ delta = false, mode = 'creators' } = {}) {
   const deltaWhere = delta ? `
     AND (
       u.updated_at > NOW() - INTERVAL '25 hours'
@@ -53,6 +54,14 @@ async function _loadCreators({ delta = false } = {}) {
          WHERE cs2.creator_id = u.id AND cs2.updated_at > NOW() - INTERVAL '25 hours'
       )
     )` : '';
+
+  const scopeWhere = mode === 'all-with-email'
+    ? `u.email IS NOT NULL AND u.email <> ''`
+    : `(
+      u.creator_status IN ('approved','active')
+      OR u.role IN ('creator','admin','superadmin','star')
+      OR p.status = 'active'
+    )`;
 
   const { rows } = await query(`
     SELECT
@@ -86,11 +95,7 @@ async function _loadCreators({ delta = false } = {}) {
         FROM creator_subscriptions cs
        WHERE cs.creator_id = u.id AND cs.status='active'
     ) sub ON true
-    WHERE (
-      u.creator_status IN ('approved','active')
-      OR u.role IN ('creator','admin','superadmin','star')
-      OR p.status = 'active'
-    )
+    WHERE ${scopeWhere}
     ${deltaWhere}
     GROUP BY u.id, p.status, sub.active_count
     ORDER BY u.id
@@ -99,14 +104,16 @@ async function _loadCreators({ delta = false } = {}) {
 }
 
 function _toZohoContact(row) {
-  return {
+  const tier = tierFor(row);
+  const isCreator = tier === 'creator' || tier === 'star' || tier === 'co_founder';
+  const c = {
     PNPtv_ID: String(row.id),
     First_Name: (row.first_name || '').slice(0, 40) || 'PNPtv',
-    Last_Name: (row.last_name || row.username || row.first_name || 'Creator').slice(0, 80),
+    Last_Name: (row.last_name || row.username || row.first_name || 'Member').slice(0, 80),
     Email: row.email || null,
     Telegram_ID: String(row.id),
     Telegram_Handle: row.username || null,
-    Creator_Tier: tierFor(row),
+    Creator_Tier: tier,
     Content_Types: row.creator_type || null,
     Total_Lifetime_Earnings_USD: Number(row.lifetime_earnings) || 0,
     Monthly_Earnings_USD: Number(row.month_earnings) || 0,
@@ -120,13 +127,15 @@ function _toZohoContact(row) {
     Mailing_City: row.city || null,
     Mailing_Country: row.country || null,
     Description: (row.bio || '').slice(0, 32000) || null,
-    // Legal package fields — schema added 2026-08-09
-    Legal_Package_Version: LEGAL_VERSION,
-    Legal_Package_URL: LEGAL_URL,
-    Legal_Package_Acknowledged_At: row.slack_legal_ack_at
-      ? new Date(row.slack_legal_ack_at).toISOString()
-      : null,
   };
+  if (isCreator) {
+    c.Legal_Package_Version = LEGAL_VERSION;
+    c.Legal_Package_URL = LEGAL_URL;
+    c.Legal_Package_Acknowledged_At = row.slack_legal_ack_at
+      ? new Date(row.slack_legal_ack_at).toISOString()
+      : null;
+  }
+  return c;
 }
 
 /**
@@ -135,15 +144,15 @@ function _toZohoContact(row) {
  * @param {boolean} [opts.dryRun=false] — log only, do not write
  * @returns {Promise<{total:number, batches:number, upserted:number, failed:number, errors:string[]}>}
  */
-async function runSync({ delta = false, dryRun = false } = {}) {
+async function runSync({ delta = false, dryRun = false, mode = 'creators' } = {}) {
   if (!zoho.isConfigured()) {
     logger.warn('[zohoSync] skipped — Zoho not configured');
     return { total: 0, batches: 0, upserted: 0, failed: 0, errors: ['not configured'] };
   }
 
   const started = Date.now();
-  const rows = await _loadCreators({ delta });
-  logger.info('[zohoSync] loaded creators', { count: rows.length, delta, dryRun });
+  const rows = await _loadCreators({ delta, mode });
+  logger.info('[zohoSync] loaded users', { count: rows.length, delta, dryRun, mode });
 
   const stats = { total: rows.length, batches: 0, upserted: 0, failed: 0, errors: [] };
   if (rows.length === 0) {

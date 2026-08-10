@@ -918,7 +918,7 @@ class PaymentService {
             });
           }
 
-          // PRIME revenue split — 20% platform / 40% Santino / 40% Lex.
+          // PRIME revenue split — 50% platform / 25% Santino / 25% Lex (2026-08-09).
           // Records one creator_earnings row per co-founder, idempotent by (source_payment_id, creator_id).
           // Skips $0 trials. Requires a sourcePaymentId to be traceable.
           const primeGross = parseFloat(planRows[0]?.price || 0);

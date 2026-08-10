@@ -1,6 +1,11 @@
 const { query } = require('../config/postgres');
+const { getRedis } = require('../config/redis');
 const logger = require('../utils/logger');
 const MODERATION_CONFIG = require('../config/moderationConfig');
+
+const ANTI_LEAKAGE_MUTE_TTL_SECONDS = 24 * 60 * 60; // 24h — the strike-2 mute duration
+const ANTI_LEAKAGE_STRIKE_WINDOW_DAYS = 30;         // rolling window for strike escalation
+const ANTI_LEAKAGE_MUTE_KEY = (userId) => `antileakage:mute:${userId}`;
 
 /**
  * Warning Service - Manages user warnings and moderation history
@@ -220,6 +225,220 @@ class WarningService {
     } catch (error) {
       logger.error('Error unmuting user:', error);
       return false;
+    }
+  }
+
+  /**
+   * Record an anti-leakage detection as a strike + apply the escalation
+   * ladder. Idempotent-ish: the same content submitted twice will produce
+   * two rows (intentional — the user is retrying the violation).
+   *
+   * Enforcement ladder:
+   *   Regular user:  strike 1 → warn (no side effect)
+   *                  strike 2 → mute_24h  (Redis TTL — checked by hooks)
+   *                  strike 3+ → ban      (PlatformBanService.ban)
+   *   Creator user:  strike 1 → warn + Slack ping to #ext-<handle> equiv
+   *                  strike 2 → warn (elevated) + Slack ping — NO auto-mute
+   *                             (creators lose income if silenced; require human)
+   *                  strike 3+ → hold_for_review (Slack CRITICAL, no auto-ban)
+   *                             Sprint 2 will add automatic payout hold here.
+   *
+   * @param {object} p
+   * @param {string} p.userId
+   * @param {string} p.sourceType       — 'bio' | 'dm' | 'mainstage_chat' | 'hangout_chat' | 'post' | 'channel_description' | 'display_name' | 'username'
+   * @param {string} [p.sourceRef]      — optional pointer (e.g. hangout group id)
+   * @param {string} [p.evidenceText]   — raw offending content (truncated to 500 chars)
+   * @param {Array<{category:string,term:string}>} p.matchedTerms — from err.terms
+   * @param {string} [p.issuedBy='system']
+   * @returns {Promise<{strikeNumber:number, action:string, strikeId:number, isCreator:boolean}>}
+   */
+  static async logAntiLeakageStrike({
+    userId,
+    sourceType,
+    sourceRef = null,
+    evidenceText = '',
+    matchedTerms = [],
+    issuedBy = 'system',
+  }) {
+    const uid = String(userId);
+    try {
+      // 1. Look up user (creator?, tier, username for Slack alert)
+      const userRes = await query(
+        `SELECT id, username, creator_status, tier, role
+           FROM users
+          WHERE id = $1
+          LIMIT 1`,
+        [uid]
+      );
+      if (userRes.rows.length === 0) {
+        logger.warn('logAntiLeakageStrike: user not found', { userId: uid });
+        return { strikeNumber: 0, action: 'strip_only', strikeId: null, isCreator: false };
+      }
+      const user = userRes.rows[0];
+      const isCreator = !!user.creator_status
+        && user.creator_status !== 'none'
+        && user.creator_status !== 'inactive';
+
+      // 2. Category = worst-severity match from terms (competitor > payment)
+      const cats = new Set(matchedTerms.map((t) => t.category));
+      const category = cats.has('off_platform_competitor')
+        ? 'off_platform_competitor'
+        : 'off_platform_payment';
+
+      // 3. Count active strikes in rolling window
+      const windowRes = await query(
+        `SELECT COUNT(*)::int AS n
+           FROM anti_leakage_strikes
+          WHERE user_id = $1
+            AND cleared = false
+            AND created_at > NOW() - ($2 || ' days')::interval`,
+        [uid, String(ANTI_LEAKAGE_STRIKE_WINDOW_DAYS)]
+      );
+      const priorStrikes = windowRes.rows[0]?.n || 0;
+      const strikeNumber = priorStrikes + 1;
+
+      // 4. Determine action
+      // Safety flag: ANTI_LEAKAGE_AUTO_BAN gates the auto-ban on strike 3 for
+      // regular users. Default OFF so a fresh deployment doesn't wipe accounts
+      // on regex false positives — the first few weeks should run in
+      // "warn + mute + hold-for-review" mode while ops tunes the patterns.
+      // Flip to 'true' after ~2 weeks of clean Slack review data.
+      const autoBanEnabled = String(process.env.ANTI_LEAKAGE_AUTO_BAN || '').toLowerCase() === 'true';
+      let action;
+      if (isCreator) {
+        if (strikeNumber >= 3) action = 'hold_for_review'; // NEVER auto-ban a creator
+        else action = 'warn'; // strikes 1 & 2 both just warn — human loop for creators
+      } else {
+        if (strikeNumber >= 3) action = autoBanEnabled ? 'ban' : 'hold_for_review';
+        else if (strikeNumber === 2) action = 'mute_24h';
+        else action = 'warn';
+      }
+
+      // Map action to the DB check-constraint values (anti_leakage_strikes_action_check).
+      // 'hold_for_review' is not in the constraint (creators never get an auto-mute/ban),
+      // so we persist it as 'strip_only' — the actual review lives in Slack + admin queue.
+      const actionForDb = action === 'hold_for_review' ? 'strip_only' : action;
+
+      // 5. Truncate evidence + normalize terms
+      const evidence = (evidenceText || '').slice(0, 500);
+      const termsJson = JSON.stringify(
+        (matchedTerms || []).slice(0, 20).map((t) => ({
+          category: String(t.category || ''),
+          term: String(t.term || '').slice(0, 120),
+        }))
+      );
+
+      // 6. Insert strike row
+      const insertRes = await query(
+        `INSERT INTO anti_leakage_strikes
+           (user_id, strike_number, category, source_type, source_ref,
+            evidence_text, matched_terms, action_taken, issued_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         RETURNING id`,
+        [uid, strikeNumber, category, sourceType, sourceRef, evidence, termsJson, actionForDb, String(issuedBy)]
+      );
+      const strikeId = insertRes.rows[0]?.id || null;
+
+      // 7. Apply side effects
+      if (action === 'mute_24h') {
+        try {
+          const redis = await getRedis();
+          if (redis) {
+            await redis.setex(ANTI_LEAKAGE_MUTE_KEY(uid), ANTI_LEAKAGE_MUTE_TTL_SECONDS, '1');
+          }
+        } catch (e) {
+          logger.error('logAntiLeakageStrike: mute set failed', { userId: uid, error: e.message });
+        }
+      } else if (action === 'ban') {
+        try {
+          const PlatformBanService = require('./platformBanService');
+          await PlatformBanService.ban({
+            userId: uid,
+            reason: `Anti-leakage: 3 strikes in ${ANTI_LEAKAGE_STRIKE_WINDOW_DAYS}d (category: ${category}, source: ${sourceType})`,
+            evidence: {
+              type: 'anti_leakage_auto_ban',
+              strikeId,
+              matchedTerms: matchedTerms.slice(0, 20),
+              sourceType,
+              sourceRef,
+            },
+            bannedBy: 'system',
+            notify: true,
+          });
+        } catch (e) {
+          logger.error('logAntiLeakageStrike: auto-ban failed', { userId: uid, error: e.message });
+        }
+      }
+      // 'hold_for_review' and 'warn' have no side effect beyond the Slack alert below.
+
+      // 8. Fire Slack alert (best-effort; do not throw)
+      try {
+        const slackOps = require('./slackOpsService');
+        if (typeof slackOps.notifyLeakageDetected === 'function') {
+          await slackOps.notifyLeakageDetected({
+            userId: uid,
+            username: user.username || null,
+            sourceType,
+            category,
+            matchedTerms: matchedTerms.slice(0, 10),
+            evidenceText: evidence,
+            strikeNumber,
+            action,
+            isCreator,
+          });
+        }
+      } catch (e) {
+        logger.warn('logAntiLeakageStrike: slack alert failed', { userId: uid, error: e.message });
+      }
+
+      logger.info('anti-leakage strike logged', {
+        userId: uid, strikeNumber, action, category, sourceType, isCreator, strikeId,
+      });
+
+      return { strikeNumber, action, strikeId, isCreator };
+    } catch (e) {
+      logger.error('logAntiLeakageStrike: unexpected error', {
+        userId: uid, sourceType, error: e.message, stack: e.stack,
+      });
+      return { strikeNumber: 0, action: 'strip_only', strikeId: null, isCreator: false };
+    }
+  }
+
+  /**
+   * True if the user is currently under a 24h anti-leakage mute.
+   * Hooks (DM send, chat send) should call this and reject with a
+   * user-facing "You are temporarily muted for policy violations" error.
+   */
+  static async isAntiLeakageMuted(userId) {
+    try {
+      const redis = await getRedis();
+      if (!redis) return false;
+      const v = await redis.get(ANTI_LEAKAGE_MUTE_KEY(String(userId)));
+      return !!v;
+    } catch (e) {
+      logger.warn('isAntiLeakageMuted: redis error', { userId, error: e.message });
+      return false;
+    }
+  }
+
+  /**
+   * Active (uncleared) strike count in the rolling window. Used by
+   * admin UI and (Sprint 2) creator payout gate.
+   */
+  static async getActiveAntiLeakageStrikeCount(userId, windowDays = ANTI_LEAKAGE_STRIKE_WINDOW_DAYS) {
+    try {
+      const res = await query(
+        `SELECT COUNT(*)::int AS n
+           FROM anti_leakage_strikes
+          WHERE user_id = $1
+            AND cleared = false
+            AND created_at > NOW() - ($2 || ' days')::interval`,
+        [String(userId), String(windowDays)]
+      );
+      return res.rows[0]?.n || 0;
+    } catch (e) {
+      logger.warn('getActiveAntiLeakageStrikeCount: db error', { userId, error: e.message });
+      return 0;
     }
   }
 

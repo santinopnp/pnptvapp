@@ -12,6 +12,8 @@ const streamAnalyticsService = require('../../services/streamAnalyticsService');
 const streamRecordingService = require('../../services/streamRecordingService');
 const restreamerService = require('../../services/restreamerService');
 const IdentityVerificationService = require('../../services/identityVerificationService');
+const { assertCleanText } = require('../../services/contentModerationFilter');
+const WarningService = require('../../services/warningService');
 
 // ── Lua script: atomic viewer-count decrement clamped to 0 ────────────────────
 // H4: Replaces the non-atomic decr + conditional set(0) pattern.
@@ -624,6 +626,47 @@ function initSocketIO(io) {
       const rawText = typeof payload.text === 'string' ? payload.text.trim() : '';
       const text = rawText.replace(/<[^>]*>/g, '').slice(0, 300);
       if (!text) return;
+
+      // Anti-leakage 24h mute — blocks strike-2 offenders from posting.
+      try {
+        if (await WarningService.isAntiLeakageMuted(String(user.id))) {
+          socket.emit('mainstage:error', {
+            code: 'ANTI_LEAKAGE_MUTED',
+            message: 'You are temporarily muted for repeated off-platform solicitation.',
+          });
+          return;
+        }
+      } catch (_) { /* redis down: fail open, next check still runs */ }
+
+      // Anti-leakage content scan — catches OnlyFans/Cash App/etc. patterns.
+      try {
+        assertCleanText(text, 'chat message');
+      } catch (err) {
+        if (err && err.code === 'FORBIDDEN_CONTENT') {
+          if (err.isAntiLeakage) {
+            WarningService.logAntiLeakageStrike({
+              userId: String(user.id),
+              sourceType: 'mainstage_chat',
+              evidenceText: text,
+              matchedTerms: err.terms || [],
+            }).catch((e) => logger.error('mainstage chat anti-leakage strike log failed', { userId: user.id, error: e.message }));
+            socket.emit('mainstage:error', {
+              code: 'LEAKAGE_DETECTED',
+              message: err.message,
+            });
+            return;
+          }
+          // Non-leakage forbidden content: silently drop (existing pattern for chat)
+          socket.emit('mainstage:error', {
+            code: 'FORBIDDEN_CONTENT',
+            message: err.message,
+          });
+          return;
+        }
+        // Unexpected error — do not crash the socket handler
+        logger.warn('mainstage chat filter error', { userId: user.id, error: err.message });
+      }
+
       const now = Date.now();
       const lastSent = mainStageChatLastSent.get(String(user.id)) || 0;
       if (now - lastSent < 1000) return; // rate limit: 1/s
@@ -972,6 +1015,49 @@ function initSocketIO(io) {
 
       const userRole = (user.role || '').toLowerCase();
       const isAdminUser = userRole === 'admin' || userRole === 'superadmin';
+
+      // Anti-leakage: check platform-wide 24h mute + content scan before any
+      // DB access. Admins are exempt so ops can reference platforms by name
+      // when moderating.
+      if (!isAdminUser) {
+        try {
+          if (await WarningService.isAntiLeakageMuted(String(user.id))) {
+            socket.emit('hangout:error', {
+              code: 'ANTI_LEAKAGE_MUTED',
+              message: 'You are temporarily muted for repeated off-platform solicitation.',
+            });
+            return;
+          }
+        } catch (_) { /* redis down: fail open, content scan still runs */ }
+
+        try {
+          assertCleanText(content, 'hangout message');
+        } catch (err) {
+          if (err && err.code === 'FORBIDDEN_CONTENT') {
+            if (err.isAntiLeakage) {
+              WarningService.logAntiLeakageStrike({
+                userId: String(user.id),
+                sourceType: 'hangout_chat',
+                sourceRef: String(gid),
+                evidenceText: content,
+                matchedTerms: err.terms || [],
+              }).catch((e) => logger.error('hangout anti-leakage strike log failed', { userId: user.id, groupId: gid, error: e.message }));
+              socket.emit('hangout:error', {
+                code: 'LEAKAGE_DETECTED',
+                message: err.message,
+              });
+              return;
+            }
+            socket.emit('hangout:error', {
+              code: 'FORBIDDEN_CONTENT',
+              message: err.message,
+            });
+            return;
+          }
+          logger.warn('hangout chat filter error', { userId: user.id, error: err.message });
+        }
+      }
+
       if (!isAdminUser) {
         // Base tier check: must hold pnp-member entitlement
         try {

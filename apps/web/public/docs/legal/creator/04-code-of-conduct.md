@@ -109,9 +109,23 @@ These behaviors do not, on a first occurrence, end your participation in the Par
 - No aggressive DMs, tip-baiting, "come to my stream instead" campaigns, or coordinated push at another creator's known regular members.
 - Compete on quality of your own product, not on sabotage. Collab and cross-promotion are welcome (Section 4.5).
 
-### 3.7. Off-platform solicitation.
+### 3.7. Off-platform solicitation. <a id="off-platform-solicitation"></a>
 
-- Directing members to pay you off-platform is a separate violation covered in detail by the **Anti-Poaching & Non-Circumvention Policy (Document 7)**. Repeat off-platform solicitation escalates faster than the standard ladder — see Document 7 Section 5.
+> **PENDING EXTERNAL LEGAL REVIEW — expanded 2026-08-10.** The enumerations below are provisional and not enforceable as a contractual add-on until external counsel signs off and this document is version-bumped. The technical enforcement (detection, strikes, mute) is live from 2026-08-10 as a **community-guideline** matter; contractual clawback consequences activate only after review.
+
+- Directing members to pay you off-platform, or promoting a competing platform to a PNPtv! audience, is a separate violation covered in detail by the **Anti-Poaching & Non-Circumvention Policy (Document 7)**. Repeat off-platform solicitation escalates faster than the standard ladder — see Document 7 Section 5.
+- Non-exhaustive examples that trigger the anti-leakage detection system:
+  - **Competitor content/cam platforms:** OnlyFans, Fansly, Fanvue, JustForFans, LoyalFans, ManyVids, FanCentro, Chaturbate, Stripchat, MyFreeCams, CAM4, BongaCams, Flirt4Free, Streamate, iWantClips, Clips4Sale, PornHub Model / ModelHub, AVN Stars, Unlockd, AdmireMe, Slushy, RentMen.
+  - **Link aggregators** used to funnel PNPtv! audience to any of the above: Linktree, Beacons, AllMyLinks, Bio.link, Carrd, Snipfeed, LinkMe.bio, Campsite.bio, Shor.by.
+  - **Off-platform payment channels:** Cash App / Cashtag, Venmo, Zelle, PayPal / PayPal.me, Nequi, Daviplata, Bre-B, RappiPay, Mercado Pago, Pix, wire transfer, Western Union, MoneyGram, raw crypto wallet addresses (`0x…`, `bc1…`), or phrases like "send USDC to my wallet."
+- **What is still allowed:** having accounts on the platforms above; mentioning them off-PNPtv (personal social media, other-platform bios); linking to your dedicated PNPtv! *personal social* fields (Instagram, X, TikTok) — those exist precisely so you can drive traffic **in** without needing to leak links from bios/DMs/chat.
+- **What is not allowed on PNPtv! surfaces** (bio, DMs, Main Stage chat, hangout chat, posts, channel descriptions, display name, username): the platform names, handles, URLs, or QR redirects to any of the above; requests for members to pay you through any off-platform channel; personal crypto wallet addresses; language like "sub my OF," "check my [aggregator]," "cash app me," "send USDC to…".
+- **Detection & enforcement (technical, effective 2026-08-10):**
+  - Detection runs automatically on every write to the surfaces listed. Obfuscation (dots, spaces, digit-swaps like `0nly f4ns`) is caught.
+  - **Regular member:** strike 1 → warning + content stripped; strike 2 → 24-hour platform-wide mute (chat/DM); strike 3 within a rolling 30-day window → automatic platform ban via PlatformBanService.
+  - **Partner Program Creator:** strike 1 → warning + Slack `#ext-[handle]` ping to your ops contact; strike 2 → warning (elevated) + payout put on manual-review hold *from Sprint 2*; strike 3 → **hold for review** (no auto-ban; ops meeting scheduled within 5 business days; payout hold sustained; contractual escalation per Document 7 Sections 4–5 possible).
+  - Admins are exempt from the content scan so ops can reference platform names when moderating.
+- Rolling window resets 30 days after each strike, matching Section 5.6.
 
 ### 3.8. No-showing scheduled streams or booked private calls without notice.
 

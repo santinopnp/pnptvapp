@@ -54,14 +54,20 @@ const UPDATE_MESSAGES: RawMessage[] = [
   },
   {
     category: "UPDATE",
-    en: "💎 Ru$h is here! PNPtv!'s new in-house currency — bulk bonuses up to +25%. Tap to top up →",
-    es: "💎 ¡Llegó Ru$h! La nueva moneda interna de PNPtv! — bonos de hasta +25%. Toca para recargar →",
+    en: "💎 PNP Wallet is live — top up with your card in 30 seconds, use Ru$h everywhere →",
+    es: "💎 Llegó PNP Wallet — recarga con tu tarjeta en 30 seg, gasta Ru$h donde quieras →",
     href: "/wallet",
   },
   {
     category: "UPDATE",
-    en: "💰 New to crypto? Setup a wallet in 5 min + earn 100 free Ru$h. Tap here →",
-    es: "💰 ¿Nuevo en cripto? Setup en 5 min + gana 100 Ru$h gratis. Toca aquí →",
+    en: "💳 Ru$h 💎 = your PNPtv! credit. Tip creators, book calls, unlock content. Reload with card →",
+    es: "💳 Ru$h 💎 = tu crédito PNPtv! Tipea creators, agenda llamadas, desbloquea contenido. Recarga con tarjeta →",
+    href: "/wallet",
+  },
+  {
+    category: "UPDATE",
+    en: "💰 Prefer crypto? We accept BTC, USDT, USDC & more — one wallet, all payment methods. Learn →",
+    es: "💰 ¿Prefieres cripto? Aceptamos BTC, USDT, USDC y más — una wallet, todos los métodos. Ver →",
     href: "/crypto-guide",
   },
   {

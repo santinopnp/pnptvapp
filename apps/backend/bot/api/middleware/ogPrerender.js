@@ -470,6 +470,21 @@ function ogPrerenderMiddleware(req, res, next) {
   } else if (mainStageMatch) {
     const html = renderOgHtml(getMainStageOg());
     return res.type('html').send(html);
+  } else if (path === '/subscribe' || path === '/lifetime100' || path === '/' || path === '/rush') {
+    // Ru$h Wallet launch card — Aug 2026 through 2026-08-23. Revert this block after.
+    const html = renderOgHtml({
+      title: 'Ru$h Wallet is live on PNPtv! — 20% off yearly & lifetime PRIME',
+      description: 'Tip creators, unlock content, book private calls — all with Ru$h 💎. Launch offer through Aug 23.',
+      image: `${BASE_URL}/rush-wallet/preview.jpg`,
+      imageWidth: 1200,
+      imageHeight: 2133,
+      url: `${BASE_URL}${path}`,
+      video: `${BASE_URL}/rush-wallet/marketing-vertical.mp4`,
+      videoType: 'video/mp4',
+      videoWidth: 1080,
+      videoHeight: 1920,
+    });
+    return res.type('html').send(html);
   } else {
     // Default card for any other page
     const html = renderOgHtml({

@@ -6599,7 +6599,7 @@ app.post('/api/webapp/rush/pay-plan', requireSessionAuth, asyncHandler(async (re
   if (!planId) return res.status(400).json({ success: false, error: 'planId is required' });
 
   const { rows: planRows } = await getPool().query(
-    'SELECT id, name, display_name, price, active, payment_method FROM plans WHERE id = $1 AND active = true',
+    'SELECT id, name, display_name, price, active, payment_method, tier FROM plans WHERE id = $1 AND active = true',
     [planId]
   );
   if (!planRows.length) return res.status(404).json({ success: false, error: 'Plan not found or inactive' });
@@ -6609,15 +6609,19 @@ app.post('/api/webapp/rush/pay-plan', requireSessionAuth, asyncHandler(async (re
 
   // Ru$h cost = USD × 6. Wallet must cover it.
   const rushCost = Math.ceil(priceUsd * 6);
+  // Platform tiers (member/prime) let gifted_balance count — tier upgrade with
+  // no external creator payout liability. Creator subs / addons stay regular-only.
+  const platformTier = plan.tier === 'member' || plan.tier === 'prime';
   const tokenLedger = require('../../services/tokenLedgerService');
   const balance = await tokenLedger.getBalance(user.id);
-  if (balance.total < rushCost) {
+  const available = platformTier ? balance.total : (Number(balance.balance_tokens) || 0);
+  if (available < rushCost) {
     return res.status(402).json({
       success: false,
       error: 'Insufficient Ru$h balance',
       code: 'INSUFFICIENT_FUNDS',
-      required: rushCost, available: balance.total,
-      shortBy: rushCost - balance.total,
+      required: rushCost, available,
+      shortBy: rushCost - available,
     });
   }
 
@@ -6645,7 +6649,8 @@ app.post('/api/webapp/rush/pay-plan', requireSessionAuth, asyncHandler(async (re
       sourceType: 'payments',
       sourceId: paymentId,
       actorId: String(user.id),
-      metadata: { planId, planName: plan.display_name || plan.name, priceUsd },
+      allowGifted: platformTier,
+      metadata: { planId, planName: plan.display_name || plan.name, priceUsd, tier: plan.tier, allowGifted: platformTier },
       externalClient: client,
     });
 
@@ -11655,7 +11660,10 @@ app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res)
   const gifted  = Number(row.gifted_balance)  || 0;
   const creatorGifts = row.creator_gifts || {};
   const creatorGiftsTotal = Object.values(creatorGifts).reduce((s, v) => s + Number(v), 0);
-  res.json({ success: true, balance: regular + gifted + creatorGiftsTotal, regularBalance: regular, giftedBalance: gifted, creatorGifts, dpnsHandle: row.dash_dpns || null });
+  // `balance` = fully-fungible spendable amount only (regular tokens).
+  // gifted_balance is Santino-tip-scoped; creator_gifts are per-creator scoped.
+  // Surfaces needing those must read the dedicated fields and label them.
+  res.json({ success: true, balance: regular, regularBalance: regular, giftedBalance: gifted, creatorGifts, dpnsHandle: row.dash_dpns || null });
 }));
 
 // GET /api/wallet/packages — available token packages (auth required to prevent
@@ -11989,7 +11997,12 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
   }
   // 6 Ru$h 💎 = $1 USD (see /root/.claude memory feedback_token_rate.md)
   const tokenCost = Math.round(basePrice * 6);
-  // Atomic debit via ledger — writes token_ledger row + updates wallet cache in one tx
+  // Atomic debit via ledger — writes token_ledger row + updates wallet cache in one tx.
+  // Platform tiers (member/prime) allow gifted_balance to be spent — this creates
+  // no external payout liability since it's just a tier upgrade (see
+  // feedback_gifted_tokens_santino_lex_only). Creator subs / tips / calls / content
+  // remain regular-only.
+  const platformTier = plan.tier === 'member' || plan.tier === 'prime';
   const tokenLedger = require('../../services/tokenLedgerService');
   const sourceId = `wallet:sub:${userId}:${plan.id}:${Date.now()}`;
   let newBalance;
@@ -12001,7 +12014,8 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
       sourceType: 'plan',
       sourceId,
       actorId: userId,
-      metadata: { planId, planSku: plan.sku || plan.name, priceUsd: basePrice },
+      allowGifted: platformTier,
+      metadata: { planId, planSku: plan.sku || plan.name, priceUsd: basePrice, tier: plan.tier, allowGifted: platformTier },
     });
     newBalance = dbRes.balance_after + dbRes.gifted_after;
   } catch (err) {
@@ -15201,16 +15215,28 @@ async function _fetchUsdcTransferReceipt(txHash, expectedRecipient) {
 // GET /api/wallet/balance/usdc — on-chain USDC balance for the session user's
 // linked wallet. 30s Redis cache. Used by BuyTokensModal to conditionally show
 // the "Pay from wallet" option.
+// Optional ?address=0x… lets an external (Trust/MetaMask) wallet query its own
+// balance without waiting for the backend to know about it. Address must be a
+// valid 40-hex EVM address.
 app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req, res) => {
   const userId = req.session?.user?.id;
   const { query: dbQuery } = require('../../config/postgres');
   const { cache } = require('../../config/redis');
 
-  const { rows } = await dbQuery(
-    `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
-    [String(userId)]
-  );
-  const address = rows[0]?.wallet_address;
+  let address = null;
+  const overrideAddr = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+  if (overrideAddr) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    address = overrideAddr;
+  } else {
+    const { rows } = await dbQuery(
+      `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    address = rows[0]?.wallet_address;
+  }
   if (!address) return res.json({ ok: true, hasWallet: false, usdc: 0 });
 
   const cacheKey = `wallet:usdc:${address.toLowerCase()}`;
@@ -15240,6 +15266,290 @@ app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req,
     logger.warn('[wallet/balance/usdc] alchemy rpc failed', { err: err.message });
     return res.json({ ok: true, hasWallet: true, address, usdc: 0, reason: 'rpc_failed' });
   }
+}));
+
+// GET /api/wallet/balance/usdc-mainnet — on-chain USDC balance on Ethereum
+// mainnet. Used to detect stranded USDC that needs bridging to Base via CCTP.
+// Optional ?address=0x… override for external wallets.
+app.get('/api/wallet/balance/usdc-mainnet', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  let address = null;
+  const overrideAddr = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+  if (overrideAddr) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    address = overrideAddr;
+  } else {
+    const { rows } = await dbQuery(
+      `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    address = rows[0]?.wallet_address;
+  }
+  if (!address) return res.json({ ok: true, hasWallet: false, usdc: 0 });
+
+  const cacheKey = `wallet:usdc-mainnet:${address.toLowerCase()}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return res.json({ ok: true, hasWallet: true, address, usdc: Number(cached), cached: true });
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return res.json({ ok: true, hasWallet: true, address, usdc: 0, reason: 'alchemy_not_configured' });
+  const USDC_ETHEREUM = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  const data = '0x70a08231' + address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const urls = [
+    `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`,
+    'https://ethereum.publicnode.com',
+  ];
+  try {
+    const results = await Promise.all(urls.map((u) => fetch(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call',
+        params: [{ to: USDC_ETHEREUM, data }, 'latest'] }),
+    }).then((r) => r.json()).catch(() => ({ result: '0x0' }))));
+    const balances = results.map((j) => BigInt(j.result || '0x0'));
+    const maxRaw = balances.reduce((a, b) => (a > b ? a : b), 0n);
+    const usdc = Number(maxRaw) / 1_000_000;
+    await cache.set(cacheKey, String(usdc), 30).catch(() => {});
+    return res.json({ ok: true, hasWallet: true, address, usdc });
+  } catch (err) {
+    logger.warn('[wallet/balance/usdc-mainnet] rpc failed', { err: err.message });
+    return res.json({ ok: true, hasWallet: true, address, usdc: 0, reason: 'rpc_failed' });
+  }
+}));
+
+// GET /api/wallet/cctp-attestation?txHash=0x… — proxy to Circle's attestation
+// API. Frontend polls this after a CCTP burn tx on Ethereum. When the
+// attestation is ready (~15 min for standard CCTP), the frontend can submit
+// receiveMessage() on Base to mint the equivalent USDC. Rate-limited.
+app.get('/api/wallet/cctp-attestation', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const txHash = typeof req.query.txHash === 'string' ? req.query.txHash.trim() : '';
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return res.status(400).json({ ok: false, error: 'invalid_txHash' });
+  }
+  try {
+    // Circle's iris API: fetch tx receipt logs → extract messageHash from
+    // MessageSent event on MessageTransmitter, then GET the attestation.
+    // We do this in one hop server-side to keep the client code simple.
+    const alchemyKey = process.env.ALCHEMY_API_KEY;
+    if (!alchemyKey) return res.status(503).json({ ok: false, error: 'alchemy_not_configured' });
+
+    const rpcRes = await fetch(`https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt', params: [txHash] }),
+    });
+    const rpcJson = await rpcRes.json();
+    const receipt = rpcJson.result;
+    if (!receipt) return res.json({ ok: true, status: 'tx_pending' });
+    if (receipt.status !== '0x1') return res.json({ ok: true, status: 'tx_reverted' });
+
+    // MessageSent event signature: MessageSent(bytes) - topic0 =
+    // 0x8c5261...cb02c hash of "MessageSent(bytes)". CCTP MessageTransmitter
+    // on Ethereum: 0x0a992d191DEeC32aFe36203Ad87D7d289a738F81.
+    const MESSAGE_TRANSMITTER_L1 = '0x0a992d191deec32afe36203ad87d7d289a738f81';
+    const MESSAGE_SENT_TOPIC = '0x8c5261668696ce22758910d05bab8f186d6eb247ceac2af2e82c7dc17669b036';
+    const log = (receipt.logs || []).find((l) =>
+      String(l.address).toLowerCase() === MESSAGE_TRANSMITTER_L1 &&
+      Array.isArray(l.topics) && l.topics[0] === MESSAGE_SENT_TOPIC
+    );
+    if (!log) return res.json({ ok: true, status: 'no_message_log' });
+
+    // The message bytes are ABI-encoded in log.data — it's a single `bytes`
+    // param so the encoding is: offset(32) + length(32) + data(padded).
+    // We extract just the bytes payload.
+    const dataHex = String(log.data || '0x').replace(/^0x/, '');
+    if (dataHex.length < 128) return res.json({ ok: true, status: 'invalid_message_log' });
+    const lengthHex = dataHex.slice(64, 128);
+    const msgLen = parseInt(lengthHex, 16);
+    const messageBytes = '0x' + dataHex.slice(128, 128 + msgLen * 2);
+
+    // Circle iris attestation API. keccak256(messageBytes) is the lookup key.
+    const crypto = require('crypto');
+    // No native keccak256 in node crypto — use a small inline impl via 'ethereum-cryptography' if present, else fall back to a fetch-with-tx approach.
+    // Actually: iris supports both messageHash AND txHash paths. Use txHash-based endpoint:
+    // https://iris-api.circle.com/v2/messages/{sourceDomain}?transactionHash={txHash}
+    // sourceDomain=0 for Ethereum mainnet.
+    const irisRes = await fetch(`https://iris-api.circle.com/v2/messages/0?transactionHash=${txHash}`);
+    if (!irisRes.ok) {
+      // v2 might 404 if not yet indexed
+      if (irisRes.status === 404) return res.json({ ok: true, status: 'pending', messageBytes });
+      return res.status(502).json({ ok: false, error: 'circle_api_error', code: irisRes.status });
+    }
+    const irisJson = await irisRes.json();
+    const msg = (irisJson.messages && irisJson.messages[0]) || null;
+    if (!msg) return res.json({ ok: true, status: 'pending', messageBytes });
+
+    // status="complete" means attestation ready
+    if (msg.status === 'complete' && msg.attestation && msg.attestation !== 'PENDING') {
+      return res.json({
+        ok: true, status: 'ready',
+        messageBytes: msg.message || messageBytes,
+        attestation: msg.attestation,
+      });
+    }
+    return res.json({ ok: true, status: 'pending', messageBytes, apiStatus: msg.status });
+  } catch (err) {
+    logger.warn('[wallet/cctp-attestation] failed', { err: err.message, txHash });
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}));
+
+// GET /api/wallet/balance/eth-mainnet — on-chain native ETH balance on
+// Ethereum mainnet for a given address. Used to detect stranded ETH that
+// needs bridging to Base. Optional ?address=0x… override.
+app.get('/api/wallet/balance/eth-mainnet', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  let address = null;
+  const overrideAddr = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+  if (overrideAddr) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    address = overrideAddr;
+  } else {
+    const { rows } = await dbQuery(
+      `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    address = rows[0]?.wallet_address;
+  }
+  if (!address) return res.json({ ok: true, hasWallet: false, eth: 0 });
+
+  const cacheKey = `wallet:eth-mainnet:${address.toLowerCase()}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return res.json({ ok: true, hasWallet: true, address, eth: Number(cached), cached: true });
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return res.json({ ok: true, hasWallet: true, address, eth: 0, reason: 'alchemy_not_configured' });
+  // Publicnode + Alchemy dual query — Alchemy occasionally lags on new tx
+  // indexing (seen 2026-08-10 during Binance ETH withdrawal debug), publicnode
+  // catches these faster. Use MAX of the two so a fresh deposit shows up.
+  const urls = [
+    `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`,
+    'https://ethereum.publicnode.com',
+  ];
+  try {
+    const results = await Promise.all(urls.map((u) => fetch(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance',
+        params: [address.toLowerCase(), 'latest'] }),
+    }).then((r) => r.json()).catch(() => ({ result: '0x0' }))));
+    const balances = results.map((j) => BigInt(j.result || '0x0'));
+    const maxWei = balances.reduce((a, b) => (a > b ? a : b), 0n);
+    const eth = Number(maxWei) / 1e18;
+    await cache.set(cacheKey, String(eth), 30).catch(() => {});
+    return res.json({ ok: true, hasWallet: true, address, eth });
+  } catch (err) {
+    logger.warn('[wallet/balance/eth-mainnet] rpc failed', { err: err.message });
+    return res.json({ ok: true, hasWallet: true, address, eth: 0, reason: 'rpc_failed' });
+  }
+}));
+
+// GET /api/wallet/balance/eth — on-chain native ETH balance on Base for the
+// session user's linked wallet. 30s Redis cache. Optional ?address=0x… lets an
+// external wallet query its own balance without server-side linking.
+app.get('/api/wallet/balance/eth', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+
+  let address = null;
+  const overrideAddr = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+  if (overrideAddr) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    address = overrideAddr;
+  } else {
+    const { rows } = await dbQuery(
+      `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    address = rows[0]?.wallet_address;
+  }
+  if (!address) return res.json({ ok: true, hasWallet: false, eth: 0 });
+
+  const cacheKey = `wallet:eth:${address.toLowerCase()}`;
+  const cached = await cache.get(cacheKey).catch(() => null);
+  if (cached != null) return res.json({ ok: true, hasWallet: true, address, eth: Number(cached), cached: true });
+
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return res.json({ ok: true, hasWallet: true, address, eth: 0, reason: 'alchemy_not_configured' });
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  try {
+    const rpcRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance',
+        params: [address.toLowerCase(), 'latest'] }),
+    });
+    const j = await rpcRes.json();
+    const hex = j.result || '0x0';
+    const wei = BigInt(hex);
+    // Return whole-ETH float with 6 decimals of precision — UI truncates to 4.
+    const eth = Number(wei) / 1e18;
+    await cache.set(cacheKey, String(eth), 30).catch(() => {});
+    return res.json({ ok: true, hasWallet: true, address, eth });
+  } catch (err) {
+    logger.warn('[wallet/balance/eth] alchemy rpc failed', { err: err.message });
+    return res.json({ ok: true, hasWallet: true, address, eth: 0, reason: 'rpc_failed' });
+  }
+}));
+
+// POST /api/wallet/client-error — capture frontend errors from the Privy
+// wallet flow (login, addFunds, sendTransaction, connectWallet) so we can see
+// server-side why users can't complete a purchase. Rate-limited, session-auth
+// required, posts to Slack #testing-team on every submission.
+//
+// Body: { step: string, error: string, context?: object }
+app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const { step, error, context } = req.body || {};
+  if (!step || !error || typeof step !== 'string' || typeof error !== 'string') {
+    return res.status(400).json({ ok: false, error: 'step + error required' });
+  }
+  const safeStep = String(step).slice(0, 80);
+  const safeError = String(error).slice(0, 500);
+  const safeContext = context && typeof context === 'object'
+    ? JSON.stringify(context).slice(0, 1000)
+    : null;
+
+  logger.warn('[wallet/client-error]', {
+    userId: String(user?.id || 'anon'),
+    username: user?.username || null,
+    step: safeStep,
+    error: safeError,
+    context: safeContext,
+  });
+
+  // Fire-and-forget Slack post so the tester channel sees every wallet blocker.
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  const channelId = (String(process.env.SLACK_TESTER_CHANNELS || '').split(',')[0] || '').trim();
+  if (botToken && channelId) {
+    const text = [
+      `⚠️ *Wallet client error*`,
+      `User: \`${user?.username || user?.id || 'anon'}\` (${user?.id || '—'})`,
+      `Step: \`${safeStep}\``,
+      `Error: \`${safeError}\``,
+      safeContext ? `Context: \`${safeContext}\`` : null,
+    ].filter(Boolean).join('\n');
+    fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${botToken}` },
+      body: JSON.stringify({ channel: channelId, text }),
+    }).catch((err) => logger.warn('[wallet/client-error] slack post failed', { err: err.message }));
+  }
+
+  return res.json({ ok: true });
 }));
 
 // ── Hostinger Mail webhook — message.received on support@pnptv.app ────────────

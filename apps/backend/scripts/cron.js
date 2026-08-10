@@ -932,14 +932,13 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // ── Creator content-compliance: deadline enforcement — daily at 09:05 UTC ──
-    // (5 min offset from the 2257 job above to avoid resource contention.)
-    // Suspends creators whose 7-day content-compliance grace deadline has passed
-    // without reaching 4+ minutes of exclusive video content, cancels their
-    // compliance_hold'd subscriptions, and refunds those subscribers in tokens
-    // at CONTENT_COMPLIANCE_REFUND_MULTIPLIER (105%) of what they paid. See
-    // services/contentComplianceService.js and migrations/318_creator_content_compliance.sql.
-    cron.schedule('5 9 * * *', async () => {
+    // ── Creator content-compliance: deadline enforcement — DISABLED 2026-08-10 ──
+    // Santino: "no more compliance like this, just friendly reminders". The 2 creators
+    // suspended by this job on 2026-08-10 (CHASINGTHERT, ATLASTROYE) were reactivated
+    // manually. The reminder cron below stays alive; only the auto-suspension is off.
+    // Do NOT re-enable without explicit policy sign-off from Santino.
+    // eslint-disable-next-line no-unreachable, no-constant-condition
+    if (false) cron.schedule('5 9 * * *', async () => {
       try {
         const { query: pgQuery } = require(path.join(backendPath, 'config/postgres'));
         const { cache } = require(path.join(backendPath, 'config/redis'));
@@ -1200,12 +1199,14 @@ const startCronJobs = async (bot = null) => {
             const deadlineStr = new Date(creator.creator_content_compliance_deadline).toLocaleDateString('en-US', {
               year: 'numeric', month: 'long', day: 'numeric',
             });
-            const message = `Reminder: you have until ${deadlineStr} to upload at least 4 minutes of exclusive video content, or your Creator Program account will be suspended for 6 months and your held subscriber(s) refunded.`;
+            // Warm tone per feedback_never_approach_creators_hostile_tone.md (2026-08-10).
+            // Enforcement is off — this is a friendly nudge only. No suspension threats.
+            const message = `Hey — whenever you're inspired, your community is waiting for your first exclusive video 💜 No rush, no pressure. We're just here if you need anything.`;
 
             NotificationEmitter.emit({
               type: 'creator_compliance_reminder',
               category: 'commerce',
-              priority: 'high',
+              priority: 'normal',
               actorId: null,
               targetUserId: String(creator.id),
               entityType: 'user',
@@ -1213,20 +1214,21 @@ const startCronJobs = async (bot = null) => {
               message,
               metadata: {
                 url: '/creator-studio/content',
-                pushTitle: 'Reminder — content deadline approaching',
-                pushBody: `Upload 4+ min of exclusive video by ${deadlineStr} to avoid suspension.`,
+                pushTitle: 'Your community is waiting 💜',
+                pushBody: `Whenever you're inspired — upload your first exclusive video from Creator Studio.`,
               },
             }).catch(() => {});
 
             if (creator.email && creator.email_verified) {
               await EmailService.send({
                 to: creator.email,
-                subject: 'Reminder — your content compliance deadline is approaching',
+                subject: 'Your community is waiting 💜',
                 html: `
-                  <p>Hi,</p>
-                  <p>This is a reminder that you have until <strong>${deadlineStr}</strong> to upload at least 4 minutes of exclusive video content to your creator profile.</p>
-                  <p>If the deadline passes without enough content, your Creator Program account will be suspended for 6 months, and your held subscriber(s) will be refunded in tokens.</p>
-                  <p>Upload now to activate your held subscriber's membership and start earning.</p>
+                  <p>Hey,</p>
+                  <p>Just a warm hello from the PNPtv! team. Whenever you're inspired, your community is here for your first exclusive video.</p>
+                  <p>No pressure, no rush — your body, your decision, your pace. Anything we can help with, this thread is the place.</p>
+                  <p><a href="https://pnptv.app/creator-studio/content">Upload from Creator Studio →</a></p>
+                  <p>💜 Team PNPtv!</p>
                 `,
               });
             }

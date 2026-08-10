@@ -188,18 +188,70 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
 import { useEffect as _useEffect, useState as _useState } from "react";
-import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
-import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
-import { base } from "viem/chains";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction } from "@privy-io/react-auth";
+import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
+import { base, mainnet } from "viem/chains";
 
 // CAIP-2 chain id for Base mainnet — required by Privy's useAddFunds destination
 const _BASE_CAIP2 = "eip155:8453" as const;
+// Base L1StandardBridge on Ethereum mainnet — official Coinbase-run contract
+// that accepts ETH via bridgeETH() and mints matching balance on Base in ~15 min.
+const _BASE_L1_BRIDGE = "0x3154Cf16ccdb4C6d922629664174b904d80F2C35" as const;
+const _BRIDGE_ETH_ABI = [{
+  name: "bridgeETH", type: "function" as const,
+  inputs: [
+    { name: "_minGasLimit", type: "uint32" },
+    { name: "_extraData", type: "bytes" },
+  ],
+  outputs: [],
+  stateMutability: "payable" as const,
+}];
 import {
   initiateWalletCheckout,
   verifyWalletCheckoutTx,
   getWalletUsdcBalance,
+  getWalletEthBalance,
+  getWalletEthMainnetBalance,
+  getWalletUsdcMainnetBalance,
+  getCctpAttestation,
+  reportWalletClientError,
   type WalletCheckoutSurface,
 } from "@/lib/api";
+
+// ── CCTP (Circle Cross-Chain Transfer Protocol) constants ─────────────────
+// Used to bridge native USDC from Ethereum mainnet → Base natively (no
+// wrapped/bridged token). Flow: approve → depositForBurn → wait attestation
+// → receiveMessage on Base.
+const _USDC_ETHEREUM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const;
+const _CCTP_TOKEN_MESSENGER_L1 = "0xBd3fa81B58Ba92a82136038B25aDec7066af3155" as const;
+const _CCTP_MESSAGE_TRANSMITTER_L2 = "0xAD09780d193884d503182aD4588450C416D6F9D4" as const;
+const _BASE_DOMAIN_ID = 6; // Circle's domain ID for Base
+const _USDC_APPROVE_ABI = [{
+  name: "approve", type: "function" as const,
+  inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
+  outputs: [{ name: "", type: "bool" }],
+  stateMutability: "nonpayable" as const,
+}];
+const _CCTP_DEPOSIT_FOR_BURN_ABI = [{
+  name: "depositForBurn", type: "function" as const,
+  inputs: [
+    { name: "amount", type: "uint256" },
+    { name: "destinationDomain", type: "uint32" },
+    { name: "mintRecipient", type: "bytes32" },
+    { name: "burnToken", type: "address" },
+  ],
+  outputs: [{ name: "nonce", type: "uint64" }],
+  stateMutability: "nonpayable" as const,
+}];
+const _CCTP_RECEIVE_MESSAGE_ABI = [{
+  name: "receiveMessage", type: "function" as const,
+  inputs: [
+    { name: "message", type: "bytes" },
+    { name: "attestation", type: "bytes" },
+  ],
+  outputs: [{ name: "success", type: "bool" }],
+  stateMutability: "nonpayable" as const,
+}];
 
 const _USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const _USDC_ABI = [{
@@ -231,50 +283,79 @@ export function WalletPayCard({
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const { connectWallet } = useConnectWallet();
+  // Active wallet: prefer the embedded PNPtv wallet (Privy) but fall back to
+  // the first connected external wallet (Trust/MetaMask via WalletConnect).
+  const activeWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const isEmbedded = activeWallet?.walletClientType === "privy";
   const [usdc, setUsdc] = _useState<number | null>(null);
   const [loading, setLoading] = _useState(false);
   const [paying, setPaying] = _useState(false);
   const [error, setError] = _useState<string | null>(null);
   const [success, setSuccess] = _useState(false);
+  // True from when addFunds resolves until either (a) balance covers the price
+  // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
+  // re-appearing as if nothing happened while Stripe onramp settles.
+  const [funding, setFunding] = _useState(false);
 
   _useEffect(() => {
-    if (!authenticated || !embeddedWallet) return;
+    if (!authenticated || !activeWallet) return;
     setLoading(true);
-    getWalletUsdcBalance()
+    getWalletUsdcBalance(activeWallet.address)
       .then((r) => setUsdc(r.hasWallet ? r.usdc : null))
       .catch(() => setUsdc(null))
       .finally(() => setLoading(false));
-  }, [authenticated, embeddedWallet?.address]);
+  }, [authenticated, activeWallet?.address]);
 
-  // Not signed into Privy yet — show the sign-in CTA rather than silently
-  // rendering nothing (that regression left every non-Privy user with no
-  // way to pay after we retired the NP/BTC/USDT fallback pills 2026-08-09).
+  // Not signed into Privy yet — frame as card-primary so a card-only user
+  // doesn't bail thinking this is a new-account onboarding step. The Privy
+  // flow accepts credit/debit cards via Stripe onramp (useAddFunds); the fact
+  // that it settles as USDC on Base is an implementation detail the user
+  // never sees.
   if (!authenticated) {
     return (
       <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-3">
-        <p className="text-xs font-semibold text-emerald-300 mb-2">
-          {es ? "Necesitas tu Billetera PNPtv" : "PNPtv Wallet required"}
+        <p className="text-sm font-bold text-emerald-300 mb-1">
+          {es
+            ? `Paga $${amountUsd.toFixed(2)} con tarjeta`
+            : `Pay $${amountUsd.toFixed(2)} with your card`}
         </p>
         <p className="text-[11px] leading-snug text-pnp-textSecondary mb-3">
           {es
-            ? "Un toque, sin apps de wallet ni frases raras. Se crea al instante."
-            : "One tap, no wallet apps or seed phrases. Created instantly."}
+            ? "Crédito, débito, Apple Pay o Google Pay. Un solo toque — sin descargar apps ni frases raras."
+            : "Credit, debit, Apple Pay, or Google Pay. One tap — no apps to install, no seed phrases."}
         </p>
         <button
           type="button"
           onClick={() => login()}
-          className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-opacity active:opacity-80"
+          className="w-full py-3 rounded-xl text-sm font-bold text-white transition-opacity active:opacity-80"
           style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
         >
-          {es ? "Crear / abrir mi Billetera" : "Create / open my Wallet"}
+          {es
+            ? `💳 Pagar $${amountUsd.toFixed(2)}`
+            : `💳 Pay $${amountUsd.toFixed(2)}`}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            try { connectWallet(); }
+            catch (err) { reportWalletClientError("connectWallet", err, { surface }); }
+          }}
+          className="w-full mt-2 py-2 rounded-xl text-[11px] font-semibold text-white/70 border border-white/10 hover:bg-white/[0.04] transition"
+        >
+          {es ? "o conecta Trust / MetaMask" : "or connect Trust / MetaMask"}
+        </button>
+        <p className="text-[9px] leading-snug text-pnp-textSecondary/70 mt-2 text-center">
+          {es
+            ? "Con tu Billetera PNPtv — sin comisiones y sin apps."
+            : "Powered by your PNPtv Wallet — no fees, no apps needed."}
+        </p>
       </div>
     );
   }
   // Signed in, wallet still provisioning (Privy embedded wallet takes a
   // second on first sign-in). Show a spinner instead of silent null.
-  if (!embeddedWallet) {
+  if (!activeWallet) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 flex items-center gap-3">
         <svg className="w-4 h-4 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
@@ -290,8 +371,16 @@ export function WalletPayCard({
 
   const canAfford = usdc != null && usdc >= amountUsd;
 
+  const handleConnectExternal = () => {
+    try {
+      connectWallet();
+    } catch (err: unknown) {
+      reportWalletClientError("connectWallet", err, { surface });
+    }
+  };
+
   const handlePay = async () => {
-    if (!embeddedWallet) return;
+    if (!activeWallet) return;
     setError(null); setPaying(true);
     try {
       // For tip/donation surfaces the server reads amountUsd from
@@ -307,9 +396,9 @@ export function WalletPayCard({
       });
       if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
 
-      const provider = await embeddedWallet.getEthereumProvider();
+      const provider = await activeWallet.getEthereumProvider();
       const walletClient = createWalletClient({
-        account: embeddedWallet.address as `0x${string}`,
+        account: activeWallet.address as `0x${string}`,
         chain: base, transport: custom(provider),
       });
       const data = encodeFunctionData({
@@ -330,16 +419,23 @@ export function WalletPayCard({
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      const friendly = /User rejected|user denied|cancel/i.test(msg)
+      const isUserCancel = /User rejected|user denied|cancel/i.test(msg);
+      const friendly = isUserCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : msg;
       setError(friendly);
+      if (!isUserCancel) {
+        reportWalletClientError("sendTransaction", err, {
+          surface, amountUsd, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
+        });
+      }
       onError?.(err);
     } finally { setPaying(false); }
   };
 
   const handleFund = async () => {
-    if (!embeddedWallet) return;
+    if (!activeWallet) return;
     setError(null);
     try {
       // useAddFunds (Privy v3) surfaces ALL enabled onramps including Stripe,
@@ -348,7 +444,7 @@ export function WalletPayCard({
       // USDC directly (no ETH → USDC swap step).
       await addFunds({
         destination: {
-          address: embeddedWallet.address,
+          address: activeWallet.address,
           chain: _BASE_CAIP2,
           asset: _USDC_BASE,
         },
@@ -356,14 +452,46 @@ export function WalletPayCard({
           defaultAmount: Math.max(amountUsd, 20).toFixed(0),
         },
       });
-      // Refresh balance after fund modal closes (settlement takes 1–2 min).
-      getWalletUsdcBalance().then((r) => setUsdc(r.hasWallet ? r.usdc : null)).catch(() => {});
+      // addFunds resolved — user closed the fund flow. Stripe settlement is
+      // instant in sandbox and up to ~2 min in prod. Poll balance every 3s
+      // for up to 60s so the user gets an obvious "we're waiting" affordance
+      // instead of the same "Pay with card" button reappearing.
+      setFunding(true);
+      const start = Date.now();
+      const poll = async (): Promise<void> => {
+        try {
+          const r = await getWalletUsdcBalance(activeWallet.address);
+          const bal = r.hasWallet ? r.usdc : null;
+          setUsdc(bal);
+          if (bal != null && bal >= amountUsd) {
+            setFunding(false);
+            return;
+          }
+        } catch { /* keep polling on transient errors */ }
+        if (Date.now() - start >= 60_000) {
+          setFunding(false);
+          return;
+        }
+        setTimeout(poll, 3_000);
+      };
+      poll();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
       setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      reportWalletClientError("addFunds", err, {
+        surface, amountUsd, address: activeWallet?.address,
+        walletType: activeWallet?.walletClientType,
+      });
     }
   };
+
+  // Gas label: Privy embedded wallets pay gas via the Alchemy Gas Manager
+  // policy (fully sponsored). External wallets (Trust/MetaMask) pay their own
+  // Base gas out of ETH balance — small (~$0.01) but not zero, so don't lie.
+  const gasLabel = isEmbedded
+    ? (es ? "gas gratis" : "no gas fees")
+    : (es ? "gas: ~$0.01 en Base" : "gas: ~$0.01 on Base");
 
   return (
     <div
@@ -375,14 +503,16 @@ export function WalletPayCard({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-pnp-textPrimary">
-            {es ? "Pagar desde tu billetera" : "Pay from your wallet"}
+            {es
+              ? (isEmbedded ? "Pagar desde tu billetera" : "Pagar con tu wallet externa")
+              : (isEmbedded ? "Pay from your wallet" : "Pay with your external wallet")}
           </p>
           <p className="text-[11px] text-pnp-textSecondary">
             {loading
               ? (es ? "Consultando saldo…" : "Checking balance…")
               : usdc == null
                 ? (es ? "Sin saldo USDC" : "No USDC balance")
-                : `${usdc.toFixed(2)} USDC · Base · gas gratis`}
+                : `${usdc.toFixed(2)} USDC · Base · ${gasLabel}`}
           </p>
         </div>
       </div>
@@ -398,29 +528,84 @@ export function WalletPayCard({
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={handlePay}
-        disabled={!canAfford || paying || success}
-        className="w-full py-2.5 rounded-lg text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-        style={{ background: canAfford && !paying ? "linear-gradient(135deg,#10b981,#059669)" : "#333" }}
-      >
-        {paying
-          ? (es ? "Firmando…" : "Signing…")
-          : (label || (es ? `Pagar $${amountUsd.toFixed(2)}` : `Pay $${amountUsd.toFixed(2)}`))}
-      </button>
-
-      {(!canAfford || usdc == null) && !loading && (
+      {/* If the wallet has enough USDC, show Pay as the primary CTA. Otherwise
+          demote Pay and promote "Fund with card" so a zero-balance user gets a
+          single obvious next step instead of two similar-looking buttons. */}
+      {canAfford ? (
         <button
           type="button"
-          onClick={handleFund}
-          className="w-full py-2 rounded-lg text-xs font-bold text-white transition active:scale-[0.98]"
-          style={{ background: "linear-gradient(90deg,#D4007A,#E69138)" }}
+          onClick={handlePay}
+          disabled={paying || success}
+          className="w-full py-3 rounded-xl text-base font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ background: paying ? "#333" : "linear-gradient(135deg,#10b981,#059669)" }}
         >
-          {es
-            ? `Cargar billetera con tarjeta →`
-            : `Fund wallet with card →`}
+          {paying
+            ? (es ? "Firmando…" : "Signing…")
+            : (label || (es ? `Pagar $${amountUsd.toFixed(2)}` : `Pay $${amountUsd.toFixed(2)}`))}
         </button>
+      ) : funding ? (
+        <div
+          className="w-full py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center gap-2"
+          role="status"
+          aria-live="polite"
+        >
+          <svg className="w-4 h-4 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-sm font-semibold text-emerald-200">
+            {es
+              ? "Confirmando tu pago… (puede tardar hasta 1 min)"
+              : "Confirming your payment… (up to 1 min)"}
+          </span>
+        </div>
+      ) : (
+        <>
+          {!loading && isEmbedded && (
+            <button
+              type="button"
+              onClick={handleFund}
+              className="w-full py-3 rounded-xl text-base font-bold text-white transition active:scale-[0.98]"
+              style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+            >
+              {es
+                ? `💳 Pagar $${amountUsd.toFixed(2)} con tarjeta`
+                : `💳 Pay $${amountUsd.toFixed(2)} with card`}
+            </button>
+          )}
+          {/* External wallet with insufficient USDC → user must top up inside
+              their own wallet app (we can't onramp into external wallets via
+              Stripe). Show the address to send to + a link to connect a Privy
+              wallet if they want the card-onramp path instead. */}
+          {!loading && !isEmbedded && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-pnp-textSecondary leading-snug">
+                {es
+                  ? `Envía al menos $${amountUsd.toFixed(2)} USDC (Base) a tu dirección para completar el pago.`
+                  : `Send at least $${amountUsd.toFixed(2)} USDC (Base) to your wallet to complete this payment.`}
+              </p>
+              <code className="block text-[10px] font-mono text-white/80 bg-white/[0.04] border border-white/10 rounded-md px-2 py-1.5 break-all">
+                {activeWallet.address}
+              </code>
+              <button
+                type="button"
+                onClick={handleConnectExternal}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/80 border border-white/15 bg-white/[0.04] hover:bg-white/[0.08]"
+              >
+                {es ? "🔗 Conectar otra wallet" : "🔗 Connect a different wallet"}
+              </button>
+            </div>
+          )}
+          {loading && (
+            <button
+              type="button"
+              disabled
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white/60 bg-white/5"
+            >
+              {es ? "Consultando saldo…" : "Checking balance…"}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -440,26 +625,111 @@ const _LazyBuyTokensModal = _lazy(() =>
 );
 
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
-  const { authenticated, login } = usePrivy();
+  const { authenticated, login, exportWallet } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
-  const address = embeddedWallet?.address || null;
+  const { connectWallet } = useConnectWallet();
+  // Privy's own tx sender — handles chain switching + fee estimation on the
+  // embedded wallet correctly (unlike viem's walletClient which was ignoring
+  // wallet_switchEthereumChain when we tried it, defaulting to Base and
+  // showing "insufficient balance on Base" errors).
+  const { sendTransaction: privySendTransaction } = useSendTransaction();
+
+  // Wallet selector: user may have both an embedded PNPtv wallet AND external
+  // (Trust/MetaMask via WalletConnect). When multiple, they pick which one the
+  // balances + Fund/Send actions target. Default = embedded (created by
+  // "Create wallet") then first external.
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || null;
+  const externalWallets = wallets.filter((w) => w.walletClientType !== "privy");
+  const [activeAddress, setActiveAddress] = _useState<string | null>(null);
+
+  _useEffect(() => {
+    // Whenever wallet list changes, ensure activeAddress still exists in it.
+    if (activeAddress && wallets.some((w) => w.address === activeAddress)) return;
+    const fallback = embeddedWallet?.address || externalWallets[0]?.address || null;
+    setActiveAddress(fallback);
+  }, [wallets.map((w) => w.address).join(","), embeddedWallet?.address]);
+
+  const activeWallet = wallets.find((w) => w.address === activeAddress) || null;
+  const isActiveEmbedded = activeWallet?.walletClientType === "privy";
+  const address = activeWallet?.address || null;
 
   const [usdc, setUsdc] = _useState<number | null>(null);
+  const [eth, setEth] = _useState<number | null>(null);
+  // Ethereum mainnet balances — for the "wrong network" bridge recovery banners.
+  // Separate from the Base balances shown in the main grid.
+  const [ethMainnet, setEthMainnet] = _useState<number | null>(null);
+  const [usdcMainnet, setUsdcMainnet] = _useState<number | null>(null);
   const [rush, setRush] = _useState<{ regular: number; gifted: number } | null>(null);
   const [loading, setLoading] = _useState(true);
   const [copied, setCopied] = _useState(false);
   const [showBuyModal, setShowBuyModal] = _useState(false);
   const [error, setError] = _useState<string | null>(null);
+  const [bridging, setBridging] = _useState(false);
+  const [bridgeTxHash, setBridgeTxHash] = _useState<string | null>(null);
+
+  // USDC CCTP bridge state machine — separate from ETH bridge since it's a
+  // multi-step flow (approve → burn → wait attestation → mint on Base).
+  // Persisted per-address in localStorage so users can close and resume.
+  type UsdcBridgeStage = "idle" | "approving" | "burning" | "waiting_attestation" | "ready_to_mint" | "minting" | "done";
+  const [usdcBridgeStage, setUsdcBridgeStage] = _useState<UsdcBridgeStage>("idle");
+  const [usdcBurnTxHash, setUsdcBurnTxHash] = _useState<string | null>(null);
+  const [usdcAttestation, setUsdcAttestation] = _useState<{ message: string; attestation: string } | null>(null);
+  const [usdcBridgeError, setUsdcBridgeError] = _useState<string | null>(null);
+
+  const _usdcBridgeStorageKey = address ? `pnptv.usdcBridge.${address.toLowerCase()}` : null;
+
+  // Restore in-flight USDC bridge from localStorage on mount / address change.
+  _useEffect(() => {
+    if (!_usdcBridgeStorageKey) return;
+    try {
+      const raw = localStorage.getItem(_usdcBridgeStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.burnTxHash && !usdcBurnTxHash) {
+        setUsdcBurnTxHash(saved.burnTxHash);
+        setUsdcBridgeStage(saved.stage || "waiting_attestation");
+        if (saved.attestation && saved.message) {
+          setUsdcAttestation({ message: saved.message, attestation: saved.attestation });
+        }
+      }
+    } catch { /* corrupt storage — skip */ }
+  }, [_usdcBridgeStorageKey]);
+
+  const _saveUsdcBridge = (patch: Record<string, unknown>) => {
+    if (!_usdcBridgeStorageKey) return;
+    try {
+      const raw = localStorage.getItem(_usdcBridgeStorageKey);
+      const prev = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(_usdcBridgeStorageKey, JSON.stringify({ ...prev, ...patch, updatedAt: Date.now() }));
+    } catch { /* localStorage full or blocked — non-fatal */ }
+  };
+
+  const _clearUsdcBridge = () => {
+    if (!_usdcBridgeStorageKey) return;
+    try { localStorage.removeItem(_usdcBridgeStorageKey); } catch { /* ignore */ }
+    setUsdcBurnTxHash(null);
+    setUsdcAttestation(null);
+    setUsdcBridgeStage("idle");
+  };
 
   const refresh = () => {
+    if (!address) {
+      setUsdc(null); setEth(null); setEthMainnet(null); setUsdcMainnet(null); setRush(null); setLoading(false);
+      return;
+    }
     setLoading(true);
     Promise.all([
-      getWalletUsdcBalance().catch(() => null),
+      getWalletUsdcBalance(address).catch(() => null),
+      getWalletEthBalance(address).catch(() => null),
+      getWalletEthMainnetBalance(address).catch(() => null),
+      getWalletUsdcMainnetBalance(address).catch(() => null),
       _getWalletBalance().catch(() => null),
-    ]).then(([u, r]) => {
-      if (u && u.hasWallet) setUsdc(u.usdc); else setUsdc(null);
+    ]).then(([u, e, em, um, r]) => {
+      setUsdc(u && u.hasWallet ? u.usdc : null);
+      setEth(e && e.hasWallet ? e.eth : null);
+      setEthMainnet(em && em.hasWallet ? em.eth : null);
+      setUsdcMainnet(um && um.hasWallet ? um.usdc : null);
       if (r && r.success) setRush({ regular: r.regularBalance || 0, gifted: r.giftedBalance || 0 });
     }).finally(() => setLoading(false));
   };
@@ -489,6 +759,271 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
       setError(`Payment provider error: ${msg}`);
+      reportWalletClientError("addFunds", err, { source: "WalletHomeSheet", address });
+    }
+  };
+
+  const handleConnectExternal = () => {
+    setError(null);
+    try {
+      connectWallet();
+    } catch (err: unknown) {
+      reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // Opens Privy's secure export flow — key is shown in a Privy-hosted modal
+  // with warnings. Only meaningful for the embedded wallet (external wallets
+  // are already user-custodied). Rare path — most users never need this.
+  const handleExportKey = async () => {
+    if (!address || !isActiveEmbedded) return;
+    setError(null);
+    try {
+      await exportWallet({ address });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel|closed|reject/i.test(msg)) return;
+      reportWalletClientError("exportWallet", err, { source: "WalletHomeSheet" });
+      setError(msg);
+    }
+  };
+
+  // Bridge ETH from Ethereum mainnet → Base via the official Base L1
+  // StandardBridge. Used when a user sent Binance withdrawal to the wallet
+  // address but picked the wrong network (Ethereum instead of Base). Works
+  // for embedded Privy wallets (chain switching handled by Privy's own
+  // sendTransaction with explicit chainId) and — after Privy 3.37+ — for
+  // external wallets too if they support Ethereum mainnet. Bridge
+  // finalization: ~10-15 min.
+  const handleBridgeEthToBase = async () => {
+    if (!activeWallet || !ethMainnet || ethMainnet <= 0) return;
+    setError(null);
+    setBridging(true);
+    setBridgeTxHash(null);
+    try {
+      // Leave ~0.0008 ETH for gas — Base bridge tx costs roughly $0.03-$4
+      // depending on Ethereum gas conditions. Bridge everything else.
+      const balanceWei = parseEther(ethMainnet.toFixed(18));
+      const gasReserveWei = parseEther("0.0008");
+      if (balanceWei <= gasReserveWei) {
+        throw new Error(`Not enough ETH to cover bridge gas. Need at least 0.001 ETH, wallet has ${ethMainnet.toFixed(6)} ETH.`);
+      }
+      const amountToBridgeWei = balanceWei - gasReserveWei;
+
+      const data = encodeFunctionData({
+        abi: _BRIDGE_ETH_ABI,
+        functionName: "bridgeETH",
+        args: [200000, "0x"],
+      });
+
+      // For embedded Privy wallet → use Privy's own sender with explicit
+      // chainId 1. Privy handles the chain switch + fee estimation on the
+      // correct chain (mainnet), which viem's walletClient was fumbling.
+      // For external wallets (MetaMask/Trust) → still use viem since Privy's
+      // sender only works on embedded wallets.
+      let txHash: `0x${string}`;
+      if (isActiveEmbedded) {
+        const res = await privySendTransaction(
+          {
+            chainId: 1, // Ethereum mainnet
+            to: _BASE_L1_BRIDGE,
+            data,
+            value: amountToBridgeWei.toString(),
+          },
+          {
+            // sponsor:false — no gas manager policy for mainnet; user pays.
+            sponsor: false,
+            address: activeWallet.address,
+            uiOptions: {
+              showWalletUIs: true,
+            },
+          }
+        );
+        txHash = res.hash;
+      } else {
+        const provider = await activeWallet.getEthereumProvider();
+        try {
+          await provider.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: "0x1" }],
+          });
+        } catch (_) { /* already on chain — continue */ }
+        const walletClient = createWalletClient({
+          account: activeWallet.address as `0x${string}`,
+          chain: mainnet,
+          transport: custom(provider),
+        });
+        txHash = await walletClient.sendTransaction({
+          to: _BASE_L1_BRIDGE,
+          data,
+          value: amountToBridgeWei,
+        });
+      }
+
+      setBridgeTxHash(txHash);
+      // Fire-and-forget refresh loop — poll Base balance every 30s for 20 min
+      // so the user sees the ETH land in Base without manually refreshing.
+      const start = Date.now();
+      const poll = async () => {
+        if (Date.now() - start > 20 * 60_000) return;
+        try {
+          const r = await getWalletEthBalance(activeWallet.address);
+          if (r.hasWallet && r.eth > (eth || 0)) {
+            refresh();
+            return;
+          }
+        } catch { /* keep polling */ }
+        setTimeout(poll, 30_000);
+      };
+      setTimeout(poll, 30_000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setError(isCancel ? "You cancelled the transaction." : msg);
+      if (!isCancel) {
+        reportWalletClientError("bridgeEthToBase", err, {
+          source: "WalletHomeSheet",
+          address, ethMainnet,
+        });
+      }
+    } finally {
+      setBridging(false);
+    }
+  };
+
+  // ── USDC CCTP bridge (Ethereum mainnet → Base) ─────────────────────────
+  // Multi-step: approve() → depositForBurn() → poll Circle attestation
+  // (~15 min) → receiveMessage() on Base. Uses Circle's native CCTP so the
+  // result is native USDC on Base (not USDbC / bridged variant).
+  const handleUsdcBridgeStart = async () => {
+    if (!activeWallet || !usdcMainnet || usdcMainnet <= 0) return;
+    setUsdcBridgeError(null);
+
+    // Convert to USDC atomic units (6 decimals) — floor to avoid rounding-up
+    // above wallet balance which would revert approve/burn.
+    const amountRaw = BigInt(Math.floor(usdcMainnet * 1_000_000));
+    if (amountRaw <= 0n) {
+      setUsdcBridgeError("Amount too small to bridge.");
+      return;
+    }
+
+    // mintRecipient is bytes32 = left-padded address of the destination wallet
+    // (same address, since CCTP is cross-chain to the same EOA).
+    const mintRecipient = ("0x" + activeWallet.address.toLowerCase().replace(/^0x/, "").padStart(64, "0")) as `0x${string}`;
+
+    try {
+      // Step 1 — approve USDC to CCTP TokenMessenger
+      setUsdcBridgeStage("approving");
+      _saveUsdcBridge({ stage: "approving" });
+      const approveData = encodeFunctionData({
+        abi: _USDC_APPROVE_ABI,
+        functionName: "approve",
+        args: [_CCTP_TOKEN_MESSENGER_L1, amountRaw],
+      });
+      if (isActiveEmbedded) {
+        await privySendTransaction(
+          { chainId: 1, to: _USDC_ETHEREUM, data: approveData, value: "0" },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+      } else {
+        const provider = await activeWallet.getEthereumProvider();
+        try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x1" }] }); } catch (_) {}
+        const wc = createWalletClient({ account: activeWallet.address as `0x${string}`, chain: mainnet, transport: custom(provider) });
+        await wc.sendTransaction({ to: _USDC_ETHEREUM, data: approveData, value: 0n });
+      }
+
+      // Step 2 — depositForBurn
+      setUsdcBridgeStage("burning");
+      _saveUsdcBridge({ stage: "burning" });
+      const burnData = encodeFunctionData({
+        abi: _CCTP_DEPOSIT_FOR_BURN_ABI,
+        functionName: "depositForBurn",
+        args: [amountRaw, _BASE_DOMAIN_ID, mintRecipient, _USDC_ETHEREUM],
+      });
+      let burnHash: `0x${string}`;
+      if (isActiveEmbedded) {
+        const res = await privySendTransaction(
+          { chainId: 1, to: _CCTP_TOKEN_MESSENGER_L1, data: burnData, value: "0" },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        burnHash = res.hash;
+      } else {
+        const provider = await activeWallet.getEthereumProvider();
+        const wc = createWalletClient({ account: activeWallet.address as `0x${string}`, chain: mainnet, transport: custom(provider) });
+        burnHash = await wc.sendTransaction({ to: _CCTP_TOKEN_MESSENGER_L1, data: burnData, value: 0n });
+      }
+
+      setUsdcBurnTxHash(burnHash);
+      setUsdcBridgeStage("waiting_attestation");
+      _saveUsdcBridge({ stage: "waiting_attestation", burnTxHash: burnHash });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setUsdcBridgeError(isCancel ? "You cancelled the transaction." : msg);
+      setUsdcBridgeStage("idle");
+      if (!isCancel) {
+        reportWalletClientError("usdcBridgeStart", err, { address, usdcMainnet, stage: usdcBridgeStage });
+      }
+    }
+  };
+
+  // Poll Circle attestation while waiting_attestation. Every 30s.
+  _useEffect(() => {
+    if (usdcBridgeStage !== "waiting_attestation" || !usdcBurnTxHash) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const r = await getCctpAttestation(usdcBurnTxHash);
+        if (cancelled) return;
+        if (r.status === "ready" && r.messageBytes && r.attestation) {
+          setUsdcAttestation({ message: r.messageBytes, attestation: r.attestation });
+          setUsdcBridgeStage("ready_to_mint");
+          _saveUsdcBridge({ stage: "ready_to_mint", message: r.messageBytes, attestation: r.attestation });
+          return;
+        }
+      } catch { /* keep polling */ }
+      setTimeout(poll, 30_000);
+    };
+    const t = setTimeout(poll, 5_000); // first check after 5s
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [usdcBridgeStage, usdcBurnTxHash]);
+
+  const handleUsdcBridgeMint = async () => {
+    if (!activeWallet || !usdcAttestation) return;
+    setUsdcBridgeError(null);
+    try {
+      setUsdcBridgeStage("minting");
+      _saveUsdcBridge({ stage: "minting" });
+      const mintData = encodeFunctionData({
+        abi: _CCTP_RECEIVE_MESSAGE_ABI,
+        functionName: "receiveMessage",
+        args: [usdcAttestation.message as `0x${string}`, usdcAttestation.attestation as `0x${string}`],
+      });
+      if (isActiveEmbedded) {
+        await privySendTransaction(
+          { chainId: 8453, to: _CCTP_MESSAGE_TRANSMITTER_L2, data: mintData, value: "0" },
+          { sponsor: true, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+      } else {
+        const provider = await activeWallet.getEthereumProvider();
+        try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); } catch (_) {}
+        const wc = createWalletClient({ account: activeWallet.address as `0x${string}`, chain: base, transport: custom(provider) });
+        await wc.sendTransaction({ to: _CCTP_MESSAGE_TRANSMITTER_L2, data: mintData, value: 0n });
+      }
+      setUsdcBridgeStage("done");
+      _clearUsdcBridge();
+      // Refresh to see the new USDC balance on Base
+      setTimeout(() => refresh(), 3_000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setUsdcBridgeError(isCancel ? "You cancelled the transaction." : msg);
+      setUsdcBridgeStage("ready_to_mint");
+      if (!isCancel) {
+        reportWalletClientError("usdcBridgeMint", err, { address, burnTxHash: usdcBurnTxHash });
+      }
     }
   };
 
@@ -499,6 +1034,19 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const shortAddress = address
     ? `${address.slice(0, 6)}…${address.slice(-4)}`
     : null;
+
+  // Best-effort label for the active wallet type (shown next to the address).
+  const walletLabel = !activeWallet
+    ? null
+    : activeWallet.walletClientType === "privy"
+      ? "PNPtv Wallet"
+      : activeWallet.walletClientType === "metamask"
+        ? "MetaMask"
+        : activeWallet.walletClientType === "coinbase_wallet"
+          ? "Coinbase"
+          : activeWallet.walletClientType === "walletconnect"
+            ? "WalletConnect"
+            : activeWallet.walletClientType || "External";
 
   return (
     <div
@@ -532,34 +1080,101 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {!authenticated || !embeddedWallet ? (
-            <div className="text-center py-8 space-y-3">
+          {!authenticated || !activeWallet ? (
+            <div className="text-center py-8 space-y-4">
               <p className="text-4xl">👛</p>
-              <p className="text-sm font-bold text-white">Create your wallet</p>
+              <p className="text-sm font-bold text-white">Get started with a wallet</p>
               <p className="text-[11px] text-white/60 leading-relaxed max-w-xs mx-auto">
-                A free embedded wallet lets you receive USDC, tip creators, and buy Ru$h with card.
+                Create a free PNPtv Wallet or bring your own — Trust Wallet, MetaMask, Coinbase, or any WalletConnect wallet.
               </p>
-              <button
-                type="button"
-                onClick={() => login()}
-                className="mt-3 min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
-                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
-              >
-                Create wallet
-              </button>
+              <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                <button
+                  type="button"
+                  onClick={() => login()}
+                  className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
+                  style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                >
+                  ✨ Create PNPtv Wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConnectExternal}
+                  className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white border border-white/15"
+                  style={{ background: "rgba(255,255,255,0.06)" }}
+                >
+                  🔗 Connect Trust / MetaMask
+                </button>
+              </div>
+              <p className="text-[10px] text-white/40 leading-relaxed pt-1">
+                Both work everywhere on PNPtv — pay for PRIME, Ru$h, tips, and calls.
+              </p>
             </div>
           ) : (
             <>
-              {/* Balances */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Wallet selector — always visible so a PNPtv-embedded user can
+                  discover Trust/MetaMask, and multi-wallet users can switch. */}
+              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-white/50 px-1 pb-1">
+                  {wallets.length > 1 ? "Switch wallet" : "Your wallet"}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {wallets.map((w) => {
+                    const isActive = w.address === activeAddress;
+                    const label = w.walletClientType === "privy"
+                      ? "PNPtv"
+                      : w.walletClientType === "metamask"
+                        ? "MetaMask"
+                        : w.walletClientType === "coinbase_wallet"
+                          ? "Coinbase"
+                          : w.walletClientType || "External";
+                    return (
+                      <button
+                        key={w.address}
+                        type="button"
+                        onClick={() => setActiveAddress(w.address)}
+                        className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition ${
+                          isActive
+                            ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
+                            : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        {label} · {w.address.slice(0, 5)}…{w.address.slice(-3)}
+                      </button>
+                    );
+                  })}
+                  {/* Always-present "+ Connect" chip — even a PNPtv-embedded user
+                      can bring in Trust/MetaMask/Coinbase without leaving this sheet. */}
+                  <button
+                    type="button"
+                    onClick={handleConnectExternal}
+                    className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-dashed border-white/20 text-white/60 hover:bg-white/[0.06] hover:text-white/90 transition"
+                  >
+                    + Connect Trust / MetaMask
+                  </button>
+                </div>
+              </div>
+
+              {/* Balances — USDC + ETH + Ru$h */}
+              <div className="grid grid-cols-3 gap-2">
                 {/* USDC */}
                 <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.06] p-3">
                   <div className="flex items-center gap-1.5">
                     <div className="w-4 h-4 rounded-full bg-[#2775ca] text-white text-[9px] font-bold flex items-center justify-center">$</div>
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">USDC</span>
                   </div>
-                  <p className="mt-1 text-xl font-bold text-white tabular-nums">
-                    {loading ? "…" : (usdc == null ? "—" : usdc.toFixed(2))}
+                  <p className="mt-1 text-lg font-bold text-white tabular-nums">
+                    {loading ? "…" : (usdc == null ? "0.00" : usdc.toFixed(2))}
+                  </p>
+                  <p className="text-[10px] text-white/50 mt-0.5">on Base</p>
+                </div>
+                {/* ETH */}
+                <div className="rounded-xl border border-indigo-400/30 bg-indigo-500/[0.06] p-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">Ξ</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">ETH</span>
+                  </div>
+                  <p className="mt-1 text-lg font-bold text-white tabular-nums">
+                    {loading ? "…" : (eth == null ? "0.0000" : eth.toFixed(4))}
                   </p>
                   <p className="text-[10px] text-white/50 mt-0.5">on Base</p>
                 </div>
@@ -569,18 +1184,20 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     <span className="text-sm">💎</span>
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Ru$h</span>
                   </div>
-                  <p className="mt-1 text-xl font-bold text-white tabular-nums">
+                  <p className="mt-1 text-lg font-bold text-white tabular-nums">
                     {loading ? "…" : (rush == null ? "—" : (rush.regular + rush.gifted).toLocaleString())}
                   </p>
                   <p className="text-[10px] text-white/50 mt-0.5">
-                    {rush && rush.gifted > 0 ? `+${rush.gifted} gifted` : "spendable balance"}
+                    {rush && rush.gifted > 0 ? `+${rush.gifted} gifted` : "spendable"}
                   </p>
                 </div>
               </div>
 
               {/* Wallet address */}
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Wallet address · Base</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
+                  {walletLabel} · Base
+                </p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs font-mono text-white/90 truncate">{shortAddress}</code>
                   <button
@@ -599,6 +1216,18 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     ↗
                   </button>
                 </div>
+                {/* Export private key — only for the embedded Privy wallet.
+                    Advanced use only (bridging cross-chain, importing to another
+                    wallet). External wallets manage their own keys. */}
+                {isActiveEmbedded && (
+                  <button
+                    type="button"
+                    onClick={handleExportKey}
+                    className="w-full mt-1 text-[10px] font-semibold text-amber-300/80 hover:text-amber-200 border border-amber-500/20 hover:border-amber-500/40 bg-amber-500/[0.04] rounded-md px-2 py-1.5 transition"
+                  >
+                    🔑 Export private key (advanced)
+                  </button>
+                )}
               </div>
 
               {error && (
@@ -607,8 +1236,189 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
+              {/* USDC wrong-network recovery via CCTP (Circle Cross-Chain
+                  Transfer Protocol) — bridges native USDC from Ethereum to
+                  Base with a 3-step flow: approve → burn → wait ~15 min for
+                  Circle attestation → mint on Base. Persists in localStorage
+                  so users can close and resume. */}
+              {((usdcMainnet != null && usdcMainnet > 0) || (usdcBurnTxHash && usdcBridgeStage !== "idle" && usdcBridgeStage !== "done")) && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3 space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <span className="text-lg leading-none pt-0.5">⚠️</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-amber-200">
+                        ¿USDC en la red equivocada?
+                      </p>
+                      <p className="text-[11px] text-amber-100/80 leading-snug mt-0.5">
+                        {usdcMainnet && usdcMainnet > 0
+                          ? <>Detectamos <span className="font-mono font-bold">{usdcMainnet.toFixed(2)} USDC</span> en tu wallet en <b>Ethereum mainnet</b>. Puentealo a <b>Base</b> vía Circle CCTP (USDC nativo).</>
+                          : <>Bridge USDC pendiente — completá los pasos abajo para recibirlo en Base.</>
+                        }
+                      </p>
+                    </div>
+                  </div>
+
+                  {usdcBridgeError && (
+                    <div className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+                      {usdcBridgeError}
+                    </div>
+                  )}
+
+                  {usdcBridgeStage === "idle" && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleUsdcBridgeStart}
+                        disabled={!ethMainnet || ethMainnet < 0.002}
+                        className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: "linear-gradient(135deg,#E69138,#D4007A)" }}
+                      >
+                        🌉 Bridge {usdcMainnet?.toFixed(2)} USDC → Base
+                      </button>
+                      {(!ethMainnet || ethMainnet < 0.002) && (
+                        <p className="text-[10px] text-red-200/80 leading-snug">
+                          Necesitás ~0.002 ETH en Ethereum para el gas de approve + burn (2 txs). Enviate un poco de ETH primero.
+                        </p>
+                      )}
+                      <p className="text-[9px] text-amber-100/60 leading-snug">
+                        Circle CCTP oficial (2 txs en Ethereum + 1 tx en Base). El USDC llega como <b>USDC nativo</b> en Base en ~15 min.
+                      </p>
+                    </>
+                  )}
+
+                  {usdcBridgeStage === "approving" && (
+                    <div className="text-[11px] text-amber-200 flex items-center gap-2">
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                        <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Paso 1/3 — Firmá el approve en Ethereum
+                    </div>
+                  )}
+
+                  {usdcBridgeStage === "burning" && (
+                    <div className="text-[11px] text-amber-200 flex items-center gap-2">
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                        <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Paso 2/3 — Firmá el burn en Ethereum
+                    </div>
+                  )}
+
+                  {usdcBridgeStage === "waiting_attestation" && (
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] text-amber-200 flex items-center gap-2">
+                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Esperando confirmación de Circle (~15 min)…
+                      </div>
+                      {usdcBurnTxHash && (
+                        <p className="text-[10px] text-amber-100/60">
+                          Podés cerrar la app — vas a poder completar cuando vuelvas.{" "}
+                          <a href={`https://etherscan.io/tx/${usdcBurnTxHash}`} target="_blank" rel="noopener noreferrer" className="underline">Ver tx</a>
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {usdcBridgeStage === "ready_to_mint" && (
+                    <>
+                      <div className="text-[11px] text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5">
+                        ✅ Attestation lista. Paso 3/3 — firma en Base para recibir el USDC.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleUsdcBridgeMint}
+                        className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+                        style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+                      >
+                        💎 Completar bridge en Base
+                      </button>
+                      <p className="text-[9px] text-emerald-100/60">
+                        Gas gratis en Base (sponsoreado por PNPtv).
+                      </p>
+                    </>
+                  )}
+
+                  {usdcBridgeStage === "minting" && (
+                    <div className="text-[11px] text-amber-200 flex items-center gap-2">
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                        <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Minteando en Base…
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Wrong-network recovery: if the active wallet has ETH sitting
+                  on Ethereum mainnet (usually because someone withdrew from an
+                  exchange picking the wrong network), offer a one-tap bridge
+                  to Base via the official Base L1StandardBridge. Persistent
+                  section — visible whenever there's ETH stuck on mainnet, so
+                  it doubles as recovery UI for anyone else who makes the same
+                  mistake. */}
+              {ethMainnet != null && ethMainnet > 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3 space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <span className="text-lg leading-none pt-0.5">⚠️</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-amber-200">
+                        ¿Enviaste a la red equivocada?
+                      </p>
+                      <p className="text-[11px] text-amber-100/80 leading-snug mt-0.5">
+                        Detectamos <span className="font-mono font-bold">{ethMainnet.toFixed(6)} ETH</span> en tu wallet en <b>Ethereum mainnet</b>. Puentealo a <b>Base</b> con un tap.
+                      </p>
+                    </div>
+                  </div>
+
+                  {bridgeTxHash && (
+                    <div className="text-[10px] text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5 leading-snug">
+                      <p className="font-semibold">Bridge iniciado ✓</p>
+                      <p className="mt-0.5">
+                        Tarda 10-15 min en aparecer en Base. Podés cerrar esta ventana.{" "}
+                        <a
+                          href={`https://etherscan.io/tx/${bridgeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                        >
+                          Ver tx
+                        </a>
+                      </p>
+                    </div>
+                  )}
+
+                  {!bridgeTxHash && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleBridgeEthToBase}
+                        disabled={bridging || ethMainnet <= 0.001}
+                        className="w-full min-h-[44px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: bridging ? "#555" : "linear-gradient(135deg,#E69138,#D4007A)" }}
+                      >
+                        {bridging
+                          ? "Firmando…"
+                          : `🌉 Bridge ${Math.max(0, ethMainnet - 0.0008).toFixed(6)} ETH → Base`}
+                      </button>
+                      <p className="text-[9px] text-amber-100/60 leading-snug">
+                        Reservamos ~0.0008 ETH para el gas. Puente oficial de Base ({_BASE_L1_BRIDGE.slice(0, 6)}…{_BASE_L1_BRIDGE.slice(-4)}) — llega a la misma address en Base en 10-15 min.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="grid grid-cols-2 gap-2">
+                {/* Fund with card — Privy's Stripe onramp lands USDC at any
+                    destination address, including external wallets. Works for
+                    both PNPtv-embedded and Trust/MetaMask. */}
                 <button
                   type="button"
                   onClick={handleFund}

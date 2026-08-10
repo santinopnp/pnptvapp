@@ -1591,10 +1591,64 @@ export async function getAvailableCreators(): Promise<{ success: true; creators:
   return res.json();
 }
 
-export async function getWalletUsdcBalance(): Promise<{ ok: true; hasWallet: boolean; address?: string; usdc: number; cached?: boolean; reason?: string }> {
-  const res = await fetch(`${API_BASE}/api/wallet/balance/usdc`, { credentials: "include" });
+export async function getWalletUsdcBalance(address?: string): Promise<{ ok: true; hasWallet: boolean; address?: string; usdc: number; cached?: boolean; reason?: string }> {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : "";
+  const res = await fetch(`${API_BASE}/api/wallet/balance/usdc${qs}`, { credentials: "include" });
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
+}
+
+export async function getWalletEthBalance(address?: string): Promise<{ ok: true; hasWallet: boolean; address?: string; eth: number; cached?: boolean; reason?: string }> {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : "";
+  const res = await fetch(`${API_BASE}/api/wallet/balance/eth${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function getWalletEthMainnetBalance(address?: string): Promise<{ ok: true; hasWallet: boolean; address?: string; eth: number; cached?: boolean; reason?: string }> {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : "";
+  const res = await fetch(`${API_BASE}/api/wallet/balance/eth-mainnet${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function getWalletUsdcMainnetBalance(address?: string): Promise<{ ok: true; hasWallet: boolean; address?: string; usdc: number; cached?: boolean; reason?: string }> {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : "";
+  const res = await fetch(`${API_BASE}/api/wallet/balance/usdc-mainnet${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// Poll Circle's CCTP attestation status for a burn tx on Ethereum mainnet.
+// `status: "ready"` means attestation is signed and receiveMessage() can be
+// submitted on Base to mint the equivalent USDC.
+export async function getCctpAttestation(txHash: string): Promise<{
+  ok: true;
+  status: "ready" | "pending" | "tx_pending" | "tx_reverted" | "no_message_log" | "invalid_message_log";
+  messageBytes?: string;
+  attestation?: string;
+  apiStatus?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/wallet/cctp-attestation?txHash=${encodeURIComponent(txHash)}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// Fire-and-forget: report a frontend wallet error (Privy login/addFunds/tx)
+// so we can see it in Slack #testing-team without waiting for the user to
+// screenshot. Never throws — swallows fetch failures to avoid infinite loops.
+export function reportWalletClientError(step: string, error: unknown, context?: Record<string, unknown>): void {
+  try {
+    const msg = error instanceof Error ? (error.stack || error.message) : String(error);
+    fetch(`${API_BASE}/api/wallet/client-error`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step, error: msg, context: context || null }),
+    }).catch(() => { /* swallow — telemetry must never break UX */ });
+  } catch { /* swallow */ }
 }
 
 export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true; privyId: string; walletAddress: string | null }> {
@@ -8538,7 +8592,7 @@ export function updateRecording(
 // ============================================================================
 
 export interface MainStageState {
-  mode: "spotlight" | "cinema" | "equal" | "theater" | "karaoke";
+  mode: "cinema" | "spotlight" | "grid3x3";
   spotlight: {
     cammer: string | null;
     nextAt: number | null;

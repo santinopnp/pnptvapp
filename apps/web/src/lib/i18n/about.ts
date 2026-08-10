@@ -57,6 +57,10 @@ const strings = {
         title: "Privacy by Design",
         body: "Browser-based and never on any app store. No behavioral advertising. No real-name requirements. Your participation in this community is yours to control, disclose, and define.",
       },
+      {
+        title: "Our Anti-Spam Promise",
+        body: "We won't blast every channel we can reach you on. You choose one preferred channel and one fallback — Telegram, X, in-app (with push), email, or another you tell us about. We use those two. Nothing more. Connection over exposure. Intimacy over noise. Loyalty over reach.",
+      },
     ],
     statsTitle: "PNPtv by the Numbers",
     stats: [
@@ -128,6 +132,10 @@ const strings = {
       {
         title: "Privacidad por Diseño",
         body: "Basada en navegador y nunca en ninguna tienda de aplicaciones. Sin publicidad conductual. Sin requisitos de nombre real. Tu participación en esta comunidad es tuya para controlar, revelar y definir.",
+      },
+      {
+        title: "Nuestra Promesa Anti-Spam",
+        body: "No te vamos a saturar por cada canal en el que podemos alcanzarte. Tú eliges un canal preferido y uno de respaldo — Telegram, X, in-app (con push), email, u otro que nos digas. Usamos esos dos. Nada más. Conexión sobre exposición. Intimidad sobre ruido. Lealtad sobre alcance.",
       },
     ],
     statsTitle: "PNPtv en Números",

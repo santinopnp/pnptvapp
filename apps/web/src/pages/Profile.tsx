@@ -1024,6 +1024,14 @@ export default function Profile() {
       roleBadge: "The PNP Latino Boy",
       roleStyle: { background: "rgba(192,192,192,0.15)", color: "#D0D0D0", border: "1px solid rgba(192,192,192,0.3)" },
     },
+    "8f5f4dd1-7bdb-4571-b026-e09d91113c91": { // PNPLatinoBoy (Lex) — reactivated 2026-08-09 — light silver
+      gradient: "linear-gradient(135deg, #C0C0C0, #E8E8E8)",
+      color: "#D0D0D0",
+      border: "rgba(192,192,192,0.4)",
+      borderColor: "rgba(192,192,192,0.25)",
+      roleBadge: "The PNP Latino Boy",
+      roleStyle: { background: "rgba(192,192,192,0.15)", color: "#D0D0D0", border: "1px solid rgba(192,192,192,0.3)" },
+    },
     "8552451957": { // @pnptv (PNPtv! News) — light silver
       gradient: "linear-gradient(135deg, #C0C0C0, #E8E8E8)",
       color: "#D0D0D0",

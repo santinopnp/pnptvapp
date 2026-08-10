@@ -27,6 +27,12 @@ const _callsChannel     = () => process.env.SLACK_OPS_CALLS_CHANNEL            |
 const _adminChannel     = () => process.env.SLACK_OPS_ADMIN_CHANNEL            || '';
 const _tgMarketChannel  = () => process.env.SLACK_MARKETING_TELEGRAM_CHANNEL   || '';
 const _xMarketChannel   = () => process.env.SLACK_MARKETING_X_CHANNEL          || '';
+// Anti-leakage / off-platform-solicitation alerts. Falls back to the ops-admin
+// channel so a fresh deployment doesn't drop these silently on the floor.
+const _moderationChannel = () => process.env.SLACK_MODERATION_CHANNEL
+  || process.env.SLACK_OPS_MODERATION_CHANNEL
+  || process.env.SLACK_OPS_ADMIN_CHANNEL
+  || '';
 
 function _nowTs() {
   return new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
@@ -774,6 +780,129 @@ async function notifyNewTelegramUser(opts) {
   }
 }
 
+/**
+ * Anti-leakage detection alert. Fires every time a user attempts to post
+ * competitor-platform promotion or off-platform payment solicitation on
+ * any surface (bio, DM, main-stage chat, hangout chat, etc.). The strike
+ * ladder is already applied by warningService.logAntiLeakageStrike — this
+ * function just surfaces the event to the moderation Slack channel with
+ * enough context for a human to review or override.
+ *
+ * @param {object} opts
+ * @param {string}  opts.userId
+ * @param {string}  [opts.username]
+ * @param {string}  opts.sourceType    'bio' | 'dm' | 'mainstage_chat' | 'hangout_chat' | ...
+ * @param {string}  opts.category      'off_platform_competitor' | 'off_platform_payment'
+ * @param {Array<{category:string,term:string}>} [opts.matchedTerms]
+ * @param {string}  [opts.evidenceText] truncated user content that triggered the match
+ * @param {number}  opts.strikeNumber   1, 2, 3, ...
+ * @param {string}  opts.action         'warn' | 'mute_24h' | 'ban' | 'hold_for_review' | 'strip_only'
+ * @param {boolean} [opts.isCreator]
+ */
+async function notifyLeakageDetected(opts) {
+  const channel = _moderationChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const {
+      userId = 'N/A',
+      username = null,
+      sourceType = 'unknown',
+      category = 'unknown',
+      matchedTerms = [],
+      evidenceText = '',
+      strikeNumber = 1,
+      action = 'warn',
+      isCreator = false,
+    } = opts || {};
+
+    // Emoji + header vary by severity so triage is visual.
+    const severity = action === 'ban' ? '🚨'
+      : action === 'hold_for_review' ? '⛔️'
+      : action === 'mute_24h' ? '⚠️'
+      : '🔎';
+    const roleTag = isCreator ? '*CREATOR*' : 'user';
+    const userLabel = username ? `@${username}` : `\`${userId}\``;
+
+    const humanCategory = category === 'off_platform_competitor'
+      ? 'competitor platform promotion'
+      : category === 'off_platform_payment'
+      ? 'off-platform payment solicitation'
+      : category;
+
+    const termsList = matchedTerms.length
+      ? matchedTerms.slice(0, 5).map((t) => `\`${(t.term || '').replace(/`/g, '\\`').slice(0, 60)}\``).join(', ')
+      : '(none)';
+
+    // Redact evidence — replace matched terms with █ so we don't re-broadcast
+    // the exact violation into another channel, but keep the shape readable.
+    let redactedEvidence = evidenceText || '(no content captured)';
+    for (const t of matchedTerms) {
+      if (t.term && t.term.length >= 3) {
+        try {
+          redactedEvidence = redactedEvidence.replace(
+            new RegExp(t.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+            '█'.repeat(Math.min(t.term.length, 20))
+          );
+        } catch (_) { /* ignore bad regex chars */ }
+      }
+    }
+    if (redactedEvidence.length > 400) {
+      redactedEvidence = `${redactedEvidence.slice(0, 400)}…`;
+    }
+
+    const text = `${severity} Anti-leakage strike ${strikeNumber} — ${userLabel} (${roleTag}) — ${humanCategory} — action: ${action}`;
+
+    const blocks = [
+      {
+        type: 'header',
+        text: {
+          type: 'plain_text',
+          text: `${severity} Anti-Leakage Strike #${strikeNumber} — action: ${action}`,
+          emoji: true,
+        },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*User:*\n${userLabel} (${roleTag})` },
+          { type: 'mrkdwn', text: `*User ID:*\n\`${userId}\`` },
+          { type: 'mrkdwn', text: `*Category:*\n${humanCategory}` },
+          { type: 'mrkdwn', text: `*Source:*\n${sourceType}` },
+          { type: 'mrkdwn', text: `*Strike #:*\n${strikeNumber} (rolling 30d)` },
+          { type: 'mrkdwn', text: `*Action:*\n${action}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*Matched terms:* ${termsList}` },
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*Evidence (redacted):*\n\`\`\`${redactedEvidence}\`\`\`` },
+      },
+      {
+        type: 'context',
+        elements: [
+          { type: 'mrkdwn', text: `<https://pnptv.app/admin/users/${userId}|Open in admin> · <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` },
+        ],
+      },
+    ];
+
+    // Creator strike 3 = hold_for_review needs a louder ping — mention the channel
+    // so on-call sees it even outside working hours.
+    if (isCreator && action === 'hold_for_review') {
+      blocks.push({
+        type: 'section',
+        text: { type: 'mrkdwn', text: '<!channel> — creator hit strike 3. No auto-ban. Payout hold + human review required.' },
+      });
+    }
+
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyLeakageDetected error', { error: e.message });
+  }
+}
+
 function _wrap(fnName, origFn) {
   return async function (...args) {
     const qs = _qs();
@@ -799,6 +928,7 @@ module.exports = {
   notifyCallReminder: _wrap('notifyCallReminder', notifyCallReminder),
   notifyBan: _wrap('notifyBan', notifyBan),
   notifyNewTelegramUser: _wrap('notifyNewTelegramUser', notifyNewTelegramUser),
+  notifyLeakageDetected: _wrap('notifyLeakageDetected', notifyLeakageDetected),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,
   _direct_notifyPaymentFailed: notifyPaymentFailed,
@@ -812,4 +942,5 @@ module.exports = {
   _direct_notifyCallReminder: notifyCallReminder,
   _direct_notifyBan: notifyBan,
   _direct_notifyNewTelegramUser: notifyNewTelegramUser,
+  _direct_notifyLeakageDetected: notifyLeakageDetected,
 };

@@ -15,26 +15,29 @@ const TIP_CREATOR_RATE         = 1.0; // 100% to creator — tips are fully exem
 // Tokens gifted before PNP Live's public launch are restricted to these
 // performers' live shows (tips + stream heartbeats). Regular purchased tokens
 // work for any performer.
-const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840'];
+const GIFTED_ALLOWED_PERFORMER_USER_IDS = ['8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91'];
 
 // Santino Furioso's user ID — historical key for the purchase-bonus token pool.
 // The JSONB pool (user_token_wallets.creator_gifts['8599671840']) is spendable
-// on Santino streams/tips.
+// on both Santino and PNPLatinoBoy streams/tips (PRIME co-founders).
 const SANTINO_USER_ID = '8599671840';
 
-// Legacy exports — Lex account terminated 2026-08-08. Keep as null so
-// downstream `=== LEX_USER_ID` / `=== LEX_PRIME_HANGOUT_GROUP_ID` checks
-// never match without breaking imports.
-const LEX_USER_ID = null;
-const LEX_PRIME_HANGOUT_GROUP_ID = null;
+// PNPLatinoBoy (Lex) — PRIME co-founder. Reactivated 2026-08-09 with a new
+// UUID identity after the 2026-08-08 termination + same-day re-registration.
+// Original Telegram id 7246621722 stays terminated.
+const LEX_USER_ID = '8f5f4dd1-7bdb-4571-b026-e09d91113c91';
+const LEX_PRIME_HANGOUT_GROUP_ID = null; // hangout 785 was hard-deleted; not restored
 
-// PRIME revenue split — 50% platform (company reinvestment) / 50% Santino (salary).
-// Applies to every paid PRIME plan grant (price>0 only, trials skip).
+// PRIME revenue split — 50% platform / 25% Santino / 25% Lex.
+// Preserves Santino's post-termination 50% platform-reinvestment decision and
+// splits the creator half equally between co-founders. Applies to every paid
+// PRIME plan grant (price>0 only, trials skip).
 const PRIME_PLATFORM_RATE = 0.50;
-const PRIME_CREATOR_RATE  = 0.50;
-const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID];
+const PRIME_CREATOR_RATE  = 0.25; // per co-founder — Santino AND Lex each get this
+const PRIME_REVENUE_RECIPIENTS = [SANTINO_USER_ID, LEX_USER_ID];
 
 // PRIME hangout group IDs — every qualifying PRIME member is auto-joined.
+// Lex's original room 785 was hard-deleted 2026-08-08; not restored.
 const SANTINO_PRIME_HANGOUT_GROUP_ID = 719;
 const PRIME_HANGOUT_GROUP_IDS = [SANTINO_PRIME_HANGOUT_GROUP_ID];
 

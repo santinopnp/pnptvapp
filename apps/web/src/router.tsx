@@ -1254,6 +1254,8 @@ export const router = createBrowserRouter([
       </ModuleLoader>
     ),
   },
+  { path: "/promise", element: <Navigate to="/about" replace /> },
+  { path: "/anti-spam", element: <Navigate to="/about" replace /> },
   {
     path: "/careers",
     element: (

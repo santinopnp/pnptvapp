@@ -124,6 +124,9 @@ export default function Subscribe() {
   // Server resolves canonical price + duration via planId — client just passes it.
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
+  // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
+  // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
+  const [giftedBalance, setGiftedBalance] = useState<number>(0);
   const [tokenSuccess, setTokensSuccess] = useState<string | null>(null);
 
   // Activation code
@@ -163,7 +166,12 @@ export default function Subscribe() {
 
     if (user) {
       getWalletBalance()
-        .then((res) => { if (res.success) setTokensBalance(res.balance); })
+        .then((res) => {
+          if (res.success) {
+            setTokensBalance(res.balance);
+            setGiftedBalance(res.giftedBalance || 0);
+          }
+        })
         .catch(() => {});
     }
 
@@ -353,8 +361,12 @@ export default function Subscribe() {
   async function handleTokensSubscribe(planId: string, planPrice: number) {
     if (submitting) return;
     const tokenCost = Math.round(planPrice * 6);
-    if (tokenBalance !== null && tokenBalance < tokenCost) {
-      setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${tokenCost.toLocaleString()} Ru$h — you have ${tokenBalance.toLocaleString()} Ru$h.`);
+    // Member/prime plans allow gifted; other plans (creator subs, add-ons)
+    // only accept regular. Server enforces this — client mirrors for the check.
+    const isPlatformTier = MEMBER_PLAN_IDS.has(planId) || String(planId).startsWith("prime");
+    const spendable = isPlatformTier ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
+    if (spendable < tokenCost) {
+      setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${spendable.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${tokenCost.toLocaleString()} Ru$h — you have ${spendable.toLocaleString()} Ru$h.`);
       return;
     }
     setSelectedPlan(planId);
@@ -514,6 +526,22 @@ export default function Subscribe() {
       <Helmet>
         <title>{s.pageTitle}</title>
         <meta name="description" content={s.pageDescription} />
+        {/* Ru$h Wallet launch OG override — replaces the generic /og-image.png fallback from index.html */}
+        <meta property="og:title" content="Ru$h Wallet on PNPtv! — 20% off yearly & lifetime PRIME" />
+        <meta property="og:description" content="Tip creators, unlock content, book private calls — all with Ru$h 💎. Launch offer through Aug 23." />
+        <meta property="og:image" content="https://pnptv.app/rush-wallet/preview.jpg" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="2133" />
+        <meta property="og:image:alt" content="Ru$h Wallet preview" />
+        <meta property="og:video" content="https://pnptv.app/rush-wallet/marketing-vertical.mp4" />
+        <meta property="og:video:type" content="video/mp4" />
+        <meta property="og:video:width" content="1080" />
+        <meta property="og:video:height" content="1920" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Ru$h Wallet on PNPtv! — 20% off yearly & lifetime PRIME" />
+        <meta name="twitter:description" content="Tip creators, unlock content, book private calls — all with Ru$h 💎." />
+        <meta name="twitter:image" content="https://pnptv.app/rush-wallet/preview.jpg" />
+        <meta name="twitter:image:alt" content="Ru$h Wallet preview" />
       </Helmet>
 
       {/* Header */}
@@ -772,19 +800,31 @@ export default function Subscribe() {
               {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
                   path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {tokenBalance !== null && tokenBalance > 0 && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
-                      <span>🎫</span>
-                      <span>Ru$h 💎</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
-                  </button>
-                )}
+                {(() => {
+                  const cost = Math.round(parseFloat(String(plan.price)) * 6);
+                  const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
+                  const spendable = isPlatform ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
+                  const usesGifted = isPlatform && giftedBalance > 0 && (tokenBalance ?? 0) < cost;
+                  if (spendable < cost) return null;
+                  return (
+                    <button
+                      disabled={submitting}
+                      onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
+                      className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
+                        <span>🎫</span>
+                        <span>Ru$h 💎</span>
+                      </span>
+                      <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{cost.toLocaleString()} 💎</span>
+                      {usesGifted && (
+                        <span className="text-[9px] font-medium text-[#FF69B4]/70 leading-none mt-0.5">
+                          {t.lang === "es" ? "usa tus 💎 bonus" : "uses your starter 💎"}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })()}
                 {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
                     Server resolves canonical price via planId so client can't
                     fudge amount. */}
@@ -949,19 +989,31 @@ export default function Subscribe() {
               {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
                   path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
               <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                {tokenBalance !== null && tokenBalance > 0 && (
-                  <button
-                    disabled={submitting}
-                    onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                    className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
-                  >
-                    <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
-                      <span>🎫</span>
-                      <span>Ru$h 💎</span>
-                    </span>
-                    <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{Math.round(parseFloat(String(plan.price)) * 6).toLocaleString()} F</span>
-                  </button>
-                )}
+                {(() => {
+                  const cost = Math.round(parseFloat(String(plan.price)) * 6);
+                  const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
+                  const spendable = isPlatform ? ((tokenBalance ?? 0) + giftedBalance) : (tokenBalance ?? 0);
+                  const usesGifted = isPlatform && giftedBalance > 0 && (tokenBalance ?? 0) < cost;
+                  if (spendable < cost) return null;
+                  return (
+                    <button
+                      disabled={submitting}
+                      onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
+                      className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
+                        <span>🎫</span>
+                        <span>Ru$h 💎</span>
+                      </span>
+                      <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{cost.toLocaleString()} 💎</span>
+                      {usesGifted && (
+                        <span className="text-[9px] font-medium text-[#FF69B4]/70 leading-none mt-0.5">
+                          {t.lang === "es" ? "usa tus 💎 bonus" : "uses your starter 💎"}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })()}
                 {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
                     Server resolves canonical price via planId so client can't
                     fudge amount. */}

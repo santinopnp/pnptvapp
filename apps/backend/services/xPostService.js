@@ -49,9 +49,13 @@ async function refreshAccountTokens(account) {
   const refreshToken = refreshData?.refreshToken || account.encrypted_refresh_token;
   if (!refreshToken) throw new Error('Refresh token no disponible para X');
 
-  const clientId = process.env.TWITTER_CLIENT_ID;
-  const clientSecret = process.env.TWITTER_CLIENT_SECRET;
-  if (!clientId) throw new Error('TWITTER_CLIENT_ID not configured');
+  // Per-account OAuth 2.0 client credentials, gated on the same consumer_key_ref
+  // used for OAuth 1.0a app keys. e.g. consumer_key_ref='pnptv' → PNPTV_CLIENT_ID.
+  // Fallback to TWITTER_CLIENT_ID/SECRET (default 'generic' ref).
+  const ref = (account.consumer_key_ref || 'generic').toUpperCase();
+  const clientId = process.env[`${ref}_CLIENT_ID`] || process.env.TWITTER_CLIENT_ID;
+  const clientSecret = process.env[`${ref}_CLIENT_SECRET`] || process.env.TWITTER_CLIENT_SECRET;
+  if (!clientId) throw new Error(`OAuth 2.0 client ID not configured for ref="${ref}". Set ${ref}_CLIENT_ID.`);
 
   const payload = new URLSearchParams({
     grant_type: 'refresh_token',

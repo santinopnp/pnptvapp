@@ -7,13 +7,13 @@
  *  1. SELECT_SLOT   — choose a time slot; shows "NOW" when creator is online,
  *                     live-show banner when they are live, "See More" for page 2
  *  2. CHECKOUT      — enter email + payment provider, submit
- *  3. SUCCESS       — confirmation (non-redirect providers only)
+ *  3. SUCCESS       — confirmation
  *
  * When `skipPackageStep` is true the SELECT_PACKAGE step is bypassed and
  * `initialDuration` is used as the fixed duration (set by CallPackageCards).
  *
- * For crypto (USDC) payments the user is redirected to the NowPayments
- * hosted checkout page.
+ * Payment rails: card-via-Wallet (Privy USDC on Base) or Ru$h tokens.
+ * NowPayments / BTC / USDT retired 2026-08-09.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -26,16 +26,9 @@ import {
 
   getMyCallCredits,
   bookCallWithCredit,
-  createCallCheckoutNowPayments,
-  createCallCheckoutBtc,
-  getBtcAvailable,
-  getBtcSubscriptionStatus,
-  getBookingPaymentStatus,
-  assertPaymentUrl,
   trackEvent,
   getWalletBalance,
   payCallWithTokens,
-  NP_COINS_SUBSCRIBE,
   GIFTED_ELIGIBLE_PERFORMER_USER_IDS,
   type CallPackage,
   type BookingSlot,
@@ -43,12 +36,13 @@ import {
   type MyCallCredit,
 } from "@/lib/api";
 import type { CreatorCardCreator } from "./CreatorCard";
-import { PayInWalletChips, WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { BuyTokensModal } from "@/components/BuyTokensModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "SELECT_MODEL" | "SELECT_PACKAGE" | "SELECT_SLOT" | "CHECKOUT" | "SUCCESS";
-type Provider = "wallet" | "tokens" | "nowpayments" | "nowpayments_usdc" | "btc";
+type Provider = "wallet" | "tokens";
 
 export interface BookCallModalProps {
   creator: CreatorCardCreator;
@@ -167,9 +161,6 @@ export function BookCallModal({
   const [duration, setDuration] = useState<30 | 60>(initialDuration);
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
   const [provider, setProvider] = useState<Provider>("wallet");
-  // Coin choice inside the "Crypto" pill — matches Prime/Subscribe checkout token grid.
-  // Defaults to USDC on Base (recommended, matches our wallet checkout rail).
-  const [npCoinPick, setNpCoinPick] = useState<string>("usdcbase");
   const [email, setEmail] = useState("");
   const [clientNotes, setClientNotes] = useState("");
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
@@ -194,9 +185,6 @@ export function BookCallModal({
   const [confirmedStartAt, setConfirmedStartAt] = useState<string | null>(null);
   const [confirmedRoomName, setConfirmedRoomName] = useState<string | null>(null);
   const [confirmedBookingId, setConfirmedBookingId] = useState<string | number | null>(null);
-  const [dashTimedOut, setDashTimedOut] = useState(false);
-  const [dashPaymentId, setDashPaymentId] = useState<string | null>(null);
-  const [npInvoiceUrl, setNpInvoiceUrl] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [retryPayload, setRetryPayload] = useState<{
     packageId: number;
@@ -205,11 +193,12 @@ export function BookCallModal({
     quantity: number;
     selectedSlot: string | null;
   } | null>(null);
+  // Ru$h purchase modal — opened when user picks Ru$h but doesn't have enough
+  const [showBuyRush, setShowBuyRush] = useState(false);
 
   // Join Call state (loading/error shown while navigating)
   const [joinCallLoading, setJoinCallLoading] = useState(false);
   const [joinCallError, setJoinCallError] = useState<string | null>(null);
-  const [btcAvailable, setBtcAvailable] = useState(false);
 
   // Existing paid credits for this creator
   const [existingCredit, setExistingCredit] = useState<MyCallCredit | null>(null);
@@ -218,8 +207,7 @@ export function BookCallModal({
   const [creditBookingLoading, setCreditBookingLoading] = useState(false);
   const [creditBookingError, setCreditBookingError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getBtcAvailable().then((r) => setBtcAvailable(r.available === true)).catch(() => {});
+  const refreshWalletBalance = useCallback(() => {
     getWalletBalance().then((r) => {
       if (r.success) {
         setTokenBalance(r.balance);
@@ -227,6 +215,10 @@ export function BookCallModal({
       }
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    refreshWalletBalance();
+  }, [refreshWalletBalance]);
 
   // Permission preflight state
   const [permissionWarning, setPermissionWarning] = useState<"camera" | "microphone" | "both" | null>(null);
@@ -236,8 +228,6 @@ export function BookCallModal({
 
   const firstFocusRef = useRef<HTMLButtonElement>(null);
   const checkoutInFlight = useRef(false);
-  const dashPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const paymentPopupRef = useRef<Window | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -264,14 +254,7 @@ export function BookCallModal({
 
   // ── Reset on open / cleanup on close ────────────────────────────────────────
   useEffect(() => {
-    if (!open) {
-      // Clear Dash poll on modal close
-      if (dashPollRef.current) {
-        clearInterval(dashPollRef.current);
-        dashPollRef.current = null;
-      }
-      return;
-    }
+    if (!open) return;
 
     const initStep: Step = !initialCreator.id
       ? "SELECT_MODEL"
@@ -291,13 +274,11 @@ export function BookCallModal({
     setConfirmedStartAt(null);
     setConfirmedRoomName(null);
     setConfirmedBookingId(null);
-    setDashTimedOut(false);
-    setDashPaymentId(null);
-    setNpInvoiceUrl(null);
     setIsProcessing(false);
     setRetryPayload(null);
     setJoinCallLoading(false);
     setJoinCallError(null);
+    setShowBuyRush(false);
     checkoutInFlight.current = false;
     setSlots([]);
     setSlotsOffset(0);
@@ -319,16 +300,6 @@ export function BookCallModal({
       });
     }
   }, [open, initialCreator, initialIsOnline, initialDuration, skipPackageStep]);
-
-  // Clear Dash poll on unmount
-  useEffect(() => {
-    return () => {
-      if (dashPollRef.current) {
-        clearInterval(dashPollRef.current);
-        dashPollRef.current = null;
-      }
-    };
-  }, []);
 
   // ── Load packages ────────────────────────────────────────────────────────────
   // Runs when entering SELECT_PACKAGE (normal flow) OR when entering SELECT_SLOT
@@ -435,8 +406,10 @@ export function BookCallModal({
   };
 
   // ── Escape key + focus trap ───────────────────────────────────────────────────
+  // Suspends when the nested BuyTokensModal is open so its own focus trap wins
+  // (otherwise Tab keeps cycling back into this modal's panel).
   useEffect(() => {
-    if (!open) return;
+    if (!open || showBuyRush) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !isProcessing) {
         onClose();
@@ -466,7 +439,7 @@ export function BookCallModal({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose, isProcessing]);
+  }, [open, onClose, isProcessing, showBuyRush]);
 
   // ── Auto-focus ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -538,194 +511,13 @@ export function BookCallModal({
     setIsProcessing(true);
     setCheckoutError(null);
     try {
-      // NowPayments — open a centered popup (cannot redirect: breaks iOS + 3rd-party cookie policy)
-      if (provider === "nowpayments" || provider === "nowpayments_usdc") {
-        // nowpayments_usdc → USDC-SOL (legacy pill). nowpayments → use the coin the
-        // user picked in the Prime-style token grid; fall back to undefined so
-        // NowPayments' own picker shows if the user skipped selection.
-        const payCurrency = provider === "nowpayments_usdc"
-          ? "usdcsol"
-          : (npCoinPick || undefined);
-        const npRes = await createCallCheckoutNowPayments(
-          activePackage.id,
-          selectedSlot?.startUtc ?? undefined,
-          selectedSlot?.endUtc ?? undefined,
-          payCurrency,
-          clientNotes.trim() || undefined,
-          email.trim() || undefined
-        );
-        // Refresh wallet balance if gifted tokens were debited
-        if (npRes.giftedTokensApplied && npRes.giftedTokensApplied > 0) {
-          getWalletBalance().then((r) => {
-            if (r.success) {
-              setTokenBalance(r.balance);
-              setGiftedBalance(r.giftedBalance ?? 0);
-            }
-          }).catch(() => {});
-        }
-        if (npRes.invoiceUrl) {
-          const safeUrl = assertPaymentUrl(npRes.invoiceUrl);
-          setNpInvoiceUrl(safeUrl);
-          // USDT BSC: use wallet deeplinks — no popup (blocked on async/mobile)
-          // Generic crypto: open popup so user can pick coin on NowPayments
-          if (provider !== "nowpayments_usdc") {
-            const pw = 600, ph = 700;
-            const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-            const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-            paymentPopupRef.current = window.open(
-              safeUrl, "nowpayments_call_checkout",
-              `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
-            );
-          }
-        }
-        setDashPaymentId(npRes.paymentId ?? null);
-
-        // Poll with bookingId when available (scheduled); fall back to paymentId for NOW flow
-        const pollId = npRes.bookingId ?? npRes.paymentId;
-        if (pollId) {
-          if (dashPollRef.current) clearInterval(dashPollRef.current);
-
-          const POLL_INTERVAL_MS = 5_000;
-          const POLL_TIMEOUT_MS = 900_000; // 15 min
-          const pollStart = Date.now();
-
-          dashPollRef.current = setInterval(async () => {
-            if (Date.now() - pollStart >= POLL_TIMEOUT_MS) {
-              if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-              setCheckoutLoading(false);
-              setIsProcessing(false);
-              checkoutInFlight.current = false;
-              setDashTimedOut(true);
-              return;
-            }
-            try {
-              const status = await getBookingPaymentStatus(pollId);
-              if (status.status === "paid") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                paymentPopupRef.current?.close();
-                paymentPopupRef.current = null;
-                setConfirmedRoomName(status.roomName ?? null);
-                // Preserve an existing confirmedBookingId (e.g. from slot selection) if
-                // the poll response doesn't include one (credits-only NOW flow).
-                setConfirmedBookingId((prev) => status.bookingId ?? prev);
-                if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
-                setStep("SUCCESS");
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              } else if (status.status === "expired" || status.status === "failed") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                setCheckoutError(
-                  status.status === "expired"
-                    ? "Invoice expired. Please try again."
-                    : "Payment failed. Please try again."
-                );
-                setRetryPayload({
-                  packageId: activePackage.id,
-                  provider: "nowpayments",
-                  email,
-                  quantity: 1,
-                  selectedSlot: selectedSlot?.startUtc ?? null,
-                });
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              }
-              // status === 'pending' → keep polling
-            } catch {
-              // Network hiccup — keep polling
-            }
-          }, POLL_INTERVAL_MS);
-        }
-        return;
-      }
-
-      // BTC + Lightning — BTCPay Server (hidden until BTC node is configured)
-      if (provider === "btc") {
-        const btcRes = await createCallCheckoutBtc(
-          activePackage.id,
-          selectedSlot?.startUtc ?? undefined,
-          selectedSlot?.endUtc ?? undefined,
-          clientNotes.trim() || undefined,
-          email.trim() || undefined
-        );
-        if (btcRes.checkoutUrl) {
-          const safeUrl = assertPaymentUrl(btcRes.checkoutUrl);
-          const pw = 560, ph = 780;
-          const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-          const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-          paymentPopupRef.current = window.open(
-            safeUrl, "btcpay_btc_checkout",
-            `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`
-          );
-        }
-        const btcInvoiceId = btcRes.invoiceId;
-        setDashPaymentId(btcInvoiceId ?? null);
-
-        // FIX HIGH-03: only poll with a UUID (bookingId or paymentId); invoiceId is a
-        // BTCPay string (e.g. "GbXz...") that getBookingPaymentStatus cannot resolve.
-        const pollId = btcRes.bookingId ?? btcRes.paymentId;
-        if (pollId) {
-          if (dashPollRef.current) clearInterval(dashPollRef.current);
-
-          const POLL_INTERVAL_MS = 5_000;
-          const POLL_TIMEOUT_MS = 900_000; // 15 min
-          const pollStart = Date.now();
-
-          dashPollRef.current = setInterval(async () => {
-            if (Date.now() - pollStart >= POLL_TIMEOUT_MS) {
-              if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-              setCheckoutLoading(false);
-              setIsProcessing(false);
-              checkoutInFlight.current = false;
-              setDashTimedOut(true);
-              return;
-            }
-            try {
-              const status = await getBookingPaymentStatus(String(pollId));
-              if (status.status === "paid") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                paymentPopupRef.current?.close();
-                paymentPopupRef.current = null;
-                setConfirmedRoomName(status.roomName ?? null);
-                // Preserve an existing confirmedBookingId if poll response omits one.
-                setConfirmedBookingId((prev) => status.bookingId ?? prev);
-                if (selectedSlot?.startUtc) setConfirmedStartAt(selectedSlot.startUtc);
-                setStep("SUCCESS");
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              } else if (status.status === "expired" || status.status === "failed") {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                setCheckoutError(
-                  status.status === "expired"
-                    ? "Invoice expired. Please try again."
-                    : "Payment failed. Please try again."
-                );
-                setRetryPayload({
-                  packageId: activePackage.id,
-                  provider: "btc",
-                  email,
-                  quantity: 1,
-                  selectedSlot: selectedSlot?.startUtc ?? null,
-                });
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              }
-            } catch {
-              // Network hiccup — keep polling
-            }
-          }, POLL_INTERVAL_MS);
-        }
-        return;
-      }
-
       // Tokens — instant payment from wallet (no popup, no polling)
       if (provider === "tokens") {
         const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
+        // Client-side pre-check: if we know the balance and it's short, open
+        // the Buy Ru$h modal instead of throwing an insufficient error.
         if (tokenBalance !== null && tokenBalance < tokenCost) {
-          setCheckoutError(`Ru$h insuficiente. Necesitas ${tokenCost.toLocaleString()} Ru$h — tienes ${tokenBalance.toLocaleString()} Ru$h.`);
+          setShowBuyRush(true);
           return;
         }
         const tokenRes = await payCallWithTokens(activePackage.id, {
@@ -735,9 +527,13 @@ export function BookCallModal({
         });
         if (!tokenRes.success) {
           if (tokenRes.code === "INSUFFICIENT_TOKENS") {
-            setCheckoutError(`Ru$h insuficiente. Necesitas ${tokenRes.required?.toLocaleString()} Ru$h — tienes ${tokenRes.current?.toLocaleString()} Ru$h.`);
+            // Server said short — open Buy Ru$h modal (bilingual toast in state)
+            setShowBuyRush(true);
           } else {
-            setCheckoutError(tokenRes.error || "No se pudieron aplicar los créditos.");
+            setCheckoutError(
+              tokenRes.error ||
+              (t.lang === "es" ? "No se pudieron aplicar los Ru$h." : "Could not apply Ru$h.")
+            );
           }
           return;
         }
@@ -1399,24 +1195,54 @@ export function BookCallModal({
           >
             💳 Wallet
           </button>
-          {tokenBalance !== null && tokenBalance > 0 && (
-            <button
-              type="button"
-              onClick={() => setProvider("tokens")}
-              className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
-              style={provider === "tokens"
-                ? { background: "rgba(212,0,122,0.18)", border: "1.5px solid #D4007A", color: "#FF69B4" }
-                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-            >
-              🎫 Ru$h 💎
-            </button>
-          )}
+          {/* Ru$h pill: always render so users with 0 balance can still choose it
+              and get routed to Buy Ru$h. Hiding this option was the #1 reason
+              zero-balance users bailed at checkout (audit 2026-08-09). */}
+          <button
+            type="button"
+            onClick={() => setProvider("tokens")}
+            className="flex-1 min-w-[90px] min-h-[44px] rounded-xl text-sm font-semibold transition-colors"
+            style={provider === "tokens"
+              ? { background: "rgba(212,0,122,0.18)", border: "1.5px solid #D4007A", color: "#FF69B4" }
+              : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+          >
+            🎫 Ru$h 💎
+          </button>
         </div>
-        {provider === "tokens" && activePackage && (
-          <p className="text-[11px] text-[#FF69B4] mt-1.5">
-            Costo: {Math.round(Number(activePackage.price_usd ?? 0) * 6).toLocaleString()} Ru$h · Saldo: {tokenBalance?.toLocaleString() ?? "—"} Ru$h
-          </p>
-        )}
+        {provider === "tokens" && activePackage && (() => {
+          const tokenCost = Math.round(Number(activePackage.price_usd ?? 0) * 6);
+          // While the wallet balance is still fetching, avoid the flash of a
+          // "Buy Ru$h" CTA (coercing null → 0 would falsely indicate short).
+          if (tokenBalance === null) {
+            return (
+              <p className="text-[11px] text-pnp-textSecondary mt-1.5 flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-full border-2 border-pnp-textSecondary/40 border-t-pnp-textSecondary/80 animate-spin" />
+                {t.lang === "es" ? "Consultando tu saldo Ru$h…" : "Checking your Ru$h balance…"}
+              </p>
+            );
+          }
+          const short = tokenBalance < tokenCost;
+          return (
+            <div className="mt-1.5 space-y-2">
+              <p className={`text-[11px] ${short ? "text-amber-300" : "text-[#FF69B4]"}`}>
+                {t.lang === "es"
+                  ? `Costo: ${tokenCost.toLocaleString()} Ru$h · Saldo: ${tokenBalance.toLocaleString()} Ru$h`
+                  : `Cost: ${tokenCost.toLocaleString()} Ru$h · Balance: ${tokenBalance.toLocaleString()} Ru$h`}
+              </p>
+              {short && (
+                <button
+                  type="button"
+                  onClick={() => setShowBuyRush(true)}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold transition active:scale-[0.98] bg-amber-500/15 text-amber-200 border border-amber-500/40 hover:bg-amber-500/25"
+                >
+                  {t.lang === "es"
+                    ? `💎 Comprar ${(tokenCost - tokenBalance).toLocaleString()} Ru$h primero`
+                    : `💎 Buy ${(tokenCost - tokenBalance).toLocaleString()} Ru$h first`}
+                </button>
+              )}
+            </div>
+          );
+        })()}
         {provider === "wallet" && activePackage && (
           <div className="mt-3">
             <WalletPayCard
@@ -1437,56 +1263,6 @@ export function BookCallModal({
                 setStep("SUCCESS");
               }}
             />
-          </div>
-        )}
-
-        {/* Crypto coin picker — same 2-col token grid pattern as Prime/Subscribe checkout */}
-        {provider === "nowpayments" && (
-          <div className="mt-3 rounded-xl border border-green-500/20 bg-[#0a1f0a]/40 p-3 animate-in fade-in slide-in-from-top-1 duration-200">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <p className="text-[11px] font-semibold" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                {t.lang === "es" ? "Elige tu token:" : "Choose your token:"}
-              </p>
-              <a
-                href="/crypto-guide"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 text-[10px] font-semibold text-amber-300 hover:text-amber-200 underline decoration-dotted underline-offset-2"
-              >
-                {t.lang === "es" ? "¿Qué red? →" : "Which network? →"}
-              </a>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {NP_COINS_SUBSCRIBE.map((coin) => {
-                const selected = npCoinPick === coin.code;
-                return (
-                  <button
-                    key={coin.code}
-                    type="button"
-                    onClick={() => setNpCoinPick(coin.code)}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-colors text-left ${
-                      selected
-                        ? "border-green-400/60 bg-green-500/10"
-                        : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
-                    }`}
-                  >
-                    <span className="text-base font-bold leading-none" style={{ color: coin.color }}>{coin.icon}</span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-white">{coin.label}</span>
-                        {"recommended" in coin && coin.recommended && (
-                          <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
-                        )}
-                      </div>
-                      <span className="text-[9px] leading-none" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{coin.network}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[9px] mt-2 text-center" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-              {t.lang === "es" ? "USDT en BSC = comisiones más bajas (~$0.01)" : "USDT on BSC = lowest fees (~$0.01)"}
-            </p>
           </div>
         )}
       </div>
@@ -1551,143 +1327,6 @@ export function BookCallModal({
         )}
       </div>
 
-      {/* Crypto: 15-min timeout recovery card */}
-      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && dashTimedOut && (
-        <div
-          className="rounded-xl px-4 py-4 space-y-3"
-          style={{ background: "rgba(255,159,10,0.10)", border: "1px solid rgba(255,159,10,0.25)" }}
-          role="alert"
-        >
-          <p className="text-sm font-semibold" style={{ color: "#FF9F0A" }}>
-            Still waiting?
-          </p>
-          <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-            Refresh this page after paying to check status. If you already paid, your booking will be confirmed automatically.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 min-h-[36px] rounded-lg text-xs font-semibold transition-opacity hover:opacity-80"
-              style={{ background: "rgba(255,255,255,0.08)", color: "var(--pnp-text-secondary, #8E8E93)", border: "1px solid rgba(255,255,255,0.10)" }}
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDashTimedOut(false);
-                setCheckoutError(null);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-                handleCheckout();
-              }}
-              className="flex-1 min-h-[36px] rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-80"
-              style={{ background: "#D4007A" }}
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Crypto: waiting for payment indicator */}
-      {(provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && checkoutLoading && !dashTimedOut && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)" }}>
-            <div className="flex items-center gap-2">
-              <Spinner size={16} />
-              <span className="text-sm" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.creator.waitingForPayment}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (dashPollRef.current) { clearInterval(dashPollRef.current); dashPollRef.current = null; }
-                setCheckoutLoading(false);
-                setIsProcessing(false);
-                checkoutInFlight.current = false;
-              }}
-              className="text-xs font-semibold px-3 min-h-[32px] rounded-lg transition-opacity hover:opacity-80"
-              style={{ color: "#FF453A", background: "rgba(255,69,58,0.10)", border: "1px solid rgba(255,69,58,0.20)" }}
-            >
-              {t.creator.cancelBtn}
-            </button>
-          </div>
-          {npInvoiceUrl && provider === "nowpayments_usdc" && (
-            /* USDC Solana: wallet deeplink shortcuts (popup blocked on async/mobile) */
-            <div className="space-y-2">
-              <p className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                {t.lang === "es" ? "Abre directamente en tu billetera:" : "Open directly in your wallet:"}
-              </p>
-              <div className="grid grid-cols-3 gap-2">
-                <a
-                  href={`https://phantom.app/ul/browse/${encodeURIComponent(npInvoiceUrl)}?ref=${encodeURIComponent(npInvoiceUrl)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 py-2.5 rounded-xl border transition-colors active:scale-[0.97]"
-                  style={{ borderColor: "rgba(171,113,255,0.3)", background: "rgba(171,113,255,0.08)" }}
-                >
-                  <span className="text-xl leading-none">👻</span>
-                  <span className="text-[10px] font-bold" style={{ color: "#AB71FF" }}>Phantom</span>
-                </a>
-                <a
-                  href={`https://solflare.com/ul/v1/browse/${encodeURIComponent(npInvoiceUrl)}?ref=${encodeURIComponent(npInvoiceUrl)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 py-2.5 rounded-xl border transition-colors active:scale-[0.97]"
-                  style={{ borderColor: "rgba(255,153,0,0.3)", background: "rgba(255,153,0,0.08)" }}
-                >
-                  <span className="text-xl leading-none">🔆</span>
-                  <span className="text-[10px] font-bold" style={{ color: "#FF9900" }}>Solflare</span>
-                </a>
-                <a
-                  href={npInvoiceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center gap-1.5 py-2.5 rounded-xl border transition-colors active:scale-[0.97]"
-                  style={{ borderColor: "rgba(234,179,8,0.3)", background: "rgba(234,179,8,0.08)" }}
-                >
-                  <span className="text-xl leading-none">🌐</span>
-                  <span className="text-[10px] font-bold" style={{ color: "#EAB308" }}>
-                    {t.lang === "es" ? "Otra" : "Other"}
-                  </span>
-                </a>
-              </div>
-            </div>
-          )}
-          {npInvoiceUrl && provider === "nowpayments" && (
-            <div className="space-y-2">
-              <PayInWalletChips
-                invoiceUrl={npInvoiceUrl}
-                payCurrency={npCoinPick}
-                lang={t.lang}
-                onOtherWallets={() => {
-                  const pw = 600, ph = 700;
-                  const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-                  const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-                  const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
-                  if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const pw = 600, ph = 700;
-                  const pl = Math.round(window.screenX + (window.outerWidth - pw) / 2);
-                  const pt = Math.round(window.screenY + (window.outerHeight - ph) / 2);
-                  const popup = window.open(npInvoiceUrl, "nowpayments_call_checkout", `width=${pw},height=${ph},left=${pl},top=${pt},resizable=yes,scrollbars=yes,noopener,noreferrer`);
-                  if (!popup || popup.closed) window.open(npInvoiceUrl, "_blank", "noopener,noreferrer");
-                }}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
-                style={{ background: "linear-gradient(90deg, #D4007A, #a8006a)" }}
-              >
-                ⚡ Open Crypto Checkout
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Error */}
       {checkoutError && (
         <div className="space-y-2">
@@ -1711,7 +1350,7 @@ export function BookCallModal({
       )}
 
       {/* Submit — hidden for wallet (WalletPayCard has its own pay button). */}
-      {provider !== "wallet" && !((provider === "nowpayments" || provider === "nowpayments_usdc" || provider === "btc") && (checkoutLoading || dashTimedOut)) && (
+      {provider === "tokens" && (
         <button
           type="button"
           disabled={checkoutLoading || !activePackage}
@@ -2089,6 +1728,21 @@ export function BookCallModal({
           to { stroke-dashoffset: 0; }
         }
       `}</style>
+
+      {/* Buy Ru$h modal — opens when user picks Ru$h with insufficient balance,
+          or the server returns INSUFFICIENT_TOKENS. Refetches wallet on close
+          so the checkout can proceed immediately if the purchase succeeded. */}
+      <BuyTokensModal
+        isOpen={showBuyRush}
+        onClose={() => {
+          setShowBuyRush(false);
+          refreshWalletBalance();
+        }}
+        onSuccess={() => {
+          setShowBuyRush(false);
+          refreshWalletBalance();
+        }}
+      />
     </div>
   );
 }

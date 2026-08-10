@@ -20,8 +20,69 @@
 
 const { getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
+const zohoDesk = require('./zohoDeskService');
 
 const SLACK_API = 'https://slack.com/api';
+
+// Fire-and-forget mirror to Zoho Desk — never blocks Slack path.
+async function _mirrorTicketToDesk(userId, ticket, bodyExcerpt) {
+  if (!zohoDesk.isConfigured()) return;
+  try {
+    const pool = getPool();
+    const u = await pool.query(
+      'SELECT email, first_name, last_name, username FROM users WHERE id = $1',
+      [userId]
+    );
+    const user = u.rows[0] || {};
+    const contactId = await zohoDesk.upsertContact({
+      email: user.email || null,
+      firstName: user.first_name || null,
+      lastName: user.last_name || user.username || null,
+      pnptvId: userId,
+    });
+    const deskTicketId = await zohoDesk.createTicket({
+      contactId,
+      subject: ticket.thread_name || `Support — ${userId}`,
+      description: bodyExcerpt || '(no content)',
+      priority: ticket.priority || 'medium',
+      category: ticket.category || null,
+      language: ticket.language || 'es',
+    });
+    await pool.query(
+      'UPDATE support_topics SET desk_ticket_id = $1 WHERE user_id = $2',
+      [deskTicketId, userId]
+    );
+    logger.info('[slackSupportService] mirrored to Zoho Desk', { userId, deskTicketId });
+  } catch (err) {
+    logger.warn('[slackSupportService] Desk mirror failed', { userId, error: err.response?.data || err.message });
+  }
+}
+
+async function _mirrorCommentToDesk(userId, content) {
+  if (!zohoDesk.isConfigured()) return;
+  try {
+    const pool = getPool();
+    const r = await pool.query('SELECT desk_ticket_id FROM support_topics WHERE user_id = $1', [userId]);
+    const deskId = r.rows[0]?.desk_ticket_id;
+    if (!deskId) return;
+    await zohoDesk.addComment(deskId, content, 'agent');
+  } catch (err) {
+    logger.warn('[slackSupportService] Desk comment mirror failed', { userId, error: err.response?.data || err.message });
+  }
+}
+
+async function _mirrorStatusToDesk(userId, status) {
+  if (!zohoDesk.isConfigured()) return;
+  try {
+    const pool = getPool();
+    const r = await pool.query('SELECT desk_ticket_id FROM support_topics WHERE user_id = $1', [userId]);
+    const deskId = r.rows[0]?.desk_ticket_id;
+    if (!deskId) return;
+    await zohoDesk.updateStatus(deskId, status);
+  } catch (err) {
+    logger.warn('[slackSupportService] Desk status mirror failed', { userId, error: err.response?.data || err.message });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -214,6 +275,8 @@ async function escalateToSlack(ticket) {
     // Non-fatal — Slack message is already posted; we just can't route replies without the ts
   }
 
+  _mirrorTicketToDesk(userId, ticket, bodyExcerpt);
+
   return threadTs;
 }
 
@@ -289,6 +352,8 @@ async function handleTeamReply(event) {
   } catch (err) {
     logger.warn('[slackSupportService] could not update last_agent_message_at', { userId, error: err.message });
   }
+
+  _mirrorCommentToDesk(userId, replyText);
 }
 
 /**
@@ -330,6 +395,8 @@ async function handleResolveReaction(event) {
     logger.warn('[slackSupportService] could not update ticket status to resolved', { userId, error: err.message });
     return;
   }
+
+  _mirrorStatusToDesk(userId, 'resolved');
 
   // Notify web widget of status change
   try {
