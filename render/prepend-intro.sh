@@ -52,6 +52,11 @@ INTRO_DUR="$(ffprobe -v error -show_entries format=duration \
 echo "source: ${WIDTH}x${HEIGHT} @ ${FPS}$([ -n "$HAS_AUDIO" ] && echo ' +audio')"
 echo "intro:  ${INTRO_DUR}s"
 
+# concat requires identical stream parameters on both sides, so the two audio
+# branches are normalised to the same rate, layout AND sample format — not just
+# the same rate, which is the easy version of this that fails on some sources.
+AFMT="aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000"
+
 SCALE_PAD="scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,\
 pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=#121212,\
 setsar=1,fps=${FPS},format=yuv420p"
@@ -63,9 +68,9 @@ if [ -n "$HAS_AUDIO" ]; then
     -i "$SOURCE" \
     -filter_complex "\
 [0:v]${SCALE_PAD}[iv]; \
-[1:a]aresample=48000[ia]; \
+[1:a]${AFMT}[ia]; \
 [2:v]${SCALE_PAD}[sv]; \
-[2:a]aresample=48000,aformat=channel_layouts=stereo[sa]; \
+[2:a]${AFMT}[sa]; \
 [iv][ia][sv][sa]concat=n=2:v=1:a=1[v][a]" \
     -map '[v]' -map '[a]' \
     -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p \
