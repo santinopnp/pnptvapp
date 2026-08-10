@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.cdnfonts.com/css/ethnocentric" rel="stylesheet">
+  <style>body{margin:0;background:#121212;}</style>
+  <script>window.OM_SCENES = '[{"name":"Title","dur":7,"desc":"The PNPtv logo, title and performer credits fade and scale in over a dark ambient background"},{"name":"Disclaimer","dur":9,"desc":"Cut to the legal disclaimer card with age, consent and copyright notices; a skip button is available throughout"}]';
+  window.OM_PLAYBACK = '{"mode":"times","count":1}';</script>
+</helmet>
+<x-import component-from-global-scope="IntroApp" from="./animations-v3.jsx ./tweaks-panel.jsx ./intro-piece.jsx ./intro-app.jsx" scenes="{{ scenes }}" playback="{{ playback }}" channel="{{ channel }}" title="{{ title }}" performers="{{ performers }}" orientation="{{ orientation }}" hint-size="100%,100%"></x-import>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1920, &quot;height&quot;: 1080}, &quot;channel&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;PNPTV! PRESENTS&quot;, &quot;tsType&quot;: &quot;string&quot;}, &quot;title&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;YOUR TITLE HERE&quot;, &quot;tsType&quot;: &quot;string&quot;}, &quot;performers&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Performer Name  •  Performer Name&quot;, &quot;tsType&quot;: &quot;string&quot;}, &quot;orientation&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;auto&quot;, &quot;landscape&quot;, &quot;portrait&quot;], &quot;default&quot;: &quot;auto&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Format&quot;}, &quot;videoWidth&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 1920, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Format&quot;}, &quot;videoHeight&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 1080, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Format&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      scenes: window.OM_SCENES,
+      playback: window.OM_PLAYBACK,
+      channel: this.props.channel,
+      title: this.props.title,
+      performers: this.props.performers,
+      orientation: this.props.orientation === 'portrait' ? 'portrait'
+        : this.props.orientation === 'landscape' ? 'landscape'
+        : (this.props.videoWidth && this.props.videoHeight && this.props.videoHeight > this.props.videoWidth) ? 'portrait' : 'landscape',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
