@@ -277,8 +277,18 @@ function ChannelDetailView({
     setCreatorUpsellDismissed(true);
   };
 
-  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[] } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
+  // Set to true once the <video> metadata reveals a landscape aspect ratio.
+  // Only landscape videos get the wider modal + taller player (semi-fullscreen);
+  // portrait/square videos stay in the compact 2xl modal so they don't stretch.
+  const [videoIsLandscape, setVideoIsLandscape] = useState(false);
+  // Reset landscape detection whenever the current video changes so a
+  // landscape video followed by a portrait one doesn't inherit the previous
+  // modal size.
+  useEffect(() => {
+    setVideoIsLandscape(false);
+  }, [playingVideo?.videoId]);
   const [videoComments, setVideoComments] = useState<ChannelVideoComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentInput, setCommentInput] = useState("");
@@ -758,6 +768,8 @@ function ChannelDetailView({
       channelId: channel.id,
       promoPostId: v.promo_post_id ?? null,
       taggedCreators: v.tagged_creators || [],
+      uploaderDisplayName: v.uploader_display_name || v.uploader_username || null,
+      durationSec: v.duration_sec ?? null,
     });
   }, [videos, searchParams, playingVideo, channel]);
 
@@ -805,6 +817,8 @@ function ChannelDetailView({
               channelId: channel!.id,
               promoPostId: v.promo_post_id ?? null,
               taggedCreators: v.tagged_creators || [],
+              uploaderDisplayName: v.uploader_display_name || v.uploader_username || null,
+              durationSec: v.duration_sec ?? null,
             });
           }}
         >
@@ -1711,7 +1725,7 @@ function ChannelDetailView({
           onClick={() => setPlayingVideo(null)}
         >
           <div
-            className="relative w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col"
+            className={`relative w-full rounded-2xl overflow-hidden flex flex-col ${videoIsLandscape ? "max-w-6xl" : "max-w-2xl"}`}
             style={{ background: "#0A0A14", maxHeight: "92vh" }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1828,22 +1842,54 @@ function ChannelDetailView({
                 </svg>
                 <p className="text-xs text-white/40">Video unavailable</p>
               </div>
-            ) : (
-              <VideoPlayer
-                key={playingVideo.url}
-                src={playingVideo.url}
-                controls
-                autoPlay
-                playsInline
-                controlsList="nodownload"
-                creatorDisclaimer
-                onContextMenu={(e) => e.preventDefault()}
-                onError={() => setVideoPlayerError(true)}
-                className="w-full flex-shrink-0 bg-black"
-                style={{ maxHeight: "50vh" }}
-                preload="metadata"
-              />
-            )}
+            ) : (() => {
+              // Product spec: 16s branded intro curtain plays before creator
+              // channel videos ≥ 30s. Uploader is always the primary credit;
+              // tagged collaborators are joined with "feat.". Channel eyebrow
+              // is "{Channel name} for PNPtv!".
+              const uploader = playingVideo.uploaderDisplayName || channel.creatorName || channel.creatorUsername || "Creator";
+              const featNames = (playingVideo.taggedCreators || [])
+                .map(t => t.first_name || t.username)
+                .filter(Boolean);
+              const performers = featNames.length > 0
+                ? `${uploader} feat. ${featNames.join(" y ")}`
+                : uploader;
+              const eligible = (playingVideo.durationSec ?? 0) >= 30;
+              // PRIME (official) channel gets a plain "PRIME" eyebrow — no
+              // "for PNPtv!" suffix. All other creator channels use the full
+              // "{Channel} for PNPtv!" form.
+              const eyebrow = channelIsPrime ? "PRIME" : `${channel.name} for PNPtv!`;
+              const intro = eligible ? {
+                channel: eyebrow,
+                title: playingVideo.title,
+                performers,
+              } : null;
+              return (
+                <VideoPlayer
+                  key={playingVideo.url}
+                  src={playingVideo.url}
+                  controls
+                  autoPlay
+                  playsInline
+                  controlsList="nodownload"
+                  creatorDisclaimer
+                  intro={intro}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onError={() => setVideoPlayerError(true)}
+                  onLoadedMetadata={(e) => {
+                    // Landscape source → widen the modal + expand the player
+                    // to semi-fullscreen. Portrait/square stays compact.
+                    const v = e.currentTarget;
+                    if (v.videoWidth && v.videoHeight) {
+                      setVideoIsLandscape(v.videoWidth > v.videoHeight * 1.05);
+                    }
+                  }}
+                  className="w-full flex-shrink-0 bg-black"
+                  style={{ maxHeight: videoIsLandscape ? "80vh" : "50vh" }}
+                  preload="metadata"
+                />
+              );
+            })()}
             {showPrimeUpsell && !primeUpsellDismissed && playingVideo.url && !videoPlayerError && (
               <a
                 href="/subscribe"

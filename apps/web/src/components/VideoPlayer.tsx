@@ -15,12 +15,31 @@ import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Hls from "hls.js";
 import { useI18n } from "@/lib/i18n";
+import { IntroPlayer } from "@/components/intro";
+
+/**
+ * Metadata burned into the IntroPlayer curtain that plays before qualifying
+ * videos. `channel` is the eyebrow line, `title` is the big title (omit for
+ * social posts per product spec), `performers` is the "Uploader feat. X y Z"
+ * credit line. Pass `null` (or omit `intro`) to skip the curtain entirely.
+ */
+export interface VideoIntroData {
+  channel: string;
+  title?: string;
+  performers: string;
+}
 
 type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
   /** When true, render an end-of-video compliance overlay for creator content. */
   creatorDisclaimer?: boolean;
   /** When true (default), render an ambient blurred backdrop behind portrait/letterboxed videos. */
   ambientBlur?: boolean;
+  /**
+   * When present, gate the video behind a 16s branded intro curtain. Skip is
+   * always visible. Callers are responsible for the duration threshold — pass
+   * `null` for videos too short to warrant the intro (< 30s per product spec).
+   */
+  intro?: VideoIntroData | null;
 };
 
 function isHlsSource(src: string | undefined | null): boolean {
@@ -35,11 +54,13 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       poster,
       creatorDisclaimer = false,
       ambientBlur = true,
+      intro = null,
       onEnded,
       onPlay,
       onLoadedMetadata,
       className = "",
       style,
+      autoPlay,
       ...rest
     },
     ref
@@ -48,6 +69,17 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const hlsRef = useRef<Hls | null>(null);
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
+    const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
+    // When an intro is configured, gate playback until the curtain completes
+    // (or the user hits Skip). Once dismissed, the intro never re-shows for
+    // this mount — replays go straight to video.
+    const [introDone, setIntroDone] = useState<boolean>(intro == null);
+    // Reset gate when src changes (e.g. re-open a different video in the same
+    // player mount) — otherwise the intro from the previous video would be
+    // considered already dismissed for the new one.
+    useEffect(() => {
+      setIntroDone(intro == null);
+    }, [src, intro]);
 
     const setRefs = (el: HTMLVideoElement | null) => {
       localRef.current = el;
@@ -89,6 +121,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       const video = e.currentTarget;
       if (video.videoWidth && video.videoHeight) {
         setIsPortrait(video.videoHeight > video.videoWidth * 1.05);
+        setVideoDims({ w: video.videoWidth, h: video.videoHeight });
       }
       onLoadedMetadata?.(e);
     };
@@ -128,7 +161,9 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           </div>
         )}
 
-        {/* Primary Video Element */}
+        {/* Primary Video Element — autoplay is deferred until the intro
+            curtain (if any) finishes. When introDone becomes true, we call
+            .play() explicitly so mobile autoplay policies still cooperate. */}
         <video
           ref={setRefs}
           src={passThroughSrc}
@@ -139,8 +174,32 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onPlay={handlePlay}
+          autoPlay={intro ? false : autoPlay}
           {...rest}
         />
+
+        {/* Intro curtain — 16s branded opener with the video's channel/title/
+            performers burned in. Sits above the video, hides it visually and
+            blocks pointer events until Skip or auto-complete. */}
+        {intro && !introDone && (
+          <div className="absolute inset-0 z-20">
+            <IntroPlayer
+              channel={intro.channel}
+              title={intro.title}
+              performers={intro.performers}
+              videoWidth={videoDims?.w}
+              videoHeight={videoDims?.h}
+              onComplete={() => {
+                setIntroDone(true);
+                // Kick playback the moment the curtain lifts. If autoPlay was
+                // requested by the caller, respect it; otherwise stay paused.
+                if (autoPlay) {
+                  localRef.current?.play().catch(() => {});
+                }
+              }}
+            />
+          </div>
+        )}
 
         {/* End-of-video Creator Compliance Overlay */}
         {showDisclaimer && (

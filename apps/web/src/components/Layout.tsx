@@ -1123,7 +1123,7 @@ export function Layout() {
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
           <div className="flex items-center gap-2">
-            <img src="/logo-header.png" alt="PNPtv!" className="h-9 w-auto" />
+            <img src="/logo-lockup.webp" alt="PNPtv!" className="h-9 w-auto" />
           </div>
           <div className="flex items-center gap-1">
             {/* Search */}
@@ -1357,7 +1357,7 @@ export function Layout() {
       <header className="lg:hidden sticky top-0 z-40 h-14 flex items-center justify-between px-3 glass-nav border-b border-pnp-border">
         {/* Left: logo + optional GOD MODE badge (click to toggle) */}
         <div className="flex items-center gap-2">
-          <img src="/logo-header.png" alt="PNPtv!" className="h-8 w-auto max-w-[110px] object-contain" />
+          <img src="/logo-lockup.webp" alt="PNPtv!" className="h-8 w-auto max-w-[110px] object-contain" />
           {isSuperGodEligible && (
             <button
               type="button"
@@ -1464,7 +1464,7 @@ export function Layout() {
           >
             {/* Header */}
             <div className="flex items-center justify-between px-3 h-11 border-b border-pnp-border flex-shrink-0">
-              <img src="/logo-header.png" alt="PNPtv!" className="h-7 w-auto" />
+              <img src="/logo-lockup.webp" alt="PNPtv!" className="h-7 w-auto" />
               <button
                 className="p-1.5 text-pnp-textSecondary hover:text-pnp-textPrimary transition-colors"
                 onClick={() => { setMobileMenuOpen(false); setInlineDmUserId(null); }}
