@@ -1,5 +1,11 @@
 # CODING AGENTS: READ THIS FIRST
 
+> **This bundle has been implemented.** The production code lives in `src/intro/`
+> (component) and `render/` (headless renderer + upload-flow prepend step). See
+> **[IMPLEMENTATION.md](IMPLEMENTATION.md)** and **[FONTS.md](FONTS.md)**.
+> Everything below is the original handoff instructions; `project/` is unchanged
+> and remains the design source of truth.
+
 This is a **handoff bundle** from Claude Design (claude.ai/design).
 
 A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported this bundle so a coding agent can implement the designs for real.

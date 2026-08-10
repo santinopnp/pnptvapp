@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+.vite/
+
+# Vendored webfont — licensed separately, see FONTS.md
+public/fonts/*.woff2
