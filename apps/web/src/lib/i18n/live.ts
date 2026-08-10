@@ -233,18 +233,16 @@ const strings = {
     retryLoading: "Retry",
 
     // Main Stage — modes
-    mainStageModeSpotlight: "Spotlight",
-    mainStageModeTheater: "Theater",
     mainStageModeCinema: "Cinema",
-    mainStageModeKaraoke: "Karaoke",
-    mainStageModeEqual: "Everyone",
+    mainStageModeSpotlight: "Spotlight",
+    mainStageModeGrid3x3: "3×3 Grid",
+    mainStageModeHotPicks: "Hot Picks!",
 
     // Main Stage — mode subtitles (admin panel)
-    mainStageModeSpotlightSub: "Pin one cammer as hero",
-    mainStageModeTheaterSub: "Velvet curtains frame the video",
     mainStageModeCinemaSub: "Media takes the stage",
-    mainStageModeKaraokeSub: "Video full, cammer in corner",
-    mainStageModeEqualSub: "Grid of all cammers",
+    mainStageModeSpotlightSub: "Rotate the spotlight — creators first",
+    mainStageModeGrid3x3Sub: "See 9 cammers at once, scroll for more",
+    mainStageModeHotPicksSub: "One cammer at a time — tap Next to swap",
 
     // Main Stage — header
     mainStageTitle: "Main Stage",
@@ -347,6 +345,12 @@ const strings = {
     mainStageStageQuietHint: "Drop in. Turn the cam on. Own the moment.",
     mainStageNobodyOnCam: "Nobody on cam yet",
     mainStageNobodyOnCamHint: "Expose yourself. The room is here for you — tap Go live to be first on.",
+
+    // Main Stage — Hot Picks personal view
+    mainStageHotPicksNext: "Next",
+    mainStageHotPicksOnlyOne: "Only cammer online right now",
+    mainStageHotPicksEmpty: "Waiting for cammers…",
+    mainStageHotPicksEmptyHint: "Hot Picks needs at least one other cammer. Try again in a moment.",
     // Main Stage — hero copy (cam-first framing)
     mainStageHeroTitle: "Main Stage — your spotlight.",
     mainStageHeroSubtitle: "Go live and be seen.",
@@ -655,18 +659,16 @@ const strings = {
     retryLoading: "Reintentar",
 
     // Main Stage — modes
-    mainStageModeSpotlight: "Destacado",
-    mainStageModeTheater: "Teatro",
     mainStageModeCinema: "Cine",
-    mainStageModeKaraoke: "Karaoke",
-    mainStageModeEqual: "Todes",
+    mainStageModeSpotlight: "Destacado",
+    mainStageModeGrid3x3: "Grilla 3×3",
+    mainStageModeHotPicks: "Hot Picks!",
 
     // Main Stage — mode subtitles (admin panel)
-    mainStageModeSpotlightSub: "Un cammer como protagonista",
-    mainStageModeTheaterSub: "Cortinas de terciopelo enmarcan el video",
     mainStageModeCinemaSub: "El contenido toma el escenario",
-    mainStageModeKaraokeSub: "Video completo, cammer en esquina",
-    mainStageModeEqualSub: "Grilla con todes los cammers",
+    mainStageModeSpotlightSub: "Rota el destacado — creadores primero",
+    mainStageModeGrid3x3Sub: "9 cammers a la vez, deslizá para más",
+    mainStageModeHotPicksSub: "Un cammer a la vez — tocá Siguiente para cambiar",
 
     // Main Stage — header
     mainStageTitle: "Escenario Principal",
@@ -769,6 +771,12 @@ const strings = {
     mainStageStageQuietHint: "Métete. Préndela. Es tu momento.",
     mainStageNobodyOnCam: "Nadie en cámara todavía",
     mainStageNobodyOnCamHint: "Exhíbete. La sala está aquí por ti — tocá Salir al aire para ser el primero.",
+
+    // Main Stage — Hot Picks vista personal
+    mainStageHotPicksNext: "Siguiente",
+    mainStageHotPicksOnlyOne: "Solo hay un cammer en línea ahora",
+    mainStageHotPicksEmpty: "Esperando cammers…",
+    mainStageHotPicksEmptyHint: "Hot Picks necesita al menos otro cammer. Volvé a intentar en un momento.",
     // Main Stage — hero copy (cam-first framing)
     mainStageHeroTitle: "Escenario Principal — tu reflector.",
     mainStageHeroSubtitle: "Préndete y déjate ver.",

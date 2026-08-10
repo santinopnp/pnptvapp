@@ -188,7 +188,7 @@ afterAll(() => {
 
 describe('setMode', () => {
   it('should resolve without error for valid modes', async () => {
-    for (const mode of ['spotlight', 'cinema', 'equal']) {
+    for (const mode of ['cinema', 'spotlight', 'grid3x3']) {
       await expect(svc.setMode(mode)).resolves.toBeUndefined();
       expect(mockRedis.set).toHaveBeenCalledWith('mainstage:mode', mode, 'EX', expect.any(Number));
     }

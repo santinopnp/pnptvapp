@@ -119,7 +119,7 @@ jest.mock('../services/livekitService', () => ({
 // We use the actual service module so the cap / mode logic is exercised.
 // Individual tests stub getState via the mock where needed.
 jest.mock('../services/mainStageService', () => {
-  const VALID_MODES = new Set(['spotlight', 'cinema', 'equal']);
+  const VALID_MODES = new Set(['spotlight', 'cinema', 'grid3x3']);
   const MAX_CAMMERS = 12;
 
   function clampVolume(v) {
@@ -129,7 +129,7 @@ jest.mock('../services/mainStageService', () => {
   }
 
   const _getState = jest.fn(async () => ({
-    mode: 'equal',
+    mode: 'grid3x3',
     spotlight: { cammer: null, nextAt: null, queue: [] },
     media: { kind: 'off', src: null, playing: false, volume: 70, startedAt: null },
     cams: { volume: 80 },
@@ -293,7 +293,7 @@ beforeEach(() => {
 
   // Default: getState returns empty queue
   mainStageService.getState.mockResolvedValue({
-    mode: 'equal',
+    mode: 'grid3x3',
     spotlight: { cammer: null, nextAt: null, queue: [] },
     media: { kind: 'off', src: null, playing: false, volume: 70, startedAt: null },
     cams: { volume: 80 },
@@ -337,7 +337,7 @@ describe('POST /api/main-stage/token — member grants', () => {
   it('should not grant admin caps to a regular member', async () => {
     mockUserRow(VIEWER_USER);
     mainStageService.getState.mockResolvedValueOnce({
-      mode: 'equal',
+      mode: 'grid3x3',
       spotlight: { cammer: null, nextAt: null, queue: [] },
       media: { kind: 'off', src: null, playing: false, volume: 70, startedAt: null },
       cams: { volume: 80 },
@@ -603,7 +603,7 @@ describe('GET /api/main-stage/state — public access', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.state).toBeDefined();
-    expect(['spotlight', 'cinema', 'equal']).toContain(res.body.state.mode);
+    expect(['cinema', 'spotlight', 'grid3x3']).toContain(res.body.state.mode);
     expect(res.body.state.spotlight).toBeDefined();
     expect(res.body.state.media).toBeDefined();
   });
@@ -681,7 +681,7 @@ describe('POST /api/main-stage/token — member happy path', () => {
   it('should issue a member token when queue has space', async () => {
     mockUserRow(VIEWER_USER);
     mainStageService.getState.mockResolvedValueOnce({
-      mode: 'equal',
+      mode: 'grid3x3',
       spotlight: { cammer: null, nextAt: null, queue: ['other1', 'other2'] },
       media: { kind: 'off', src: null, playing: false, volume: 70, startedAt: null },
       cams: { volume: 80 },

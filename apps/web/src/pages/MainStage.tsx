@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   LiveKitRoom,
+  ParticipantTile,
   RoomAudioRenderer,
+  useLocalParticipant,
   useRoomContext,
+  useTracks,
 } from "@livekit/components-react";
-import { ConnectionState, RoomEvent } from "livekit-client";
+import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
 import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite } from "@/lib/api";
@@ -26,11 +29,9 @@ import { ParticipantCollector, type CammerInfo } from "@/components/mainstage/Pa
 import { BottomBarInner } from "@/components/mainstage/BottomBar";
 import { ConnectionOverlay } from "@/components/mainstage/ConnectionOverlay";
 import { ForceCamMicEnforcer } from "@/components/mainstage/ForceCamMicEnforcer";
-import { KaraokeCammerOverlay } from "@/components/mainstage/KaraokeCammerOverlay";
 import { WellnessTipsOverlay } from "@/components/mainstage/WellnessTipsOverlay";
 import { NowPlayingChip } from "@/components/mainstage/NowPlayingChip";
 import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
-import { TheaterCurtains } from "@/components/mainstage/TheaterCurtains";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
@@ -68,53 +69,51 @@ function readAndClearGuestCredentials(): GuestCredentials | null {
 }
 
 const MODE_LABELS: Record<ModeId, string> = {
-  spotlight: "Spotlight",
-  theater: "Theater",
   cinema: "Cinema",
-  karaoke: "Karaoke",
-  equal: "Everyone",
+  spotlight: "Spotlight",
+  grid3x3: "3×3 Grid",
+  hotpicks: "Hot Picks!",
 };
 
 const MODE_ICONS: Record<ModeId, JSX.Element> = {
-  spotlight: (
-    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <circle cx="12" cy="10" r="4" />
-      <path strokeLinecap="round" d="M12 14v5M8 19h8" />
-    </svg>
-  ),
-  theater: (
-    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 5v14M20 5v14M4 7c2 0 4 2 4 4s-2 4-4 4M20 7c-2 0-4 2-4 4s2 4 4 4M9 12h6" />
-    </svg>
-  ),
   cinema: (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path strokeLinecap="round" d="M8 10l4 2.5L8 15z" fill="currentColor" />
     </svg>
   ),
-  karaoke: (
+  spotlight: (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <rect x="3" y="5" width="18" height="12" rx="1.5" />
-      <circle cx="17" cy="15" r="3" fill="currentColor" />
+      <circle cx="12" cy="10" r="4" />
+      <path strokeLinecap="round" d="M12 14v5M8 19h8" />
     </svg>
   ),
-  equal: (
+  grid3x3: (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <rect x="3" y="3" width="5" height="5" rx="1" />
+      <rect x="9.5" y="3" width="5" height="5" rx="1" />
+      <rect x="16" y="3" width="5" height="5" rx="1" />
+      <rect x="3" y="9.5" width="5" height="5" rx="1" />
+      <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+      <rect x="16" y="9.5" width="5" height="5" rx="1" />
+      <rect x="3" y="16" width="5" height="5" rx="1" />
+      <rect x="9.5" y="16" width="5" height="5" rx="1" />
+      <rect x="16" y="16" width="5" height="5" rx="1" />
+    </svg>
+  ),
+  hotpicks: (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 3l-2 9h6l-8 9 2-9H5l8-9z" />
     </svg>
   ),
 };
 
+// Cycle order on the mode-cycle button. Cinema → Spotlight → 3×3 → Hot Picks → Cinema.
 const NEXT_MODE: Record<ModeId, ModeId> = {
-  spotlight: "theater",
-  theater: "cinema",
-  cinema: "karaoke",
-  karaoke: "equal",
-  equal: "spotlight",
+  cinema: "spotlight",
+  spotlight: "grid3x3",
+  grid3x3: "hotpicks",
+  hotpicks: "cinema",
 };
 
 interface RoomListenerProps {
@@ -138,6 +137,186 @@ function RoomListener({ onConnectionStateChange }: RoomListenerProps) {
   }, [onConnectionStateChange, room]);
 
   return null;
+}
+
+/**
+ * HotPicksView — personal viewer mode. Shows ONE random cammer full-screen
+ * with the viewer's own self-cam as a small PiP (if broadcasting). Tap
+ * "Next" to reroll to another cammer. Creators/performers are weighted first
+ * in the random pool; the last N picks are excluded so consecutive rerolls
+ * don't repeat immediately.
+ *
+ * Global mode is unaffected — this is a client-side layout override.
+ */
+const HOT_PICKS_EXCLUDE_RECENT = 3;
+
+function HotPicksView() {
+  const t = useI18n().live;
+  const { localParticipant } = useLocalParticipant();
+  const allTracks = useTracks(
+    [{ source: Track.Source.Camera, withPlaceholder: false }],
+    { onlySubscribed: false }
+  );
+
+  // Candidate cammers: exclude the media bot, guests, viewers, and the local
+  // participant themselves — the whole point is to feature someone ELSE.
+  const localIdentity = localParticipant?.identity ?? "";
+  const candidates = allTracks.filter((tr) => {
+    const id = tr.participant.identity;
+    if (id === MEDIA_IDENTITY) return false;
+    if (id === localIdentity) return false;
+    if (id.startsWith("guest_") || id.startsWith("viewer_")) return false;
+    return true;
+  });
+
+  const [pickedIdentity, setPickedIdentity] = useState<string | null>(null);
+  const recentRef = useRef<string[]>([]);
+
+  const pickNext = useCallback(() => {
+    if (candidates.length === 0) {
+      setPickedIdentity(null);
+      return;
+    }
+    if (candidates.length === 1) {
+      setPickedIdentity(candidates[0].participant.identity);
+      return;
+    }
+    const excluded = new Set(recentRef.current);
+    let pool = candidates.filter((c) => !excluded.has(c.participant.identity));
+    if (pool.length === 0) {
+      // Whole pool was recently shown — drop the oldest exclusion.
+      recentRef.current = recentRef.current.slice(1);
+      pool = candidates.filter((c) => !new Set(recentRef.current).has(c.participant.identity));
+      if (pool.length === 0) pool = candidates;
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const nextIdentity = pick.participant.identity;
+    recentRef.current = [...recentRef.current, nextIdentity].slice(-HOT_PICKS_EXCLUDE_RECENT);
+    setPickedIdentity(nextIdentity);
+  }, [candidates]);
+
+  // Auto-pick the first time we have candidates + whenever the current pick
+  // disappears from the room.
+  useEffect(() => {
+    if (candidates.length === 0) {
+      if (pickedIdentity !== null) setPickedIdentity(null);
+      return;
+    }
+    if (!pickedIdentity || !candidates.some((c) => c.participant.identity === pickedIdentity)) {
+      pickNext();
+    }
+  }, [candidates, pickedIdentity, pickNext]);
+
+  const focusedTrack = candidates.find((c) => c.participant.identity === pickedIdentity) ?? null;
+
+  // Self-cam preview — mirrored, mounted only when the viewer has a live camera track.
+  const selfVideoRef = useRef<HTMLVideoElement>(null);
+  const [hasSelfTrack, setHasSelfTrack] = useState(false);
+  useEffect(() => {
+    if (!localParticipant || !selfVideoRef.current) {
+      setHasSelfTrack(false);
+      return;
+    }
+    const pub = localParticipant.getTrackPublication(Track.Source.Camera);
+    const track = pub?.track;
+    if (track && selfVideoRef.current) {
+      track.attach(selfVideoRef.current);
+      setHasSelfTrack(true);
+      return () => {
+        if (selfVideoRef.current) track.detach(selfVideoRef.current);
+        setHasSelfTrack(false);
+      };
+    }
+    setHasSelfTrack(false);
+  }, [localParticipant, focusedTrack]);
+
+  if (candidates.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center bg-pnp-background">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center animate-pulse bg-pnp-accent/10 border border-pnp-accent/20">
+          <svg className="w-8 h-8 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 3l-2 9h6l-8 9 2-9H5l8-9z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-semibold text-sm">{t.mainStageHotPicksEmpty}</p>
+          <p className="text-white/50 text-xs mt-1">{t.mainStageHotPicksEmptyHint}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-full w-full bg-black">
+      {focusedTrack && (
+        <ParticipantTile
+          trackRef={focusedTrack}
+          disableSpeakingIndicator={false}
+          style={{ height: "100%", width: "100%" }}
+        />
+      )}
+
+      {/* Self-cam PiP — only when viewer is broadcasting */}
+      {hasSelfTrack && (
+        <div
+          className="absolute z-10 rounded-2xl overflow-hidden shadow-2xl border"
+          style={{
+            width: 120,
+            height: 160,
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+            borderColor: "rgba(212,0,122,0.55)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.30)",
+            background: "#0A0A0F",
+          }}
+        >
+          <video
+            ref={selfVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: "scaleX(-1)" }}
+          />
+          <div
+            className="absolute top-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold text-white/90 uppercase tracking-wider"
+            style={{ background: "rgba(212,0,122,0.70)", backdropFilter: "blur(4px)" }}
+          >
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white" />
+            </span>
+            You
+          </div>
+        </div>
+      )}
+
+      {/* Next button */}
+      <div
+        className="absolute z-20 left-1/2 -translate-x-1/2 flex items-center gap-2"
+        style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom, 0px))" }}
+      >
+        <button
+          type="button"
+          onClick={pickNext}
+          disabled={candidates.length <= 1}
+          className="min-h-[48px] px-6 flex items-center justify-center gap-2 rounded-full text-white text-sm font-bold shadow-2xl transition-all active:scale-[0.96] disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            background: "linear-gradient(135deg,#D4007A,#7B61FF)",
+            border: "1px solid rgba(255,255,255,0.25)",
+            boxShadow: "0 8px 24px rgba(212,0,122,0.5)",
+          }}
+          aria-label={t.mainStageHotPicksNext}
+          title={candidates.length <= 1 ? t.mainStageHotPicksOnlyOne : t.mainStageHotPicksNext}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+          </svg>
+          {t.mainStageHotPicksNext}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface MainStageInnerProps {
@@ -213,13 +392,6 @@ function MainStageInner({
       <RoomListener onConnectionStateChange={onConnectionStateChange} />
 
       <div className="flex-1 min-h-0 relative overflow-hidden" style={{ transition: "background 0.3s, opacity 0.22s", opacity: modeTransitioning ? 0 : 1 }}>
-        {mode === "spotlight" && (
-          <SpotlightGrid
-            focusIdentity={spotlightCammer}
-            nextAt={spotlightNextAt}
-            onTileClick={isAdmin ? onSpotlightPick : undefined}
-          />
-        )}
         {mode === "cinema" && (
           <CinemaGrid
             mediaIdentity={MEDIA_IDENTITY}
@@ -230,34 +402,15 @@ function MainStageInner({
             mediaStartedAt={mediaStartedAt}
           />
         )}
-        {mode === "theater" && (
-          <div className="relative h-full w-full">
-            <CinemaGrid
-              mediaIdentity={MEDIA_IDENTITY}
-              mediaKind={mediaKind}
-              mediaSrc={mediaSrc}
-              mediaPlaying={mediaPlaying}
-              mediaVolume={mediaVolume}
-              mediaStartedAt={mediaStartedAt}
-            />
-            <TheaterCurtains />
-          </div>
+        {mode === "spotlight" && (
+          <SpotlightGrid
+            focusIdentity={spotlightCammer}
+            nextAt={spotlightNextAt}
+            onTileClick={isAdmin ? onSpotlightPick : undefined}
+          />
         )}
-        {mode === "karaoke" && (
-          <>
-            <CinemaGrid
-              mediaIdentity={MEDIA_IDENTITY}
-              mediaKind={mediaKind}
-              mediaSrc={mediaSrc}
-              mediaPlaying={mediaPlaying}
-              mediaVolume={mediaVolume}
-              mediaStartedAt={mediaStartedAt}
-              hideCammerStrip
-            />
-            <KaraokeCammerOverlay spotlightIdentity={spotlightCammer} />
-          </>
-        )}
-        {mode === "equal" && <EqualGrid />}
+        {mode === "grid3x3" && <EqualGrid />}
+        {mode === "hotpicks" && <HotPicksView />}
       </div>
 
       {/* Slim positive-tips ribbon — sits between cam grid and bottom bar
@@ -760,7 +913,7 @@ export default function MainStage() {
   const [localViewMode, setLocalViewMode] = useState<ModeId | null>(() => {
     if (typeof localStorage === "undefined") return null;
     const raw = localStorage.getItem(LOCAL_MODE_KEY);
-    const isValid = raw === "spotlight" || raw === "theater" || raw === "cinema" || raw === "karaoke" || raw === "equal";
+    const isValid = raw === "cinema" || raw === "spotlight" || raw === "grid3x3" || raw === "hotpicks";
     return isValid ? (raw as ModeId) : null;
   });
   useEffect(() => {
@@ -881,8 +1034,8 @@ export default function MainStage() {
   // server's mode remains the default for anyone who hasn't overridden.
   const handleCycleMode = useCallback(() => {
     const currentEffective: ModeId =
-      (localViewMode ?? (state?.mode as ModeId | undefined) ?? "spotlight");
-    const next = NEXT_MODE[currentEffective] ?? "spotlight";
+      (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
+    const next = NEXT_MODE[currentEffective] ?? "cinema";
     setLocalViewMode(next);
   }, [localViewMode, state?.mode]);
 
@@ -1282,18 +1435,17 @@ export default function MainStage() {
   // Effective mode: per-user local override wins over the server's
   // shared mode. Everything downstream uses this.
   const mode: ModeId =
-    (localViewMode ?? (state?.mode as ModeId | undefined) ?? "spotlight");
+    (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
   // In viewer mode, prefer the REST-polled state override (socket state not delivered to unauthed viewers).
   const effectiveState = (isViewerMode && viewerStateOverride) ? viewerStateOverride : state;
   const liveParticipants = effectiveState?.counts?.participants ?? effectiveState?.counts?.cammers ?? 0;
 
   // i18n mode label lookup — used in header and toolbar aria-labels.
   const modeLabels: Record<ModeId, string> = {
-    spotlight: t.live.mainStageModeSpotlight,
-    theater: t.live.mainStageModeTheater,
     cinema: t.live.mainStageModeCinema,
-    karaoke: t.live.mainStageModeKaraoke,
-    equal: t.live.mainStageModeEqual,
+    spotlight: t.live.mainStageModeSpotlight,
+    grid3x3: t.live.mainStageModeGrid3x3,
+    hotpicks: t.live.mainStageModeHotPicks,
   };
 
   return (

@@ -9,40 +9,43 @@ import InvitePanel from "@/components/mainstage/InvitePanel";
 import type { MainStageState } from "@/hooks/useMainStage";
 import type { CammerInfo } from "@/components/mainstage/ParticipantCollector";
 
-export type ModeId = "spotlight" | "theater" | "cinema" | "karaoke" | "equal";
+// Global modes controlled by the admin (broadcast to everyone in the room).
+// Hot Picks is a personal viewer-only mode and lives outside this enum in
+// GlobalModeId; the union ModeId covers both surfaces where they share a UI.
+export type GlobalModeId = "cinema" | "spotlight" | "grid3x3";
+export type ModeId = GlobalModeId | "hotpicks";
 
 type AdminType = ReturnType<typeof useMainStage>["admin"];
 
 const MODE_ICONS_ADMIN: Record<ModeId, JSX.Element> = {
-  spotlight: (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <circle cx="12" cy="10" r="4" />
-      <path strokeLinecap="round" d="M12 14v5M8 19h8" />
-    </svg>
-  ),
-  theater: (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 5v14M20 5v14M4 7c2 0 4 2 4 4s-2 4-4 4M20 7c-2 0-4 2-4 4s2 4 4 4M9 12h6" />
-    </svg>
-  ),
   cinema: (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path strokeLinecap="round" d="M8 10l4 2.5L8 15z" fill="currentColor" />
     </svg>
   ),
-  karaoke: (
+  spotlight: (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <rect x="3" y="5" width="18" height="12" rx="1.5" />
-      <circle cx="17" cy="15" r="3" fill="currentColor" />
+      <circle cx="12" cy="10" r="4" />
+      <path strokeLinecap="round" d="M12 14v5M8 19h8" />
     </svg>
   ),
-  equal: (
+  grid3x3: (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <rect x="3" y="3" width="5" height="5" rx="1" />
+      <rect x="9.5" y="3" width="5" height="5" rx="1" />
+      <rect x="16" y="3" width="5" height="5" rx="1" />
+      <rect x="3" y="9.5" width="5" height="5" rx="1" />
+      <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+      <rect x="16" y="9.5" width="5" height="5" rx="1" />
+      <rect x="3" y="16" width="5" height="5" rx="1" />
+      <rect x="9.5" y="16" width="5" height="5" rx="1" />
+      <rect x="16" y="16" width="5" height="5" rx="1" />
+    </svg>
+  ),
+  hotpicks: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 3l-2 9h6l-8 9 2-9H5l8-9z" />
     </svg>
   ),
 };
@@ -156,8 +159,8 @@ export function AdminPanelContent({
   // For non-admins, the active highlight on layout buttons reflects their
   // *personal* view (local override or, if none, the room default).
   const effectiveLayoutMode: ModeId =
-    !isAdmin ? ((localViewMode ?? (state?.mode as ModeId | undefined) ?? "spotlight"))
-    : ((state?.mode as ModeId | undefined) ?? "spotlight");
+    !isAdmin ? ((localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema"))
+    : (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
 
   useEffect(() => {
     let cancelled = false;
@@ -228,30 +231,31 @@ export function AdminPanelContent({
           {!isAdmin && (
             <p className="text-white/45 text-[11px] leading-snug mb-2.5">{t.live.mainStageLayoutPersonalHint}</p>
           )}
-          <div className="grid grid-cols-3 gap-2">
-            {(["spotlight", "theater", "cinema", "karaoke", "equal"] as ModeId[]).map((modeId) => {
+          <div className="grid grid-cols-2 gap-2">
+            {(["cinema", "spotlight", "grid3x3", "hotpicks"] as ModeId[]).map((modeId) => {
               const active = effectiveLayoutMode === modeId;
               const modeLabel: Record<ModeId, string> = {
-                spotlight: t.live.mainStageModeSpotlight,
-                theater: t.live.mainStageModeTheater,
                 cinema: t.live.mainStageModeCinema,
-                karaoke: t.live.mainStageModeKaraoke,
-                equal: t.live.mainStageModeEqual,
+                spotlight: t.live.mainStageModeSpotlight,
+                grid3x3: t.live.mainStageModeGrid3x3,
+                hotpicks: t.live.mainStageModeHotPicks,
               };
               const modeSub: Record<ModeId, string> = {
-                spotlight: t.live.mainStageModeSpotlightSub,
-                theater: t.live.mainStageModeTheaterSub,
                 cinema: t.live.mainStageModeCinemaSub,
-                karaoke: t.live.mainStageModeKaraokeSub,
-                equal: t.live.mainStageModeEqualSub,
+                spotlight: t.live.mainStageModeSpotlightSub,
+                grid3x3: t.live.mainStageModeGrid3x3Sub,
+                hotpicks: t.live.mainStageModeHotPicksSub,
               };
+              // Hot Picks is always a personal view (never global). Admins get
+              // the same personal experience as viewers when they pick it.
+              const isPersonalOnly = modeId === "hotpicks";
               return (
                 <button
                   key={modeId}
                   type="button"
                   onClick={() => {
-                    if (isAdmin) {
-                      admin.setMode(modeId);
+                    if (isAdmin && !isPersonalOnly) {
+                      admin.setMode(modeId as GlobalModeId);
                     } else if (onSetLocalView) {
                       onSetLocalView(modeId);
                     }
@@ -272,7 +276,7 @@ export function AdminPanelContent({
               );
             })}
           </div>
-          {!isAdmin && localViewMode !== null && onResetLocalView && (
+          {localViewMode !== null && onResetLocalView && (
             <button
               type="button"
               onClick={onResetLocalView}

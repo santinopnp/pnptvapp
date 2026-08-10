@@ -96,8 +96,8 @@ export const tutorialContent: Record<string, TutorialSection> = {
       {
         titleEn: "Switch the view mode",
         titleEs: "Cambia el modo de vista",
-        descEn: "Spotlight, Theater, Cinema, Karaoke or Everyone — pick the layout that fits the moment. Each viewer controls their own view, no one is locked in.",
-        descEs: "Spotlight, Theater, Cinema, Karaoke o Everyone — elige el layout que va con el momento. Cada viewer controla su propia vista, nadie queda atado.",
+        descEn: "Cinema, Spotlight, 3×3 Grid or Hot Picks! — pick the layout that fits the moment. When a creator hops on, Spotlight kicks in automatically.",
+        descEs: "Cine, Destacado, Grilla 3×3 o Hot Picks! — elige el layout que va con el momento. Cuando un creador entra en cámara, el modo Destacado se activa solo.",
         illustration: "browse",
       },
       {

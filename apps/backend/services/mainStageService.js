@@ -4,9 +4,15 @@
  * Main Stage Service
  *
  * Redis-backed state machine for the 24/7 Main Stage LiveKit room.
- * Manages mode (spotlight / cinema / equal), media playback state, cammer
+ * Manages mode (cinema / spotlight / grid3x3), media playback state, cammer
  * queue, and a distributed spotlight-rotation lock so multiple bot replicas
  * do not each run their own rotation timer simultaneously.
+ *
+ * Spotlight rotation is creator-priority: creators/performers rotate through
+ * first (5-min hold each) with regulars filling the gaps when no creators
+ * are on stage (90s hold each). Cinema↔Spotlight auto-flips: (1) Cinema →
+ * Spotlight the moment a creator arrives when ≥2 humans are on stage,
+ * (2) Spotlight → Cinema when human cammer count drops to 1.
  *
  * Socket.IO instance is injected via setIo() at boot time (called from
  * socketHandlers.js) to avoid a circular require with bot.js.
@@ -22,14 +28,24 @@ const livekit     = require('./livekitService');
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ROOM_NAME            = 'main-stage-prime';
-const ROTATE_INTERVAL_MS   = 120_000; // 2 min between spotlight rotations
+// Spotlight rotation cadence — differs by who's on stage:
+//   - Regular cammer holds the spotlight for 90s
+//   - Creator/performer holds the spotlight for 5 min
+// The tick fires every 90s (the shorter cadence) but only advances when the
+// per-cammer TTL stored in mainstage:spotlight:nextAt has elapsed.
+const ROTATE_INTERVAL_REGULAR_MS  = 90_000;      // 90s for members
+const ROTATE_INTERVAL_CREATOR_MS  = 5 * 60_000;  // 5 min for creators/performers
+const ROTATE_INTERVAL_MS          = ROTATE_INTERVAL_REGULAR_MS; // legacy alias (used by stats + module export)
 const AUTO_MEDIA_INTERVAL_MS = 10 * 60_000; // 10 min between auto-picked Prime Videos
 const MEDIA_BOT_IDENTITY   = 'mainstage-media';
 const LOCK_KEY             = 'mainstage:rotator:lock';
 const LOCK_TTL_S           = 60;      // lock expires in 60s
 const LOCK_RENEW_MS        = 20_000;  // renew every 20s
 const MAX_CAMMERS          = 100;
-const VALID_MODES          = new Set(['spotlight', 'cinema', 'equal', 'theater', 'karaoke']);
+const VALID_MODES          = new Set(['spotlight', 'cinema', 'grid3x3']);
+// Legacy mode values that must be migrated once at boot. Any live Redis state
+// still using these gets rewritten to the new equivalent on startRotation().
+const LEGACY_MODE_MIGRATION = { theater: 'cinema', karaoke: 'cinema', equal: 'grid3x3' };
 const VALID_MEDIA_KINDS    = new Set(['video', 'music', 'off']);
 
 // mainstage:media is stored as a Redis Hash (HSET/HGETALL) so individual fields
@@ -38,6 +54,10 @@ const VALID_MEDIA_KINDS    = new Set(['video', 'music', 'off']);
 // correctly when read back via HGETALL (which returns everything as strings).
 const MEDIA_KEY            = 'mainstage:media';
 const MODE_KEY             = 'mainstage:mode';
+// Per-identity role cache — 'creator' | 'regular'. Populated on cammer join,
+// pruned on leave. Read on every rotation tick so we can order the queue by
+// creator-priority + set the correct spotlight interval without hitting PG.
+const ROLES_KEY            = 'mainstage:cammer:roles';
 
 // Default media state — merged with whatever is stored in the Hash.
 const MEDIA_DEFAULTS = {
@@ -67,7 +87,7 @@ const PIN_MAX_TTL_S    = 7 * 24 * 3600;
 // Directus endpoints for background Prime Video auto-rotation
 const DIRECTUS_INTERNAL_URL = (process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055').replace(/\/$/, '');
 const DIRECTUS_PUBLIC_URL   = (process.env.DIRECTUS_PUBLIC_URL   || 'https://cms.pnptv.app').replace(/\/$/, '');
-// 24h TTL so an idle room doesn't silently reset to `mode: 'equal'` after 5 min.
+// 24h TTL so an idle room doesn't silently reset to `mode: 'cinema'` after 5 min.
 // Every write refreshes the TTL; the rotation tick effectively heartbeats it too.
 const STATE_CACHE_TTL_S    = 86_400;
 
@@ -78,9 +98,17 @@ let _io = null;
 /**
  * Inject the Socket.IO server instance.
  * Called once at boot by socketHandlers.js after io is created.
+ *
+ * We also fire the legacy-mode migration here so EVERY replica prunes stale
+ * theater/karaoke/equal values from Redis at startup — not just the one that
+ * later wins the rotation lock. Otherwise a non-lock replica could serve a
+ * mode the frontend can't render.
  */
 function setIo(io) {
   _io = io;
+  migrateLegacyModeIfNeeded().catch((err) => {
+    logger.warn('[MainStage] setIo: legacy mode migration failed (non-fatal)', { error: err.message });
+  });
 }
 
 /**
@@ -300,7 +328,7 @@ async function getState() {
   ]);
 
   return {
-    mode:      mode || 'equal',
+    mode:      mode || 'cinema',
     spotlight: {
       cammer: spotlightCammer || null,
       nextAt: spotlightNextAt ? parseInt(spotlightNextAt, 10) : null,
@@ -329,6 +357,146 @@ function countViewers(cammerCount) {
   return 0;
 }
 
+// ── Creator/performer role cache ─────────────────────────────────────────────
+
+// A queue identity counts as "human cammer" only if it isn't the media bot or
+// an anon/guest/viewer session. Only these can be creators/performers.
+function isHumanCammerIdentity(identity) {
+  const id = String(identity || '');
+  if (!id) return false;
+  if (id === MEDIA_BOT_IDENTITY) return false;
+  if (id.startsWith('guest_') || id.startsWith('viewer_')) return false;
+  return true;
+}
+
+/**
+ * Look up whether a platform user ID has creator or performer role.
+ * Returns 'creator' | 'regular'. Non-human identities always return 'regular'.
+ */
+async function fetchIdentityRole(identity) {
+  if (!isHumanCammerIdentity(identity)) return 'regular';
+  try {
+    const pool = getPool();
+    const { rows } = await pool.query(
+      `SELECT 1
+         FROM users u
+         LEFT JOIN performers p
+           ON p.user_id::text = u.id::text AND p.status = 'active'
+        WHERE u.id::text = $1
+          AND (u.role = 'creator' OR p.user_id IS NOT NULL)
+        LIMIT 1`,
+      [String(identity)]
+    );
+    return rows.length > 0 ? 'creator' : 'regular';
+  } catch (err) {
+    logger.warn('[MainStage] fetchIdentityRole failed', { identity, error: err.message });
+    return 'regular';
+  }
+}
+
+async function cacheIdentityRole(identity, role) {
+  if (!isHumanCammerIdentity(identity)) return;
+  const redis = getRedis();
+  await redis.hset(ROLES_KEY, String(identity), role === 'creator' ? 'creator' : 'regular');
+  await redis.expire(ROLES_KEY, STATE_CACHE_TTL_S);
+}
+
+async function forgetIdentityRole(identity) {
+  const redis = getRedis();
+  await redis.hdel(ROLES_KEY, String(identity)).catch(() => {});
+}
+
+async function readAllCammerRoles() {
+  const redis = getRedis();
+  const hash = await redis.hgetall(ROLES_KEY).catch(() => ({}));
+  return hash || {};
+}
+
+async function countCreatorsInQueue() {
+  const redis = getRedis();
+  const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
+  const roles = await readAllCammerRoles();
+  let n = 0;
+  for (const id of queue) {
+    if (id === MEDIA_BOT_IDENTITY) continue;
+    if (roles[id] === 'creator') n += 1;
+  }
+  return n;
+}
+
+/**
+ * Count human cammers in the queue (excludes media bot).
+ */
+async function countHumanCammers() {
+  const redis = getRedis();
+  const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
+  return queue.filter((id) => id !== MEDIA_BOT_IDENTITY).length;
+}
+
+/**
+ * Evaluate the two auto-flip rules and apply if needed. Runs after every
+ * add/remove of a cammer. Rules:
+ *
+ *   1. Cinema → Spotlight when a NEW creator arrives (creator count 0 → 1)
+ *      AND there are ≥2 human cammers total. Fires on the edge only, so
+ *      admin flipping back to Cinema is respected until all creators leave
+ *      and a fresh one arrives.
+ *
+ *   2. Spotlight → Cinema when human cammer count drops to ≤1. Otherwise
+ *      spotlight has nothing to rotate through.
+ *
+ * @param {'add'|'remove'} event   Which cammer-list mutation triggered this
+ * @param {number} creatorsBefore  Creator count before the mutation
+ * @param {number} creatorsAfter   Creator count after the mutation
+ * @param {number} humansAfter     Human cammer count after the mutation
+ */
+// 5-second fence key — atomic `SET NX EX` guarantees only one concurrent
+// caller can trigger a given auto-flip transition within the window. Prevents
+// e.g. two simultaneous creator joins from both firing cinema→spotlight and
+// re-flipping against an admin who manually returned to Cinema mid-race.
+const AUTOFLIP_FENCE_TTL_S = 5;
+const FENCE_KEY_CS = 'mainstage:autoflip:cinema-spotlight';
+const FENCE_KEY_SC = 'mainstage:autoflip:spotlight-cinema';
+
+async function acquireFlipFence(key) {
+  const redis = getRedis();
+  const result = await redis.set(key, '1', 'NX', 'EX', AUTOFLIP_FENCE_TTL_S).catch(() => null);
+  return result === 'OK';
+}
+
+async function maybeAutoFlipMode(event, creatorsBefore, creatorsAfter, humansAfter) {
+  const redis = getRedis();
+  const currentMode = await redis.get(MODE_KEY);
+
+  // Rule 1 — creator arrival edge
+  if (event === 'add'
+      && currentMode === 'cinema'
+      && creatorsBefore === 0
+      && creatorsAfter >= 1
+      && humansAfter >= 2) {
+    if (!(await acquireFlipFence(FENCE_KEY_CS))) {
+      logger.debug('[MainStage] auto-flip cinema→spotlight fenced (recent trigger)');
+      return;
+    }
+    logger.info('[MainStage] auto-flip cinema → spotlight (creator online)', { creatorsAfter, humansAfter });
+    await setMode('spotlight');
+    return;
+  }
+
+  // Rule 2 — spotlight starves with 1 cammer
+  if (event === 'remove'
+      && currentMode === 'spotlight'
+      && humansAfter <= 1) {
+    if (!(await acquireFlipFence(FENCE_KEY_SC))) {
+      logger.debug('[MainStage] auto-flip spotlight→cinema fenced (recent trigger)');
+      return;
+    }
+    logger.info('[MainStage] auto-flip spotlight → cinema (cammer count dropped)', { humansAfter });
+    await setMode('cinema');
+    return;
+  }
+}
+
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
 async function setMode(mode) {
@@ -337,6 +505,22 @@ async function setMode(mode) {
   await redis.set('mainstage:mode', mode, 'EX', STATE_CACHE_TTL_S);
   logger.info('[MainStage] mode set', { mode });
   await emitState();
+}
+
+/**
+ * One-shot: rewrite Redis state that still holds a legacy mode value
+ * (theater/karaoke/equal) to its new equivalent. Idempotent — a no-op on
+ * subsequent calls or once the key holds a valid new-enum value.
+ * Called from startRotation() on boot.
+ */
+async function migrateLegacyModeIfNeeded() {
+  const redis = getRedis();
+  const raw = await redis.get(MODE_KEY).catch(() => null);
+  if (!raw) return;
+  const target = LEGACY_MODE_MIGRATION[raw];
+  if (!target) return;
+  await redis.set(MODE_KEY, target, 'EX', STATE_CACHE_TTL_S);
+  logger.info('[MainStage] migrated legacy mode', { from: raw, to: target });
 }
 
 // ── Media ─────────────────────────────────────────────────────────────────────
@@ -481,6 +665,8 @@ async function addCammer(identity) {
   const redis    = getRedis();
   const queueKey = 'mainstage:spotlight:queue';
 
+  const creatorsBefore = await countCreatorsInQueue();
+
   const result = await redis.eval(
     ADD_CAMMER_LUA, 2, queueKey, QUEUE_TS_KEY,
     String(identity), String(MAX_CAMMERS), String(Date.now()),
@@ -497,15 +683,21 @@ async function addCammer(identity) {
 
   await redis.expire(queueKey, STATE_CACHE_TTL_S);
 
-  // If no spotlight yet, immediately set this cammer as spotlight
+  // Cache role for creator-priority spotlight ordering + auto-flip decisions.
+  const role = await fetchIdentityRole(identity);
+  await cacheIdentityRole(identity, role);
+
+  // If no spotlight yet, immediately set this cammer as spotlight.
+  // Interval respects role — creators hold for 5 min, regulars for 90s.
   const current = await redis.get('mainstage:spotlight:cammer');
   if (!current) {
+    const interval = role === 'creator' ? ROTATE_INTERVAL_CREATOR_MS : ROTATE_INTERVAL_REGULAR_MS;
     await redis.set('mainstage:spotlight:cammer', String(identity), 'EX', STATE_CACHE_TTL_S);
-    const nextAt = Date.now() + ROTATE_INTERVAL_MS;
+    const nextAt = Date.now() + interval;
     await redis.set('mainstage:spotlight:nextAt', String(nextAt), 'EX', STATE_CACHE_TTL_S);
   }
 
-  logger.info('[MainStage] cammer added', { identity });
+  logger.info('[MainStage] cammer added', { identity, role });
 
   // Best-effort stats upsert
   upsertCammerStats(identity).catch(() => {});
@@ -515,6 +707,11 @@ async function addCammer(identity) {
   notifyCammerJoined(identity).catch((err) =>
     logger.warn('[MainStage] notifyCammerJoined failed', { identity, error: err.message })
   );
+
+  // Fire mode auto-flip evaluation AFTER the cammer is in the queue + role cached.
+  const creatorsAfter = await countCreatorsInQueue();
+  const humansAfter = await countHumanCammers();
+  await maybeAutoFlipMode('add', creatorsBefore, creatorsAfter, humansAfter);
 
   await emitState();
   return 'added';
@@ -649,6 +846,8 @@ async function addCammerForce(identity) {
   const redis    = getRedis();
   const queueKey = 'mainstage:spotlight:queue';
 
+  const creatorsBefore = await countCreatorsInQueue();
+
   const result = await redis.eval(
     ADD_CAMMER_FORCE_LUA, 2, queueKey, QUEUE_TS_KEY,
     String(identity), String(Date.now()),
@@ -661,18 +860,27 @@ async function addCammerForce(identity) {
 
   await redis.expire(queueKey, STATE_CACHE_TTL_S);
 
+  const role = await fetchIdentityRole(identity);
+  await cacheIdentityRole(identity, role);
+
   const current = await redis.get('mainstage:spotlight:cammer');
   if (!current) {
+    const interval = role === 'creator' ? ROTATE_INTERVAL_CREATOR_MS : ROTATE_INTERVAL_REGULAR_MS;
     await redis.set('mainstage:spotlight:cammer', String(identity), 'EX', STATE_CACHE_TTL_S);
-    const nextAt = Date.now() + ROTATE_INTERVAL_MS;
+    const nextAt = Date.now() + interval;
     await redis.set('mainstage:spotlight:nextAt', String(nextAt), 'EX', STATE_CACHE_TTL_S);
   }
 
-  logger.info('[MainStage] admin cammer force-added', { identity });
+  logger.info('[MainStage] admin cammer force-added', { identity, role });
   upsertCammerStats(identity).catch(() => {});
   notifyCammerJoined(identity).catch((err) =>
     logger.warn('[MainStage] notifyCammerJoined failed (force path)', { identity, error: err.message })
   );
+
+  const creatorsAfter = await countCreatorsInQueue();
+  const humansAfter = await countHumanCammers();
+  await maybeAutoFlipMode('add', creatorsBefore, creatorsAfter, humansAfter);
+
   await emitState();
   return 'added';
 }
@@ -682,16 +890,21 @@ async function removeCammer(identity) {
   const redis    = getRedis();
   const queueKey = 'mainstage:spotlight:queue';
 
+  const creatorsBefore = await countCreatorsInQueue();
+
   // LREM returns the number of elements removed. Only proceed with queue
   // maintenance and logging when the identity was actually present, avoiding
   // spurious state broadcasts and misleading log entries when called for users
   // who were never in the cammer queue.
   const removed = await redis.lrem(queueKey, 0, String(identity));
   await redis.hdel(QUEUE_TS_KEY, String(identity));
+  await forgetIdentityRole(identity);
 
   if (removed === 0) return; // identity was not in the queue — nothing to do
 
-  // If this was the spotlight cammer, advance to the next
+  // If the removed cammer held the spotlight, advance to the next; otherwise
+  // just refresh state. emitState is 200ms-debounced so any downstream flip
+  // in maybeAutoFlipMode below coalesces with this into a single broadcast.
   const current = await redis.get('mainstage:spotlight:cammer');
   if (current === String(identity)) {
     await advanceSpotlight();
@@ -699,70 +912,81 @@ async function removeCammer(identity) {
     await emitState();
   }
   logger.info('[MainStage] cammer removed', { identity });
+
+  const creatorsAfter = await countCreatorsInQueue();
+  const humansAfter = await countHumanCammers();
+  await maybeAutoFlipMode('remove', creatorsBefore, creatorsAfter, humansAfter);
 }
 
 async function setSpotlight(identity) {
   if (!identity) throw new Error('identity required');
   const redis = getRedis();
+  const roles = await readAllCammerRoles();
+  const interval = roles[String(identity)] === 'creator'
+    ? ROTATE_INTERVAL_CREATOR_MS
+    : ROTATE_INTERVAL_REGULAR_MS;
   await redis.set('mainstage:spotlight:cammer', String(identity), 'EX', STATE_CACHE_TTL_S);
-  const nextAt = Date.now() + ROTATE_INTERVAL_MS;
+  const nextAt = Date.now() + interval;
   await redis.set('mainstage:spotlight:nextAt', String(nextAt), 'EX', STATE_CACHE_TTL_S);
   logger.info('[MainStage] spotlight set manually', { identity });
   await emitState();
 }
 
 /**
- * Atomic round-robin advance. Read-modify-write in a single Redis call so
- * two advanceSpotlight invocations (e.g. brief lock-handover window) can't
- * skip a cammer by racing each other's reads. Returns the outgoing identity
- * so the caller can update stats outside the script.
+ * Advance the spotlight to the next cammer with creator priority.
+ *
+ * Ordering rule: creators/performers rotate through first (in queue order),
+ * then regulars fill the gaps. Once all creators have had a turn we cycle
+ * back to the first creator (never leaving the creator pool while it exists).
+ * If no creators are in the queue we round-robin regulars.
+ *
+ * The nextAt timestamp is set based on the incoming spotlight's role — 5 min
+ * for creators, 90s for regulars — so the rotation tick knows when to advance.
  */
-const ADVANCE_LUA = `
-local qk     = KEYS[1]
-local ck     = KEYS[2]
-local nk     = KEYS[3]
-local ttl    = tonumber(ARGV[1])
-local nextAt = ARGV[2]
-local queue  = redis.call('LRANGE', qk, 0, -1)
-if #queue == 0 then
-  redis.call('DEL', ck)
-  redis.call('DEL', nk)
-  return {'', ''}
-end
-local current = redis.call('GET', ck)
-local idx = 0
-if current then
-  for i, v in ipairs(queue) do
-    if v == current then idx = i end
-  end
-end
-local nextIdx = (idx % #queue) + 1
-local nextId  = queue[nextIdx]
-redis.call('SET', ck, nextId, 'EX', ttl)
-redis.call('SET', nk, nextAt, 'EX', ttl)
-return { nextId, current or '' }
-`;
-
 async function advanceSpotlight() {
-  const redis  = getRedis();
-  const nextAt = Date.now() + ROTATE_INTERVAL_MS;
+  const redis = getRedis();
+  const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
 
-  const result = await redis.eval(
-    ADVANCE_LUA, 3,
-    'mainstage:spotlight:queue',
-    'mainstage:spotlight:cammer',
-    'mainstage:spotlight:nextAt',
-    String(STATE_CACHE_TTL_S),
-    String(nextAt),
-  );
+  if (queue.length === 0) {
+    await redis.del('mainstage:spotlight:cammer');
+    await redis.del('mainstage:spotlight:nextAt');
+    await emitState();
+    return;
+  }
 
-  const next    = result[0] || null;
-  const outgoing = result[1] || null;
+  const roles = await readAllCammerRoles();
+  const humanQueue = queue.filter((id) => id !== MEDIA_BOT_IDENTITY);
+  const creators = humanQueue.filter((id) => roles[id] === 'creator');
+  const regulars = humanQueue.filter((id) => roles[id] !== 'creator');
+  const priorityList = creators.length > 0 ? creators : regulars;
+  if (priorityList.length === 0) {
+    // Only the media bot is in the queue — nothing to spotlight.
+    await redis.del('mainstage:spotlight:cammer');
+    await redis.del('mainstage:spotlight:nextAt');
+    await emitState();
+    return;
+  }
 
-  logger.info('[MainStage] spotlight advanced', { next });
+  const current = await redis.get('mainstage:spotlight:cammer');
+  let nextId;
+  const currentIdx = current ? priorityList.indexOf(current) : -1;
+  if (currentIdx === -1) {
+    nextId = priorityList[0];
+  } else {
+    nextId = priorityList[(currentIdx + 1) % priorityList.length];
+  }
 
-  if (outgoing) {
-    updateCammerSpotlightStats(outgoing).catch(() => {});
+  const nextRole = roles[nextId] === 'creator' ? 'creator' : 'regular';
+  const interval = nextRole === 'creator' ? ROTATE_INTERVAL_CREATOR_MS : ROTATE_INTERVAL_REGULAR_MS;
+  const nextAt = Date.now() + interval;
+
+  await redis.set('mainstage:spotlight:cammer', nextId, 'EX', STATE_CACHE_TTL_S);
+  await redis.set('mainstage:spotlight:nextAt', String(nextAt), 'EX', STATE_CACHE_TTL_S);
+
+  logger.info('[MainStage] spotlight advanced', { next: nextId, role: nextRole, intervalMs: interval });
+
+  if (current && current !== nextId) {
+    updateCammerSpotlightStats(current).catch(() => {});
   }
 
   await emitState();
@@ -893,9 +1117,9 @@ async function advanceVideo() {
   await redis.zadd(PLAYLIST_KEY, Date.now(), pick.fileId);
   await redis.expire(PLAYLIST_KEY, STATE_CACHE_TTL_S);
 
-  // Force a media-compatible layout mode
+  // Force a media-compatible layout mode when auto-rotating video.
   const currentMode = await redis.get(MODE_KEY);
-  if (currentMode !== 'cinema' && currentMode !== 'theater' && currentMode !== 'karaoke') {
+  if (currentMode !== 'cinema') {
     await setMode('cinema');
   }
 
@@ -1107,6 +1331,10 @@ async function startRotation() {
   // becomes a no-op once the key is already a hash.
   try { await migrateMediaKeyIfNeeded(); } catch (_) { /* best-effort */ }
 
+  // Prune retired mode values (theater/karaoke/equal) from Redis state so
+  // frontends don't receive a mode they can't render. Idempotent.
+  try { await migrateLegacyModeIfNeeded(); } catch (_) { /* best-effort */ }
+
   async function tryAcquire() {
     const result = await redis.set(LOCK_KEY, _lockToken, 'NX', 'EX', LOCK_TTL_S);
     if (result !== 'OK') {
@@ -1139,18 +1367,23 @@ async function startRotation() {
       }
     }, LOCK_RENEW_MS);
 
-    // Rotation tick — also opportunistically sweeps ghost cammers every tick
+    // Rotation tick — fires at the shorter (90s) cadence but only advances the
+    // spotlight when the per-cammer nextAt timestamp has elapsed. This lets us
+    // hold creators for 5 min without slowing regular rotation.
     _rotationInterval = setInterval(async () => {
       try {
         // Ghost-sweep first so the spotlight rotation operates on a clean queue
         await sweepGhostCammers();
         const mode = await redis.get('mainstage:mode');
         if (mode !== 'spotlight') return;
+        const nextAtRaw = await redis.get('mainstage:spotlight:nextAt');
+        const nextAt = nextAtRaw ? parseInt(nextAtRaw, 10) : 0;
+        if (nextAt && Date.now() < nextAt) return; // still holding current cammer
         await advanceSpotlight();
       } catch (err) {
         logger.error('[MainStage] rotation tick error', { error: err.message });
       }
-    }, ROTATE_INTERVAL_MS);
+    }, ROTATE_INTERVAL_REGULAR_MS);
 
     // Prime Video auto-rotation: fire once shortly after boot so the room
     // isn't silent on first load, then every AUTO_MEDIA_INTERVAL_MS.
