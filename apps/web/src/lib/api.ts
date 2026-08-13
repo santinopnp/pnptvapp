@@ -1491,7 +1491,7 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
   return res.json();
 }
 
-export type WalletCheckoutRail = "usdc" | "rush";
+export type WalletCheckoutRail = "usdc" | "rush" | "eth";
 export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip";
 
 export interface WalletCheckoutInitiateResult {
@@ -1504,6 +1504,10 @@ export interface WalletCheckoutInitiateResult {
   amountUsdc?: number;
   expiresAt?: string;
   gasPolicyId?: string | null;
+  // ETH rail fields
+  amountEth?: number;
+  amountWeiExpected?: string;
+  ethUsdPrice?: number;
   // Ru$h rail fields
   spentBalance?: number;
   spentGifted?: number;
@@ -1601,6 +1605,12 @@ export async function getWalletUsdcBalance(address?: string): Promise<{ ok: true
 export async function getWalletEthBalance(address?: string): Promise<{ ok: true; hasWallet: boolean; address?: string; eth: number; cached?: boolean; reason?: string }> {
   const qs = address ? `?address=${encodeURIComponent(address)}` : "";
   const res = await fetch(`${API_BASE}/api/wallet/balance/eth${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function getWalletEthPrice(): Promise<{ ok: true; priceUsd: number; source: string }> {
+  const res = await fetch(`${API_BASE}/api/wallet/eth-price`, { credentials: "include" });
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }

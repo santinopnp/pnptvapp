@@ -677,6 +677,17 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const [usdcAttestation, setUsdcAttestation] = _useState<{ message: string; attestation: string } | null>(null);
   const [usdcBridgeError, setUsdcBridgeError] = _useState<string | null>(null);
 
+  // Send-crypto sub-panel state. Replaces the home body when sendOpen. Keeps
+  // the widget one-file (no new component) per project convention.
+  const [sendOpen, setSendOpen] = _useState(false);
+  const [sendAsset, setSendAsset] = _useState<"usdc" | "eth">("usdc");
+  const [sendTo, setSendTo] = _useState("");
+  const [sendAmount, setSendAmount] = _useState("");
+  const [sending, setSending] = _useState(false);
+  const [sendTxHash, setSendTxHash] = _useState<string | null>(null);
+  const [sendError, setSendError] = _useState<string | null>(null);
+  const [sendConfirm, setSendConfirm] = _useState(false);
+
   const _usdcBridgeStorageKey = address ? `pnptv.usdcBridge.${address.toLowerCase()}` : null;
 
   // Restore in-flight USDC bridge from localStorage on mount / address change.
@@ -1031,6 +1042,126 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     if (address) window.open(`https://basescan.org/address/${address}`, "_blank", "noopener,noreferrer");
   };
 
+  const resetSend = () => {
+    setSendOpen(false);
+    setSendTo("");
+    setSendAmount("");
+    setSending(false);
+    setSendTxHash(null);
+    setSendError(null);
+    setSendConfirm(false);
+  };
+
+  // Send USDC or ETH from the active wallet to any external address on Base.
+  // Embedded Privy wallets get sponsored gas via the Alchemy Gas Manager
+  // policy; external wallets pay their own gas (needs a dust of ETH on Base).
+  const handleSend = async () => {
+    if (!activeWallet) return;
+    setSendError(null);
+    setSendTxHash(null);
+
+    const to = sendTo.trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+      setSendError("Invalid address. Must be a 0x… Base address.");
+      return;
+    }
+    if (to.toLowerCase() === activeWallet.address.toLowerCase()) {
+      setSendError("Destination is your own wallet.");
+      return;
+    }
+
+    const amtNum = Number(sendAmount);
+    if (!isFinite(amtNum) || amtNum <= 0) {
+      setSendError("Enter an amount greater than 0.");
+      return;
+    }
+
+    if (sendAsset === "usdc") {
+      if (usdc == null || amtNum > usdc + 1e-9) {
+        setSendError("Amount exceeds your USDC balance.");
+        return;
+      }
+    } else {
+      // ETH: keep a small dust for future gas on external wallets. Embedded
+      // is sponsored so we allow the full balance. Users can still hit "Max"
+      // and we'll clamp below.
+      const reserve = isActiveEmbedded ? 0 : 0.00005;
+      if (eth == null || amtNum > eth + 1e-12 || amtNum > Math.max(0, eth - reserve) + 1e-12) {
+        setSendError(
+          isActiveEmbedded
+            ? "Amount exceeds your ETH balance."
+            : `Amount exceeds sendable balance (keep ~0.00005 ETH for gas).`
+        );
+        return;
+      }
+    }
+
+    setSending(true);
+    try {
+      let txHash: `0x${string}`;
+      if (sendAsset === "usdc") {
+        const data = encodeFunctionData({
+          abi: _USDC_ABI,
+          functionName: "transfer",
+          args: [to as `0x${string}`, parseUnits(amtNum.toFixed(6), 6)],
+        });
+        if (isActiveEmbedded) {
+          const res = await privySendTransaction(
+            { chainId: 8453, to: _USDC_BASE, data, value: "0" },
+            { sponsor: true, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+          );
+          txHash = res.hash;
+        } else {
+          const provider = await activeWallet.getEthereumProvider();
+          try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); } catch (_) {}
+          const wc = createWalletClient({
+            account: activeWallet.address as `0x${string}`,
+            chain: base,
+            transport: custom(provider),
+          });
+          txHash = await wc.sendTransaction({ to: _USDC_BASE as `0x${string}`, data, value: 0n });
+        }
+      } else {
+        // Native ETH transfer on Base
+        const valueWei = parseEther(amtNum.toFixed(18));
+        if (isActiveEmbedded) {
+          const res = await privySendTransaction(
+            { chainId: 8453, to: to as `0x${string}`, value: valueWei.toString() },
+            { sponsor: true, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+          );
+          txHash = res.hash;
+        } else {
+          const provider = await activeWallet.getEthereumProvider();
+          try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); } catch (_) {}
+          const wc = createWalletClient({
+            account: activeWallet.address as `0x${string}`,
+            chain: base,
+            transport: custom(provider),
+          });
+          txHash = await wc.sendTransaction({ to: to as `0x${string}`, value: valueWei });
+        }
+      }
+
+      setSendTxHash(txHash);
+      // Optimistic UI + refresh after settlement (~2s on Base).
+      if (sendAsset === "usdc") setUsdc((prev) => (prev == null ? prev : Math.max(0, prev - amtNum)));
+      else setEth((prev) => (prev == null ? prev : Math.max(0, prev - amtNum)));
+      setTimeout(() => refresh(), 3_000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setSendError(isCancel ? "You cancelled the transaction." : msg);
+      if (!isCancel) {
+        reportWalletClientError("sendCrypto", err, {
+          source: "WalletHomeSheet",
+          address, sendAsset, amount: amtNum, to,
+        });
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
   const shortAddress = address
     ? `${address.slice(0, 6)}…${address.slice(-4)}`
     : null;
@@ -1109,6 +1240,190 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 Both work everywhere on PNPtv — pay for PRIME, Ru$h, tips, and calls.
               </p>
             </div>
+          ) : sendOpen ? (
+            <>
+              {/* Send sub-panel — replaces the home body. Back button returns
+                  to the wallet home. Success screen surfaces the tx hash link. */}
+              <div className="flex items-center gap-2 -mt-1">
+                <button
+                  type="button"
+                  onClick={resetSend}
+                  className="text-[11px] px-2 py-1 rounded-md bg-white/[0.06] text-white/80 hover:bg-white/[0.12] transition min-h-[32px]"
+                >
+                  ← Back
+                </button>
+                <p className="text-sm font-bold text-white">Send crypto</p>
+              </div>
+
+              {sendTxHash ? (
+                <div className="space-y-3 text-center py-4">
+                  <p className="text-4xl">✅</p>
+                  <p className="text-sm font-bold text-emerald-300">Sent!</p>
+                  <p className="text-[11px] text-white/70 leading-snug max-w-xs mx-auto">
+                    Your {sendAsset === "usdc" ? "USDC" : "ETH"} transfer has been broadcast. Balances update in ~10 seconds.
+                  </p>
+                  <a
+                    href={`https://basescan.org/tx/${sendTxHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-[11px] px-3 py-1.5 rounded-md bg-white/[0.08] text-white/90 hover:bg-white/[0.14] transition underline"
+                  >
+                    View on Basescan ↗
+                  </a>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={resetSend}
+                      className="mt-2 text-[12px] font-semibold text-white/80 hover:text-white underline"
+                    >
+                      Back to wallet
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Asset picker */}
+                  <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-white/50 px-1 pb-1">
+                      Asset
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSendAsset("usdc")}
+                        className={`text-xs font-semibold px-2 py-2 rounded-lg transition ${
+                          sendAsset === "usdc"
+                            ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
+                            : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="w-4 h-4 rounded-full bg-[#2775ca] text-white text-[9px] font-bold flex items-center justify-center">$</span>
+                          USDC · {usdc == null ? "—" : usdc.toFixed(2)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSendAsset("eth")}
+                        className={`text-xs font-semibold px-2 py-2 rounded-lg transition ${
+                          sendAsset === "eth"
+                            ? "bg-indigo-500/20 text-indigo-200 border border-indigo-500/40"
+                            : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        Ξ ETH · {eth == null ? "—" : eth.toFixed(4)}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-white/40 mt-1.5 px-1">On Base network only.</p>
+                  </div>
+
+                  {/* Recipient address */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-white/60 px-1">
+                      To address
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={sendTo}
+                        onChange={(e) => { setSendTo(e.target.value); setSendError(null); }}
+                        placeholder="0x…"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        className="flex-1 min-w-0 text-xs font-mono px-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-white/25"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const txt = await navigator.clipboard.readText();
+                            if (txt) { setSendTo(txt.trim()); setSendError(null); }
+                          } catch { /* clipboard blocked */ }
+                        }}
+                        className="text-[11px] font-semibold px-2.5 rounded-lg bg-white/[0.08] text-white/80 hover:bg-white/[0.14] transition min-h-[40px]"
+                      >
+                        Paste
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Amount */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-white/60 px-1">
+                      Amount ({sendAsset === "usdc" ? "USDC" : "ETH"})
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={sendAmount}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(",", ".");
+                          if (v === "" || /^\d*\.?\d*$/.test(v)) { setSendAmount(v); setSendError(null); }
+                        }}
+                        placeholder="0.00"
+                        className="flex-1 min-w-0 text-base font-semibold tabular-nums px-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-white/25"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (sendAsset === "usdc" && usdc != null) {
+                            setSendAmount(usdc.toFixed(6).replace(/\.?0+$/, ""));
+                          } else if (sendAsset === "eth" && eth != null) {
+                            const reserve = isActiveEmbedded ? 0 : 0.00005;
+                            const max = Math.max(0, eth - reserve);
+                            setSendAmount(max.toFixed(6).replace(/\.?0+$/, ""));
+                          }
+                          setSendError(null);
+                        }}
+                        className="text-[11px] font-semibold px-3 rounded-lg bg-white/[0.08] text-white/80 hover:bg-white/[0.14] transition min-h-[40px]"
+                      >
+                        Max
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-white/40 px-1">
+                      Balance: {sendAsset === "usdc"
+                        ? (usdc == null ? "—" : `${usdc.toFixed(2)} USDC`)
+                        : (eth == null ? "—" : `${eth.toFixed(6)} ETH`)}
+                      {sendAsset === "eth" && !isActiveEmbedded && " · ~0.00005 ETH reserved for gas"}
+                      {isActiveEmbedded && " · gas sponsored by PNPtv"}
+                    </p>
+                  </div>
+
+                  {sendError && (
+                    <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
+                      {sendError}
+                    </div>
+                  )}
+
+                  {/* Irreversibility warning + confirm gate */}
+                  <label className="flex items-start gap-2 text-[11px] text-amber-100/90 bg-amber-500/[0.08] border border-amber-500/30 rounded-md px-3 py-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sendConfirm}
+                      onChange={(e) => setSendConfirm(e.target.checked)}
+                      className="mt-0.5 accent-amber-400"
+                    />
+                    <span className="leading-snug">
+                      I checked the address. Crypto sends are <b>irreversible</b> — a wrong address means the funds are gone.
+                    </span>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={sending || !sendConfirm || !sendTo || !sendAmount}
+                    className="w-full min-h-[48px] rounded-xl text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: sending ? "#555" : "linear-gradient(135deg,#7B61FF,#3B82F6)" }}
+                  >
+                    {sending
+                      ? "Signing…"
+                      : `↗️ Send ${sendAmount || "0"} ${sendAsset === "usdc" ? "USDC" : "ETH"}`}
+                  </button>
+                </>
+              )}
+            </>
           ) : (
             <>
               {/* Wallet selector — always visible so a PNPtv-embedded user can
@@ -1415,7 +1730,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
               )}
 
               {/* Actions */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {/* Fund with card — Privy's Stripe onramp lands USDC at any
                     destination address, including external wallets. Works for
                     both PNPtv-embedded and Trust/MetaMask. */}
@@ -1439,6 +1754,15 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => { resetSend(); setSendOpen(true); }}
+                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                  style={{ background: "linear-gradient(135deg,#7B61FF,#3B82F6)" }}
+                >
+                  <span className="text-lg leading-none">↗️</span>
+                  <span className="text-[11px]">Send</span>
+                </button>
+                <button
+                  type="button"
                   onClick={openInBasescan}
                   className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
                 >
@@ -1448,10 +1772,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={refresh}
-                  className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                  className="col-span-2 min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex items-center justify-center gap-2"
                 >
                   <span className="text-lg leading-none">🔄</span>
-                  <span className="text-[11px]">Refresh</span>
+                  <span className="text-[11px]">Refresh balances</span>
                 </button>
               </div>
 

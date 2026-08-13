@@ -14945,7 +14945,7 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const userId = req.session?.user?.id;
   const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {} } = req.body || {};
 
-  if (!rail || !['usdc', 'rush'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
+  if (!rail || !['usdc', 'rush', 'eth'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
   const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation']);
   if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
 
@@ -14965,6 +14965,14 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
     if (rail === 'usdc') {
       const result = await walletCheckoutService.initiateUsdcPurchase({
         userId, surface, amountUsd, entitlementSpec: resolvedSpec, metadata,
+      });
+      return res.json({ ok: true, rail, ...result });
+    }
+    if (rail === 'eth') {
+      const ethUsdPrice = await _getEthUsdPrice();
+      if (!ethUsdPrice) return res.status(503).json({ error: 'eth_price_unavailable' });
+      const result = await walletCheckoutService.initiateEthPurchase({
+        userId, surface, amountUsd, ethUsdPrice, entitlementSpec: resolvedSpec, metadata,
       });
       return res.json({ ok: true, rail, ...result });
     }
@@ -15061,13 +15069,26 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
 
   if (surface === 'rush') {
     const pkgId = spec?.packageId ? String(spec.packageId) : null;
-    if (!pkgId) throwErr('packageId required', 400);
-    const DashTokenService = require('../../services/dashTokenService');
-    const pkg = DashTokenService.TOKEN_PACKAGES.find(p => p.id === pkgId);
-    if (!pkg) throwErr('unknown package', 400);
+    if (pkgId) {
+      const DashTokenService = require('../../services/dashTokenService');
+      const pkg = DashTokenService.TOKEN_PACKAGES.find(p => p.id === pkgId);
+      if (!pkg) throwErr('unknown package', 400);
+      return {
+        amountUsd: Number(pkg.usd),
+        resolvedSpec: { tokens: Number(pkg.tokens), packageId: pkg.id },
+      };
+    }
+    // Custom-amount Ru$h purchase — no preset package. Flat 6 Ru$h per USD
+    // (no bonus). Bounded server-side; client input is untrusted. Cap matches
+    // the largest preset package (pkg_5000) so custom never exceeds a route
+    // the DB already supports.
+    const amt = Number(spec?.amountUsd);
+    if (!Number.isFinite(amt) || amt < 1 || amt > 5000) throwErr('Ru$h amount must be $1–$5000', 400);
+    const usd = Math.round(amt * 100) / 100;
+    const tokens = Math.round(usd * 6);
     return {
-      amountUsd: Number(pkg.usd),
-      resolvedSpec: { tokens: Number(pkg.tokens), packageId: pkg.id },
+      amountUsd: usd,
+      resolvedSpec: { tokens, packageId: null },
     };
   }
 
@@ -15145,7 +15166,7 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   // Load the intent to get expected amount + receiving address for RPC verification.
   const { query: dbQuery } = require('../../config/postgres');
   const { rows } = await dbQuery(
-    `SELECT id, user_id, expected_amount_usdc, receiving_address, status
+    `SELECT id, user_id, expected_amount_usdc, receiving_address, status, token
        FROM checkout_intents WHERE id = $1 LIMIT 1`,
     [Number(intentId)]
   );
@@ -15153,6 +15174,18 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   const intent = rows[0];
   if (String(intent.user_id) !== String(userId)) return res.status(403).json({ error: 'intent_not_yours' });
   if (intent.status === 'confirmed') return res.json({ ok: true, alreadyConfirmed: true, intentId });
+
+  // Dispatch by token: ETH parses native transfer, USDC parses ERC20 log.
+  if (String(intent.token).toUpperCase() === 'ETH') {
+    const receipt = await _fetchEthTransferReceipt(txHash, intent.receiving_address);
+    if (!receipt.ok) return res.status(422).json({ error: receipt.reason, txHash });
+    const result = await walletCheckoutService.verifyAndFulfillEth({
+      txHash,
+      fromAddress: receipt.from,
+      amountWeiReceived: receipt.valueWei,
+    });
+    return res.json(result);
+  }
 
   // Fetch on-chain tx receipt + parse USDC Transfer log via Alchemy.
   const receipt = await _fetchUsdcTransferReceipt(txHash, intent.receiving_address);
@@ -15167,6 +15200,86 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   });
   return res.json(result);
 }));
+
+// GET /api/wallet/eth-price — spot ETH/USD used to compute expected_amount_native
+// for ETH-rail intents. 60s Redis-cached, Coinbase spot (no API key needed).
+app.get('/api/wallet/eth-price', asyncHandler(async (_req, res) => {
+  const price = await _getEthUsdPrice();
+  if (!price) return res.status(503).json({ error: 'eth_price_unavailable' });
+  return res.json({ ok: true, priceUsd: price, source: 'coinbase' });
+}));
+
+// In-memory + Redis-cached ETH/USD spot. Called by /initiate for the ETH rail
+// (server-authoritative price snapshot stored on the intent) and by the public
+// price endpoint. 60s TTL is safe — verify tolerates 2% slippage.
+async function _getEthUsdPrice() {
+  const CACHE_KEY = 'wallet:ethUsdSpot';
+  try {
+    const { cache } = require('../../config/redis');
+    const cached = await cache.get(CACHE_KEY).catch(() => null);
+    if (cached) {
+      const n = Number(cached);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  } catch { /* cache optional */ }
+
+  try {
+    const r = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!r.ok) throw new Error(`coinbase ${r.status}`);
+    const j = await r.json();
+    const price = Number(j?.data?.amount);
+    if (!Number.isFinite(price) || price <= 0) throw new Error('bad price payload');
+    try {
+      const { cache } = require('../../config/redis');
+      await cache.set(CACHE_KEY, String(price), 60).catch(() => {});
+    } catch { /* ignore */ }
+    return price;
+  } catch (err) {
+    logger.warn('[wallet/eth-price] coinbase fetch failed', { err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Fetch a Base tx (native ETH transfer) and verify it landed at our receiving
+ * address with status=success. Returns { ok, valueWei, from } or { ok:false, reason }.
+ * Uses eth_getTransactionByHash (for to/value/from) + eth_getTransactionReceipt (status).
+ */
+async function _fetchEthTransferReceipt(txHash, expectedRecipient) {
+  const apiKey = process.env.ALCHEMY_API_KEY;
+  if (!apiKey) return { ok: false, reason: 'alchemy_not_configured' };
+  const url = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+
+  let tx, receipt;
+  try {
+    const [txRes, rcptRes] = await Promise.all([
+      fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionByHash', params: [txHash] }),
+      }),
+      fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'eth_getTransactionReceipt', params: [txHash] }),
+      }),
+    ]);
+    tx = (await txRes.json()).result;
+    receipt = (await rcptRes.json()).result;
+  } catch (err) {
+    logger.warn('[wallet/verify-tx eth] alchemy rpc failed', { err: err.message, txHash });
+    return { ok: false, reason: 'rpc_failed' };
+  }
+  if (!tx || !receipt) return { ok: false, reason: 'tx_not_found_or_unconfirmed' };
+  if (receipt.status !== '0x1') return { ok: false, reason: 'tx_reverted' };
+  if (!tx.to) return { ok: false, reason: 'no_to_field' };
+  if (String(tx.to).toLowerCase() !== String(expectedRecipient).toLowerCase()) {
+    return { ok: false, reason: 'wrong_recipient' };
+  }
+  const valueWei = BigInt(tx.value || '0x0');
+  if (valueWei <= 0n) return { ok: false, reason: 'zero_value' };
+  return { ok: true, valueWei, from: String(tx.from).toLowerCase() };
+}
 
 /**
  * Fetch a Base tx receipt and extract the USDC Transfer amount to our address.

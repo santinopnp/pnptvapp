@@ -5,10 +5,12 @@ import {
   initiateWalletCheckout,
   verifyWalletCheckoutTx,
   getWalletUsdcBalance,
+  getWalletEthBalance,
+  getWalletEthPrice,
   activateTokenCode,
   type TokenPackage,
 } from "@/lib/api";
-import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
 import { WalletCheckoutHero } from "@/components/payments/PayInWalletChips";
@@ -35,16 +37,29 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
+  const { sendTransaction: privySendTransaction } = useSendTransaction();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  const isEmbedded = embeddedWallet?.walletClientType === "privy";
 
   const [packages, setPackages] = useState<TokenPackage[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
 
   const [walletUsdc, setWalletUsdc] = useState<number | null>(null);
+  const [walletEth, setWalletEth] = useState<number | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
   const [payingPackageId, setPayingPackageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ tokens: number } | null>(null);
+
+  // Rail selection + ETH spot for the ETH rail. Spot is refreshed every open;
+  // the initiate call captures its own server-side snapshot for verification.
+  const [rail, setRail] = useState<"usdc" | "eth">("usdc");
+  const [ethUsdPrice, setEthUsdPrice] = useState<number | null>(null);
+
+  // Custom-amount input (USD). When >0, this overrides preset packages.
+  // Server-bounded to $1–$500 with flat 6 Ru$h per USD.
+  const [customUsd, setCustomUsd] = useState<string>("");
+  const [payingCustom, setPayingCustom] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -67,61 +82,146 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       .finally(() => setLoadingPackages(false));
   }, [isOpen]);
 
-  // Load USDC balance on open + when wallet changes
+  // Load USDC + ETH balance + ETH spot price on open. All three drive rail
+  // affordability + custom-amount previews.
   useEffect(() => {
-    if (!isOpen || !authenticated || !embeddedWallet) { setWalletUsdc(null); return; }
+    if (!isOpen || !authenticated || !embeddedWallet) {
+      setWalletUsdc(null); setWalletEth(null); return;
+    }
     setWalletLoading(true);
-    getWalletUsdcBalance()
-      .then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null))
-      .catch(() => setWalletUsdc(null))
-      .finally(() => setWalletLoading(false));
+    Promise.all([
+      getWalletUsdcBalance().catch(() => null),
+      getWalletEthBalance().catch(() => null),
+      getWalletEthPrice().catch(() => null),
+    ]).then(([u, e, p]) => {
+      setWalletUsdc(u && u.hasWallet ? u.usdc : null);
+      setWalletEth(e && e.hasWallet ? e.eth : null);
+      setEthUsdPrice(p && p.priceUsd > 0 ? p.priceUsd : null);
+    }).finally(() => setWalletLoading(false));
   }, [isOpen, authenticated, embeddedWallet?.address]);
 
   if (!isOpen) return null;
 
   const refreshBalance = () => {
     if (!authenticated || !embeddedWallet) return;
-    getWalletUsdcBalance().then((r) => setWalletUsdc(r.hasWallet ? r.usdc : null)).catch(() => {});
+    Promise.all([
+      getWalletUsdcBalance().catch(() => null),
+      getWalletEthBalance().catch(() => null),
+    ]).then(([u, e]) => {
+      setWalletUsdc(u && u.hasWallet ? u.usdc : null);
+      setWalletEth(e && e.hasWallet ? e.eth : null);
+    });
   };
 
-  const handleWalletPay = async (pkg: TokenPackage) => {
+  // Unified pay flow — dispatches USDC transfer or native ETH transfer based
+  // on the intent's rail. Handles both preset packages and custom-amount
+  // purchases: caller passes { rail, spec, expectedTokens }.
+  const _executeIntent = async (
+    railChoice: "usdc" | "eth",
+    spec: Record<string, unknown>,
+    expectedTokens: number,
+    amountUsdOverride: number | null,
+  ): Promise<void> => {
     if (!embeddedWallet) return;
-    const price = Number(pkg.usd);
-    setError(null); setPayingPackageId(pkg.id);
-    try {
-      const intent = await initiateWalletCheckout({
-        rail: "usdc",
-        surface: "rush",
-        amountUsd: price,
-        entitlementSpec: { tokens: Number(pkg.tokens), packageId: pkg.id },
-        metadata: { source: "buy_tokens_modal", packageId: pkg.id },
-      });
-      if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
+    const intent = await initiateWalletCheckout({
+      rail: railChoice,
+      surface: "rush",
+      ...(amountUsdOverride != null ? { amountUsd: amountUsdOverride } : {}),
+      entitlementSpec: { ...spec, ...(amountUsdOverride != null ? { amountUsd: amountUsdOverride } : {}) },
+      metadata: { source: "buy_tokens_modal", ...(spec.packageId ? { packageId: spec.packageId } : { custom: true }) },
+    });
+    if (!intent.receivingAddress) throw new Error("intent_missing_fields");
 
-      const provider = await embeddedWallet.getEthereumProvider();
-      const walletClient = createWalletClient({
-        account: embeddedWallet.address as `0x${string}`,
-        chain: base, transport: custom(provider),
-      });
+    let txHash: `0x${string}`;
+    if (railChoice === "eth") {
+      if (!intent.amountWeiExpected) throw new Error("intent_missing_eth_amount");
+      const valueWei = BigInt(intent.amountWeiExpected);
+      if (isEmbedded) {
+        const res = await privySendTransaction(
+          { chainId: 8453, to: intent.receivingAddress as `0x${string}`, value: valueWei.toString() },
+          { sponsor: true, address: embeddedWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        txHash = res.hash;
+      } else {
+        const provider = await embeddedWallet.getEthereumProvider();
+        try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); } catch (_) {}
+        const walletClient = createWalletClient({
+          account: embeddedWallet.address as `0x${string}`,
+          chain: base, transport: custom(provider),
+        });
+        txHash = await walletClient.sendTransaction({
+          to: intent.receivingAddress as `0x${string}`, value: valueWei,
+        });
+      }
+    } else {
+      // USDC ERC20 transfer
+      if (!intent.amountUsdc) throw new Error("intent_missing_usdc_amount");
       const data = encodeFunctionData({
         abi: USDC_TRANSFER_ABI, functionName: "transfer",
         args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
       });
-      const txHash = await walletClient.sendTransaction({
-        to: USDC_BASE_ADDRESS as `0x${string}`, data, value: 0n,
-      });
-      const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
-      if (!verified.ok) throw new Error(verified.reason || "verify_failed");
-      const credited = verified.rushCredited ?? Number(pkg.tokens);
-      setSuccess({ tokens: credited });
-      refreshBalance();
-      if (onSuccess) onSuccess(credited);
+      if (isEmbedded) {
+        const res = await privySendTransaction(
+          { chainId: 8453, to: USDC_BASE_ADDRESS, data, value: "0" },
+          { sponsor: true, address: embeddedWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        txHash = res.hash;
+      } else {
+        const provider = await embeddedWallet.getEthereumProvider();
+        try { await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }); } catch (_) {}
+        const walletClient = createWalletClient({
+          account: embeddedWallet.address as `0x${string}`,
+          chain: base, transport: custom(provider),
+        });
+        txHash = await walletClient.sendTransaction({
+          to: USDC_BASE_ADDRESS as `0x${string}`, data, value: 0n,
+        });
+      }
+    }
+
+    const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
+    if (!verified.ok) throw new Error(verified.reason || "verify_failed");
+    const credited = verified.rushCredited ?? expectedTokens;
+    setSuccess({ tokens: credited });
+    refreshBalance();
+    if (onSuccess) onSuccess(credited);
+  };
+
+  const handleWalletPay = async (pkg: TokenPackage) => {
+    if (!embeddedWallet) return;
+    setError(null); setPayingPackageId(pkg.id);
+    try {
+      await _executeIntent(
+        rail,
+        { tokens: Number(pkg.tokens), packageId: pkg.id },
+        Number(pkg.tokens),
+        null,
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(/User rejected|user denied|cancel/i.test(msg)
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : msg);
     } finally { setPayingPackageId(null); }
+  };
+
+  const handleCustomPay = async () => {
+    if (!embeddedWallet) return;
+    const usd = Number(customUsd);
+    if (!isFinite(usd) || usd < 1 || usd > 5000) {
+      setError(es ? "Ingresa un monto entre $1 y $5000." : "Enter an amount between $1 and $5000.");
+      return;
+    }
+    setError(null); setPayingCustom(true);
+    try {
+      const tokens = Math.round(usd * 6);
+      await _executeIntent(rail, { tokens }, tokens, usd);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(/User rejected|user denied|cancel/i.test(msg)
+        ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
+        : msg);
+    } finally { setPayingCustom(false); }
   };
 
   const handleFundForPackage = async (pkg: TokenPackage) => {
@@ -204,25 +304,56 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           {/* Hero — one-off marketing pitch shared with every other checkout surface. */}
           <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
 
-          {/* Wallet state summary */}
+          {/* Wallet state summary + rail picker. USDC or ETH — both on Base.
+              Shows live balance for the picked rail; ETH also shows spot USD. */}
           {authenticated && embeddedWallet ? (
-            <div
-              className="rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] px-3 py-2 flex items-center gap-3"
-            >
-              <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
-                <span className="text-lg leading-none">💳</span>
+            <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/[0.06] p-3 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center" style={{ background: "rgba(52,211,153,0.15)" }}>
+                  <span className="text-lg leading-none">💳</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide">
+                    {es ? "Pagar con" : "Pay with"}
+                  </p>
+                  <p className="text-sm font-bold text-white tabular-nums">
+                    {walletLoading
+                      ? (es ? "Consultando…" : "Checking…")
+                      : rail === "usdc"
+                        ? (walletUsdc == null ? (es ? "Sin saldo USDC" : "No USDC balance") : `${walletUsdc.toFixed(2)} USDC · Base`)
+                        : (walletEth == null
+                            ? (es ? "Sin saldo ETH" : "No ETH balance")
+                            : `${walletEth.toFixed(6)} ETH · Base${ethUsdPrice ? ` · $${(walletEth * ethUsdPrice).toFixed(2)}` : ""}`)}
+                  </p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide">
-                  {es ? "Tu billetera" : "Your wallet"}
-                </p>
-                <p className="text-sm font-bold text-white tabular-nums">
-                  {walletLoading
-                    ? (es ? "Consultando…" : "Checking…")
-                    : walletUsdc == null
-                      ? (es ? "Sin saldo USDC" : "No USDC balance")
-                      : `${walletUsdc.toFixed(2)} USDC · Base`}
-                </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setRail("usdc")}
+                  className={`text-xs font-semibold px-2 py-2 rounded-lg transition ${
+                    rail === "usdc"
+                      ? "bg-emerald-500/25 text-emerald-100 border border-emerald-500/50"
+                      : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-[#2775ca] text-white text-[9px] font-bold flex items-center justify-center">$</span>
+                    USDC
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRail("eth")}
+                  disabled={!ethUsdPrice}
+                  className={`text-xs font-semibold px-2 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                    rail === "eth"
+                      ? "bg-indigo-500/25 text-indigo-100 border border-indigo-500/50"
+                      : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  Ξ ETH
+                </button>
               </div>
             </div>
           ) : (
@@ -258,14 +389,116 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
             </div>
           )}
 
-          {/* Package grid — pick a Ru$h pack. When wallet has enough USDC we
-              sign a direct transfer. Otherwise we open Privy's fund modal with
-              the exact amount preselected so the user pays with card / Apple /
-              Google Pay in a single step. */}
+          {/* Custom amount — user types any USD value ($1–$500) and gets flat
+              6 Ru$h per USD. Overrides preset packages. Pays via the selected
+              rail (USDC or ETH) from the wallet balance. */}
+          {authenticated && embeddedWallet && (() => {
+            const usd = Number(customUsd);
+            const validUsd = isFinite(usd) && usd >= 1 && usd <= 5000;
+            const tokens = validUsd ? Math.round(usd * 6) : 0;
+            const ethNeeded = validUsd && ethUsdPrice ? usd / ethUsdPrice : 0;
+            const canAffordCustom = validUsd && (
+              rail === "usdc"
+                ? (walletUsdc != null && walletUsdc + 1e-9 >= usd)
+                : (walletEth != null && ethUsdPrice && walletEth + 1e-12 >= ethNeeded)
+            );
+            const disabledCustom = payingCustom || success !== null || !validUsd || !canAffordCustom;
+
+            // "Max" — pins the amount to spend the full balance on the selected
+            // rail. For ETH, reserves a dust for gas on external wallets only
+            // (embedded gets gas sponsored). Both rails clamp to the $5000
+            // server cap and to 2-decimal precision to survive JSON round-trip.
+            const gasReserveEth = isEmbedded ? 0 : 0.00005;
+            const maxAvailableUsd = rail === "usdc"
+              ? (walletUsdc ?? 0)
+              : (walletEth != null && ethUsdPrice ? Math.max(0, walletEth - gasReserveEth) * ethUsdPrice : 0);
+            const maxSpendableUsd = Math.min(5000, Math.floor(maxAvailableUsd * 100) / 100);
+            const maxEnabled = maxSpendableUsd >= 1 && !payingCustom && !success;
+            const willHitCap = maxAvailableUsd > 5000 + 0.01;
+
+            return (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide">
+                  {es ? "Monto personalizado" : "Custom amount"}
+                </p>
+                <div className="flex gap-2 items-center">
+                  <span className="text-lg text-white/70">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customUsd}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(",", ".");
+                      if (v === "" || /^\d*\.?\d*$/.test(v)) { setCustomUsd(v); setError(null); }
+                    }}
+                    placeholder="0.00"
+                    className="flex-1 min-w-0 text-base font-semibold tabular-nums px-2 py-2 rounded-lg bg-white/[0.06] border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/50"
+                  />
+                  <span className="text-[11px] text-white/50 font-semibold">USD</span>
+                  <button
+                    type="button"
+                    onClick={() => { setCustomUsd(maxSpendableUsd.toFixed(2)); setError(null); }}
+                    disabled={!maxEnabled}
+                    className="text-[11px] font-semibold px-2.5 py-2 rounded-lg bg-white/[0.08] text-white/85 hover:bg-white/[0.14] transition min-h-[36px] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Max
+                  </button>
+                </div>
+                <p className="text-[11px] text-white/60 min-h-[16px]">
+                  {validUsd ? (
+                    <>
+                      → <span className="font-semibold text-white">{tokens.toLocaleString()} Ru$h 💎</span>
+                      {rail === "eth" && ethUsdPrice ? (
+                        <span className="text-white/50"> · ≈ {ethNeeded.toFixed(6)} ETH</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-white/40">
+                      {es ? "Entre $1 y $5000. 6 Ru$h por USD." : "Between $1 and $5000. 6 Ru$h per USD."}
+                    </span>
+                  )}
+                </p>
+                {willHitCap && (
+                  <p className="text-[10px] text-amber-300/80">
+                    {es
+                      ? `Max limitado a $5000 (tu saldo cubre $${maxAvailableUsd.toFixed(2)}).`
+                      : `Max capped at $5000 (your balance covers $${maxAvailableUsd.toFixed(2)}).`}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCustomPay}
+                  disabled={disabledCustom}
+                  className="w-full py-2.5 rounded-lg text-sm font-bold text-white transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: disabledCustom
+                      ? "#333"
+                      : rail === "eth"
+                        ? "linear-gradient(135deg,#7B61FF,#3B82F6)"
+                        : "linear-gradient(135deg,#10b981,#059669)",
+                  }}
+                >
+                  {payingCustom
+                    ? (es ? "Firmando…" : "Signing…")
+                    : validUsd
+                      ? canAffordCustom
+                        ? (rail === "eth"
+                            ? `Ξ ${es ? "Pagar" : "Pay"} ${ethNeeded.toFixed(6)} ETH`
+                            : `${es ? "Pagar" : "Pay"} $${usd.toFixed(2)} USDC`)
+                        : (es ? "Saldo insuficiente" : "Insufficient balance")
+                      : (es ? "Ingresa un monto" : "Enter an amount")}
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Package grid — pick a preset Ru$h pack (bonus tiers). When wallet
+              has enough on the selected rail we sign a direct transfer. USDC-
+              only path falls back to Privy's card onramp for a zero-balance user. */}
           {authenticated && embeddedWallet && (
             <div>
               <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wide mb-2">
-                {es ? "Elige un paquete" : "Choose a package"}
+                {es ? "O elige un paquete (con bono)" : "Or pick a package (with bonus)"}
               </p>
               {loadingPackages ? (
                 <p className="text-xs text-white/40 text-center py-6">{es ? "Cargando paquetes…" : "Loading packages…"}</p>
@@ -277,15 +510,25 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                 <div className="grid grid-cols-2 gap-2">
                   {eligiblePackages.map((pkg) => {
                     const price = Number(pkg.usd);
-                    const canAfford = walletUsdc != null && walletUsdc >= price;
+                    const ethNeeded = ethUsdPrice ? price / ethUsdPrice : 0;
+                    const canAfford = rail === "usdc"
+                      ? (walletUsdc != null && walletUsdc >= price)
+                      : (walletEth != null && ethUsdPrice != null && walletEth >= ethNeeded);
                     const isPaying = payingPackageId === pkg.id;
                     const disabled = isPaying || success !== null;
-                    const onClick = () => canAfford ? handleWalletPay(pkg) : handleFundForPackage(pkg);
+                    // Card fallback is USDC-only (Privy Stripe onramp lands USDC).
+                    const onClick = () => canAfford
+                      ? handleWalletPay(pkg)
+                      : rail === "usdc" ? handleFundForPackage(pkg) : undefined;
                     const subLabel = isPaying
                       ? (es ? "Firmando…" : "Signing…")
                       : canAfford
-                        ? `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`
-                        : `$${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`;
+                        ? (rail === "eth"
+                            ? `Ξ ${ethNeeded.toFixed(6)} ETH`
+                            : `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`)
+                        : rail === "usdc"
+                          ? `$${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`
+                          : (es ? "Sin ETH" : "Not enough ETH");
                     return (
                       <button
                         key={pkg.id}

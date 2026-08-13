@@ -195,6 +195,205 @@ async function initiateUsdcPurchase(opts) {
 }
 
 /**
+ * Create an on-chain ETH checkout intent on Base. Native transfer (no ERC20
+ * contract call). Piggybacks on provider='wallet_usdc' but stores token='ETH'
+ * as the discriminator. Server captures the ETH→USD price at intent time and
+ * stores it in metadata so the verifier can apply a bounded slippage tolerance
+ * against value received on-chain.
+ *
+ * @param {object} opts
+ * @param {string} opts.userId
+ * @param {string} opts.surface
+ * @param {number} opts.amountUsd
+ * @param {number} opts.ethUsdPrice   Server-fetched spot at intent time (USD per ETH)
+ * @param {object} opts.entitlementSpec
+ * @param {object} [opts.metadata={}]
+ * @returns {Promise<{intentId, receivingAddress, amountEth, ethUsdPrice, amountWeiExpected, expiresAt}>}
+ */
+async function initiateEthPurchase(opts) {
+  const {
+    userId, surface, amountUsd, ethUsdPrice, entitlementSpec = {}, metadata = {},
+  } = opts || {};
+
+  if (!userId) throw new Error('walletCheckout: userId required');
+  if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  if (!Number.isFinite(ethUsdPrice) || ethUsdPrice <= 0) throw new Error('walletCheckout: ethUsdPrice must be > 0');
+
+  const receivingAddress = RECEIVING_ADDRESS();
+  if (!receivingAddress) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
+
+  // ETH amount = USD / price. Round to 12 decimals (schema precision) and to
+  // avoid a wei-level rounding mismatch we truncate down slightly so the user
+  // is never asked to send fractionally more than intended.
+  const rawEth = amountUsd / ethUsdPrice;
+  const amountEth = Math.floor(rawEth * 1e12) / 1e12;
+  const amountWeiExpected = BigInt(Math.floor(amountEth * 1e18)).toString();
+
+  const mergedMetadata = {
+    ...metadata,
+    rail: 'eth',
+    ethUsdPriceSnapshot: ethUsdPrice,
+    amountWeiExpected,
+  };
+
+  const { rows } = await query(
+    `INSERT INTO checkout_intents
+       (user_id, surface, provider, amount_usd, expected_amount_usdc, expected_amount_native,
+        status, chain, token, receiving_address, entitlement_spec, metadata, expires_at)
+     VALUES ($1, $2, 'wallet_usdc', $3, $3, $4, 'pending', 'base', 'ETH', $5, $6::jsonb, $7::jsonb,
+             NOW() + ($8 || ' minutes')::interval)
+     RETURNING id, expires_at`,
+    [String(userId), surface, amountUsd, amountEth, receivingAddress,
+     JSON.stringify(entitlementSpec), JSON.stringify(mergedMetadata), INTENT_EXPIRY_MINUTES]
+  );
+
+  const intentId = Number(rows[0].id);
+  const expiresAt = rows[0].expires_at;
+
+  logger.info('[walletCheckout] ETH intent created', {
+    userId, surface, intentId, amountEth, amountUsd, ethUsdPrice, receivingAddress,
+  });
+
+  return {
+    intentId,
+    receivingAddress,
+    amountEth,
+    ethUsdPrice,
+    amountWeiExpected,
+    expiresAt,
+    gasPolicyId: GAS_MANAGER_POLICY_ID(),
+  };
+}
+
+/**
+ * Fulfill an on-chain ETH transfer against a pending intent. Called by
+ * /api/wallet/checkout/verify-tx after the frontend broadcasts. Idempotent
+ * on tx_hash. Applies 2% slippage tolerance on value received vs expected.
+ *
+ * @param {object} opts
+ * @param {string} opts.txHash
+ * @param {string} opts.fromAddress
+ * @param {bigint|string} opts.amountWeiReceived
+ */
+async function verifyAndFulfillEth(opts) {
+  const { txHash, fromAddress } = opts || {};
+  const amountWeiReceived = BigInt(opts?.amountWeiReceived || 0);
+  if (!txHash) throw new Error('walletCheckout: txHash required');
+
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Idempotent claim.
+    const { rows: existingByTx } = await client.query(
+      `SELECT id, status FROM checkout_intents
+         WHERE lower(tx_hash) = lower($1) FOR UPDATE`,
+      [txHash]
+    );
+    if (existingByTx.length > 0 && existingByTx[0].status === 'confirmed') {
+      await client.query('COMMIT');
+      return { ok: true, intentId: existingByTx[0].id, reason: 'already_confirmed' };
+    }
+
+    // Match by tx_hash or by (expected_amount_native, address, sender). ETH
+    // discriminator is token='ETH'. Fallback address match uses users.wallet_address.
+    const amountEthReceived = Number(amountWeiReceived) / 1e18;
+    const { rows: intentRows } = await client.query(
+      `SELECT id, user_id, amount_usd, expected_amount_native, entitlement_spec,
+              surface, receiving_address, metadata
+         FROM checkout_intents
+        WHERE provider = 'wallet_usdc'
+          AND token = 'ETH'
+          AND status = 'pending'
+          AND (
+            lower(tx_hash) = lower($1)
+            OR (
+              tx_hash IS NULL
+              AND expires_at > NOW()
+              AND user_id::text = (
+                SELECT id::text FROM users
+                 WHERE lower(wallet_address) = lower($2) LIMIT 1
+              )
+              -- 2% slippage tolerance on the primary match too.
+              AND ABS(expected_amount_native - $3) <= (expected_amount_native * 0.02)
+            )
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [txHash, fromAddress || '', amountEthReceived]
+    );
+    if (intentRows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'no_matching_intent' };
+    }
+    const intent = intentRows[0];
+
+    // Value guard — allow 2% under (price moved unfavorably during broadcast).
+    const expectedEth = Number(intent.expected_amount_native);
+    const tolerance = expectedEth * 0.02;
+    if (amountEthReceived + 1e-12 < expectedEth - tolerance) {
+      await client.query(
+        `UPDATE checkout_intents SET status = 'failed',
+             grant_result = jsonb_build_object('reason', 'amount_mismatch', 'received_eth', $2::text, 'expected_eth', expected_amount_native::text),
+             tx_hash = $3
+           WHERE id = $1`,
+        [intent.id, amountEthReceived, txHash]
+      );
+      await client.query('COMMIT');
+      logger.warn('[walletCheckout] ETH amount_mismatch', {
+        intentId: intent.id, expected: expectedEth, received: amountEthReceived, txHash,
+      });
+      return { ok: false, reason: 'amount_mismatch', intentId: intent.id };
+    }
+
+    let entitlementSpec;
+    try {
+      entitlementSpec = typeof intent.entitlement_spec === 'string'
+        ? JSON.parse(intent.entitlement_spec)
+        : (intent.entitlement_spec || {});
+    } catch { entitlementSpec = {}; }
+
+    const fulfillment = await _fulfill(client, {
+      userId: intent.user_id,
+      entitlementSpec,
+      surface: intent.surface,
+      provider: 'wallet_usdc',
+      intentId: intent.id,
+      amountUsd: Number(intent.amount_usd),
+    });
+    const entitlementId = fulfillment.entitlementId;
+
+    await client.query(
+      `UPDATE checkout_intents
+         SET status = 'confirmed', fulfilled_at = NOW(),
+             tx_hash = $2, from_address = $3, confirmed_at = NOW(),
+             grant_result = jsonb_build_object('entitlement_id', $4::bigint, 'received_eth', $5::text, 'rush_credited', $6::int)
+       WHERE id = $1`,
+      [intent.id, txHash, fromAddress || null, entitlementId, String(amountEthReceived), fulfillment.rushCredited || 0]
+    );
+
+    await client.query('COMMIT');
+    _invalidateCaches(intent.user_id).catch(() => {});
+
+    logger.info('[walletCheckout] ETH purchase fulfilled', {
+      intentId: intent.id, userId: intent.user_id, surface: intent.surface,
+      entitlementId, rushCredited: fulfillment.rushCredited || 0, txHash,
+      amountEthReceived, amountUsd: Number(intent.amount_usd),
+    });
+
+    return { ok: true, intentId: intent.id, entitlementId, rushCredited: fulfillment.rushCredited || 0 };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Called from Alchemy webhook after an on-chain USDC transfer is observed.
  * Verifies the tx matches an outstanding intent, grants entitlement, marks
  * intent fulfilled. Idempotent on tx_hash — replaying the same webhook is
@@ -629,7 +828,9 @@ function requireWalletForSurface(surface) {
 module.exports = {
   initiateRushPurchase,
   initiateUsdcPurchase,
+  initiateEthPurchase,
   verifyAndFulfillUsdc,
+  verifyAndFulfillEth,
   requireWalletForSurface,
   // Constants exposed for tests / callers
   USDC_BASE_CONTRACT,
