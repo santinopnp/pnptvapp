@@ -880,6 +880,18 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               <span style={{ fontSize: "0.36em", marginTop: "0.55em", opacity: 0.8 }}>$</span>
               <span>100</span>
             </div>
+            <span
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#ff9933",
+                textAlign: "center",
+                letterSpacing: "0.02em",
+              }}
+            >
+              {s.chargeCurrencyNote}
+            </span>
           </div>
 
           {/* Benefits list */}

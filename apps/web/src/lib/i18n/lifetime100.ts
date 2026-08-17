@@ -11,6 +11,7 @@ export const strings = {
     oldPrice: "$250",
     newPrice: "$100",
     limitedBadge: "FOUNDERS PRICE · LIMITED SPOTS",
+    chargeCurrencyNote: "Charged in Colombian Pesos (COP) — approx. $100 USD",
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
@@ -116,6 +117,7 @@ export const strings = {
     oldPrice: "$250",
     newPrice: "$100",
     limitedBadge: "PRECIO DE FUNDADORES · CUPOS LIMITADOS",
+    chargeCurrencyNote: "Se cobra en Pesos Colombianos (COP) — aprox. $100 USD",
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [

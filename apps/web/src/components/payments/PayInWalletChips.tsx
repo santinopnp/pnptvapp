@@ -1082,16 +1082,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
         return;
       }
     } else {
-      // ETH: keep a small dust for future gas on external wallets. Embedded
-      // is sponsored so we allow the full balance. Users can still hit "Max"
-      // and we'll clamp below.
-      const reserve = isActiveEmbedded ? 0 : 0.00005;
+      // ETH: always reserve a small dust for gas. Gas Manager sponsorship is
+      // scoped to specific contracts (CCTP), not arbitrary sends, so user
+      // always pays their own gas out of ETH balance on Base (~$0.001).
+      const reserve = 0.00005;
       if (eth == null || amtNum > eth + 1e-12 || amtNum > Math.max(0, eth - reserve) + 1e-12) {
-        setSendError(
-          isActiveEmbedded
-            ? "Amount exceeds your ETH balance."
-            : `Amount exceeds sendable balance (keep ~0.00005 ETH for gas).`
-        );
+        setSendError(`Amount exceeds sendable balance (keep ~0.00005 ETH for gas).`);
         return;
       }
     }
@@ -1106,9 +1102,12 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           args: [to as `0x${string}`, parseUnits(amtNum.toFixed(6), 6)],
         });
         if (isActiveEmbedded) {
+          // sponsor:false — Alchemy Gas Manager policy only whitelists CCTP
+          // receive on Base, not arbitrary sends. Base gas is ~$0.001; user
+          // pays from their own ETH.
           const res = await privySendTransaction(
             { chainId: 8453, to: _USDC_BASE, data, value: "0" },
-            { sponsor: true, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+            { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
           );
           txHash = res.hash;
         } else {
@@ -1127,7 +1126,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
         if (isActiveEmbedded) {
           const res = await privySendTransaction(
             { chainId: 8453, to: to as `0x${string}`, value: valueWei.toString() },
-            { sponsor: true, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+            { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
           );
           txHash = res.hash;
         } else {
@@ -1371,8 +1370,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                           if (sendAsset === "usdc" && usdc != null) {
                             setSendAmount(usdc.toFixed(6).replace(/\.?0+$/, ""));
                           } else if (sendAsset === "eth" && eth != null) {
-                            const reserve = isActiveEmbedded ? 0 : 0.00005;
-                            const max = Math.max(0, eth - reserve);
+                            const max = Math.max(0, eth - 0.00005);
                             setSendAmount(max.toFixed(6).replace(/\.?0+$/, ""));
                           }
                           setSendError(null);
@@ -1386,8 +1384,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                       Balance: {sendAsset === "usdc"
                         ? (usdc == null ? "—" : `${usdc.toFixed(2)} USDC`)
                         : (eth == null ? "—" : `${eth.toFixed(6)} ETH`)}
-                      {sendAsset === "eth" && !isActiveEmbedded && " · ~0.00005 ETH reserved for gas"}
-                      {isActiveEmbedded && " · gas sponsored by PNPtv"}
+                      {sendAsset === "eth" && " · ~0.00005 ETH reserved for gas"}
                     </p>
                   </div>
 

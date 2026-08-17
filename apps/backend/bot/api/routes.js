@@ -11736,26 +11736,20 @@ app.get('/api/wallet/presale-status', limiter, asyncHandler(async (req, res) => 
   }
 }));
 
-// POST /api/wallet/buy-nowpayments — RETIRED 2026-08-09. Wallet USDC on Base
-// via /api/wallet/usdc/initiate + verify is the only inbound crypto rail.
-// Returns 410 Gone so any stale client (mobile app cache, resumed session)
-// gets a clear signal to reload; existing in-flight orders continue to
-// fulfil through the webhook + reconciler for ~14 days.
-app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, (_req, res) => {
-  return res.status(410).json({
-    success: false,
-    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
-    code: 'NOWPAYMENTS_RETIRED',
-  });
-});
-
-// (Legacy handler follows as dead code — kept for grep archaeology.)
-app.post('/__np_retired_stub__buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+// POST /api/wallet/buy-nowpayments — re-enabled 2026-08-15 as fallback rail so
+// users without Base USDC can pay in any NowPayments-supported coin. Wallet
+// checkout on Base remains the primary path (WalletPayCard); this endpoint
+// serves the "Pay with any crypto" fallback.
+app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const { packageId, payCurrency: rawPayCurrency } = req.body;
   if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
 
-  const ALLOWED_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
+  // Accept any NP-supported coin. When null, NP shows the full picker on the invoice page.
+  const ALLOWED_PAY_CURRENCIES = new Set([
+    'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
+    'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+  ]);
   const payCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
 
@@ -12725,18 +12719,12 @@ app.post('/__np_retired_stub__usdc-subscribe', requireSessionAuth, usdcSubscribe
   return res.json({ success: true, orderId, invoiceUrl, planName: planDisplayName, usdAmount, ...npPayInfo });
 }));
 
-// RETIRED 2026-08-09 — NowPayments hosted invoice replaced by wallet checkout.
-app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, (_req, res) => {
-  return res.status(410).json({
-    success: false,
-    error: 'NowPayments retired. Use wallet checkout (USDC on Base).',
-    code: 'NOWPAYMENTS_RETIRED',
-  });
-});
-
-app.post('/__np_retired_stub__usdc-prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
+// Re-enabled 2026-08-15 as "Pay with any crypto" fallback for plans checkout.
+// Primary path is wallet USDC on Base (WalletPayCard); this creates a hosted
+// NowPayments invoice for users who prefer BTC / USDT / DOGE / LTC / XMR / etc.
+app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLimiter, asyncHandler(async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).json({ success: false, error: 'USDC payments are not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
+    return res.status(503).json({ success: false, error: 'Crypto fallback is not configured.', code: 'NOWPAYMENTS_NOT_CONFIGURED' });
   }
 
   const user = req.session.user;
@@ -12747,7 +12735,10 @@ app.post('/__np_retired_stub__usdc-prepare', requireSessionAuth, usdcPrepareLimi
     return res.status(400).json({ success: false, error: 'Invalid email address' });
   }
 
-  const ALLOWED_PAY_CURRENCIES_PREPARE = new Set(['eth', 'usdcerc20']);
+  const ALLOWED_PAY_CURRENCIES_PREPARE = new Set([
+    'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
+    'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+  ]);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;
 
@@ -15161,6 +15152,23 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   const intent = rows[0];
   if (String(intent.user_id) !== String(userId)) return res.status(403).json({ error: 'intent_not_yours' });
   if (intent.status === 'confirmed') return res.json({ ok: true, alreadyConfirmed: true, intentId });
+
+  // Pre-write tx_hash on the intent so the service's primary match by
+  // lower(tx_hash) succeeds — otherwise the fallback path requires
+  // users.wallet_address, which is empty for wallet-only users. Idempotent:
+  // if this tx_hash is already on another intent, the UNIQUE constraint
+  // trips and we surface tx_hash_already_used.
+  try {
+    await dbQuery(
+      `UPDATE checkout_intents SET tx_hash = $1 WHERE id = $2 AND tx_hash IS NULL`,
+      [txHash, Number(intentId)]
+    );
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'tx_hash_already_used', txHash });
+    }
+    throw err;
+  }
 
   // Dispatch by token: ETH parses native transfer, USDC parses ERC20 log.
   if (String(intent.token).toUpperCase() === 'ETH') {

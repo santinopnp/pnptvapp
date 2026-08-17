@@ -13,6 +13,7 @@ import {
   assertPaymentUrl,
   getWalletBalance,
   paySubscriptionWithTokens,
+  prepareUsdcSubscription,
   type SubscriptionPlan,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -396,6 +397,46 @@ export default function Subscribe() {
 
   // BTC polling effect removed 2026-07-31 — BTCPay retired.
   // Dash polling effect removed 2026-07-31 — Dash/BTCPay retired.
+
+  // "Pay with any crypto" fallback — opens a hosted NowPayments invoice in a
+  // centered popup. NP checkout cannot be iframed (HTTP downgrade + 3P cookie
+  // blocking), so window.open is required. Success is picked up by the polling
+  // effect via getPaymentStatus on the orderId stored in sessionStorage.
+  const [npFallbackLoading, setNpFallbackLoading] = useState<string | null>(null);
+  const openNpFallback = useCallback(async (planId: string) => {
+    setNpFallbackLoading(planId);
+    setError(null);
+    try {
+      const res = await prepareUsdcSubscription(planId);
+      if (!res.success || !res.invoiceUrl || !res.orderId) {
+        throw new Error(res.error || "no_url");
+      }
+      assertPaymentUrl(res.invoiceUrl);
+      try { sessionStorage.setItem("pnp_pending_payment", res.orderId); } catch {}
+      const width = 480, height = 720;
+      const left = Math.max(0, Math.round((window.outerWidth - width) / 2 + (window.screenX || 0)));
+      const top = Math.max(0, Math.round((window.outerHeight - height) / 2 + (window.screenY || 0)));
+      const popup = window.open(
+        res.invoiceUrl,
+        "pnp_nowpayments",
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+      );
+      if (!popup) {
+        // Popup blocked — fall back to same-tab redirect.
+        window.location.href = res.invoiceUrl;
+        return;
+      }
+      setPollingPaymentId(res.orderId);
+      trackEvent("payment_started", { plan: planId, provider: "nowpayments_fallback" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(t.lang === "es"
+        ? `No se pudo abrir el pago con cripto: ${msg}`
+        : `Could not open crypto payment: ${msg}`);
+    } finally {
+      setNpFallbackLoading(null);
+    }
+  }, [t.lang]);
 
   // Derive current tier display from user object
   function renderTierBanner() {
@@ -861,7 +902,22 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
-                {/* NP crypto picker + hosted-invoice panel removed 2026-08-09. */}
+                {/* "Pay with any crypto" fallback — hosted NowPayments invoice
+                    for users without Base USDC. Popup-based per NP iframe rules. */}
+                <div className="w-full mt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    disabled={npFallbackLoading === plan.id}
+                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 disabled:opacity-50"
+                  >
+                    {npFallbackLoading === plan.id
+                      ? (t.lang === "es" ? "Abriendo…" : "Opening…")
+                      : (t.lang === "es"
+                        ? "¿Prefieres otra cripto? Paga con BTC, USDT, DOGE, LTC, XMR…"
+                        : "Prefer another crypto? Pay with BTC, USDT, DOGE, LTC, XMR…")}
+                  </button>
+                </div>
               </div>
             </div>
             </div>
@@ -1050,7 +1106,22 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
-                {/* NP crypto picker + hosted-invoice panel removed 2026-08-09. */}
+                {/* "Pay with any crypto" fallback — hosted NowPayments invoice
+                    for users without Base USDC. Popup-based per NP iframe rules. */}
+                <div className="w-full mt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    disabled={npFallbackLoading === plan.id}
+                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 disabled:opacity-50"
+                  >
+                    {npFallbackLoading === plan.id
+                      ? (t.lang === "es" ? "Abriendo…" : "Opening…")
+                      : (t.lang === "es"
+                        ? "¿Prefieres otra cripto? Paga con BTC, USDT, DOGE, LTC, XMR…"
+                        : "Prefer another crypto? Pay with BTC, USDT, DOGE, LTC, XMR…")}
+                  </button>
+                </div>
               </div>
             </div>
             </div>
