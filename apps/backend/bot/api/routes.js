@@ -10475,25 +10475,12 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
     }
 
     if (video.directus_file_id) {
-      const directusInternal = process.env.DIRECTUS_URL || process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055';
-      const upstreamUrl = `${directusInternal}/assets/${video.directus_file_id}`;
-      const upstreamHeaders = {};
-      if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'];
-      if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
-      const upstream = await axios({
-        method: 'GET',
-        url: upstreamUrl,
-        responseType: 'stream',
-        headers: upstreamHeaders,
-        validateStatus: (s) => s < 500,
-        timeout: 10000,
-      });
-      res.status(upstream.status);
-      for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
-        if (upstream.headers[h]) res.set(h, upstream.headers[h]);
-      }
-      res.set('Cache-Control', 'private, max-age=3600');
-      upstream.data.pipe(res);
+      // Internal Directus proxy stopped working after admin token permissions
+      // were narrowed (returns 403 on directus_files). Redirect to the public
+      // CMS URL — access check above has already run, and the CMS asset URL is
+      // already publicly reachable (no additional exposure).
+      const directusPublic = (process.env.DIRECTUS_PUBLIC_URL || 'https://cms.pnptv.app').replace(/\/$/, '');
+      return res.redirect(302, `${directusPublic}/assets/${video.directus_file_id}`);
     } else if (video.video_url && video.video_url.startsWith('/uploads/')) {
       const localPath = path.join(__dirname, '../../../../public', video.video_url);
       if (!fs.existsSync(localPath)) {
