@@ -780,7 +780,12 @@ function ChannelDetailView({
   const renderVideoCard = (v: ChannelVideo) => {
     const isEditing = editingVideoId === v.id;
     const isDeleting = deletingVideoId === v.id;
-    const isProcessing = v.status === "processing" || v.mux_status === "preparing" || v.mux_status === "waiting";
+    // Legacy Directus uploads (mux_upload_id NULL, video_url set) sit at
+    // mux_status='waiting' forever — the reconciler skips them. Only flag as
+    // processing when there is genuinely no playable URL yet.
+    const hasPlayableUrl = !!v.mux_playback_id || !!v.video_url;
+    const isProcessing = v.status === "processing"
+      || ((v.mux_status === "preparing" || v.mux_status === "waiting") && !hasPlayableUrl);
     const duration = formatDuration(v.duration_sec);
 
     // Thumbnail fallback chain: gif_url (hover only) → thumbnail_url → placeholder
