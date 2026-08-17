@@ -24,6 +24,8 @@ export const strings = {
 
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Good to know",
+    noticeManualActivation:
+      "Activation is done manually — usually within 2 hours, up to 24 max. That hands-on onboarding is one of the reasons we can offer this at $100 instead of $250.",
     noticeFundraising:
       "Your $100 goes directly to building PNPtv — founders' price while we finish.",
     noticeEarlyAccess:
@@ -130,6 +132,8 @@ export const strings = {
 
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Bueno saber",
+    noticeManualActivation:
+      "La activación se hace manualmente — normalmente en menos de 2 horas, máximo 24. Esa atención personal es una de las razones por las que podemos ofrecerlo a $100 en vez de $250.",
     noticeFundraising:
       "Tu $100 va directamente a construir PNPtv — precio de fundadores mientras terminamos.",
     noticeEarlyAccess:

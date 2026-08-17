@@ -952,6 +952,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               listStyleType: "disc",
             }}
           >
+            <li style={{ marginBottom: 8 }}>{s.noticeManualActivation}</li>
             <li style={{ marginBottom: 8 }}>{s.noticeFundraising}</li>
             <li style={{ marginBottom: 8 }}>{s.noticeEarlyAccess}</li>
             <li>{s.noticeInProgress}</li>
