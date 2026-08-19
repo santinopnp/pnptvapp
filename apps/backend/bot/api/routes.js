@@ -12563,6 +12563,130 @@ const usdcPrepareLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Signed NowPayments redirect — used by mass DM/Telegram broadcasts so each
+// button in a message can 302 straight to a hosted NP invoice for the correct
+// user + plan + crypto. HMAC-SHA256 over SESSION_SECRET + short-lived exp so a
+// leaked URL can't be reused past its window.
+// ─────────────────────────────────────────────────────────────────────────────
+const npGoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const NP_GO_ALLOWED_PLANS = new Set(['lifetime80', 'yearly50']);
+const NP_GO_ALLOWED_PAY = new Set(['usdcbase', 'eth', 'btc']);
+
+function npGoSign(plan, pay, uid, exp) {
+  const secret = process.env.SESSION_SECRET || '';
+  return crypto.createHmac('sha256', secret)
+    .update(`${plan}|${pay}|${uid}|${exp}`)
+    .digest('hex');
+}
+
+function npGoVerify(plan, pay, uid, exp, sig) {
+  const expected = npGoSign(plan, pay, uid, exp);
+  try {
+    if (expected.length !== String(sig).length) return false;
+    return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(String(sig), 'hex'));
+  } catch { return false; }
+}
+
+app.get('/api/pay/np-go', npGoLimiter, asyncHandler(async (req, res) => {
+  const { plan, pay, u, exp, sig } = req.query;
+  if (!plan || !pay || !u || !exp || !sig) {
+    return res.status(400).send('Missing parameters.');
+  }
+  const expNum = Number(exp);
+  if (!Number.isFinite(expNum) || expNum < Math.floor(Date.now() / 1000)) {
+    return res.status(410).send('This payment link has expired. Please open PNPtv! to get a fresh one.');
+  }
+  if (!NP_GO_ALLOWED_PLANS.has(String(plan))) return res.status(400).send('Unknown plan.');
+  if (!NP_GO_ALLOWED_PAY.has(String(pay))) return res.status(400).send('Unsupported currency.');
+  if (!npGoVerify(String(plan), String(pay), String(u), String(exp), String(sig))) {
+    return res.status(403).send('Invalid signature.');
+  }
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).send('Crypto payments are temporarily unavailable.');
+  }
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const userRes = await dbQuery(
+    'SELECT id, email FROM users WHERE id = $1 AND is_deleted IS NOT TRUE',
+    [String(u)]
+  );
+  if (userRes.rows.length === 0) return res.status(404).send('User not found.');
+  const dbUser = userRes.rows[0];
+
+  const planRes = await dbQuery('SELECT id, display_name, name, price FROM plans WHERE id = $1 AND active = true', [String(plan)]);
+  if (planRes.rows.length === 0) return res.status(404).send('Plan not available.');
+  const planRow = planRes.rows[0];
+  const usdAmount = parseFloat(planRow.price);
+  const planDisplayName = planRow.display_name || planRow.name;
+
+  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
+  const orderId = `pnptv-npgo-${dbUser.id}-${Date.now()}`;
+
+  let invoiceUrl;
+  let nowpaymentsInvoiceId;
+  try {
+    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
+      price_amount: usdAmount,
+      price_currency: 'usd',
+      pay_currency: String(pay),
+      order_id: orderId,
+      order_description: `${planDisplayName} – PNPtv!`,
+      ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
+      success_url: `${webappUrl}/subscribe?nowpayments=success&order=${encodeURIComponent(orderId)}`,
+      cancel_url: `${webappUrl}/subscribe`,
+      ...(dbUser.email ? { customer_email: dbUser.email } : {}),
+    }, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    nowpaymentsInvoiceId = paymentResp.data?.id;
+    invoiceUrl = paymentResp.data?.invoice_url;
+    if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
+    if (!invoiceUrl) invoiceUrl = `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+  } catch (err) {
+    logger.error('[NP-GO] NowPayments invoice creation failed', {
+      userId: dbUser.id, plan, pay, error: err.response?.data || err.message,
+    });
+    return res.status(502).send('Could not reach the payment provider. Please try again in a minute.');
+  }
+
+  await dbQuery(
+    `INSERT INTO dash_subscription_orders
+       (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+     ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+    [
+      String(dbUser.id),
+      String(plan),
+      dbUser.email || null,
+      usdAmount,
+      orderId,
+      JSON.stringify({
+        provider: 'nowpayments',
+        flow: 'hosted',
+        source: 'np-go-broadcast',
+        invoiceUrl,
+        nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
+        payCurrency: String(pay),
+      }),
+    ]
+  );
+
+  logger.info('[NP-GO] Redirecting to NowPayments checkout', {
+    userId: dbUser.id, plan, pay, orderId, usdAmount,
+  });
+  return res.redirect(302, invoiceUrl);
+}));
+
+
 // Subscribable (recurring) plan IDs → NOWPayments subscription plan ID env var names
 const NOWPAYMENTS_SUBSCRIPTION_PLAN_MAP = {
   'prime-week-pass-7d': 'NOWPAYMENTS_PLAN_WEEKLY',
