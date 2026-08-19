@@ -1056,6 +1056,104 @@ class CreatorPayoutService {
   }
 
   /**
+   * Sunday 10:00 Bogota (= 15:00 UTC) cron. Read-only preview of the
+   * eligible-creators list that runWeeklyPayoutProposals will process on
+   * Monday 09:00 Bogota. Posts the batch to Slack (#ops-payments) so ops
+   * can verify amounts + payout methods before the real cron fires. Does
+   * NOT reserve earnings and does NOT create approval rows.
+   */
+  static async runWeeklyPayoutPreview() {
+    logger.info('CreatorPayoutService: running weekly payout preview');
+    // Find the next Monday in Bogota. On the scheduled Sunday tick it's tomorrow;
+    // on any other day (manual smoke tests) it's still the upcoming Monday.
+    const nowBogotaMs = Date.now() - 5 * 3600 * 1000;
+    const bNow = new Date(nowBogotaMs);
+    const dow = bNow.getUTCDay(); // 0=Sun..6=Sat
+    const daysAhead = ((1 - dow + 7) % 7) || 7; // 1..7 (never 0 — always future Monday)
+    const nextMondayDate = new Date(Date.UTC(bNow.getUTCFullYear(), bNow.getUTCMonth(), bNow.getUTCDate() + daysAhead));
+    const nextMonday = nextMondayDate.toISOString().slice(0, 10);
+    const rateCop = await this.getUsdCopRate();
+
+    let rows;
+    try {
+      const result = await query(`
+        SELECT
+          ce.creator_id,
+          COALESCE(SUM(ce.amount_creator), 0)::numeric   AS total_creator,
+          MAX(u.username)                                 AS username,
+          MAX(u.first_name)                               AS first_name,
+          MAX(u.country)                                  AS country,
+          MAX(u.creator_dash_address)                     AS creator_dash_address,
+          MAX(u.meru_account)                             AS meru_account,
+          MAX(u.fiat_payout_method)                       AS fiat_payout_method,
+          MAX(u.fiat_payout_account)                      AS fiat_payout_account,
+          MAX(u.creator_payout_destinations::text)::jsonb AS creator_payout_destinations
+        FROM creator_earnings ce
+        LEFT JOIN users u ON u.id = ce.creator_id
+        WHERE ce.status  = 'available'
+          AND ce.paid_at IS NULL
+        GROUP BY ce.creator_id
+        HAVING COALESCE(SUM(ce.amount_creator), 0) >= $1
+        ORDER BY total_creator DESC
+      `, [WEEKLY_MINIMUM_USD]);
+      rows = result.rows;
+    } catch (err) {
+      logger.error('runWeeklyPayoutPreview: fetch failed', { error: err.message });
+      return { success: false, error: err.message };
+    }
+
+    let totalUsd = 0;
+    let missingMethod = 0;
+    const bullets = rows.map((row) => {
+      const amountUsd = Number(row.total_creator);
+      totalUsd += amountUsd;
+      const method = this._pickPreferredMethod(row);
+      if (!method) missingMethod++;
+      const methodLabel = method ? method.label : ':warning: NO METHOD';
+      const handle = row.username || row.first_name || row.creator_id;
+      const country = row.country ? ` (${row.country})` : '';
+      return `• *${handle}*${country} — $${amountUsd.toFixed(2)} · ${methodLabel}`;
+    });
+
+    const totalCop = Math.round(totalUsd * rateCop);
+    const header = `:money_with_wings: *Weekly payout preview — for Monday ${nextMonday}*`;
+    const subheader = rows.length === 0
+      ? `_No creators above the $${WEEKLY_MINIMUM_USD} threshold this week._`
+      : `${rows.length} creator${rows.length === 1 ? '' : 's'} · total *$${totalUsd.toFixed(2)} USD* (~$${totalCop.toLocaleString('en-US')} COP)${missingMethod ? ` · :warning: ${missingMethod} without payout method` : ''}`;
+    const footer = `_Preview only — proposals run Monday 09:00 Bogotá. Reply here if anything looks wrong._`;
+    const text = [header, subheader, ...(rows.length ? ['', ...bullets] : []), '', footer].join('\n');
+
+    const channel = process.env.SLACK_OPS_PAYMENTS_CHANNEL;
+    const botToken = process.env.SLACK_BOT_TOKEN;
+    if (!channel || !botToken) {
+      logger.warn('runWeeklyPayoutPreview: SLACK_OPS_PAYMENTS_CHANNEL or SLACK_BOT_TOKEN missing — skipping post');
+      return { success: false, error: 'slack config missing', eligible: rows.length, totalUsd };
+    }
+    try {
+      const res = await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ channel, text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(`Slack ${res.status}: ${data.error || 'unknown'}`);
+      }
+    } catch (err) {
+      logger.error('runWeeklyPayoutPreview: slack post failed', { error: err.message });
+      return { success: false, error: err.message, eligible: rows.length, totalUsd };
+    }
+
+    logger.info('runWeeklyPayoutPreview: complete', {
+      eligible: rows.length, totalUsd, missingMethod,
+    });
+    return { success: true, eligible: rows.length, totalUsd, missingMethod };
+  }
+
+  /**
    * Monday 16:00 Bogota cron. Any row still in 'proposed' state past the
    * deadline expires and its reserved earnings roll back to 'available' so
    * they're picked up in next week's batch.

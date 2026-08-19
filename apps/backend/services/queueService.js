@@ -294,6 +294,13 @@ async function initializeQueues() {
     jobId: 'cron-creator-payout-remind',
   });
 
+  // Weekly payout preview to Slack #ops-payments — Sundays 10:00 America/Bogota (= 15:00 UTC)
+  await cronQueue.add('creator-weekly-preview', {}, {
+    repeat: { pattern: '0 15 * * 0', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-creator-weekly-preview',
+  });
+
   // Weekly payout proposal — Mondays 09:00 America/Bogota (= 14:00 UTC)
   await cronQueue.add('creator-weekly-proposal', {}, {
     repeat: { pattern: '0 14 * * 1', tz: 'UTC' },
@@ -495,6 +502,15 @@ async function initializeQueues() {
     repeat: { pattern: '*/10 * * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-crypto-alert-stuck',
+  });
+
+  // Crypto on-chain payment: retry grant for rows stuck in grant_failed —
+  // every 15 min. Recovers users whose on-chain payment landed but whose
+  // entitlement grant threw a transient error on the original webhook.
+  await cronQueue.add('crypto-reconcile-grant-failed', {}, {
+    repeat: { pattern: '*/15 * * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crypto-reconcile-grant-failed',
   });
 
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');

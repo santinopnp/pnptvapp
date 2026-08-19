@@ -566,6 +566,14 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'creator-weekly-preview': {
+      const CreatorPayoutService = _safeRequire('../creatorPayoutService');
+      if (!CreatorPayoutService) { logger.warn('[BullMQ] creator-weekly-preview: service not found'); return; }
+      const results = await CreatorPayoutService.runWeeklyPayoutPreview();
+      logger.info('Weekly creator payout preview completed', results);
+      return;
+    }
+
     case 'creator-weekly-deadline': {
       const CreatorPayoutService = _safeRequire('../creatorPayoutService');
       if (!CreatorPayoutService) { logger.warn('[BullMQ] creator-weekly-deadline: service not found'); return; }
@@ -937,6 +945,13 @@ async function cronProcessor(job) {
       const CryptoPaymentService = _safeRequire('../cryptoPaymentService');
       if (!CryptoPaymentService) { logger.warn('[BullMQ] crypto-alert-stuck: service not found'); return; }
       await CryptoPaymentService.alertStuck();
+      return;
+    }
+
+    case 'crypto-reconcile-grant-failed': {
+      const CryptoPaymentService = _safeRequire('../cryptoPaymentService');
+      if (!CryptoPaymentService) { logger.warn('[BullMQ] crypto-reconcile-grant-failed: service not found'); return; }
+      await CryptoPaymentService.reconcileGrantFailed();
       return;
     }
 
