@@ -265,6 +265,92 @@ class CryptoPaymentService {
   }
 
   /**
+   * Retry entitlement grant for rows stuck in `grant_failed`. On-chain money
+   * already arrived; a transient DB/Redis blip during the original grant call
+   * left the user paid-but-not-activated. Runs every 15 min via BullMQ.
+   *
+   * Only touches rows younger than 7 days — anything older warrants a human
+   * look and shouldn't be auto-retried forever.
+   */
+  static async reconcileGrantFailed() {
+    const { rows } = await query(
+      `SELECT id, user_id, plan_id, creator_id, scope_type, scope_id,
+              tx_hash, from_address, token, expected_amount_native
+       FROM checkout_intents
+       WHERE status = 'grant_failed'
+         AND COALESCE(confirmed_at, created_at) > NOW() - INTERVAL '7 days'
+       ORDER BY COALESCE(confirmed_at, created_at) ASC
+       LIMIT 50`
+    );
+    if (rows.length === 0) return { attempted: 0, recovered: 0 };
+
+    const PaymentService = require('./paymentService');
+    let recovered = 0;
+    const stillFailed = [];
+
+    for (const payment of rows) {
+      const metadata = {
+        provider: 'crypto_base',
+        asset: payment.token,
+        txHash: payment.tx_hash,
+        fromAddress: payment.from_address,
+        amountReceived: parseFloat(payment.expected_amount_native),
+        recovered: true,
+        ...(payment.creator_id && { creatorId: payment.creator_id }),
+        ...(payment.scope_type && { scopeType: payment.scope_type }),
+        ...(payment.scope_id && { scopeId: payment.scope_id }),
+      };
+      try {
+        const grantResult = await PaymentService.grantEntitlementsForPlan(
+          payment.user_id,
+          payment.plan_id,
+          'crypto_base',
+          metadata,
+          `crypto_${payment.id}`
+        );
+        await query(
+          `UPDATE checkout_intents
+           SET status = 'confirmed', grant_result = $1
+           WHERE id = $2 AND status = 'grant_failed'`,
+          [JSON.stringify(grantResult), payment.id]
+        );
+        recovered++;
+        logger.info('CryptoPayment: recovered grant_failed', {
+          paymentId: payment.id, userId: payment.user_id, planId: payment.plan_id,
+        });
+      } catch (grantErr) {
+        stillFailed.push({ id: payment.id, userId: payment.user_id, err: grantErr.message });
+        logger.warn('CryptoPayment: reconcile retry still failing', {
+          paymentId: payment.id, userId: payment.user_id, error: grantErr.message,
+        });
+      }
+    }
+
+    // Business-channel alert if anything is still failing after retry — a
+    // human needs to check whether the plan is misconfigured, the user was
+    // deleted, or the balance/entitlement service has a bug.
+    if (stillFailed.length > 0) {
+      try {
+        const bns = require('./businessNotificationService');
+        const bulletList = stillFailed
+          .map((r) => `• <code>${r.id}</code> · user <code>${r.userId}</code> · ${r.err.slice(0, 120)}`)
+          .join('\n');
+        await bns.send(
+          `🚨 <b>Crypto grant_failed — ${stillFailed.length} row(s) still stuck after retry</b>\n\n${bulletList}\n\nUser has paid on-chain but PRIME is not active. Needs manual review.`,
+          'payment'
+        );
+      } catch (bnsErr) {
+        logger.warn('CryptoPayment: businessNotificationService.send failed', { error: bnsErr.message });
+      }
+    }
+
+    logger.info('CryptoPayment: reconcileGrantFailed run complete', {
+      attempted: rows.length, recovered, stillFailed: stillFailed.length,
+    });
+    return { attempted: rows.length, recovered, stillFailed: stillFailed.length };
+  }
+
+  /**
    * Alert on stuck payments. Bounded windows prevent the same rows from
    * spamming logs forever after they age past a reasonable investigation
    * horizon — old rows still surface via a lower-severity separate log.

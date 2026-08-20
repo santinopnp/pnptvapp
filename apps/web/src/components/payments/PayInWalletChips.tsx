@@ -284,6 +284,7 @@ export function WalletPayCard({
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
   const { connectWallet } = useConnectWallet();
+  const { sendTransaction: privySendTransaction } = useSendTransaction();
   // Active wallet: prefer the embedded PNPtv wallet (Privy) but fall back to
   // the first connected external wallet (Trust/MetaMask via WalletConnect).
   const activeWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
@@ -396,18 +397,35 @@ export function WalletPayCard({
       });
       if (!intent.receivingAddress || !intent.amountUsdc) throw new Error("intent_missing_fields");
 
-      const provider = await activeWallet.getEthereumProvider();
-      const walletClient = createWalletClient({
-        account: activeWallet.address as `0x${string}`,
-        chain: base, transport: custom(provider),
-      });
       const data = encodeFunctionData({
         abi: _USDC_ABI, functionName: "transfer",
         args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
       });
-      const txHash = await walletClient.sendTransaction({
-        to: _USDC_BASE as `0x${string}`, data, value: 0n,
-      });
+
+      let txHash: `0x${string}`;
+      if (isEmbedded) {
+        // Privy smart_wallet_config.enabled=false for this app — embedded
+        // wallets are pure EOAs, so sponsor:true is a no-op / error. User
+        // pays their own gas out of Base ETH. handleFund is responsible for
+        // seeding ETH dust alongside USDC (see co-fund flow below).
+        const res = await privySendTransaction(
+          { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
+          { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
+        );
+        txHash = res.hash as `0x${string}`;
+      } else {
+        // External wallet (Trust/MetaMask via WalletConnect) — self-signs and
+        // self-pays gas out of its own ETH balance (typically ~$0.01 on Base).
+        const provider = await activeWallet.getEthereumProvider();
+        const walletClient = createWalletClient({
+          account: activeWallet.address as `0x${string}`,
+          chain: base, transport: custom(provider),
+        });
+        txHash = await walletClient.sendTransaction({
+          to: _USDC_BASE as `0x${string}`, data, value: 0n,
+        });
+      }
+
       const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
       if (!verified.ok) throw new Error(verified.reason || "verify_failed");
       setSuccess(true);
@@ -442,6 +460,9 @@ export function WalletPayCard({
       // whereas the legacy useFundWallet excludes Stripe by design. destination
       // uses CAIP-2 chain id + USDC contract on Base so the funding UI lands
       // USDC directly (no ETH → USDC swap step).
+      // Privy providers (Stripe/MoonPay) enforce their own minima (typically
+      // $10-15). Default to the plan amount exactly — do NOT bump to $20, that
+      // was creating a permanent overpay for $9.99/$15 plans.
       await addFunds({
         destination: {
           address: activeWallet.address,
@@ -449,7 +470,7 @@ export function WalletPayCard({
           asset: _USDC_BASE,
         },
         fiat: {
-          defaultAmount: Math.max(amountUsd, 20).toFixed(0),
+          defaultAmount: amountUsd.toFixed(2),
         },
       });
       // addFunds resolved — user closed the fund flow. Stripe settlement is

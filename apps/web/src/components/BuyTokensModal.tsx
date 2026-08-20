@@ -154,6 +154,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       if (!intent.amountWeiExpected) throw new Error("intent_missing_eth_amount");
       const valueWei = BigInt(intent.amountWeiExpected);
       if (isEmbedded) {
+        // Privy smart_wallet_config.enabled=false for this app — embedded
+        // wallets are pure EOAs. sponsor:true is a no-op / error. User must
+        // have ETH dust on Base (~0.00005 = ~$0.15) to cover gas.
         const res = await privySendTransaction(
           { chainId: 8453, to: intent.receivingAddress as `0x${string}`, value: valueWei.toString() },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -178,6 +181,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
       });
       if (isEmbedded) {
+        // Privy smart wallets disabled → EOA, sponsor:true is a no-op.
         const res = await privySendTransaction(
           { chainId: 8453, to: USDC_BASE_ADDRESS, data, value: "0" },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -241,16 +245,19 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } finally { setPayingCustom(false); }
   };
 
-  // NowPayments fallback — for users who prefer BTC / USDT / DOGE / LTC / XMR
-  // or any other coin outside our Base-USDC/ETH wallet flow. Popup-based per
-  // NP iframe restrictions; polls order status and closes on completion.
+  // NowPayments alternate-coin option — for users who want to pay in USDC (any
+  // chain), BTC, or ETH outside our Base wallet flow. Restricted to those three
+  // per product policy (2026-08-19); NP full picker (LTC/DOGE/XMR/etc.) is only
+  // exposed on /subscribe, not for Ru$h top-ups. Popup-based per NP iframe rules.
+  type NpCoin = 'usdcerc20' | 'btc' | 'eth';
+  const [npCoin, setNpCoin] = useState<NpCoin>('usdcerc20');
   const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
   const handlePayWithNowPayments = async (pkg: TokenPackage) => {
     setError(null);
     setNpFallbackPackageId(pkg.id);
     let popup: Window | null = null;
     try {
-      const res = await buyTokensWithNowPayments(pkg.id);
+      const res = await buyTokensWithNowPayments(pkg.id, npCoin);
       if (!res.success || !res.checkoutUrl || !res.invoiceId) {
         throw new Error(res.error || "no_url");
       }
@@ -344,7 +351,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     }
   };
 
-  const eligiblePackages = packages.filter((p) => Number(p.usd) >= 30);
+  const eligiblePackages = packages.filter((p) => Number(p.usd) >= 1);
 
   return (
     <div
@@ -674,36 +681,55 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   : "1 USD = 6 Ru$h (base). Larger packs include a bonus."}
               </p>
 
-              {/* "Pay with any crypto" fallback — hosted NowPayments invoice
-                  for users holding BTC / USDT / DOGE / LTC / XMR outside our
-                  Base wallet flow. Opens a centered popup (NP can't be iframed)
-                  and polls the order status until the webhook credits Ru$h. */}
+              {/* Alt-coin path — pay in USDC (Ethereum), Bitcoin, or Ethereum
+                  via a hosted NowPayments invoice. Restricted to these three
+                  for token top-ups per product policy; opens a centered popup
+                  (NP can't be iframed) and polls until webhook credits Ru$h. */}
               <div className="mt-3 pt-3 border-t border-white/5">
-                <p className="text-[10px] text-white/45 text-center mb-2 leading-relaxed">
-                  {es
-                    ? "¿Tienes cripto fuera de Base? Paga con BTC, USDT, DOGE, LTC, XMR y más."
-                    : "Have crypto outside Base? Pay with BTC, USDT, DOGE, LTC, XMR and more."}
+                <p className="text-[11px] font-semibold text-white/70 text-center mb-2">
+                  {es ? "O paga con cripto externa" : "Or pay with external crypto"}
                 </p>
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                  {([
+                    { id: 'usdcerc20' as NpCoin, label: 'USDC', tint: 'text-[#2775ca]' },
+                    { id: 'btc' as NpCoin,       label: 'BTC',  tint: 'text-[#F7931A]' },
+                    { id: 'eth' as NpCoin,       label: 'ETH',  tint: 'text-[#627EEA]' },
+                  ]).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setNpCoin(c.id)}
+                      className={`text-xs font-bold py-2 rounded-lg border transition ${
+                        npCoin === c.id
+                          ? "bg-orange-500/20 border-orange-400/60 text-orange-100"
+                          : "bg-white/[0.04] border-white/10 text-white/70 hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      <span className={c.tint}>●</span> {c.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {eligiblePackages.map((pkg) => {
                     const price = Number(pkg.usd);
                     const isPaying = npFallbackPackageId === pkg.id;
                     const disabled = isPaying || success !== null || npFallbackPackageId !== null;
+                    const coinLabel = npCoin === 'usdcerc20' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
                     return (
                       <button
                         key={`np-${pkg.id}`}
                         type="button"
                         disabled={disabled}
                         onClick={() => handlePayWithNowPayments(pkg)}
-                        className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] text-left transition hover:bg-white/[0.06] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg border border-orange-400/30 bg-orange-500/[0.06] text-left transition hover:bg-orange-500/[0.12] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <span className="text-[11px] font-semibold text-white/85 leading-tight">
                           {Number(pkg.tokens).toLocaleString()} Ru$h 💎
                         </span>
-                        <span className="text-[9px] text-white/50 leading-none">
+                        <span className="text-[9px] text-white/60 leading-none">
                           {isPaying
                             ? (es ? "Abriendo…" : "Opening…")
-                            : `$${price.toFixed(0)} · ${es ? "cualquier cripto" : "any crypto"} ▸`}
+                            : `$${price.toFixed(0)} · ${coinLabel} ▸`}
                         </span>
                       </button>
                     );
