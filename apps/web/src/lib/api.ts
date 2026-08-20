@@ -3724,12 +3724,15 @@ export function prepareUsdcSubscription(
   planId: string,
   email?: string,
   creatorId?: string,
+  payCurrency?: string,
 ): Promise<{
   success: boolean;
   orderId: string;
   usdAmount: number;
   planName: string;
   invoiceUrl: string;
+  nowpaymentsInvoiceId?: string;
+  payCurrency?: string;
   originalAmount?: number;
   discountPct?: number;
   error?: string;
@@ -3737,6 +3740,7 @@ export function prepareUsdcSubscription(
   const body: Record<string, string> = { planId };
   if (email) body.email = email;
   if (creatorId) body.creatorId = creatorId;
+  if (payCurrency) body.payCurrency = payCurrency;
   return request("/api/webapp/payments/usdc/prepare", { method: "POST", body });
 }
 

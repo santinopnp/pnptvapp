@@ -12954,7 +12954,7 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
 
   const ALLOWED_PAY_CURRENCIES_PREPARE = new Set([
     'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
-    'usdcerc20', 'usdcsol', 'usdttrc20', 'usdtbsc', 'usdterc20',
+    'usdcerc20', 'usdcsol', 'usdcbase', 'usdttrc20', 'usdtbsc', 'usdterc20',
   ]);
   const validPayCurrency = (rawPayCurrency && ALLOWED_PAY_CURRENCIES_PREPARE.has(String(rawPayCurrency).toLowerCase()))
     ? String(rawPayCurrency).toLowerCase() : null;

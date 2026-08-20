@@ -20,7 +20,17 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTutorial } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useI18n } from "@/lib/i18n";
-import { WalletPayCard, WalletCheckoutHero } from "@/components/payments/PayInWalletChips";
+import {
+  WalletPayCard,
+  WalletCheckoutHero,
+  MetaMaskIcon,
+  TrustWalletIcon,
+  WalletConnectIcon,
+  trustWalletDeepLink,
+  metaMaskDeepLink,
+  isMetaMaskCompatible,
+} from "@/components/payments/PayInWalletChips";
+import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d"]);
@@ -150,6 +160,13 @@ export default function Subscribe() {
             : null;
           if (requestedPlan) {
             setSelectedPlan(requestedPlan.id);
+            // Deep-link from /api/pay/np-go — auto-open the wallet checkout
+            // panel so the user lands on the actual pay button, not the
+            // plan list. `via=np-go` distinguishes broadcast clicks from
+            // organic /subscribe visits.
+            if (searchParams.get("via") === "np-go") {
+              setWalletPanelPlanId(requestedPlan.id);
+            }
           } else {
             const rec = res.plans.find((p) => p.id === RECOMMENDED_PLAN || p.sku === RECOMMENDED_PLAN);
             setSelectedPlan(rec?.id || res.plans[0].id);
@@ -297,6 +314,26 @@ export default function Subscribe() {
     setSearchParams(next, { replace: true });
   }
 
+  // Real-time success signal from any payment path (crypto webhook, NP IPN,
+  // Ru$h spend, EfiPay grant). Backend fires `user:entitlement-change` on
+  // grantEntitlementsForPlan — mirror MainStage's listener so users don't
+  // depend on the polling loop finishing.
+  useEffect(() => {
+    if (!user?.id) return;
+    const socket = connectSocket();
+    const onEntitlementChange = () => {
+      // Close any pending polling and mark the page as successful.
+      setPollingPaymentId(null);
+      setPollingOverFiveMin(false);
+      try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
+      setPaymentSuccess(true);
+      trackEvent("payment_success", { plan: selectedPlan || "unknown", provider: "socket" });
+      refreshUser();
+    };
+    socket.on("user:entitlement-change", onEntitlementChange);
+    return () => { socket.off("user:entitlement-change", onEntitlementChange); };
+  }, [user?.id, selectedPlan, refreshUser]);
+
   // Poll payment status after hosted checkout opens (legacy fallback flow).
   useEffect(() => {
     if (!pollingPaymentId) return;
@@ -327,7 +364,7 @@ export default function Subscribe() {
       try {
         const data = await getPaymentStatus(pollingPaymentId);
         if (cancelled) return;
-        if (data.status === "completed" || data.status === "paid" || data.status === "success") {
+        if (data.status === "completed" || data.status === "paid" || data.status === "success" || data.status === "confirmed") {
           setPollingPaymentId(null);
           setPollingOverFiveMin(false);
           try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
@@ -398,45 +435,16 @@ export default function Subscribe() {
   // BTC polling effect removed 2026-07-31 — BTCPay retired.
   // Dash polling effect removed 2026-07-31 — Dash/BTCPay retired.
 
-  // "Pay with any crypto" fallback — opens a hosted NowPayments invoice in a
-  // centered popup. NP checkout cannot be iframed (HTTP downgrade + 3P cookie
-  // blocking), so window.open is required. Success is picked up by the polling
-  // effect via getPaymentStatus on the orderId stored in sessionStorage.
-  const [npFallbackLoading, setNpFallbackLoading] = useState<string | null>(null);
-  const openNpFallback = useCallback(async (planId: string) => {
-    setNpFallbackLoading(planId);
+  // "Pay with any crypto" — opens the inline NowPayments widget modal (same
+  // pattern as /lifetime100). NP's hosted checkout can't be iframed, but the
+  // /embeds/payment-widget?iid=<id> endpoint IS embeddable; we just need the
+  // invoice id from /usdc/prepare (already returned) plus a currency picker.
+  const [npModalPlanId, setNpModalPlanId] = useState<string | null>(null);
+  const openNpFallback = useCallback((planId: string) => {
     setError(null);
-    try {
-      const res = await prepareUsdcSubscription(planId);
-      if (!res.success || !res.invoiceUrl || !res.orderId) {
-        throw new Error(res.error || "no_url");
-      }
-      assertPaymentUrl(res.invoiceUrl);
-      try { sessionStorage.setItem("pnp_pending_payment", res.orderId); } catch {}
-      const width = 480, height = 720;
-      const left = Math.max(0, Math.round((window.outerWidth - width) / 2 + (window.screenX || 0)));
-      const top = Math.max(0, Math.round((window.outerHeight - height) / 2 + (window.screenY || 0)));
-      const popup = window.open(
-        res.invoiceUrl,
-        "pnp_nowpayments",
-        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
-      );
-      if (!popup) {
-        // Popup blocked — fall back to same-tab redirect.
-        window.location.href = res.invoiceUrl;
-        return;
-      }
-      setPollingPaymentId(res.orderId);
-      trackEvent("payment_started", { plan: planId, provider: "nowpayments_fallback" });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(t.lang === "es"
-        ? `No se pudo abrir el pago con cripto: ${msg}`
-        : `Could not open crypto payment: ${msg}`);
-    } finally {
-      setNpFallbackLoading(null);
-    }
-  }, [t.lang]);
+    setNpModalPlanId(planId);
+    trackEvent("payment_started", { plan: planId, provider: "nowpayments_widget" });
+  }, []);
 
   // Derive current tier display from user object
   function renderTierBanner() {
@@ -529,7 +537,7 @@ export default function Subscribe() {
           </p>
 
           <button
-            onClick={() => navigate("/welcome")}
+            onClick={() => { window.location.href = "/"; }}
             className="btn-gradient px-6 py-2.5 rounded-xl text-white font-medium"
           >
             {s.goToPNPtv}
@@ -838,9 +846,26 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
-                  path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
-              <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+              {/* Quick-pay buttons — card is primary, then any-crypto, then
+                  Ru$h if user has balance. WalletPayCard handles the card and
+                  Privy-wallet cases inline; NowPayments popup handles BTC/ETH/
+                  USDT/etc. for users who prefer another crypto. */}
+              <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                  >
+                    💳 {t.lang === "es" ? "Pagar" : "Pay"} ${parseFloat(String(plan.price)).toFixed(2)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    className="py-3 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all"
+                  >
+                    {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
+                  </button>
+                </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -851,39 +876,17 @@ export default function Subscribe() {
                     <button
                       disabled={submitting}
                       onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                      className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
                     >
-                      <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
-                        <span>🎫</span>
-                        <span>Ru$h 💎</span>
-                      </span>
-                      <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{cost.toLocaleString()} 💎</span>
+                      <span className="text-xs font-semibold text-[#FF69B4]">🎫 Ru$h 💎 · {cost.toLocaleString()} 💎</span>
                       {usesGifted && (
-                        <span className="text-[9px] font-medium text-[#FF69B4]/70 leading-none mt-0.5">
-                          {t.lang === "es" ? "usa tus 💎 bonus" : "uses your starter 💎"}
+                        <span className="text-[9px] font-medium text-[#FF69B4]/70">
+                          ({t.lang === "es" ? "usa bonus" : "uses starter"})
                         </span>
                       )}
                     </button>
                   );
                 })()}
-                {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
-                    Server resolves canonical price via planId so client can't
-                    fudge amount. */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${walletPanelPlanId === plan.id ? "border-emerald-400/60 bg-emerald-500/20" : "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"}`}
-                >
-                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
-                    <span>💳</span>
-                    <span>Wallet</span>
-                    <span className="text-[9px] text-emerald-400/70">▾</span>
-                  </span>
-                  <span className="text-[11px] font-bold text-emerald-400 leading-none">USDC · Base</span>
-                </button>
-                {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
-                    only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
-                    users route through wallet → fund → USDC via the Privy
-                    onramps (Stripe / MoonPay / Meld / Coinbase). */}
                 {walletPanelPlanId === plan.id && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     <WalletPayCard
@@ -902,22 +905,6 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
-                {/* "Pay with any crypto" fallback — hosted NowPayments invoice
-                    for users without Base USDC. Popup-based per NP iframe rules. */}
-                <div className="w-full mt-2 text-center">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    disabled={npFallbackLoading === plan.id}
-                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 disabled:opacity-50"
-                  >
-                    {npFallbackLoading === plan.id
-                      ? (t.lang === "es" ? "Abriendo…" : "Opening…")
-                      : (t.lang === "es"
-                        ? "¿Prefieres otra cripto? Paga con BTC, USDT, DOGE, LTC, XMR…"
-                        : "Prefer another crypto? Pay with BTC, USDT, DOGE, LTC, XMR…")}
-                  </button>
-                </div>
               </div>
             </div>
             </div>
@@ -1042,9 +1029,26 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — Wallet (USDC on Base) is the only crypto
-                  path. NowPayments/hosted-invoice picker retired 2026-08-09. */}
-              <div className="mt-3 pt-3 border-t border-white/5 flex gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+              {/* Quick-pay buttons — card is primary, then any-crypto, then
+                  Ru$h if user has balance. WalletPayCard handles the card and
+                  Privy-wallet cases inline; NowPayments popup handles BTC/ETH/
+                  USDT/etc. for users who prefer another crypto. */}
+              <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                  >
+                    💳 {t.lang === "es" ? "Pagar" : "Pay"} ${parseFloat(String(plan.price)).toFixed(2)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
+                    className="py-3 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all"
+                  >
+                    {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
+                  </button>
+                </div>
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1055,39 +1059,17 @@ export default function Subscribe() {
                     <button
                       disabled={submitting}
                       onClick={(e) => { e.stopPropagation(); handleTokensSubscribe(plan.id, parseFloat(String(plan.price))); }}
-                      className="flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-[#D4007A]/40 bg-[#D4007A]/10 hover:bg-[#D4007A]/20 disabled:opacity-50 transition-colors"
                     >
-                      <span className="flex items-center gap-1 text-xs font-semibold text-[#FF69B4]">
-                        <span>🎫</span>
-                        <span>Ru$h 💎</span>
-                      </span>
-                      <span className="text-[11px] font-bold text-[#FF69B4] leading-none">{cost.toLocaleString()} 💎</span>
+                      <span className="text-xs font-semibold text-[#FF69B4]">🎫 Ru$h 💎 · {cost.toLocaleString()} 💎</span>
                       {usesGifted && (
-                        <span className="text-[9px] font-medium text-[#FF69B4]/70 leading-none mt-0.5">
-                          {t.lang === "es" ? "usa tus 💎 bonus" : "uses your starter 💎"}
+                        <span className="text-[9px] font-medium text-[#FF69B4]/70">
+                          ({t.lang === "es" ? "usa bonus" : "uses starter"})
                         </span>
                       )}
                     </button>
                   );
                 })()}
-                {/* Wallet USDC on Base — gas-sponsored, one signature, instant.
-                    Server resolves canonical price via planId so client can't
-                    fudge amount. */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`flex-1 min-w-[80px] flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border transition-colors ${walletPanelPlanId === plan.id ? "border-emerald-400/60 bg-emerald-500/20" : "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"}`}
-                >
-                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-300">
-                    <span>💳</span>
-                    <span>Wallet</span>
-                    <span className="text-[9px] text-emerald-400/70">▾</span>
-                  </span>
-                  <span className="text-[11px] font-bold text-emerald-400 leading-none">USDC · Base</span>
-                </button>
-                {/* Card / Meru button removed 2026-08-08 — /subscribe accepts
-                    only crypto (USDC + ETH on Base) and Ru$h now. Fiat card
-                    users route through wallet → fund → USDC via the Privy
-                    onramps (Stripe / MoonPay / Meld / Coinbase). */}
                 {walletPanelPlanId === plan.id && (
                   <div className="w-full mt-2" onClick={(e) => e.stopPropagation()}>
                     <WalletPayCard
@@ -1106,22 +1088,6 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
-                {/* "Pay with any crypto" fallback — hosted NowPayments invoice
-                    for users without Base USDC. Popup-based per NP iframe rules. */}
-                <div className="w-full mt-2 text-center">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    disabled={npFallbackLoading === plan.id}
-                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 disabled:opacity-50"
-                  >
-                    {npFallbackLoading === plan.id
-                      ? (t.lang === "es" ? "Abriendo…" : "Opening…")
-                      : (t.lang === "es"
-                        ? "¿Prefieres otra cripto? Paga con BTC, USDT, DOGE, LTC, XMR…"
-                        : "Prefer another crypto? Pay with BTC, USDT, DOGE, LTC, XMR…")}
-                  </button>
-                </div>
               </div>
             </div>
             </div>
@@ -1167,6 +1133,18 @@ export default function Subscribe() {
       )}
 
       {/* Crypto nudge removed 2026-08-09 — Wallet is now the only crypto path. */}
+
+      {npModalPlanId && (
+        <NowPaymentsWidgetModal
+          planId={npModalPlanId}
+          lang={(t.lang as "es" | "en")}
+          onClose={() => setNpModalPlanId(null)}
+          onOrderCreated={(orderId) => {
+            try { sessionStorage.setItem("pnp_pending_payment", orderId); } catch {}
+            setPollingPaymentId(orderId);
+          }}
+        />
+      )}
 
       {/* Error banner */}
       {error && (
@@ -1275,6 +1253,305 @@ export default function Subscribe() {
         {s.goBack}
       </button>
 
+    </div>
+  );
+}
+
+// ── "Pay with any crypto" modal ────────────────────────────────────────────────
+// Two-step flow inside one modal (matches /lifetime100's working pattern):
+//   1. Currency picker → POST /api/webapp/payments/usdc/prepare
+//   2. On success, swap in NP widget iframe + MetaMask/Trust wallet chips
+// Success is signaled via `user:entitlement-change` socket event (see the
+// listener in the parent page) — the modal itself just embeds the checkout.
+
+const NP_MODAL_CURRENCIES: Array<{ code: string; label: string; chain: string }> = [
+  { code: "usdcbase", label: "USDC", chain: "Base" },
+  { code: "usdterc20", label: "USDT", chain: "ERC-20" },
+  { code: "eth",       label: "ETH",  chain: "Ethereum" },
+  { code: "btc",       label: "BTC",  chain: "Bitcoin" },
+];
+
+interface NpInvoice {
+  invoiceUrl: string;
+  nowpaymentsInvoiceId: string;
+  payCurrency: string;
+  orderId: string;
+}
+
+function NowPaymentsWidgetModal({
+  planId,
+  lang,
+  onClose,
+  onOrderCreated,
+}: {
+  planId: string;
+  lang: "es" | "en";
+  onClose: () => void;
+  onOrderCreated: (orderId: string) => void;
+}) {
+  const es = lang === "es";
+  const [payCurrency, setPayCurrency] = useState<string>("usdcbase");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [invoice, setInvoice] = useState<NpInvoice | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !submitting) onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose, submitting]);
+
+  const handleContinue = useCallback(async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await prepareUsdcSubscription(planId, undefined, undefined, payCurrency);
+      if (!res.success || !res.invoiceUrl || !res.orderId) {
+        throw new Error(res.error || (es ? "No se pudo crear la factura." : "Could not create invoice."));
+      }
+      if (!res.nowpaymentsInvoiceId) {
+        throw new Error(es ? "Respuesta incompleta del proveedor." : "Incomplete response from provider.");
+      }
+      assertPaymentUrl(res.invoiceUrl);
+      setInvoice({
+        invoiceUrl: res.invoiceUrl,
+        nowpaymentsInvoiceId: String(res.nowpaymentsInvoiceId),
+        payCurrency: res.payCurrency || payCurrency,
+        orderId: res.orderId,
+      });
+      onOrderCreated(res.orderId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [planId, payCurrency, es, onOrderCreated]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={!submitting ? onClose : undefined}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)",
+        backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: "20px 16px",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "rgba(44,44,46,0.92)",
+          border: "1px solid rgba(255,180,84,0.3)",
+          borderRadius: 24, padding: "24px 20px",
+          width: "100%", maxWidth: 440, maxHeight: "90dvh", overflowY: "auto",
+          boxShadow: "0 24px 48px rgba(0,0,0,0.6)",
+        }}
+      >
+        {invoice ? (
+          <>
+            <h2 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 700, color: "#ffffff" }}>
+              {es ? "Completa el pago abajo" : "Complete the payment below"}
+            </h2>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#8E8E93", lineHeight: 1.5 }}>
+              {es
+                ? "Mantén esta ventana abierta hasta que se confirme. Tu plan se activa automáticamente."
+                : "Keep this tab open until it confirms. Your plan activates automatically."}
+            </p>
+
+            {/* Short pay instructions */}
+            <ol style={{
+              margin: "0 0 12px", padding: "10px 14px 10px 26px",
+              fontSize: 11, color: "#c7c7cc", lineHeight: 1.55,
+              background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 10,
+            }}>
+              <li>{es
+                ? "Copia la dirección y el monto exacto que aparecen abajo."
+                : "Copy the address and the exact amount shown below."}</li>
+              <li>{es
+                ? "Envíalos desde tu wallet — o toca un botón de wallet abajo para abrirla al instante."
+                : "Send from your wallet — or tap a wallet button below to open it instantly."}</li>
+              <li>{es
+                ? "Espera 1–3 confirmaciones en la red. Tu plan se activa solo."
+                : "Wait 1–3 network confirmations. Your plan activates on its own."}</li>
+            </ol>
+
+            <div style={{
+              width: "100%", height: 480, borderRadius: 14, overflow: "hidden",
+              background: "#0d0510", border: "1px solid rgba(255,180,84,0.25)",
+            }}>
+              <iframe
+                src={`https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(invoice.nowpaymentsInvoiceId)}`}
+                title="NowPayments checkout"
+                width="100%"
+                height="480"
+                frameBorder="0"
+                scrolling="yes"
+                style={{ display: "block", border: 0, width: "100%", height: 480, background: "#fff" }}
+                allow="payment"
+              />
+            </div>
+
+            <p style={{ margin: "14px 0 8px", fontSize: 11, fontWeight: 600, color: "#8E8E93" }}>
+              {es ? "O abre en tu wallet:" : "Or open in your wallet:"}
+            </p>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: isMetaMaskCompatible(invoice.payCurrency) ? "repeat(3, minmax(0,1fr))" : "repeat(2, minmax(0,1fr))",
+              gap: 8,
+            }}>
+              {isMetaMaskCompatible(invoice.payCurrency) && (
+                <a
+                  href={metaMaskDeepLink(invoice.invoiceUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                    padding: "12px 6px", borderRadius: 12,
+                    border: "1px solid rgba(249,115,22,0.3)",
+                    background: "rgba(249,115,22,0.08)",
+                    textDecoration: "none",
+                  }}
+                >
+                  <MetaMaskIcon />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#fdba74" }}>MetaMask</span>
+                </a>
+              )}
+              <a
+                href={trustWalletDeepLink(invoice.invoiceUrl, invoice.payCurrency)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  padding: "12px 6px", borderRadius: 12,
+                  border: "1px solid rgba(59,153,252,0.3)",
+                  background: "rgba(37,99,235,0.1)",
+                  textDecoration: "none",
+                }}
+              >
+                <TrustWalletIcon />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>Trust Wallet</span>
+              </a>
+              <a
+                href={invoice.invoiceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  padding: "12px 6px", borderRadius: 12,
+                  border: "1px solid rgba(59,153,252,0.3)",
+                  background: "rgba(59,153,252,0.08)",
+                  textDecoration: "none",
+                }}
+              >
+                <WalletConnectIcon />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>
+                  {es ? "Otra wallet" : "Other wallet"}
+                </span>
+              </a>
+            </div>
+
+            <button
+              onClick={onClose}
+              style={{
+                display: "block", width: "100%", marginTop: 14, padding: "10px",
+                background: "none", border: "none", color: "#8E8E93",
+                fontSize: 13, cursor: "pointer", minHeight: 44,
+              }}
+            >
+              {es ? "Cerrar" : "Close"}
+            </button>
+          </>
+        ) : (
+          <>
+            <h2 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
+              {es ? "Pagar con cripto" : "Pay with crypto"}
+            </h2>
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
+              {es
+                ? "Elige la moneda. Tu plan se activa apenas la red confirme el pago — sin códigos ni esperas."
+                : "Pick your coin. Your plan activates the moment the network confirms — no codes, no waiting."}
+            </p>
+
+            <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#8E8E93" }}>
+              {es ? "Elige tu moneda" : "Choose your currency"}
+            </p>
+            <div
+              role="radiogroup"
+              style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginBottom: 16 }}
+            >
+              {NP_MODAL_CURRENCIES.map((c) => {
+                const selected = payCurrency === c.code;
+                return (
+                  <button
+                    key={c.code}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setPayCurrency(c.code)}
+                    disabled={submitting}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                      padding: "12px 4px", borderRadius: 12,
+                      border: selected ? "1.5px solid #ff9933" : "1px solid rgba(255,255,255,0.15)",
+                      background: selected ? "rgba(255,153,51,0.12)" : "rgba(0,0,0,0.3)",
+                      color: "#ffffff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      minHeight: 56, transition: "all 0.15s",
+                      boxShadow: selected ? "0 0 12px rgba(255,153,51,0.25)" : "none",
+                    }}
+                  >
+                    <span>{c.label}</span>
+                    <span style={{ fontSize: 9, fontWeight: 500, color: selected ? "#ffb454" : "#8E8E93" }}>
+                      {c.chain}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {error && (
+              <p role="alert" style={{ margin: "0 0 12px", fontSize: 13, color: "#FF453A" }}>
+                {error}
+              </p>
+            )}
+
+            <button
+              onClick={handleContinue}
+              disabled={submitting}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                width: "100%", padding: "14px 20px", borderRadius: 12, border: "none",
+                background: submitting
+                  ? "rgba(255,51,119,0.4)"
+                  : "linear-gradient(90deg, #ff3377, #ff9933)",
+                color: "#ffffff", fontSize: 14, fontWeight: 700,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+                cursor: submitting ? "not-allowed" : "pointer",
+                minHeight: 48, transition: "opacity 0.15s",
+              }}
+            >
+              {submitting
+                ? (es ? "Abriendo pago…" : "Opening payment…")
+                : (es ? "Continuar al pago" : "Continue to payment")}
+            </button>
+
+            <button
+              onClick={onClose}
+              disabled={submitting}
+              style={{
+                display: "block", width: "100%", marginTop: 10, padding: "10px",
+                background: "none", border: "none", color: "#8E8E93",
+                fontSize: 13, cursor: submitting ? "not-allowed" : "pointer", minHeight: 44,
+              }}
+            >
+              {es ? "Cancelar" : "Cancel"}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
