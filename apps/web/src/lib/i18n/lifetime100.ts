@@ -11,7 +11,25 @@ export const strings = {
     oldPrice: "$250",
     newPrice: "$100",
     limitedBadge: "FOUNDERS PRICE · LIMITED SPOTS",
-    chargeCurrencyNote: "Charged in Colombian Pesos (COP) — approx. $100 USD",
+    chargeCurrencyNote: "Pay with USDC · USDT · ETH · BTC — no card needed",
+
+    // ── Crypto payment modal ──────────────────────────────────────────────────
+    cryptoModalTitle: "Pay Lifetime PRIME with crypto",
+    cryptoModalSubtitle:
+      "Enter your email, pick your coin, and complete the payment. PRIME activates automatically the moment your payment confirms — no waiting on a code.",
+    cryptoPickCurrency: "Choose your currency",
+    cryptoOpenWallet: "Open directly in your wallet:",
+    cryptoContinue: "Continue to payment",
+    cryptoOpeningInvoice: "Opening payment...",
+    cryptoPayHere: "Complete the payment below",
+    cryptoAfterPay:
+      "Keep this tab open until the payment confirms. You'll get a confirmation email at the address above and PRIME activates automatically.",
+    cryptoOpenInNewTab: "Open in new tab",
+    cryptoCancel: "Close",
+    cryptoUsdcLabel: "USDC",
+    cryptoUsdtLabel: "USDT",
+    cryptoEthLabel: "ETH",
+    cryptoBtcLabel: "BTC",
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
@@ -119,7 +137,25 @@ export const strings = {
     oldPrice: "$250",
     newPrice: "$100",
     limitedBadge: "PRECIO DE FUNDADORES · CUPOS LIMITADOS",
-    chargeCurrencyNote: "Se cobra en Pesos Colombianos (COP) — aprox. $100 USD",
+    chargeCurrencyNote: "Paga con USDC · USDT · ETH · BTC — sin tarjeta",
+
+    // ── Crypto payment modal ──────────────────────────────────────────────────
+    cryptoModalTitle: "Paga Lifetime PRIME con cripto",
+    cryptoModalSubtitle:
+      "Escribe tu correo, escoge la moneda y completa el pago. PRIME se activa automáticamente en cuanto tu pago confirme — sin esperar códigos.",
+    cryptoPickCurrency: "Escoge tu moneda",
+    cryptoOpenWallet: "Abre directo en tu wallet:",
+    cryptoContinue: "Continuar al pago",
+    cryptoOpeningInvoice: "Abriendo pago...",
+    cryptoPayHere: "Completa el pago aquí abajo",
+    cryptoAfterPay:
+      "Deja esta pestaña abierta hasta que el pago confirme. Recibirás un correo de confirmación al email de arriba y PRIME se activará automáticamente.",
+    cryptoOpenInNewTab: "Abrir en pestaña nueva",
+    cryptoCancel: "Cerrar",
+    cryptoUsdcLabel: "USDC",
+    cryptoUsdtLabel: "USDT",
+    cryptoEthLabel: "ETH",
+    cryptoBtcLabel: "BTC",
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [

@@ -12609,40 +12609,132 @@ app.get('/api/pay/np-go', npGoLimiter, asyncHandler(async (req, res) => {
   if (!npGoVerify(String(plan), String(pay), String(u), String(exp), String(sig))) {
     return res.status(403).send('Invalid signature.');
   }
+
+  // Route change 2026-08-19: STOP creating a NowPayments invoice on click.
+  // The blind 302→NP hosted checkout was converting at 0.006% (1 payment out
+  // of 15,539 clicks on the 2026-08-19 crypto-plans broadcast). Users landed
+  // on NP's "send X BTC to this address" page, had no crypto or no idea how,
+  // and bailed. Now we redirect to /subscribe with the plan preselected and
+  // the intended coin as a hint, so the user lands on the improved checkout
+  // surface with card + wallet + all crypto options visible.
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const dest = `${webappUrl}/subscribe?plan=${encodeURIComponent(String(plan))}&pay=${encodeURIComponent(String(pay))}&via=np-go`;
+  logger.info('[NP-GO] Redirecting to /subscribe (invoice creation retired)', {
+    userId: String(u), plan, pay, dest,
+  });
+  return res.redirect(302, dest);
+}));
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public lifetime100 crypto checkout (no auth) — creates a NowPayments hosted
+// invoice for a $100 lifetime PRIME purchase paid in USDC / USDT / ETH / BTC.
+// User arrives on /lifetime100, picks currency, enters email — we lazy-create
+// (or resolve) a user row keyed by email, then hand back the invoice URL + iid
+// so the frontend can embed the NP widget. IPN webhook path is shared with the
+// authenticated flow: on completion it grants the lifetime100 plan add-ons.
+// ─────────────────────────────────────────────────────────────────────────────
+const LIFETIME100_PAY_CURRENCIES = new Set(['usdcbase', 'usdterc20', 'eth', 'btc']);
+const lifetime100NpInvoiceLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 12, // 4 currencies × up to 3 retries per hour per IP
+  message: { success: false, error: 'Too many payment attempts. Try again in an hour.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+});
+
+app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyncHandler(async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
-    return res.status(503).send('Crypto payments are temporarily unavailable.');
+    return res.status(503).json({ success: false, error: 'Crypto payments are temporarily unavailable.' });
   }
 
+  const { email: rawEmail, payCurrency: rawPayCurrency, language: rawLang } = req.body || {};
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required.' });
+  }
+  const payCurrency = String(rawPayCurrency || '').toLowerCase();
+  if (!LIFETIME100_PAY_CURRENCIES.has(payCurrency)) {
+    return res.status(400).json({ success: false, error: 'Unsupported currency.' });
+  }
+  const language = (typeof rawLang === 'string' && rawLang.toLowerCase().startsWith('es')) ? 'es' : 'en';
+
   const { query: dbQuery } = require('../../config/postgres');
-  const userRes = await dbQuery(
-    'SELECT id, email FROM users WHERE id = $1 AND is_deleted IS NOT TRUE',
-    [String(u)]
+  const { ensureEmailCredentials } = require('../../services/userService');
+
+  // Resolve (or lazy-create) a user for this email so the IPN webhook can grant.
+  const existing = await dbQuery(
+    `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    [email]
   );
-  if (userRes.rows.length === 0) return res.status(404).send('User not found.');
-  const dbUser = userRes.rows[0];
+  let userId;
+  if (existing.rows.length > 0) {
+    userId = existing.rows[0].id;
+  } else {
+    userId = crypto.randomUUID();
+    const firstName = email.split('@')[0].slice(0, 80) || 'Founder';
+    await dbQuery(
+      `INSERT INTO users (id, email, first_name, tier, role, subscription_status, language, created_at, updated_at)
+       VALUES ($1, $2, $3, 'free', 'user', 'free', $4, NOW(), NOW())`,
+      [userId, email, firstName, language]
+    );
+    // Best-effort Authentik provision so a magic-link login works post-payment.
+    try { await ensureEmailCredentials(userId, email, language, { skipEmail: true }); } catch (_) {}
+  }
 
-  const planRes = await dbQuery('SELECT id, display_name, name, price FROM plans WHERE id = $1 AND active = true', [String(plan)]);
-  if (planRes.rows.length === 0) return res.status(404).send('Plan not available.');
-  const planRow = planRes.rows[0];
-  const usdAmount = parseFloat(planRow.price);
-  const planDisplayName = planRow.display_name || planRow.name;
+  // Confirm the plan exists + read the amount from the DB (source of truth).
+  const planRes = await dbQuery(
+    `SELECT id, display_name, name, price FROM plans WHERE id = 'lifetime100' AND active = true LIMIT 1`
+  );
+  if (planRes.rows.length === 0) {
+    return res.status(503).json({ success: false, error: 'Lifetime plan not available.' });
+  }
+  const plan = planRes.rows[0];
+  const usdAmount = parseFloat(plan.price);
+  const planDisplayName = plan.display_name || plan.name || 'PNPtv! Lifetime PRIME';
 
-  const webappUrl = process.env.WEBAPP_URL || 'https://pnptv.app';
-  const orderId = `pnptv-npgo-${dbUser.id}-${Date.now()}`;
+  // Reuse a live pending invoice for the same user + currency (avoids duplicate NP fees on retry).
+  const resumeRes = await dbQuery(
+    `SELECT id, btcpay_invoice_id, metadata FROM dash_subscription_orders
+     WHERE user_id = $1 AND plan_id = 'lifetime100' AND status = 'pending'
+       AND metadata->>'flow' = 'lifetime100-public'
+       AND metadata->>'payCurrency' = $2
+       AND created_at > NOW() - INTERVAL '23 hours'
+     ORDER BY created_at DESC LIMIT 1`,
+    [String(userId), payCurrency]
+  );
+  if (resumeRes.rows.length > 0) {
+    const meta = resumeRes.rows[0].metadata || {};
+    if (meta.invoiceUrl && meta.nowpaymentsInvoiceId) {
+      return res.json({
+        success: true,
+        orderId: resumeRes.rows[0].btcpay_invoice_id,
+        invoiceUrl: meta.invoiceUrl,
+        nowpaymentsInvoiceId: String(meta.nowpaymentsInvoiceId),
+        payCurrency,
+        usdAmount,
+        planName: planDisplayName,
+        resumed: true,
+      });
+    }
+  }
 
-  let invoiceUrl;
-  let nowpaymentsInvoiceId;
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+  const orderId = `pnptv-lt100-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+  let invoiceUrl, nowpaymentsInvoiceId;
   try {
     const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
       price_amount: usdAmount,
       price_currency: 'usd',
-      pay_currency: String(pay),
+      pay_currency: payCurrency,
       order_id: orderId,
-      order_description: `${planDisplayName} – PNPtv!`,
+      order_description: `${planDisplayName} — PNPtv!`,
       ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
-      success_url: `${webappUrl}/subscribe?nowpayments=success&order=${encodeURIComponent(orderId)}`,
-      cancel_url: `${webappUrl}/subscribe`,
-      ...(dbUser.email ? { customer_email: dbUser.email } : {}),
+      success_url: `${webappUrl}/lifetime100?paid=1&order=${encodeURIComponent(orderId)}`,
+      cancel_url: `${webappUrl}/lifetime100`,
+      customer_email: email,
     }, {
       headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
       timeout: 10000,
@@ -12652,38 +12744,39 @@ app.get('/api/pay/np-go', npGoLimiter, asyncHandler(async (req, res) => {
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
     if (!invoiceUrl) invoiceUrl = `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
   } catch (err) {
-    logger.error('[NP-GO] NowPayments invoice creation failed', {
-      userId: dbUser.id, plan, pay, error: err.response?.data || err.message,
+    logger.error('[LT100-NP] NowPayments invoice creation failed', {
+      email, payCurrency, error: err.response?.data || err.message,
     });
-    return res.status(502).send('Could not reach the payment provider. Please try again in a minute.');
+    return res.status(502).json({ success: false, error: 'Could not reach the payment provider. Please try again in a minute.' });
   }
 
   await dbQuery(
     `INSERT INTO dash_subscription_orders
        (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+     VALUES ($1, 'lifetime100', $2, $3, $4, 'pending', $5)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
-    [
-      String(dbUser.id),
-      String(plan),
-      dbUser.email || null,
-      usdAmount,
-      orderId,
-      JSON.stringify({
-        provider: 'nowpayments',
-        flow: 'hosted',
-        source: 'np-go-broadcast',
-        invoiceUrl,
-        nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
-        payCurrency: String(pay),
-      }),
-    ]
+    [String(userId), email, usdAmount, orderId, JSON.stringify({
+      provider: 'nowpayments',
+      flow: 'lifetime100-public',
+      source: 'lifetime100-widget',
+      payCurrency,
+      language,
+      invoiceUrl,
+      nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
+    })]
   );
 
-  logger.info('[NP-GO] Redirecting to NowPayments checkout', {
-    userId: dbUser.id, plan, pay, orderId, usdAmount,
+  logger.info('[LT100-NP] Invoice created', { userId, email, orderId, payCurrency, usdAmount });
+
+  return res.json({
+    success: true,
+    orderId,
+    invoiceUrl,
+    nowpaymentsInvoiceId: String(nowpaymentsInvoiceId),
+    payCurrency,
+    usdAmount,
+    planName: planDisplayName,
   });
-  return res.redirect(302, invoiceUrl);
 }));
 
 

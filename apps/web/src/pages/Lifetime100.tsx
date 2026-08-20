@@ -2,6 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useLocation, useNavigate, Link } from "react-router-dom";
 import { useLifetime100Strings, type Lifetime100Strings } from "@/lib/i18n/lifetime100";
 import { sheets } from "@/pages/LandingPage";
+import {
+  MetaMaskIcon,
+  TrustWalletIcon,
+  WalletConnectIcon,
+  trustWalletDeepLink,
+  metaMaskDeepLink,
+  isMetaMaskCompatible,
+} from "@/components/payments/PayInWalletChips";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -9,10 +17,13 @@ const API_BASE = import.meta.env.VITE_API_URL || "https://pnptv.app";
 const LANG_STORAGE_KEY = "pnptv:lifetime100:lang";
 const REDIRECT_DELAY_MS = 2500;
 
-// Switch between payment providers without deleting the Meru implementation.
-// Set to 'meru' to restore the email-capture → Meru link flow.
-const PAYMENT_PROVIDER: "meru" | "nequi" = "nequi";
-const NEQUI_PAYMENT_URL = "https://checkout.nequi.wompi.co/l/LILWzX";
+// Crypto currencies accepted for lifetime100 — mirrors the backend allow-list.
+const CRYPTO_CURRENCIES = [
+  { code: "usdcbase", labelKey: "cryptoUsdcLabel" as const, chain: "Base" },
+  { code: "usdterc20", labelKey: "cryptoUsdtLabel" as const, chain: "ERC-20" },
+  { code: "eth", labelKey: "cryptoEthLabel" as const, chain: "Ethereum" },
+  { code: "btc", labelKey: "cryptoBtcLabel" as const, chain: "Bitcoin" },
+];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -186,29 +197,43 @@ function ModalOverlay({
   );
 }
 
-// ── Email capture modal ────────────────────────────────────────────────────────
+// ── Crypto payment modal (USDC / USDT / ETH / BTC via NowPayments) ────────────
+//
+// Two-step flow inside one modal:
+//   1. Email + currency picker → POST /api/public/lifetime100/np-invoice
+//   2. On success, swap in an NP widget iframe + MetaMask/Trust Wallet chips
+//
+// PRIME activates automatically via the shared NP IPN webhook once payment
+// confirms — no code, no activation step.
 
-interface EmailModalProps {
+interface CryptoPaymentModalProps {
   s: Lifetime100Strings;
   lang: string;
   onClose: () => void;
-  onSuccess: (meruUrl: string | null) => void;
 }
 
-function EmailModal({ s, lang, onClose, onSuccess }: EmailModalProps) {
+interface InvoiceState {
+  invoiceUrl: string;
+  nowpaymentsInvoiceId: string;
+  payCurrency: string;
+}
+
+function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
   const [email, setEmail] = useState("");
+  const [payCurrency, setPayCurrency] = useState<string>("usdcbase");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [invoice, setInvoice] = useState<InvoiceState | null>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Delay focus to allow animation to complete
-    const id = setTimeout(() => inputRef.current?.focus(), 80);
+    if (invoice) return;
+    const id = setTimeout(() => emailInputRef.current?.focus(), 80);
     return () => clearTimeout(id);
-  }, []);
+  }, [invoice]);
 
-  const handleSubmit = useCallback(async () => {
-    const trimmed = email.trim();
+  const handleContinue = useCallback(async () => {
+    const trimmed = email.trim().toLowerCase();
     if (!isValidEmail(trimmed)) {
       setError(s.invalidEmail);
       return;
@@ -216,47 +241,156 @@ function EmailModal({ s, lang, onClose, onSuccess }: EmailModalProps) {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/public/lifetime100/reserve`, {
+      const res = await fetch(`${API_BASE}/api/public/lifetime100/np-invoice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmed, language: lang }),
+        body: JSON.stringify({ email: trimmed, payCurrency, language: lang }),
         credentials: "include",
       });
       const data = await res.json();
-      if (res.status === 429) {
-        setError(data.error || data.message || s.errorGeneric);
-        return;
-      }
       if (!res.ok || !data.success) {
-        setError(data.error || data.message || s.errorGeneric);
+        setError(data.error || s.errorGeneric);
         return;
       }
-      onSuccess(typeof data.meruUrl === "string" ? data.meruUrl : null);
+      setInvoice({
+        invoiceUrl: String(data.invoiceUrl),
+        nowpaymentsInvoiceId: String(data.nowpaymentsInvoiceId),
+        payCurrency: String(data.payCurrency || payCurrency),
+      });
     } catch {
       setError(s.errorGeneric);
     } finally {
       setSubmitting(false);
     }
-  }, [email, lang, onSuccess, s]);
+  }, [email, payCurrency, lang, s]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleSubmit();
+    if (e.key === "Enter" && !invoice) handleContinue();
   };
 
+  // ── Step 2 — invoice created, show widget + wallet chips ─────────────────
+  if (invoice) {
+    const widgetSrc = `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(invoice.nowpaymentsInvoiceId)}`;
+    const showMetaMask = isMetaMaskCompatible(invoice.payCurrency);
+    const tw = trustWalletDeepLink(invoice.invoiceUrl, invoice.payCurrency);
+    const mm = metaMaskDeepLink(invoice.invoiceUrl);
+
+    return (
+      <ModalOverlay onClose={onClose}>
+        <div style={{ maxHeight: "85dvh", overflowY: "auto" }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: "#ffffff" }}>
+            {s.cryptoPayHere}
+          </h2>
+          <p style={{ margin: "0 0 14px", fontSize: 12, color: "#8E8E93", lineHeight: 1.5 }}>
+            {s.cryptoAfterPay}
+          </p>
+
+          <div
+            style={{
+              width: "100%",
+              height: 480,
+              borderRadius: 14,
+              overflow: "hidden",
+              background: "#0d0510",
+              border: "1px solid rgba(255,180,84,0.25)",
+            }}
+          >
+            <iframe
+              src={widgetSrc}
+              title="NowPayments checkout"
+              width="100%"
+              height="480"
+              frameBorder="0"
+              scrolling="yes"
+              style={{ display: "block", border: 0, width: "100%", height: 480, background: "#fff" }}
+              allow="payment"
+            />
+          </div>
+
+          <p style={{ margin: "16px 0 8px", fontSize: 11, fontWeight: 600, color: "#8E8E93" }}>
+            {s.cryptoOpenWallet}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: showMetaMask ? "repeat(3, minmax(0,1fr))" : "repeat(2, minmax(0,1fr))",
+              gap: 8,
+            }}
+          >
+            {showMetaMask && (
+              <a
+                href={mm}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  padding: "12px 6px", borderRadius: 12,
+                  border: "1px solid rgba(249,115,22,0.3)",
+                  background: "rgba(249,115,22,0.08)",
+                  textDecoration: "none",
+                }}
+              >
+                <MetaMaskIcon />
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#fdba74" }}>MetaMask</span>
+              </a>
+            )}
+            <a
+              href={tw}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                padding: "12px 6px", borderRadius: 12,
+                border: "1px solid rgba(59,153,252,0.3)",
+                background: "rgba(37,99,235,0.1)",
+                textDecoration: "none",
+              }}
+            >
+              <TrustWalletIcon />
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>Trust Wallet</span>
+            </a>
+            <a
+              href={invoice.invoiceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                padding: "12px 6px", borderRadius: 12,
+                border: "1px solid rgba(59,153,252,0.3)",
+                background: "rgba(59,153,252,0.08)",
+                textDecoration: "none",
+              }}
+            >
+              <WalletConnectIcon />
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#93c5fd" }}>
+                {s.cryptoOpenInNewTab}
+              </span>
+            </a>
+          </div>
+
+          <button
+            onClick={onClose}
+            style={{
+              display: "block", width: "100%", marginTop: 16, padding: "10px",
+              background: "none", border: "none", color: "#8E8E93",
+              fontSize: 13, cursor: "pointer", minHeight: 44,
+            }}
+          >
+            {s.cryptoCancel}
+          </button>
+        </div>
+      </ModalOverlay>
+    );
+  }
+
+  // ── Step 1 — email + currency picker ─────────────────────────────────────
   return (
     <ModalOverlay onClose={!submitting ? onClose : undefined}>
-      <h2
-        style={{
-          margin: "0 0 8px",
-          fontSize: 20,
-          fontWeight: 700,
-          color: "#ffffff",
-        }}
-      >
-        {s.modalTitle}
+      <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
+        {s.cryptoModalTitle}
       </h2>
-      <p style={{ margin: "0 0 20px", fontSize: 14, color: "#8E8E93", lineHeight: 1.5 }}>
-        {s.modalSubtitle}
+      <p style={{ margin: "0 0 18px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
+        {s.cryptoModalSubtitle}
       </p>
 
       <label
@@ -267,179 +401,98 @@ function EmailModal({ s, lang, onClose, onSuccess }: EmailModalProps) {
       </label>
       <input
         id="lt100-email"
-        ref={inputRef}
+        ref={emailInputRef}
         type="email"
         autoComplete="email"
+        inputMode="email"
         value={email}
         onChange={(e) => { setEmail(e.target.value); setError(null); }}
         onKeyDown={handleKeyDown}
         placeholder={s.emailPlaceholder}
         disabled={submitting}
         style={{
-          display: "block",
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "12px 14px",
-          borderRadius: 12,
+          display: "block", width: "100%", boxSizing: "border-box",
+          padding: "12px 14px", borderRadius: 12,
           border: "1px solid rgba(255,255,255,0.15)",
-          background: "rgba(0,0,0,0.3)",
-          color: "#ffffff",
-          fontSize: 16,
-          marginBottom: 8,
-          outline: "none",
+          background: "rgba(0,0,0,0.3)", color: "#ffffff",
+          fontSize: 16, marginBottom: 16, outline: "none",
           opacity: submitting ? 0.6 : 1,
         }}
-        aria-describedby={error ? "lt100-email-error" : undefined}
         aria-invalid={!!error}
       />
 
+      <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#8E8E93" }}>
+        {s.cryptoPickCurrency}
+      </p>
+      <div
+        role="radiogroup"
+        aria-label={s.cryptoPickCurrency}
+        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8, marginBottom: 18 }}
+      >
+        {CRYPTO_CURRENCIES.map((c) => {
+          const selected = payCurrency === c.code;
+          return (
+            <button
+              key={c.code}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => setPayCurrency(c.code)}
+              disabled={submitting}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                padding: "12px 4px", borderRadius: 12,
+                border: selected ? "1.5px solid #ff9933" : "1px solid rgba(255,255,255,0.15)",
+                background: selected ? "rgba(255,153,51,0.12)" : "rgba(0,0,0,0.3)",
+                color: "#ffffff", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                minHeight: 56, transition: "all 0.15s",
+                boxShadow: selected ? "0 0 12px rgba(255,153,51,0.25)" : "none",
+              }}
+            >
+              <span>{s[c.labelKey]}</span>
+              <span style={{ fontSize: 9, fontWeight: 500, color: selected ? "#ffb454" : "#8E8E93" }}>
+                {c.chain}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {error && (
-        <p
-          id="lt100-email-error"
-          role="alert"
-          style={{ margin: "0 0 12px", fontSize: 13, color: "#FF453A" }}
-        >
+        <p role="alert" style={{ margin: "0 0 12px", fontSize: 13, color: "#FF453A" }}>
           {error}
         </p>
       )}
 
       <button
-        onClick={handleSubmit}
+        onClick={handleContinue}
         disabled={submitting || !email.trim()}
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          width: "100%",
-          padding: "14px 20px",
-          borderRadius: 12,
-          border: "none",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          width: "100%", padding: "14px 20px", borderRadius: 12, border: "none",
           background: submitting || !email.trim()
             ? "rgba(255,51,119,0.4)"
             : "linear-gradient(90deg, #ff3377, #ff9933)",
-          color: "#ffffff",
-          fontSize: 14,
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
+          color: "#ffffff", fontSize: 14, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: "0.05em",
           cursor: submitting || !email.trim() ? "not-allowed" : "pointer",
-          minHeight: 48,
-          transition: "opacity 0.15s",
+          minHeight: 48, transition: "opacity 0.15s",
         }}
       >
         {submitting && <Spinner size={16} />}
-        {submitting ? s.modalSubmitting : s.modalSubmit}
+        {submitting ? s.cryptoOpeningInvoice : s.cryptoContinue}
       </button>
 
       <button
         onClick={onClose}
         disabled={submitting}
         style={{
-          display: "block",
-          width: "100%",
-          marginTop: 10,
-          padding: "10px",
-          background: "none",
-          border: "none",
-          color: "#8E8E93",
-          fontSize: 13,
-          cursor: submitting ? "not-allowed" : "pointer",
-          minHeight: 44,
+          display: "block", width: "100%", marginTop: 10, padding: "10px",
+          background: "none", border: "none", color: "#8E8E93",
+          fontSize: 13, cursor: submitting ? "not-allowed" : "pointer", minHeight: 44,
         }}
       >
         {s.modalCancel}
-      </button>
-    </ModalOverlay>
-  );
-}
-
-// ── Confirmation modal ─────────────────────────────────────────────────────────
-
-interface ConfirmationModalProps {
-  s: Lifetime100Strings;
-  onClose: () => void;
-  onDismiss: () => void;
-  activateHref: string;
-}
-
-function ConfirmationModal({ s, onClose, onDismiss, activateHref }: ConfirmationModalProps) {
-  return (
-    <ModalOverlay onClose={onClose}>
-      {/* Checkmark icon */}
-      <div
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: "50%",
-          background: "rgba(230,145,56,0.15)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 auto 16px",
-        }}
-        aria-hidden="true"
-      >
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-          <path d="M5 13l4 4L19 7" stroke="#E69138" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-
-      <h2
-        style={{
-          margin: "0 0 8px",
-          fontSize: 20,
-          fontWeight: 700,
-          color: "#ffffff",
-          textAlign: "center",
-        }}
-      >
-        {s.confirmationTitle}
-      </h2>
-      <p style={{ margin: "0 0 12px", fontSize: 14, color: "#8E8E93", lineHeight: 1.5, textAlign: "center" }}>
-        {s.confirmationBody}
-      </p>
-      <p style={{ margin: "0 0 24px", fontSize: 12, color: "#8E8E93", textAlign: "center" }}>
-        {s.confirmationCheckEmail}
-      </p>
-
-      <a
-        href={activateHref}
-        style={{
-          display: "block",
-          textAlign: "center",
-          padding: "10px 16px",
-          marginBottom: 8,
-          borderRadius: 10,
-          background: "rgba(255,180,84,0.12)",
-          border: "1px solid rgba(255,180,84,0.3)",
-          color: "#FFB454",
-          fontSize: 13,
-          fontWeight: 600,
-          textDecoration: "none",
-        }}
-        onClick={onClose}
-      >
-        {s.alreadyPaidLink}
-      </a>
-
-      <button
-        onClick={onDismiss}
-        style={{
-          display: "block",
-          width: "100%",
-          padding: "12px",
-          borderRadius: 12,
-          border: "none",
-          background: "linear-gradient(90deg, #ff3377, #ff9933)",
-          color: "#ffffff",
-          fontSize: 14,
-          fontWeight: 700,
-          cursor: "pointer",
-          minHeight: 48,
-        }}
-      >
-        {s.confirmationClose}
       </button>
     </ModalOverlay>
   );
@@ -698,33 +751,13 @@ interface HeroViewProps {
 
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [meruUrl, setMeruUrl] = useState<string | null>(null);
 
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
 
   const handleCtaClick = () => {
     if (isClosed) return;
-    if (PAYMENT_PROVIDER === "nequi") {
-      window.location.href = NEQUI_PAYMENT_URL;
-      return;
-    }
     setModalOpen(true);
-  };
-
-  const handleReserveSuccess = (url: string | null) => {
-    // Send the user straight to the Meru payment page. Backend already
-    // emailed them the code + activation link as a fallback. Only fall
-    // back to the confirmation modal if no payment URL came back (rare
-    // — would mean the reservation succeeded but Meru linking failed).
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    setMeruUrl(url);
-    setModalOpen(false);
-    setShowConfirmation(true);
   };
 
   const activateHref = `/lifetime100/activate`;
@@ -1120,28 +1153,12 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         </div>
       </div>
 
-      {/* Meru modals — only rendered when PAYMENT_PROVIDER === 'meru' */}
-      {PAYMENT_PROVIDER === "meru" && modalOpen && !showConfirmation && (
-        <EmailModal
+      {/* Crypto payment modal — USDC / USDT / ETH / BTC via NowPayments */}
+      {modalOpen && (
+        <CryptoPaymentModal
           s={s}
           lang={lang}
           onClose={() => setModalOpen(false)}
-          onSuccess={handleReserveSuccess}
-        />
-      )}
-      {PAYMENT_PROVIDER === "meru" && showConfirmation && (
-        <ConfirmationModal
-          s={s}
-          onClose={() => setShowConfirmation(false)}
-          onDismiss={() => {
-            setShowConfirmation(false);
-            if (meruUrl) {
-              window.location.assign(meruUrl);
-            } else {
-              window.location.assign("/landing");
-            }
-          }}
-          activateHref={activateHref}
         />
       )}
     </div>
