@@ -10,6 +10,7 @@ infrastructure/data/
 
 # User-uploaded media (served from disk, not tracked in git)
 public/uploads/
+uploads/
 
 # Build & tooling caches
 .turbo/
