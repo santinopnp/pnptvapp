@@ -435,8 +435,13 @@ class EmailService {
         mode: 'sent',
       };
     } catch (error) {
-      // Auto-suppress on permanent delivery failure (5xx SMTP response)
-      if (error.responseCode >= 550 && error.responseCode < 560) {
+      // Auto-suppress only on true recipient-side hard bounces.
+      // 550/551/552 = recipient mailbox unavailable/forwarded/over quota.
+      // 554 (and everything 555+) is generic transaction failed / policy — usually
+      // sender-side (e.g. Hostinger "Disabled by user from hPanel" on our own
+      // mailbox), which should NOT poison the recipient. Bit us 2026-08-20 when
+      // 2,113 recipients got wrongly suppressed during a support@ outage.
+      if (error.responseCode >= 550 && error.responseCode <= 552) {
         await this.suppress(to, `smtp-${error.responseCode}`);
       }
       logger.error('Error sending email:', {
