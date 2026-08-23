@@ -1955,8 +1955,13 @@ const hangoutMediaUpload = multer({
   fileFilter: (req, file, cb) => {
     // Strip codec parameters before matching (MediaRecorder sends e.g. "video/webm;codecs=vp9,opus")
     const baseMime = (file.mimetype || '').toLowerCase().split(';')[0].trim();
-    const isAllowed = /^(image\/(jpeg|jpg|png|webp|gif)|video\/(mp4|webm)|audio\/(webm|ogg|mp4|mpeg))$/.test(baseMime);
-    if (isAllowed) return cb(null, true);
+    const isImage = /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/.test(baseMime);
+    const isVideo = /^video\/(mp4|webm|quicktime|x-m4v)$/.test(baseMime);
+    const isAudio = /^audio\/(webm|ogg|mp4|mpeg|mp3|m4a|x-m4a|wav)$/.test(baseMime);
+    // iOS + some Android browsers send application/octet-stream for HEIC/MOV;
+    // verifyMagicBytes(HANGOUT_MEDIA_MIMES) below still enforces the actual type.
+    const isOctet = baseMime === 'application/octet-stream' || baseMime === '';
+    if (isImage || isVideo || isAudio || isOctet) return cb(null, true);
     cb(new Error('Only image, video, and voice message files are allowed'));
   },
 });
@@ -5938,15 +5943,167 @@ const lifetime100ActivateLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
 });
 
-// GET /api/public/lifetime100/availability — Meru retired 2026-08
-app.get('/api/public/lifetime100/availability', (_req, res) => {
-  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// Mercado Pago lifetime100 flow (replaced retired Meru 2026-08-23)
+//
+// Pool: 6 reusable mpago.li shortlinks seeded in mp_payment_links.
+// Verification: optimistic grant + admin review (mp_activations rows).
+// See services/mpActivationService.js for full flow.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// POST /api/public/lifetime100/reserve — Meru retired 2026-08
-app.post('/api/public/lifetime100/reserve', lifetime100ReserveLimiter, (_req, res) => {
-  res.status(410).json({ success: false, error: 'Meru payments retired.', code: 'MERU_RETIRED' });
-});
+// GET /api/public/lifetime100/availability — always open (pool is reusable)
+app.get('/api/public/lifetime100/availability', asyncHandler(async (_req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const { rows } = await dbQuery(
+    `SELECT COUNT(*)::int AS n FROM mp_payment_links
+      WHERE active = TRUE AND product = 'lifetime100'`
+  );
+  const n = rows[0]?.n || 0;
+  // Report at least 1 slot when the pool has any active link — the UI
+  // treats 0 as sold out, and MP links never sell out.
+  return res.json({ success: true, available: n > 0 ? Math.max(n, 100) : 0 });
+}));
+
+// POST /api/public/lifetime100/reserve — pick pool link + email user
+app.post('/api/public/lifetime100/reserve', lifetime100ReserveLimiter, asyncHandler(async (req, res) => {
+  const MpActivationService = require('../../services/mpActivationService');
+  const EmailService = require('../../services/emailservice');
+  const slackOpsService = require('../../services/slackOpsService');
+
+  const { email, language } = req.body || {};
+  const lang = language === 'en' ? 'en' : 'es';
+
+  const result = await MpActivationService.reserveLink({
+    email, language: lang, ipAddress: req.ip,
+  });
+
+  if (result.error) {
+    const map = {
+      INVALID_EMAIL: [400, 'Please provide a valid email address.'],
+      POOL_EMPTY:    [503, 'Temporarily out of payment slots. Try again in a moment.'],
+    };
+    const [code, msg] = map[result.error] || [500, 'Reservation failed.'];
+    return res.status(code).json({ success: false, error: msg, code: result.error });
+  }
+
+  // Fire-and-forget email — never blocks the response
+  const activationUrl = `https://pnptv.app/lifetime100/activate`;
+  EmailService.sendMpLifetimeReserveEmail({
+    to: result.email,
+    language: result.language,
+    mpUrl: result.url,
+    linkCode: result.code,
+    activationUrl,
+    amountCop: result.amountCop,
+  }).catch((err) => {
+    logger.warn('[/lifetime100/reserve] email send failed (non-blocking)', {
+      email: result.email, error: err.message,
+    });
+  });
+
+  // Slack ping so ops sees the new reservation come through
+  slackOpsService.notifyMpReserve?.({
+    email: result.email, linkCode: result.code, amountCop: result.amountCop, language: result.language,
+  }).catch(() => {});
+
+  return res.json({
+    success: true,
+    code: result.code,
+    mpUrl: result.url,
+    activationUrl,
+    amountCop: result.amountCop,
+    message: 'Payment link reserved. Check your email for instructions.',
+  });
+}));
+
+// POST /api/public/lifetime100/activate — optimistic grant + pending_review row
+app.post('/api/public/lifetime100/activate', lifetime100ActivateLimiter, asyncHandler(async (req, res) => {
+  const MpActivationService = require('../../services/mpActivationService');
+  const slackOpsService = require('../../services/slackOpsService');
+
+  const { code, email, language } = req.body || {};
+  const lang = language === 'en' ? 'en' : 'es';
+
+  const result = await MpActivationService.activate({
+    paymentId: code,
+    email,
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent'),
+    language: lang,
+  });
+
+  if (result.error) {
+    const map = {
+      INVALID_PAYMENT_ID: [400, 'Please enter a valid Mercado Pago payment ID (numbers only).'],
+      INVALID_EMAIL:      [400, 'Please provide a valid email address.'],
+      ALREADY_USED:       [409, 'This payment ID was already used to activate an account.'],
+      GRANT_FAILED:       [500, 'Could not grant access. Please contact support.'],
+    };
+    const [status, msg] = map[result.error] || [500, 'Activation failed.'];
+    return res.status(status).json({ success: false, error: msg, code: result.error });
+  }
+
+  // Slack ping — admin needs to see this to verify
+  slackOpsService.notifyMpActivationPending?.({
+    activationId: result.activationId,
+    email: result.email,
+    userId: result.userId,
+    paymentId: result.paymentId,
+    mpLinkCode: result.mpLinkCode,
+  }).catch(() => {});
+
+  return res.json({
+    success: true,
+    message: 'Access granted. Welcome!',
+    redirect: '/',
+    activationId: result.activationId,
+  });
+}));
+
+// ── Admin endpoints ──────────────────────────────────────────────────────────
+
+// GET /api/webapp/admin/mp-activations?status=pending_review|confirmed|revoked|all
+app.get('/api/webapp/admin/mp-activations', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const MpActivationService = require('../../services/mpActivationService');
+  const status = String(req.query.status || 'pending_review');
+  const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+  const activations = await MpActivationService.listActivations({ status, limit });
+  return res.json({ success: true, activations });
+}));
+
+// POST /api/webapp/admin/mp-activations/:id/confirm
+app.post('/api/webapp/admin/mp-activations/:id/confirm', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const MpActivationService = require('../../services/mpActivationService');
+  const actor = req.session?.user;
+  const { notes } = req.body || {};
+  const result = await MpActivationService.confirmActivation({
+    activationId: req.params.id,
+    actorId: actor?.id || 'admin',
+    notes: notes || null,
+  });
+  if (result.error) {
+    const map = { NOT_FOUND: 404, ALREADY_CONFIRMED: 409, ALREADY_REVOKED: 409 };
+    return res.status(map[result.error] || 500).json({ success: false, error: result.error });
+  }
+  return res.json({ success: true, activationId: result.activationId });
+}));
+
+// POST /api/webapp/admin/mp-activations/:id/revoke
+app.post('/api/webapp/admin/mp-activations/:id/revoke', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const MpActivationService = require('../../services/mpActivationService');
+  const actor = req.session?.user;
+  const { reason } = req.body || {};
+  const result = await MpActivationService.revokeActivation({
+    activationId: req.params.id,
+    actorId: actor?.id || 'admin',
+    reason: reason || 'Revoked by admin',
+  });
+  if (result.error) {
+    const map = { NOT_FOUND: 404, ALREADY_REVOKED: 409 };
+    return res.status(map[result.error] || 500).json({ success: false, error: result.error });
+  }
+  return res.json({ success: true, activationId: result.activationId });
+}));
 
 // ── Nequi Negocios (Wompi reusable link) ─────────────────────────────────────
 //
@@ -9005,12 +9162,27 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
     query(
       `SELECT id, name, description, access_type, slug, cover_image_url,
               subscriber_count
-         FROM creator_channels
+         FROM creator_channels cc
         WHERE is_active = true
           AND (name ILIKE $1 ESCAPE '\\' OR description ILIKE $1 ESCAPE '\\' OR slug ILIKE $1 ESCAPE '\\')
+          AND (
+            cc.creator_id = $3
+            OR cc.access_type = 'free'
+            OR (cc.access_type = 'prime' AND EXISTS (
+              SELECT 1 FROM user_entitlements ue
+              WHERE ue.user_id = $3 AND ue.add_on_id = 'prime'
+                AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+            ))
+            OR (cc.access_type IN ('subscription','paid') AND EXISTS (
+              SELECT 1 FROM creator_subscriptions cs
+              WHERE cs.subscriber_id = $3 AND cs.creator_id = cc.creator_id
+                AND cs.status = 'active'
+                AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+            ))
+          )
         ORDER BY subscriber_count DESC NULLS LAST
         LIMIT $2`,
-      [like, limit],
+      [like, limit, String(viewerId)],
     ),
     query(
       `SELECT g.id, g.name, g.description, g.is_paid,
@@ -9056,6 +9228,8 @@ app.get('/api/webapp/search', requireSessionAuth, asyncHandler(async (req, res) 
          JOIN users u ON u.id::text = p.user_id::text
         WHERE p.is_deleted = false
           AND u.is_deleted = false
+          AND p.is_exclusive = false
+          AND COALESCE(p.content_tier, 'free') = 'free'
           AND p.content ILIKE $1 ESCAPE '\\'
         ORDER BY p.created_at DESC
         LIMIT $2`,
@@ -19373,7 +19547,8 @@ const mainStageStateLimiter = rateLimit({
 });
 app.get('/api/main-stage/state', mainStageStateLimiter, mainStageController.getState);
 
-// Viewer token — no auth, IP-only rate-limited (5/min to prevent identity flood)
+// Viewer token — signed-in Basic/PRIME/admin only. IP-rate-limited (5/min) to prevent
+// identity flood + entitlement gate so free tier can't watch Main Stage for free.
 const mainStageViewerTokenLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -19383,7 +19558,13 @@ const mainStageViewerTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.get('/api/main-stage/viewer-token', mainStageViewerTokenLimiter, mainStageController.viewerToken);
+app.get(
+  '/api/main-stage/viewer-token',
+  mainStageViewerTokenLimiter,
+  requireSessionAuth,
+  requireMemberTier,
+  mainStageController.viewerToken,
+);
 
 // GET /api/main-stage/cammers — active publishers in main-stage-prime for the
 // community-feed Spotlight rail. Backed by the Redis spotlight queue (updated

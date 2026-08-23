@@ -797,13 +797,18 @@ async function cronProcessor(job) {
 
     case 'weekly-log-retention': {
       const pool = getPool();
-      for (const [table, interval] of [['user_access_logs', '30 days'], ['video_fetch_log', '90 days']]) {
+      // Each table stamps its rows with a differently-named timestamp column,
+      // so a shared "created_at" hardcode 500'd the video_fetch_log branch.
+      for (const [table, tsCol, interval] of [
+        ['user_access_logs', 'created_at', '30 days'],
+        ['video_fetch_log',  'fetched_at', '90 days'],
+      ]) {
         let total = 0;
         try {
           while (true) {
             const r = await pool.query(
               `DELETE FROM ${table} WHERE id IN (
-                 SELECT id FROM ${table} WHERE created_at < NOW() - INTERVAL '${interval}' LIMIT 50000)`
+                 SELECT id FROM ${table} WHERE ${tsCol} < NOW() - INTERVAL '${interval}' LIMIT 50000)`
             );
             total += r.rowCount;
             if (r.rowCount === 0) break;
