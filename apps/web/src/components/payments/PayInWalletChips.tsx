@@ -1487,6 +1487,43 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
+              {/* Spend-it-now nudge — appears when user has meaningful on-chain
+                  balance to catch dormant funded wallets on next login. Silent
+                  when balance is trivial. */}
+              {(() => {
+                const _ETH_PRICE_ROUGH = 2500;
+                const _totalUsd =
+                  (usdc || 0) + (usdcMainnet || 0) +
+                  ((eth || 0) + (ethMainnet || 0)) * _ETH_PRICE_ROUGH;
+                if (loading || _totalUsd < 0.50) return null;
+                const _isEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+                return (
+                  <div className="rounded-xl border border-yellow-400/50 bg-gradient-to-br from-yellow-500/[0.14] to-pink-500/[0.12] p-3 space-y-2 shadow-[0_0_18px_-4px_rgba(250,204,21,0.35)]">
+                    <div className="text-sm font-bold text-yellow-200 flex items-center gap-1.5">
+                      <span className="text-base">💰</span>
+                      {_isEs
+                        ? <>Tienes <span className="tabular-nums">≈ ${_totalUsd.toFixed(2)}</span> sin gastar</>
+                        : <>You have <span className="tabular-nums">≈ ${_totalUsd.toFixed(2)}</span> unspent</>}
+                    </div>
+                    <p className="text-[11px] text-white/70 leading-snug">
+                      {_isEs
+                        ? "Úsalo ya en PRIME, propinas en vivo, videollamadas privadas o contenido exclusivo."
+                        : "Use it now on PRIME, live tips, private video calls, or exclusive content."}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <a href="/subscribe" onClick={onClose}
+                         className="block text-center py-2 rounded-lg text-xs font-bold text-black bg-yellow-400 hover:bg-yellow-300 transition">
+                        💎 {_isEs ? "Obtener PRIME" : "Get PRIME"}
+                      </a>
+                      <a href="/main-stage" onClick={onClose}
+                         className="block text-center py-2 rounded-lg text-xs font-bold text-white bg-pink-600 hover:bg-pink-500 transition">
+                        💸 {_isEs ? "Dar Propinas" : "Send Tips"}
+                      </a>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Balances — USDC + ETH + Ru$h */}
               <div className="grid grid-cols-3 gap-2">
                 {/* USDC */}
