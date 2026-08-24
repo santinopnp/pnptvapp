@@ -39,6 +39,17 @@ const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-di
 
 const RECOMMENDED_PLAN = "prime-diamond-pass-365d";
 
+// Mercado Pago pre-generated checkout links (Colombia, COP). Each link has a
+// fixed COP amount tied to the plan's USD price. Manual activation — user
+// emails support@pnptv.app with receipt after paying.
+const MP_LINKS: Record<string, string> = {
+  "member_monthly":          "https://mpago.li/2psRirn", // BASIC Monthly $9.99
+  "prime-week-pass-7d":      "https://mpago.li/2wKDS3q", // PRIME Week $15
+  "monthly-pass":            "https://mpago.li/2VvAg9K", // PRIME Monthly $24.99
+  "prime-diamond-pass-365d": "https://mpago.li/1Spwqd5", // PRIME Diamond $99.99
+  "lifetime-pass":           "https://mpago.li/1xjtaya", // PRIME Lifetime $250
+};
+
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
     return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(amount);
@@ -134,6 +145,7 @@ export default function Subscribe() {
   // Wallet-USDC-on-Base checkout — expands the WalletPayCard for the picked plan.
   // Server resolves canonical price + duration via planId — client just passes it.
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
+  const [mpPanelPlanId, setMpPanelPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
   // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
   // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
@@ -905,6 +917,40 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
+                {MP_LINKS[plan.id] && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMpPanelPlanId(mpPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${mpPanelPlanId === plan.id ? "bg-gradient-to-r from-sky-400 to-blue-500 ring-2 ring-sky-300" : "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500"}`}
+                  >
+                    🇨🇴 {t.lang === "es" ? "Pagar con Tarjeta (COP)" : "Pay with Card (COP)"}
+                  </button>
+                )}
+                {mpPanelPlanId === plan.id && MP_LINKS[plan.id] && (
+                  <div className="w-full mt-2 p-3 rounded-lg border border-sky-500/30 bg-sky-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="text-sm font-semibold text-pnp-textPrimary">
+                      🇨🇴 Mercado Pago · Colombia
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary">
+                      {t.lang === "es"
+                        ? `Cobrado en pesos colombianos · ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD`
+                        : `Charged in Colombian pesos · ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD`}
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
+                      {t.lang === "es"
+                        ? "📧 Después de pagar, envía tu recibo a support@pnptv.app para activar tu plan — usualmente en menos de 2h (máx 24h)."
+                        : "📧 After paying, email your receipt to support@pnptv.app to activate your plan — usually under 2h (24h max)."}
+                    </div>
+                    <a
+                      href={MP_LINKS[plan.id]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 transition-all"
+                    >
+                      💳 {t.lang === "es" ? "Abrir Mercado Pago" : "Open Mercado Pago"} →
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
             </div>
@@ -1086,6 +1132,40 @@ export default function Subscribe() {
                       }}
                       compact
                     />
+                  </div>
+                )}
+                {MP_LINKS[plan.id] && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMpPanelPlanId(mpPanelPlanId === plan.id ? null : plan.id); }}
+                    className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${mpPanelPlanId === plan.id ? "bg-gradient-to-r from-sky-400 to-blue-500 ring-2 ring-sky-300" : "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500"}`}
+                  >
+                    🇨🇴 {t.lang === "es" ? "Pagar con Tarjeta (COP)" : "Pay with Card (COP)"}
+                  </button>
+                )}
+                {mpPanelPlanId === plan.id && MP_LINKS[plan.id] && (
+                  <div className="w-full mt-2 p-3 rounded-lg border border-sky-500/30 bg-sky-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="text-sm font-semibold text-pnp-textPrimary">
+                      🇨🇴 Mercado Pago · Colombia
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary">
+                      {t.lang === "es"
+                        ? `Cobrado en pesos colombianos · ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD`
+                        : `Charged in Colombian pesos · ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD`}
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
+                      {t.lang === "es"
+                        ? "📧 Después de pagar, envía tu recibo a support@pnptv.app para activar tu plan — usualmente en menos de 2h (máx 24h)."
+                        : "📧 After paying, email your receipt to support@pnptv.app to activate your plan — usually under 2h (24h max)."}
+                    </div>
+                    <a
+                      href={MP_LINKS[plan.id]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 transition-all"
+                    >
+                      💳 {t.lang === "es" ? "Abrir Mercado Pago" : "Open Mercado Pago"} →
+                    </a>
                   </div>
                 )}
               </div>
