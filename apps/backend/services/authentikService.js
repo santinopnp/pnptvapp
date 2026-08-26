@@ -170,7 +170,7 @@ class AuthentikService {
       logger.info(`[Authentik] Password set for user pk=${userPk}`);
       return true;
     } catch (err) {
-      logger.error('[Authentik] setUserPassword failed:', err.response?.data || err.message);
+      logger.error('[Authentik] setUserPassword failed', { error: err.response?.data || err.message });
       return false;
     }
   }
@@ -1138,7 +1138,7 @@ class AuthentikService {
       captureSetCookie(initRes.headers);
       currentData = initRes.data;
     } catch (err) {
-      logger.error('[Passkey] beginPasskeyFlow init GET failed:', err.message);
+      logger.error('[Passkey] beginPasskeyFlow init GET failed', { error: err.message });
       return { success: false, error: 'passkey_unavailable' };
     }
 
@@ -1404,7 +1404,7 @@ class AuthentikService {
       });
       return { success: true, devices: res.data?.results || [] };
     } catch (err) {
-      logger.error('[Passkey] listWebAuthnDevices failed:', err.response?.data || err.message);
+      logger.error('[Passkey] listWebAuthnDevices failed', { error: err.response?.data || err.message });
       return { success: false, error: 'fetch_failed' };
     }
   }

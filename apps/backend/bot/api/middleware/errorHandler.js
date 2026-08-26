@@ -139,6 +139,16 @@ function notFoundHandler(req, res) {
  */
 function asyncHandler(fn) {
   return (req, res, next) => {
+    if (typeof fn !== 'function') {
+      const method = req?.method || '?';
+      const path = req?.path || req?.originalUrl || '?';
+      const err = new TypeError(`asyncHandler wrapped a non-function (got ${typeof fn}) at ${method} ${path}`);
+      try {
+        // Lazy-require logger to avoid circular imports if this file is loaded early
+        require('../../../utils/logger').error('asyncHandler misuse — route registered with undefined handler', { method, path });
+      } catch { /* logger may be unavailable during boot */ }
+      return next(err);
+    }
     Promise.resolve(fn(req, res, next)).catch(next);
   };
 }

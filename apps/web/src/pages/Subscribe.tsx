@@ -53,6 +53,13 @@ const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-di
 
 const RECOMMENDED_PLAN = "prime-diamond-pass-365d";
 
+// (MP_LINKS was here — superseded by MERCADOPAGO_LINKS above which powers the
+// shared CardPaymentModal + op# activation flow. Do NOT re-add.)
+
+// Direct Dash receive address. Manual activation — user sends USD-equivalent
+// Dash and emails the tx hash to support@pnptv.app.
+const DASH_ADDRESS = "Xbz9ZsZTdRyPXhKyTM2XrS7ELDFvJr9zL3";
+
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
     return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(amount);
@@ -150,6 +157,8 @@ export default function Subscribe() {
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
   // MercadoPago modal — holds the plan_id whose Card button was clicked.
   const [cardModalPlanId, setCardModalPlanId] = useState<string | null>(null);
+  // Dash inline panel — plan_id whose Dash CTA was clicked.
+  const [dashPanelPlanId, setDashPanelPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
   // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
   // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
@@ -931,6 +940,44 @@ export default function Subscribe() {
                     />
                   </div>
                 )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDashPanelPlanId(dashPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${dashPanelPlanId === plan.id ? "bg-gradient-to-r from-cyan-500 to-cyan-700 ring-2 ring-cyan-300" : "bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700"}`}
+                >
+                  🐎 {t.lang === "es" ? "Pagar con Dash" : "Pay with Dash"}
+                </button>
+                {dashPanelPlanId === plan.id && (
+                  <div className="w-full mt-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="text-sm font-semibold text-pnp-textPrimary">
+                      🐎 Dash Direct
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary">
+                      {t.lang === "es"
+                        ? `Envía ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD en Dash a esta dirección:`
+                        : `Send ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD worth of Dash to this address:`}
+                    </div>
+                    <div className="font-mono text-xs bg-black/40 p-2 rounded break-all select-all text-pnp-textPrimary">
+                      {DASH_ADDRESS}
+                    </div>
+                    <div className="text-[11px] text-pnp-textSecondary">
+                      {t.lang === "es" ? "Precio actual: " : "Current price: "}
+                      <a href="https://www.coingecko.com/en/coins/dash" target="_blank" rel="noopener noreferrer" className="underline">coingecko.com/dash</a>
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
+                      {t.lang === "es"
+                        ? "📧 Después de pagar, envía el tx hash a support@pnptv.app — activamos en menos de 2h (máx 24h)."
+                        : "📧 After paying, email your tx hash to support@pnptv.app — we activate within 2h (24h max)."}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(DASH_ADDRESS); }}
+                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700 transition-all"
+                    >
+                      📋 {t.lang === "es" ? "Copiar dirección" : "Copy address"}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             </div>
@@ -1122,6 +1169,44 @@ export default function Subscribe() {
                       }}
                       compact
                     />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDashPanelPlanId(dashPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${dashPanelPlanId === plan.id ? "bg-gradient-to-r from-cyan-500 to-cyan-700 ring-2 ring-cyan-300" : "bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700"}`}
+                >
+                  🐎 {t.lang === "es" ? "Pagar con Dash" : "Pay with Dash"}
+                </button>
+                {dashPanelPlanId === plan.id && (
+                  <div className="w-full mt-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="text-sm font-semibold text-pnp-textPrimary">
+                      🐎 Dash Direct
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary">
+                      {t.lang === "es"
+                        ? `Envía ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD en Dash a esta dirección:`
+                        : `Send ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD worth of Dash to this address:`}
+                    </div>
+                    <div className="font-mono text-xs bg-black/40 p-2 rounded break-all select-all text-pnp-textPrimary">
+                      {DASH_ADDRESS}
+                    </div>
+                    <div className="text-[11px] text-pnp-textSecondary">
+                      {t.lang === "es" ? "Precio actual: " : "Current price: "}
+                      <a href="https://www.coingecko.com/en/coins/dash" target="_blank" rel="noopener noreferrer" className="underline">coingecko.com/dash</a>
+                    </div>
+                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
+                      {t.lang === "es"
+                        ? "📧 Después de pagar, envía el tx hash a support@pnptv.app — activamos en menos de 2h (máx 24h)."
+                        : "📧 After paying, email your tx hash to support@pnptv.app — we activate within 2h (24h max)."}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(DASH_ADDRESS); }}
+                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700 transition-all"
+                    >
+                      📋 {t.lang === "es" ? "Copiar dirección" : "Copy address"}
+                    </button>
                   </div>
                 )}
               </div>
