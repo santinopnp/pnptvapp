@@ -34,9 +34,10 @@ import { CardPaymentModal } from "@/components/payments/CardPaymentModal";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
-// lifetime100 = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
-// lifetime80   = legacy plan; superseded by `lifetime-pass` ($249.99).
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80"]);
+// lifetime100          = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
+// lifetime80           = legacy plan; superseded by `lifetime-pass` ($249.99).
+// monthly-pass-promo-15 + yearly50 = promo/discount SKUs granted out-of-band; never on /subscribe.
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15", "yearly50"]);
 
 // MercadoPago (mpago.li) hosted-checkout links per plan. Only plans present
 // in this map show the "💳 Card" button — buyer pays in COP, then submits
