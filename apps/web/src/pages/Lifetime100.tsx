@@ -498,6 +498,69 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
   );
 }
 
+// ── Card payment modal (MercadoPago hosted link — mpago.li) ──────────────────
+//
+// One-step redirect flow: opens the mpago.li checkout in a new tab. Buyer pays
+// in COP (~320,000 ≈ $100 USD). After payment they return to /mercadopago,
+// enter their email → admin activates from /admin/manual-activations.
+
+interface CardPaymentModalProps {
+  s: Lifetime100Strings;
+  onClose: () => void;
+}
+
+function CardPaymentModal({ s, onClose }: CardPaymentModalProps) {
+  return (
+    <ModalOverlay onClose={onClose}>
+      <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
+        {s.cardModalTitle}
+      </h2>
+      <p style={{ margin: "0 0 18px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
+        {s.cardModalBody}
+      </p>
+
+      <a
+        href="https://mpago.li/2hvNVkH"
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClose}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: "100%", padding: "14px 20px", borderRadius: 12,
+          background: "linear-gradient(90deg,#009EE3,#00B4E6)",
+          color: "#ffffff", fontSize: 14, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: "0.05em",
+          textDecoration: "none", minHeight: 48, boxSizing: "border-box",
+          boxShadow: "0 6px 20px rgba(0,158,227,0.35)",
+        }}
+      >
+        {s.cardModalOpenButton}
+      </a>
+
+      <p style={{ margin: "18px 0 0", textAlign: "center", fontSize: 13, color: "#8E8E93" }}>
+        {s.mercadoPagoAlreadyPaid}{" "}
+        <a
+          href="/mercadopago"
+          style={{ color: "#5EC4FF", fontWeight: 600, borderBottom: "1px solid rgba(94,196,255,0.5)", textDecoration: "none" }}
+        >
+          {s.mercadoPagoAlreadyPaidLink}
+        </a>
+      </p>
+
+      <button
+        onClick={onClose}
+        style={{
+          display: "block", width: "100%", marginTop: 10, padding: "10px",
+          background: "none", border: "none", color: "#8E8E93",
+          fontSize: 13, cursor: "pointer", minHeight: 44,
+        }}
+      >
+        {s.modalCancel}
+      </button>
+    </ModalOverlay>
+  );
+}
+
 // ── Activate view ──────────────────────────────────────────────────────────────
 
 interface ActivateViewProps {
@@ -751,6 +814,7 @@ interface HeroViewProps {
 
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [cardModalOpen, setCardModalOpen] = useState(false);
 
   const isSoldOut = available === 0;
   const isClosed = !availabilityLoading && isSoldOut;
@@ -758,6 +822,11 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
   const handleCtaClick = () => {
     if (isClosed) return;
     setModalOpen(true);
+  };
+
+  const handleCardClick = () => {
+    if (isClosed) return;
+    setCardModalOpen(true);
   };
 
   const activateHref = `/lifetime100/activate`;
@@ -771,7 +840,7 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         display: "flex",
         flexDirection: "column",
         overflowX: "hidden",
-        paddingBottom: 200, // clearance for stacked pills + legal + CTA footer
+        paddingBottom: 280, // clearance for stacked pills + legal + 2 CTA buttons (crypto + card)
       }}
     >
       {/* Ambient glow */}
@@ -992,64 +1061,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           </ul>
         </div>
 
-        {/* MercadoPago (COP) side channel — hosted mpago.li link + manual activation */}
-        <div
-          style={{
-            margin: "0 0 16px",
-            padding: "18px 20px",
-            borderRadius: 24,
-            border: "1px solid rgba(0,158,227,0.35)",
-            background:
-              "linear-gradient(135deg, rgba(0,158,227,0.10), rgba(255,214,10,0.06))",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-          }}
-        >
-          <p
-            style={{
-              margin: "0 0 6px",
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "#5EC4FF",
-            }}
-          >
-            🇨🇴 {s.mercadoPagoCtaTitle}
-          </p>
-          <p style={{ margin: "0 0 14px", fontSize: 13, color: "#d6d6dc", lineHeight: 1.5 }}>
-            {s.mercadoPagoCtaBody}
-          </p>
-          <a
-            href="https://mpago.li/2hvNVkH"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: "block",
-              textAlign: "center",
-              padding: "13px 18px",
-              borderRadius: 13,
-              background: "linear-gradient(90deg,#009EE3,#00B4E6)",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 700,
-              textDecoration: "none",
-              boxShadow: "0 6px 20px rgba(0,158,227,0.35)",
-            }}
-          >
-            {s.mercadoPagoCtaButton}
-          </a>
-          <p style={{ margin: "12px 0 0", textAlign: "center", fontSize: 12, color: "#8E8E93" }}>
-            {s.mercadoPagoAlreadyPaid}{" "}
-            <a
-              href="/mercadopago"
-              style={{ color: "#5EC4FF", fontWeight: 600, textDecoration: "none", borderBottom: "1px solid rgba(94,196,255,0.5)" }}
-            >
-              {s.mercadoPagoAlreadyPaidLink}
-            </a>
-          </p>
-        </div>
-
         {/* Diamond separator */}
         <div
           aria-hidden="true"
@@ -1156,58 +1167,104 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           ))}
         </div>
 
-        {/* CTA button container */}
-        <div style={{ padding: "4px 20px 0" }}>
-        <button
-          onClick={handleCtaClick}
-          disabled={availabilityLoading || isClosed}
-          aria-disabled={availabilityLoading || isClosed}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            width: "100%",
-            maxWidth: 500,
-            margin: "0 auto",
-            padding: "18px 24px",
-            borderRadius: 16,
-            border: "none",
-            background: isClosed
-              ? "rgba(255,255,255,0.08)"
-              : "linear-gradient(90deg, #ff3377, #ff9933)",
-            color: isClosed ? "#8E8E93" : "#ffffff",
-            fontSize: 15,
-            fontWeight: 800,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-            minHeight: 56,
-            boxShadow: isClosed
-              ? "none"
-              : "0 8px 32px rgba(255,51,119,0.4)",
-            transition: "opacity 0.15s, transform 0.1s",
-          }}
-          onMouseDown={(e) => {
-            if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-          }}
-          onMouseUp={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-          }}
-          onTouchStart={(e) => {
-            if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-          }}
-          onTouchEnd={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-          }}
-        >
-          {availabilityLoading && <Spinner size={16} />}
-          {availabilityLoading
-            ? s.ctaLoading
-            : isClosed
-            ? s.ctaSoldOut
-            : s.ctaGetAccess}
-        </button>
+        {/* CTA buttons — stacked: Pay with Crypto (primary) + Pay with Card (MP) */}
+        <div style={{ padding: "4px 20px 0", display: "flex", flexDirection: "column", gap: 8, maxWidth: 500, margin: "0 auto" }}>
+          <button
+            onClick={handleCtaClick}
+            disabled={availabilityLoading || isClosed}
+            aria-disabled={availabilityLoading || isClosed}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              width: "100%",
+              padding: "18px 24px",
+              borderRadius: 16,
+              border: "none",
+              background: isClosed
+                ? "rgba(255,255,255,0.08)"
+                : "linear-gradient(90deg, #ff3377, #ff9933)",
+              color: isClosed ? "#8E8E93" : "#ffffff",
+              fontSize: 15,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
+              minHeight: 56,
+              boxShadow: isClosed
+                ? "none"
+                : "0 8px 32px rgba(255,51,119,0.4)",
+              transition: "opacity 0.15s, transform 0.1s",
+            }}
+            onMouseDown={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onMouseUp={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+            onTouchStart={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onTouchEnd={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+          >
+            {availabilityLoading && <Spinner size={16} />}
+            {availabilityLoading
+              ? s.ctaLoading
+              : isClosed
+              ? s.ctaSoldOut
+              : s.ctaPayWithCrypto}
+          </button>
+
+          <button
+            onClick={handleCardClick}
+            disabled={availabilityLoading || isClosed}
+            aria-disabled={availabilityLoading || isClosed}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              width: "100%",
+              padding: "18px 24px",
+              borderRadius: 16,
+              border: "none",
+              background: isClosed
+                ? "rgba(255,255,255,0.08)"
+                : "linear-gradient(90deg, #009EE3, #00B4E6)",
+              color: isClosed ? "#8E8E93" : "#ffffff",
+              fontSize: 15,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
+              minHeight: 56,
+              boxShadow: isClosed
+                ? "none"
+                : "0 8px 32px rgba(0,158,227,0.4)",
+              transition: "opacity 0.15s, transform 0.1s",
+            }}
+            onMouseDown={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onMouseUp={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+            onTouchStart={(e) => {
+              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+            }}
+            onTouchEnd={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+            }}
+          >
+            {availabilityLoading
+              ? s.ctaLoading
+              : isClosed
+              ? s.ctaSoldOut
+              : s.ctaPayWithCard}
+          </button>
         </div>
       </div>
 
@@ -1217,6 +1274,14 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           s={s}
           lang={lang}
           onClose={() => setModalOpen(false)}
+        />
+      )}
+
+      {/* Card payment modal — MercadoPago (mpago.li) redirect */}
+      {cardModalOpen && (
+        <CardPaymentModal
+          s={s}
+          onClose={() => setCardModalOpen(false)}
         />
       )}
     </div>

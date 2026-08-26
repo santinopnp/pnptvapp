@@ -53,8 +53,15 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "CLAIM YOUR SPOT — $100",
+    ctaPayWithCrypto: "💎 PAY WITH CRYPTO — $100",
+    ctaPayWithCard: "💳 PAY WITH CARD — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
+
+    // ── Card (MercadoPago) modal ───────────────────────────────────────────────
+    cardModalTitle: "Pay with Card via MercadoPago",
+    cardModalBody: "You'll be redirected to MercadoPago to complete your $100 payment. MercadoPago will charge ~320,000 COP (the equivalent of $100 USD). After paying, come back to /mercadopago to complete your activation — usually within a few hours.",
+    cardModalOpenButton: "Open MercadoPago →",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Get Your Payment Link",
@@ -202,8 +209,15 @@ export const strings = {
 
     // ── Sticky CTA ─────────────────────────────────────────────────────────────
     ctaGetAccess: "RECLAMA TU LUGAR — $100",
+    ctaPayWithCrypto: "💎 PAGAR CON CRIPTO — $100",
+    ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",
+
+    // ── Card (MercadoPago) modal ───────────────────────────────────────────────
+    cardModalTitle: "Pagar con Tarjeta vía MercadoPago",
+    cardModalBody: "Serás redirigido a MercadoPago para completar tu pago de $100. MercadoPago cobrará ~320.000 COP (el equivalente a $100 USD). Después de pagar, vuelve a /mercadopago para completar tu activación — normalmente en pocas horas.",
+    cardModalOpenButton: "Abrir MercadoPago →",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Obtén Tu Link de Pago",
