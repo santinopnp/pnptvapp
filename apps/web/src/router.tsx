@@ -348,6 +348,7 @@ const CristinaPage = lazy(() => import("@/components/CristinaWidget").then((m) =
 const PrimeChannel = lazy(() => import("@/pages/admin/PrimeChannel"));
 const Compliance2257 = lazy(() => import("@/pages/admin/Compliance2257"));
 const AdminInviteLinks = lazy(() => import("@/pages/admin/InviteLinks"));
+const AdminManualActivations = lazy(() => import("@/pages/admin/ManualActivations"));
 const ReferralAdmin = lazy(() => import("@/pages/admin/ReferralAdmin"));
 const Lifetime100 = lazy(() => import("@/pages/Lifetime100"));
 const NequiNegociosPage = lazy(() =>
@@ -1080,6 +1081,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <AdminInviteLinks />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "manual-activations",
+        element: (
+          <ModuleLoader>
+            <AdminManualActivations />
           </ModuleLoader>
         ),
       },
