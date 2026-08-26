@@ -30,10 +30,24 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
+import { CardPaymentModal } from "@/components/payments/CardPaymentModal";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
-const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d"]);
+// lifetime100 = /lifetime100 fundraiser (dedicated landing, not for /subscribe).
+// lifetime80   = legacy plan; superseded by `lifetime-pass` ($249.99).
+const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80"]);
+
+// MercadoPago (mpago.li) hosted-checkout links per plan. Only plans present
+// in this map show the "💳 Card" button — buyer pays in COP, then submits
+// their MP "número de operación" on /mercadopago for admin verification.
+const MERCADOPAGO_LINKS: Record<string, { link: string; copApprox: number; nameEs: string }> = {
+  "member_monthly":          { link: "https://mpago.li/2psRirn", copApprox: 32000,  nameEs: "Membresía Básica (mensual)" },
+  "prime-week-pass-7d":      { link: "https://mpago.li/2wKDS3q", copApprox: 48000,  nameEs: "PRIME · Pase Semanal" },
+  "monthly-pass":            { link: "https://mpago.li/2VvAg9K", copApprox: 80000,  nameEs: "PRIME · Pase Mensual" },
+  "prime-diamond-pass-365d": { link: "https://mpago.li/1Spwqd5", copApprox: 320000, nameEs: "PRIME Diamond · Pase Anual" },
+  "lifetime-pass":           { link: "https://mpago.li/1xjtaya", copApprox: 800000, nameEs: "PRIME Lifetime Pass" },
+};
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
@@ -134,6 +148,8 @@ export default function Subscribe() {
   // Wallet-USDC-on-Base checkout — expands the WalletPayCard for the picked plan.
   // Server resolves canonical price + duration via planId — client just passes it.
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
+  // MercadoPago modal — holds the plan_id whose Card button was clicked.
+  const [cardModalPlanId, setCardModalPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
   // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
   // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
@@ -866,6 +882,16 @@ export default function Subscribe() {
                     {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
                   </button>
                 </div>
+                {MERCADOPAGO_LINKS[plan.id] && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setCardModalPlanId(plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white transition-all"
+                    style={{ background: "linear-gradient(90deg,#009EE3,#00B4E6)", boxShadow: "0 6px 16px rgba(0,158,227,0.30)" }}
+                  >
+                    💳 {t.lang === "es" ? "Tarjeta (MercadoPago)" : "Card (MercadoPago)"}
+                  </button>
+                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1049,6 +1075,16 @@ export default function Subscribe() {
                     {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
                   </button>
                 </div>
+                {MERCADOPAGO_LINKS[plan.id] && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setCardModalPlanId(plan.id); }}
+                    className="w-full py-3 rounded-lg font-bold text-sm text-white transition-all"
+                    style={{ background: "linear-gradient(90deg,#009EE3,#00B4E6)", boxShadow: "0 6px 16px rgba(0,158,227,0.30)" }}
+                  >
+                    💳 {t.lang === "es" ? "Tarjeta (MercadoPago)" : "Card (MercadoPago)"}
+                  </button>
+                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1145,6 +1181,25 @@ export default function Subscribe() {
           }}
         />
       )}
+
+      {/* MercadoPago (mpago.li) modal — email + op# activation */}
+      {cardModalPlanId && (() => {
+        const cfg = MERCADOPAGO_LINKS[cardModalPlanId];
+        const plan = plans.find((p) => p.id === cardModalPlanId);
+        if (!cfg || !plan) return null;
+        const priceUsd = parseFloat(String(plan.price)) || 0;
+        return (
+          <CardPaymentModal
+            link={cfg.link}
+            planId={cardModalPlanId}
+            planName={cfg.nameEs}
+            priceUsd={priceUsd}
+            copApprox={cfg.copApprox}
+            lang={t.lang}
+            onClose={() => setCardModalPlanId(null)}
+          />
+        );
+      })()}
 
       {/* Error banner */}
       {error && (

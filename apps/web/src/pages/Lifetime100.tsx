@@ -10,6 +10,7 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
+import { CardPaymentModal } from "@/components/payments/CardPaymentModal";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -504,62 +505,9 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
 // in COP (~320,000 ≈ $100 USD). After payment they return to /mercadopago,
 // enter their email → admin activates from /admin/manual-activations.
 
-interface CardPaymentModalProps {
-  s: Lifetime100Strings;
-  onClose: () => void;
-}
-
-function CardPaymentModal({ s, onClose }: CardPaymentModalProps) {
-  return (
-    <ModalOverlay onClose={onClose}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 700, color: "#ffffff" }}>
-        {s.cardModalTitle}
-      </h2>
-      <p style={{ margin: "0 0 18px", fontSize: 13, color: "#8E8E93", lineHeight: 1.5 }}>
-        {s.cardModalBody}
-      </p>
-
-      <a
-        href="https://mpago.li/2hvNVkH"
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={onClose}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: "100%", padding: "14px 20px", borderRadius: 12,
-          background: "linear-gradient(90deg,#009EE3,#00B4E6)",
-          color: "#ffffff", fontSize: 14, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: "0.05em",
-          textDecoration: "none", minHeight: 48, boxSizing: "border-box",
-          boxShadow: "0 6px 20px rgba(0,158,227,0.35)",
-        }}
-      >
-        {s.cardModalOpenButton}
-      </a>
-
-      <p style={{ margin: "18px 0 0", textAlign: "center", fontSize: 13, color: "#8E8E93" }}>
-        {s.mercadoPagoAlreadyPaid}{" "}
-        <a
-          href="/mercadopago"
-          style={{ color: "#5EC4FF", fontWeight: 600, borderBottom: "1px solid rgba(94,196,255,0.5)", textDecoration: "none" }}
-        >
-          {s.mercadoPagoAlreadyPaidLink}
-        </a>
-      </p>
-
-      <button
-        onClick={onClose}
-        style={{
-          display: "block", width: "100%", marginTop: 10, padding: "10px",
-          background: "none", border: "none", color: "#8E8E93",
-          fontSize: 13, cursor: "pointer", minHeight: 44,
-        }}
-      >
-        {s.modalCancel}
-      </button>
-    </ModalOverlay>
-  );
-}
+// CardPaymentModal now lives in @/components/payments/CardPaymentModal.tsx —
+// shared with Subscribe.tsx so both surfaces get the same email + operation
+// number activation flow.
 
 // ── Activate view ──────────────────────────────────────────────────────────────
 
@@ -1277,10 +1225,15 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         />
       )}
 
-      {/* Card payment modal — MercadoPago (mpago.li) redirect */}
+      {/* Card payment modal — MercadoPago (mpago.li) redirect + op# activation */}
       {cardModalOpen && (
         <CardPaymentModal
-          s={s}
+          link="https://mpago.li/2hvNVkH"
+          planId="lifetime100"
+          planName="Miembro de por vida + 2 Meses PRIME"
+          priceUsd={100}
+          copApprox={320000}
+          lang={lang}
           onClose={() => setCardModalOpen(false)}
         />
       )}
@@ -1690,19 +1643,21 @@ export function NequiNegociosPage() {
 
 export function MercadoPagoPage() {
   const [searchParams] = useSearchParams();
-  const mpStatus        = (searchParams.get("collection_status") || searchParams.get("status") || "").toLowerCase();
-  const mpReference     = searchParams.get("external_reference") || searchParams.get("reference") || "";
-  const mpTransactionId = searchParams.get("payment_id") || searchParams.get("collection_id") || searchParams.get("id") || "";
+  const mpStatus         = (searchParams.get("collection_status") || searchParams.get("status") || "").toLowerCase();
+  const mpReference      = searchParams.get("external_reference") || searchParams.get("reference") || "";
+  const urlOpNumber      = searchParams.get("payment_id") || searchParams.get("collection_id") || searchParams.get("id") || "";
+  const planId           = searchParams.get("planId") || "lifetime100";
 
   const isApproved = mpStatus === "approved";
   const isDeclined = mpStatus === "rejected" || mpStatus === "cancelled" || mpStatus === "error";
 
-  const [lang, setLang]         = useState(getInitialLang);
-  const s                       = useLifetime100Strings(lang);
-  const [email, setEmail]       = useState("");
-  const [submitting, setSubmit] = useState(false);
-  const [submitted, setDone]    = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const [lang, setLang]           = useState(getInitialLang);
+  const s                         = useLifetime100Strings(lang);
+  const [email, setEmail]         = useState("");
+  const [opNumber, setOpNumber]   = useState(urlOpNumber);
+  const [submitting, setSubmit]   = useState(false);
+  const [submitted, setDone]      = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
   useEffect(() => {
     document.title = s.mpagoPageTitle;
@@ -1716,6 +1671,13 @@ export function MercadoPagoPage() {
   const handleRegister = async () => {
     const trimmed = email.trim();
     if (!isValidEmail(trimmed)) { setError(s.invalidEmail); return; }
+    const opTrim = opNumber.replace(/\s+/g, "").trim();
+    if (opTrim.length < 6 || opTrim.length > 40 || !/^[A-Za-z0-9\-_]+$/.test(opTrim)) {
+      setError(lang.startsWith("en")
+        ? "Enter your MercadoPago operation number (~12 digits)."
+        : "Ingresa tu número de operación de MercadoPago (aprox. 12 dígitos).");
+      return;
+    }
     setSubmit(true);
     setError(null);
     try {
@@ -1724,9 +1686,10 @@ export function MercadoPagoPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: trimmed,
-          mpReference:     mpReference     || null,
-          mpTransactionId: mpTransactionId || null,
-          mpStatus:        mpStatus        || null,
+          planId,
+          mpReference:     mpReference || null,
+          mpTransactionId: opTrim,
+          mpStatus:        mpStatus || null,
         }),
         credentials: "include",
       });
@@ -1858,10 +1821,31 @@ export function MercadoPagoPage() {
             autoComplete="email"
             value={email}
             onChange={(e) => { setEmail(e.target.value); setError(null); }}
-            onKeyDown={(e) => { if (e.key === "Enter") handleRegister(); }}
             placeholder="tu@correo.com"
             disabled={submitting}
-            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: "13px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff", fontSize: 16, marginBottom: 10, outline: "none", opacity: submitting ? 0.6 : 1 }}
+            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: "13px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff", fontSize: 16, marginBottom: 14, outline: "none", opacity: submitting ? 0.6 : 1 }}
+            aria-invalid={!!error}
+          />
+
+          <label htmlFor="mp-op" style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#8E8E93", marginBottom: 4 }}>
+            {lang.startsWith("en") ? "MercadoPago operation number" : "Número de operación de MercadoPago"}
+          </label>
+          <p style={{ margin: "0 0 6px", fontSize: 11, color: "#8E8E93", lineHeight: 1.5 }}>
+            {lang.startsWith("en")
+              ? "The ~12-digit number MercadoPago shows after your payment (e.g. 172521754472)."
+              : "El número (~12 dígitos) que MercadoPago te muestra tras pagar (ej: 172521754472)."}
+          </p>
+          <input
+            id="mp-op"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={opNumber}
+            onChange={(e) => { setOpNumber(e.target.value); setError(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter") handleRegister(); }}
+            placeholder="172521754472"
+            disabled={submitting}
+            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: "13px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff", fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 16, letterSpacing: "0.06em", marginBottom: 10, outline: "none", opacity: submitting ? 0.6 : 1 }}
             aria-invalid={!!error}
           />
 
@@ -1871,8 +1855,8 @@ export function MercadoPagoPage() {
 
           <button
             onClick={handleRegister}
-            disabled={submitting || !email.trim()}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "15px 20px", borderRadius: 13, border: "none", background: submitting || !email.trim() ? "rgba(255,51,119,0.4)" : "linear-gradient(90deg,#ff3377,#ff9933)", color: "#fff", fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", cursor: submitting || !email.trim() ? "not-allowed" : "pointer", minHeight: 50 }}
+            disabled={submitting || !email.trim() || !opNumber.trim()}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "15px 20px", borderRadius: 13, border: "none", background: submitting || !email.trim() || !opNumber.trim() ? "rgba(255,51,119,0.4)" : "linear-gradient(90deg,#ff3377,#ff9933)", color: "#fff", fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", cursor: submitting || !email.trim() || !opNumber.trim() ? "not-allowed" : "pointer", minHeight: 50 }}
           >
             {submitting && <Spinner size={16} />}
             {submitting ? s.mpagoSubmitting : s.mpagoSubmit}

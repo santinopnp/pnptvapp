@@ -8,8 +8,25 @@ import {
   type NequiActivation,
 } from "@/lib/api";
 
+// plan_id is being added to the backend type — extend locally until api.ts is updated
+type MercadoPagoActivationWithPlan = MercadoPagoActivation & { plan_id?: string | null };
+
 type Tab = "mercadopago" | "nequi";
 type Filter = "pending" | "activated" | "rejected" | "all";
+
+const PLAN_LABELS: Record<string, string> = {
+  "member_monthly":           "Basic $9.99",
+  "prime-week-pass-7d":       "Week $14.99",
+  "monthly-pass":             "Monthly $24.99",
+  "prime-diamond-pass-365d":  "Year $99.99",
+  "lifetime-pass":            "Lifetime $249.99",
+  "lifetime100":              "Lifetime100 $100",
+};
+
+function planLabel(planId: string | null | undefined): string {
+  if (!planId) return PLAN_LABELS["lifetime100"];
+  return PLAN_LABELS[planId] ?? planId;
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -35,10 +52,69 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
+function PlanPill({ planId }: { planId: string | null | undefined }) {
+  const label = planLabel(planId);
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded-full font-semibold tracking-wide whitespace-nowrap"
+      style={{ background: "rgba(255,255,255,0.07)", color: "#8E8E93" }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function CopyCell({
+  value,
+  emphasize = false,
+}: {
+  value: string | null;
+  emphasize?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  if (!value) return <span className="text-pnp-textSecondary">—</span>;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard denied — silently ignore
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      title="Click to copy"
+      className="group flex items-center gap-1.5 text-left transition-opacity hover:opacity-80 active:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-1 focus-visible:ring-offset-pnp-surface rounded"
+    >
+      {emphasize ? (
+        <span
+          className="font-mono font-bold text-sm tracking-wide px-1.5 py-0.5 rounded"
+          style={{ background: "rgba(0,133,255,0.12)", color: "#5BB9FF" }}
+        >
+          {value}
+        </span>
+      ) : (
+        <span className="font-mono text-[11px] break-all">{value}</span>
+      )}
+      <span
+        className="shrink-0 text-[10px] font-semibold transition-all"
+        style={{ color: copied ? "#4ADE80" : "#555" }}
+      >
+        {copied ? "copied ✓" : "⎘"}
+      </span>
+    </button>
+  );
+}
+
 export default function ManualActivations() {
   const [tab, setTab] = useState<Tab>("mercadopago");
   const [filter, setFilter] = useState<Filter>("pending");
-  const [mpRows, setMpRows] = useState<MercadoPagoActivation[]>([]);
+  const [mpRows, setMpRows] = useState<MercadoPagoActivationWithPlan[]>([]);
   const [nequiRows, setNequiRows] = useState<NequiActivation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +128,7 @@ export default function ManualActivations() {
       if (tab === "mercadopago") {
         const res = await listMercadoPagoActivations(filter);
         if (!res.success) throw new Error("Failed to load MercadoPago activations");
-        setMpRows(res.activations || []);
+        setMpRows((res.activations || []) as MercadoPagoActivationWithPlan[]);
       } else {
         const res = await listNequiActivations(filter);
         if (!res.success) throw new Error("Failed to load Nequi activations");
@@ -73,9 +149,10 @@ export default function ManualActivations() {
     return () => clearTimeout(t);
   }, [banner]);
 
-  const handleGrant = async (id: number) => {
-    const label = tab === "mercadopago" ? "MercadoPago" : "Nequi Negocios";
-    if (!window.confirm(`Grant lifetime + 60d PRIME for ${label} activation #${id}? This sends the welcome email.`)) return;
+  const handleGrant = async (id: number, planId?: string | null) => {
+    const provider = tab === "mercadopago" ? "MercadoPago" : "Nequi Negocios";
+    const planLbl = tab === "mercadopago" ? planLabel(planId) : "Lifetime100 $100";
+    if (!window.confirm(`Grant ${planLbl} for ${provider} activation #${id}? This sends the welcome email.`)) return;
     setBusyId(id);
     try {
       const res = tab === "mercadopago"
@@ -97,6 +174,7 @@ export default function ManualActivations() {
     userId: string | null;
     username: string | null;
     firstName: string | null;
+    planId: string | null | undefined;
     reference: string | null;
     transactionId: string | null;
     externalStatus: string | null;
@@ -104,6 +182,7 @@ export default function ManualActivations() {
     createdAt: string;
     activatedAt: string | null;
     notes: string | null;
+    isMp: boolean;
   }> = tab === "mercadopago"
     ? mpRows.map((r) => ({
         id: r.id,
@@ -111,6 +190,7 @@ export default function ManualActivations() {
         userId: r.user_id,
         username: r.username,
         firstName: r.first_name,
+        planId: r.plan_id,
         reference: r.mp_reference,
         transactionId: r.mp_transaction_id,
         externalStatus: r.mp_status,
@@ -118,6 +198,7 @@ export default function ManualActivations() {
         createdAt: r.created_at,
         activatedAt: r.activated_at,
         notes: r.notes,
+        isMp: true,
       }))
     : nequiRows.map((r) => ({
         id: r.id,
@@ -125,6 +206,7 @@ export default function ManualActivations() {
         userId: r.user_id,
         username: r.username,
         firstName: r.first_name,
+        planId: undefined,
         reference: r.wompi_reference,
         transactionId: r.wompi_transaction_id,
         externalStatus: r.wompi_status,
@@ -132,6 +214,7 @@ export default function ManualActivations() {
         createdAt: r.created_at,
         activatedAt: r.activated_at,
         notes: r.notes,
+        isMp: false,
       }));
 
   const providerLabel = tab === "mercadopago" ? "MercadoPago" : "Nequi Negocios";
@@ -229,8 +312,9 @@ export default function ManualActivations() {
               <tr>
                 <th className="text-left px-3 py-2">#</th>
                 <th className="text-left px-3 py-2">Email / User</th>
+                <th className="text-left px-3 py-2">Plan</th>
                 <th className="text-left px-3 py-2">Reference</th>
-                <th className="text-left px-3 py-2">Transaction ID</th>
+                <th className="text-left px-3 py-2">Op# / Tx</th>
                 <th className="text-left px-3 py-2">Ext. Status</th>
                 <th className="text-left px-3 py-2">Status</th>
                 <th className="text-left px-3 py-2">Created</th>
@@ -250,8 +334,16 @@ export default function ManualActivations() {
                       </div>
                     )}
                   </td>
+                  <td className="px-3 py-2">
+                    {r.isMp
+                      ? <PlanPill planId={r.planId} />
+                      : <span className="text-pnp-textSecondary text-xs">—</span>
+                    }
+                  </td>
                   <td className="px-3 py-2 font-mono text-[11px] break-all">{r.reference || "—"}</td>
-                  <td className="px-3 py-2 font-mono text-[11px] break-all">{r.transactionId || "—"}</td>
+                  <td className="px-3 py-2">
+                    <CopyCell value={r.transactionId} emphasize={r.isMp} />
+                  </td>
                   <td className="px-3 py-2 text-xs">{r.externalStatus || "—"}</td>
                   <td className="px-3 py-2"><StatusPill status={r.status} /></td>
                   <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(r.createdAt)}</td>
@@ -259,7 +351,7 @@ export default function ManualActivations() {
                   <td className="px-3 py-2 text-right">
                     {r.status === "pending" ? (
                       <button
-                        onClick={() => void handleGrant(r.id)}
+                        onClick={() => void handleGrant(r.id, r.planId)}
                         disabled={busyId === r.id}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
                         style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}

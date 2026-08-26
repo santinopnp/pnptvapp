@@ -6154,16 +6154,66 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
   return res.json({ success: true, message: 'Lifetime access granted and welcome email sent.' });
 }));
 
-// ── MercadoPago (mpago.li hosted link) ───────────────────────────────────────
+// ── MercadoPago (mpago.li hosted links) ──────────────────────────────────────
 //
-// Flow: buyer pays at https://mpago.li/2hvNVkH (charges ~320,000 COP ≈ $100 USD)
-//   → buyer returns to /mercadopago (manual click or MP back_urls if configured)
-//   → buyer enters email → POST /api/public/mercadopago/register (below)
-//   → admin sees pending row → verifies in MercadoPago dashboard → clicks Grant
-//   → POST /api/webapp/admin/mercadopago/:id/activate grants lifetime access
+// Two entry surfaces:
+//   /lifetime100 → planId = 'lifetime100' (fundraiser, $100 = lifetime member + 60d PRIME bonus)
+//   /subscribe   → planId ∈ {member_monthly, prime-week-pass-7d, monthly-pass,
+//                            prime-diamond-pass-365d, lifetime-pass}
 //
-// Mirrors the Nequi Negocios flow above 1:1 — same rate limits, same grants
-// (pnp-member lifetime + prime 60d + founder badge + welcome email).
+// mpago.li short links do NOT reliably redirect back to the merchant, so the
+// UX asks the buyer for their MercadoPago "número de operación" (~12-digit,
+// e.g. 172521754472) on the way back — stored as mp_transaction_id. Admin
+// verifies the op# in the MercadoPago dashboard, then clicks Grant Access in
+// /admin/manual-activations.
+//
+// Flow:
+//   1. Frontend calls POST /email-link (optional) → we email them the payment
+//      link + instructions, create an awaiting_payment row.
+//   2. Buyer pays on mpago.li.
+//   3. Frontend calls POST /register with the op# → row upgrades to pending,
+//      Slack ping fires with the op# for admin lookup.
+//   4. Admin verifies in MP dashboard → POST /activate → dispatches the
+//      correct entitlement grant via PaymentService.grantEntitlementsForPlan
+//      (for real plans) or the legacy pnp-member-lifetime+60d bundle (for
+//      the /lifetime100 fundraiser flow).
+
+const MERCADOPAGO_PLAN_LINKS = {
+  'lifetime100':             'https://mpago.li/2hvNVkH',
+  'member_monthly':          'https://mpago.li/2psRirn',
+  'prime-week-pass-7d':      'https://mpago.li/2wKDS3q',
+  'monthly-pass':            'https://mpago.li/2VvAg9K',
+  'prime-diamond-pass-365d': 'https://mpago.li/1Spwqd5',
+  'lifetime-pass':           'https://mpago.li/1xjtaya',
+};
+
+const MERCADOPAGO_PLAN_LABELS_ES = {
+  'lifetime100':             'Miembro de por vida + 2 Meses PRIME',
+  'member_monthly':          'Membresía Básica (mensual)',
+  'prime-week-pass-7d':      'PRIME · Pase Semanal',
+  'monthly-pass':            'PRIME · Pase Mensual',
+  'prime-diamond-pass-365d': 'PRIME Diamond · Pase Anual',
+  'lifetime-pass':           'PRIME Lifetime Pass',
+};
+
+const MERCADOPAGO_COP_APPROX = {
+  'lifetime100':              320000,
+  'member_monthly':            32000,
+  'prime-week-pass-7d':        48000,
+  'monthly-pass':              80000,
+  'prime-diamond-pass-365d':  320000,
+  'lifetime-pass':            800000,
+};
+
+function _mpResolvePlan(planIdRaw) {
+  const planId = planIdRaw && MERCADOPAGO_PLAN_LINKS[planIdRaw] ? planIdRaw : 'lifetime100';
+  return {
+    planId,
+    link: MERCADOPAGO_PLAN_LINKS[planId],
+    labelEs: MERCADOPAGO_PLAN_LABELS_ES[planId],
+    copApprox: MERCADOPAGO_COP_APPROX[planId],
+  };
+}
 
 const mercadopagoRegisterLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -6174,18 +6224,21 @@ const mercadopagoRegisterLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
 });
 
-app.post('/api/public/mercadopago/register', mercadopagoRegisterLimiter, asyncHandler(async (req, res) => {
-  const { email: rawEmail, mpReference, mpTransactionId, mpStatus } = req.body || {};
-  const email = String(rawEmail || '').trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    return res.status(400).json({ success: false, error: 'A valid email address is required' });
-  }
+const mercadopagoEmailLinkLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { success: false, error: 'Too many attempts. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
+});
 
+/** Shared helper: find-or-create a user by email and ensure Authentik creds. */
+async function _mpFindOrCreateUser(email) {
   const { query: dbQuery } = require('../../config/postgres');
   const crypto = require('crypto');
   const { ensureEmailCredentials } = require('../../services/userService');
 
-  // Find or create user
   const { rows: existing } = await dbQuery(
     `SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND COALESCE(is_deleted,false)=false LIMIT 1`,
     [email]
@@ -6206,24 +6259,138 @@ app.post('/api/public/mercadopago/register', mercadopagoRegisterLimiter, asyncHa
   try {
     await ensureEmailCredentials(userId, email, 'es', { skipEmail: true });
   } catch (credErr) {
-    logger.warn('mercadopago register: credential provisioning failed (non-blocking)', { email, error: credErr.message });
+    logger.warn('mercadopago: credential provisioning failed (non-blocking)', { email, error: credErr.message });
   }
+
+  return userId;
+}
+
+// POST /api/public/mercadopago/email-link — email the buyer the payment link
+// + step-by-step instructions. Creates an awaiting_payment row so admin has
+// visibility that someone is on this path. If they never come back with an
+// op#, this row stays as awaiting_payment (won't accidentally grant access).
+app.post('/api/public/mercadopago/email-link', mercadopagoEmailLinkLimiter, asyncHandler(async (req, res) => {
+  const { email: rawEmail, planId: rawPlanId } = req.body || {};
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required' });
+  }
+  const { planId, link, labelEs, copApprox } = _mpResolvePlan(rawPlanId);
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const userId = await _mpFindOrCreateUser(email);
 
   await dbQuery(
     `INSERT INTO mercadopago_activations
-       (email, user_id, mp_reference, mp_transaction_id, mp_status, status)
-     VALUES ($1, $2, $3, $4, $5, 'pending')`,
-    [email, userId, mpReference || null, mpTransactionId || null, mpStatus || null]
+       (email, user_id, plan_id, status)
+     VALUES ($1, $2, $3, 'awaiting_payment')`,
+    [email, userId, planId]
   );
+
+  try {
+    const EmailService = require('../../services/emailservice');
+    const backLink = `https://pnptv.app/mercadopago?planId=${encodeURIComponent(planId)}`;
+    const copFmt = copApprox.toLocaleString('es-CO');
+    await EmailService.send({
+      to: email,
+      subject: '💳 Tu link de pago MercadoPago — PNPtv!',
+      html: `
+        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#1a1a2e">
+          <h2 style="color:#009EE3;margin:0 0 8px">Tu link de pago MercadoPago</h2>
+          <p style="color:#555">Plan: <strong>${labelEs}</strong></p>
+
+          <p style="margin:16px 0;font-size:14px;line-height:1.55">
+            1. Haz clic aquí para pagar con MercadoPago (~${copFmt} COP):
+          </p>
+          <p style="margin:0 0 20px">
+            <a href="${link}" style="display:inline-block;padding:14px 28px;background:#009EE3;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold">
+              💳 Pagar ahora
+            </a>
+          </p>
+
+          <p style="margin:16px 0 6px;font-size:14px;line-height:1.55">
+            2. Después de pagar, MercadoPago te mostrará un <strong>número de operación</strong> (aprox. 12 dígitos, ej: <code>172521754472</code>).
+          </p>
+          <p style="margin:0 0 6px;font-size:14px;line-height:1.55">
+            3. Ingresa ese número aquí para activar tu membresía:
+          </p>
+          <p style="margin:0 0 20px">
+            <a href="${backLink}" style="display:inline-block;padding:12px 22px;background:#D4007A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold">
+              ✅ Activar mi membresía
+            </a>
+          </p>
+
+          <p style="color:#666;font-size:13px;margin-top:24px">
+            Activación manual — normalmente en pocas horas después de que verifiquemos tu pago.<br>
+            Si necesitas ayuda escríbenos a <a href="mailto:support@pnptv.app">support@pnptv.app</a>.
+          </p>
+        </div>
+      `,
+    });
+  } catch (emailErr) {
+    logger.warn('mercadopago email-link: send failed (non-blocking)', { email, error: emailErr.message });
+    // Row is still there; user can proceed via the site
+  }
+
+  return res.json({ success: true, message: 'Payment link emailed.' });
+}));
+
+// POST /api/public/mercadopago/register — buyer has paid and is submitting
+// their MercadoPago "número de operación" for admin verification.
+app.post('/api/public/mercadopago/register', mercadopagoRegisterLimiter, asyncHandler(async (req, res) => {
+  const { email: rawEmail, planId: rawPlanId, mpReference, mpTransactionId, mpStatus } = req.body || {};
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'A valid email address is required' });
+  }
+  const opNumber = String(mpTransactionId || '').trim();
+  if (!opNumber || opNumber.length < 6 || opNumber.length > 40) {
+    return res.status(400).json({ success: false, error: 'Ingresa tu número de operación de MercadoPago (aprox. 12 dígitos).' });
+  }
+  const { planId } = _mpResolvePlan(rawPlanId);
+
+  const { query: dbQuery } = require('../../config/postgres');
+  const userId = await _mpFindOrCreateUser(email);
+
+  // Prefer to upgrade an awaiting_payment row for this (email, planId) rather
+  // than creating a duplicate. If none exists, insert fresh as pending.
+  const { rows: upgraded } = await dbQuery(
+    `UPDATE mercadopago_activations
+        SET mp_transaction_id = $3,
+            mp_reference = COALESCE($4, mp_reference),
+            mp_status = COALESCE($5, mp_status),
+            status = 'pending'
+      WHERE id = (
+        SELECT id FROM mercadopago_activations
+         WHERE LOWER(email) = LOWER($1)
+           AND COALESCE(plan_id, 'lifetime100') = COALESCE($2, 'lifetime100')
+           AND status = 'awaiting_payment'
+         ORDER BY created_at DESC
+         LIMIT 1
+      )
+      RETURNING id`,
+    [email, planId, opNumber, mpReference || null, mpStatus || null]
+  );
+
+  if (upgraded.length === 0) {
+    await dbQuery(
+      `INSERT INTO mercadopago_activations
+         (email, user_id, plan_id, mp_reference, mp_transaction_id, mp_status, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+      [email, userId, planId, mpReference || null, opNumber, mpStatus || null]
+    );
+  }
 
   const slackOpsService = require('../../services/slackOpsService');
   slackOpsService.notifyMercadoPagoPendingActivation({
-    email, mpReference: mpReference || 'N/A',
-    mpTransactionId: mpTransactionId || 'N/A',
+    email,
+    planId,
+    mpReference: mpReference || 'N/A',
+    mpTransactionId: opNumber,
     mpStatus: mpStatus || 'N/A',
   }).catch(() => {});
 
-  return res.json({ success: true, message: 'Registered. You will receive your activation details shortly.' });
+  return res.json({ success: true, message: 'Registered. Admin will verify and activate shortly.' });
 }));
 
 // GET /api/webapp/admin/mercadopago — list MercadoPago activations
@@ -6231,7 +6398,7 @@ app.get('/api/webapp/admin/mercadopago', requireSessionAuth, adminGuard, asyncHa
   const { query: dbQuery } = require('../../config/postgres');
   const statusFilter = req.query.status || 'pending';
   const { rows } = await dbQuery(
-    `SELECT m.id, m.email, m.user_id, m.mp_reference, m.mp_transaction_id,
+    `SELECT m.id, m.email, m.user_id, m.plan_id, m.mp_reference, m.mp_transaction_id,
             m.mp_status, m.status, m.created_at, m.activated_at, m.notes,
             u.username, u.first_name
      FROM mercadopago_activations m
@@ -6244,7 +6411,7 @@ app.get('/api/webapp/admin/mercadopago', requireSessionAuth, adminGuard, asyncHa
   return res.json({ success: true, activations: rows });
 }));
 
-// POST /api/webapp/admin/mercadopago/:id/activate — grant lifetime access
+// POST /api/webapp/admin/mercadopago/:id/activate — grant per plan_id
 app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid ID' });
@@ -6262,49 +6429,94 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
   const userId = record.user_id;
   if (!userId) return res.status(500).json({ success: false, error: 'No user linked to this activation record' });
 
+  // Resolve plan (null → lifetime100 legacy behavior)
+  const planId = record.plan_id || 'lifetime100';
+
   const EntitlementModel = require('../../models/entitlementModel');
   const EntitlementAccessService = require('../../services/entitlementAccessService');
-  const primeExpiry = new Date();
-  primeExpiry.setDate(primeExpiry.getDate() + 60);
+  const PaymentService = require('../../services/paymentService');
 
-  await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
-    isLifetime: true, source: 'mercadopago', actorId: actor?.id || 'admin',
-    reason: 'MercadoPago admin activation',
-  });
-  await EntitlementModel.grantEntitlement(userId, 'prime', {
-    isLifetime: false, durationDays: 60, source: 'mercadopago', actorId: actor?.id || 'admin',
-    reason: 'MercadoPago — 2 month PRIME bonus',
-  });
-  await EntitlementAccessService.recomputeUserTier(userId);
-  await EntitlementAccessService.invalidateCache(userId);
+  let planPriceUsd = 100;
+  let planNameEs = MERCADOPAGO_PLAN_LABELS_ES[planId] || planId;
+  let grantedMessage = 'access granted';
 
-  const UserModel = require('../../models/userModel');
-  await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
-  try {
-    const txClient = await pool.connect();
+  if (planId === 'lifetime100') {
+    // Legacy /lifetime100 fundraiser grant: lifetime pnp-member + 60d PRIME bonus.
+    // The DB row for the `lifetime100` plan is 60-day PRIME only, which is why we
+    // hand-roll this rather than routing through grantEntitlementsForPlan.
+    const primeExpiry = new Date();
+    primeExpiry.setDate(primeExpiry.getDate() + 60);
+
+    await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
+      isLifetime: true, source: 'mercadopago', actorId: actor?.id || 'admin',
+      reason: 'MercadoPago admin activation (lifetime100)',
+    });
+    await EntitlementModel.grantEntitlement(userId, 'prime', {
+      isLifetime: false, durationDays: 60, source: 'mercadopago', actorId: actor?.id || 'admin',
+      reason: 'MercadoPago (lifetime100) — 2 month PRIME bonus',
+    });
+    await EntitlementAccessService.recomputeUserTier(userId);
+    await EntitlementAccessService.invalidateCache(userId);
+
+    const UserModel = require('../../models/userModel');
+    await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
     try {
-      await txClient.query('BEGIN');
-      await txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
-      await txClient.query(
-        `UPDATE users SET plan_expiry = CASE
-           WHEN plan_expiry IS NULL THEN NULL
-           WHEN plan_expiry > $2::timestamptz THEN plan_expiry
-           ELSE $2::timestamptz
-         END, updated_at = NOW() WHERE id = $1`,
-        [userId, primeExpiry.toISOString()]
-      );
-      await txClient.query('COMMIT');
-    } catch (txErr) {
-      await txClient.query('ROLLBACK').catch(() => {});
-    } finally {
-      txClient.release();
-    }
-  } catch { /* non-critical */ }
+      const txClient = await pool.connect();
+      try {
+        await txClient.query('BEGIN');
+        await txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
+        await txClient.query(
+          `UPDATE users SET plan_expiry = CASE
+             WHEN plan_expiry IS NULL THEN NULL
+             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
+             ELSE $2::timestamptz
+           END, updated_at = NOW() WHERE id = $1`,
+          [userId, primeExpiry.toISOString()]
+        );
+        await txClient.query('COMMIT');
+      } catch (txErr) {
+        await txClient.query('ROLLBACK').catch(() => {});
+      } finally {
+        txClient.release();
+      }
+    } catch { /* non-critical */ }
 
-  try {
-    const gamificationService = require('../../services/gamificationService');
-    await gamificationService.awardBadge(userId, 'founder', null, 'MercadoPago founding member');
-  } catch { /* non-critical */ }
+    try {
+      const gamificationService = require('../../services/gamificationService');
+      await gamificationService.awardBadge(userId, 'founder', null, 'MercadoPago founding member');
+    } catch { /* non-critical */ }
+
+    planNameEs = 'Miembro de por vida + 2 Meses PRIME';
+    grantedMessage = 'Lifetime + 2 months PRIME granted';
+  } else {
+    // Real /subscribe plan — route through canonical helper so plan_add_ons
+    // rules decide exactly what's granted and for how long.
+    const grant = await PaymentService.grantEntitlementsForPlan(
+      userId,
+      planId,
+      'mercadopago',
+      { activationId: id, mpTransactionId: record.mp_transaction_id },
+      null
+    );
+    if (grant?.warning === 'NO_PLAN_ADDONS') {
+      logger.error('mercadopago activate: plan has no add_ons mapping', { planId, id });
+      return res.status(500).json({ success: false, error: `Plan "${planId}" has no add_ons mapping — cannot grant.` });
+    }
+    await EntitlementAccessService.recomputeUserTier(userId);
+    await EntitlementAccessService.invalidateCache(userId);
+
+    // Look up plan price for accounting parity.
+    try {
+      const { rows: planRows } = await dbQuery(`SELECT price, name FROM plans WHERE id = $1`, [planId]);
+      if (planRows.length > 0) {
+        planPriceUsd = parseFloat(planRows[0].price) || 0;
+        // Prefer Spanish label from constants; fall back to DB name.
+        planNameEs = MERCADOPAGO_PLAN_LABELS_ES[planId] || planRows[0].name || planId;
+      }
+    } catch { /* non-critical */ }
+
+    grantedMessage = `${planNameEs} granted`;
+  }
 
   await dbQuery(
     `UPDATE mercadopago_activations SET status='activated', activated_at=NOW(), notes=$2 WHERE id=$1`,
@@ -6313,15 +6525,15 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
 
   try {
     const PaymentHistoryService = require('../../services/paymentHistoryService');
-    // Charged in COP (~320,000) but booked as 100 USD for accounting parity with the crypto/lifetime100 rail.
+    const copApprox = MERCADOPAGO_COP_APPROX[planId] || null;
     await PaymentHistoryService.recordPayment({
-      userId, paymentMethod: 'mercadopago', amount: 100, currency: 'USD',
-      planId: 'lifetime100', planName: 'Lifetime Member + 2 Months PRIME',
-      product: 'lifetime100', paymentReference: record.mp_reference || `mercadopago-${id}`,
+      userId, paymentMethod: 'mercadopago', amount: planPriceUsd, currency: 'USD',
+      planId, planName: planNameEs,
+      product: planId, paymentReference: record.mp_reference || `mercadopago-${id}`,
       metadata: {
-        mp_transaction_id: record.mp_transaction_id,
+        mp_transaction_id: record.mp_transaction_id,  // buyer-entered op#
         mp_status: record.mp_status,
-        charged_cop_approx: 320000,
+        charged_cop_approx: copApprox,
         activated_by: actor?.id,
       },
       ipAddress: req.ip, userAgent: req.get('user-agent'),
@@ -6332,11 +6544,11 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
     const EmailService = require('../../services/emailservice');
     await EmailService.send({
       to: record.email,
-      subject: '🎉 ¡Tu membresía de por vida en PNPtv! está activa',
+      subject: `🎉 ¡Tu ${planNameEs} en PNPtv! está activa`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;color:#1a1a2e">
           <h2 style="color:#D4007A">¡Bienvenido/a a PNPtv! 🌈</h2>
-          <p>Tu pago de MercadoPago fue confirmado y tu <strong>membresía de por vida + 2 meses PRIME</strong> ya está activa.</p>
+          <p>Tu pago de MercadoPago fue confirmado y tu <strong>${planNameEs}</strong> ya está activa.</p>
           <p>
             <a href="https://pnptv.app" style="display:inline-block;padding:12px 24px;background:#D4007A;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold">
               Entrar a PNPtv!
@@ -6353,7 +6565,7 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
     logger.warn('mercadopago admin activate: welcome email failed (non-critical)', { id, error: emailErr.message });
   }
 
-  return res.json({ success: true, message: 'Lifetime access granted and welcome email sent.' });
+  return res.json({ success: true, message: grantedMessage });
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

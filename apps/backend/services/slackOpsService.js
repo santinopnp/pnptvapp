@@ -550,29 +550,46 @@ async function notifyMercadoPagoPendingActivation(opts) {
   const channel = _paymentsChannel();
   if (!_tok() || !channel) return;
   try {
-    const { email = 'unknown', mpReference = 'N/A', mpTransactionId = 'N/A', mpStatus = 'N/A' } = opts || {};
-    const text = `:money_with_wings: MercadoPago: buyer registered — action required`;
+    const {
+      email = 'unknown',
+      planId = 'lifetime100',
+      mpReference = 'N/A',
+      mpTransactionId = 'N/A',
+      mpStatus = 'N/A',
+    } = opts || {};
+    const text = `:money_with_wings: MercadoPago op# ${mpTransactionId} — action required (${planId})`;
     const blocks = [
       {
         type: 'header',
-        text: { type: 'plain_text', text: '💳 MercadoPago — Buyer Registered', emoji: true },
+        text: { type: 'plain_text', text: `💳 MP · Op# ${mpTransactionId}`, emoji: true },
       },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: 'A buyer completed the MercadoPago flow (mpago.li link, ~320k COP ≈ $100 USD). *Verify payment in the MercadoPago dashboard, then grant access via the admin activate endpoint.*' },
+        text: { type: 'mrkdwn', text: `Buyer submitted their MercadoPago *número de operación* for *${planId}*. Look up this op# in the MercadoPago dashboard → confirm payment amount → click Grant Access in /admin/manual-activations.` },
       },
       {
         type: 'section',
         fields: [
+          { type: 'mrkdwn', text: `*Op# (paste here → MP):*\n\`${mpTransactionId}\`` },
+          { type: 'mrkdwn', text: `*Plan:*\n\`${planId}\`` },
           { type: 'mrkdwn', text: `*Email:*\n${email}` },
           { type: 'mrkdwn', text: `*MP Status:*\n${mpStatus}` },
-          { type: 'mrkdwn', text: `*MP Reference:*\n\`${mpReference}\`` },
-          { type: 'mrkdwn', text: `*Transaction ID:*\n\`${mpTransactionId}\`` },
+        ],
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Open Manual Activations', emoji: true },
+            url: 'https://pnptv.app/admin/manual-activations',
+            action_id: 'open_admin_manual_activations',
+          },
         ],
       },
       {
         type: 'context',
-        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+        elements: [{ type: 'mrkdwn', text: `Ref: \`${mpReference}\` · <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
       },
     ];
     await _post(channel, text, blocks);

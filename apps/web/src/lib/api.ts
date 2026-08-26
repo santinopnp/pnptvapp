@@ -8332,10 +8332,12 @@ export interface MercadoPagoActivation {
   user_id: string | null;
   username: string | null;
   first_name: string | null;
+  plan_id: string | null;
   mp_reference: string | null;
+  /** buyer-entered "número de operación" (~12-digit MP id, e.g. 172521754472) */
   mp_transaction_id: string | null;
   mp_status: string | null;
-  status: "pending" | "activated" | "rejected";
+  status: "awaiting_payment" | "pending" | "activated" | "rejected";
   created_at: string;
   activated_at: string | null;
   notes: string | null;
