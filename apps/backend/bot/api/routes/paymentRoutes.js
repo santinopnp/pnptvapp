@@ -2,34 +2,11 @@ const express = require('express');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { authenticateUser } = require('../middleware/auth');
 const paymentController = require('../controllers/paymentController');
-const { verifyAdminJWT } = require('../middleware/jwtAuth');
 
-// Controllers and services needed for inline route logic
 const { ensureEmailCredentials } = require('../../../services/userService');
 const logger = require('../../../utils/logger');
-const rateLimit = require('express-rate-limit');
 
 const router = express.Router();
-
-// C5: Dedicated rate limiter for payment status polling endpoint
-// Tightened to max 10/min per IP to prevent payment-ID enumeration.
-const paymentStatusLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // 10 polls per minute per IP — prevents payment-ID enumeration
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ error: 'Too many status requests, please wait.' }),
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// The payment UUID (128-bit random) is itself the capability — users arrive via a direct
-// link from pnptv.app or a Telegram message without a session on pay.codigosdemujeres.com.
-// Ownership is still enforced when a session IS present (see paymentController.getPaymentInfo).
-router.get('/:paymentId', asyncHandler(paymentController.getPaymentInfo));
-
-// C5: getPaymentStatus is polled by the server-rendered payment-response page which has no
-// session cookies. We protect it with a dedicated rate limiter to prevent payment-ID enumeration.
-router.get('/:paymentId/status', paymentStatusLimiter, asyncHandler(paymentController.getPaymentStatus));
 
 // Update email for a payment (collected on checkout page instead of subscribe page)
 router.post('/:paymentId/email', authenticateUser, asyncHandler(async (req, res) => {
@@ -57,26 +34,6 @@ router.post('/:paymentId/email', authenticateUser, asyncHandler(async (req, res)
   }
 }));
 
-// Email-credential provisioning lives inside paymentController.processTokenizedCharge
-// after the response is sent, so a throw in that path can never corrupt a charge result.
-// Same cross-domain rationale as GET /:paymentId — session cookie is scoped to pnptv.app,
-// not pay.codigosdemujeres.com. Ownership is enforced via the payment record inside the handler.
-router.post('/tokenized-charge', asyncHandler(paymentController.processTokenizedCharge));
-
-const paymentActionLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  keyGenerator: (req) => req.ip,
-  handler: (req, res) => res.status(429).json({ success: false, error: 'Too many attempts. Please wait.' }),
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-router.post('/verify-2fa', paymentActionLimiter, asyncHandler(paymentController.verify2FA));
-router.post('/complete-3ds-2', paymentActionLimiter, asyncHandler(paymentController.complete3DS2Authentication));
 router.get('/confirm-payment/:token', asyncHandler(paymentController.confirmPaymentToken));
-
-// Retry payment webhook (admin only)
-router.post('/:paymentId/retry-webhook', verifyAdminJWT, asyncHandler(paymentController.retryPaymentWebhook));
 
 module.exports = router;

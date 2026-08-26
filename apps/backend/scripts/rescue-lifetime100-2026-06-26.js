@@ -216,14 +216,16 @@ async function createNpInvoice(userId, _customerEmail, { dryRun: _dryRun }) {
 
 async function insertOrderRow({ userId, orderId, invoiceUrl, customerEmail, sourceTag, dryRun }) {
   if (dryRun) return;
-  // Kept as a rescue-attempt breadcrumb so the 30-day cooldown query still
-  // matches. Provider is 'wallet_deep_link' + status 'sent' so the NowPayments
-  // reconciler never picks it up. Actual purchase creates its own
+  // Rescue-attempt breadcrumb so the 30-day cooldown query matches.
+  // NowPayments reconciler skips this row because it filters on
+  // provider='nowpayments' (metadata here is 'wallet_deep_link') and on
+  // btcpay_invoice_id LIKE 'pnptv-nowp-%' (rescue orderIds start with
+  // 'pnptv-wallet-life100-rescue-'). Actual purchase creates its own
   // checkout_intents row when the user completes wallet checkout.
   await query(
     `INSERT INTO dash_subscription_orders
        (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
-     VALUES ($1, $2, $3, $4, $5, 'sent', $6)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
      ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
     [
       userId,
