@@ -992,6 +992,64 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
           </ul>
         </div>
 
+        {/* MercadoPago (COP) side channel — hosted mpago.li link + manual activation */}
+        <div
+          style={{
+            margin: "0 0 16px",
+            padding: "18px 20px",
+            borderRadius: 24,
+            border: "1px solid rgba(0,158,227,0.35)",
+            background:
+              "linear-gradient(135deg, rgba(0,158,227,0.10), rgba(255,214,10,0.06))",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+          }}
+        >
+          <p
+            style={{
+              margin: "0 0 6px",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "#5EC4FF",
+            }}
+          >
+            🇨🇴 {s.mercadoPagoCtaTitle}
+          </p>
+          <p style={{ margin: "0 0 14px", fontSize: 13, color: "#d6d6dc", lineHeight: 1.5 }}>
+            {s.mercadoPagoCtaBody}
+          </p>
+          <a
+            href="https://mpago.li/2hvNVkH"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block",
+              textAlign: "center",
+              padding: "13px 18px",
+              borderRadius: 13,
+              background: "linear-gradient(90deg,#009EE3,#00B4E6)",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 700,
+              textDecoration: "none",
+              boxShadow: "0 6px 20px rgba(0,158,227,0.35)",
+            }}
+          >
+            {s.mercadoPagoCtaButton}
+          </a>
+          <p style={{ margin: "12px 0 0", textAlign: "center", fontSize: 12, color: "#8E8E93" }}>
+            {s.mercadoPagoAlreadyPaid}{" "}
+            <a
+              href="/mercadopago"
+              style={{ color: "#5EC4FF", fontWeight: 600, textDecoration: "none", borderBottom: "1px solid rgba(94,196,255,0.5)" }}
+            >
+              {s.mercadoPagoAlreadyPaidLink}
+            </a>
+          </p>
+        </div>
+
         {/* Diamond separator */}
         <div
           aria-hidden="true"
@@ -1541,6 +1599,220 @@ export function NequiNegociosPage() {
           </button>
 
           {/* Already have a code */}
+          <p style={{ margin: "20px 0 0", textAlign: "center", fontSize: 13, color: "#8E8E93" }}>
+            {s.alreadyPaid}{" "}
+            <a href="/lifetime100/activate" style={{ color: "#ff9933", fontWeight: 600, borderBottom: "1px solid rgba(255,153,51,0.5)", textDecoration: "none" }}>
+              {s.alreadyPaidLink}
+            </a>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MercadoPagoPage ───────────────────────────────────────────────────────────
+//
+// Post-payment landing after the buyer pays via the mpago.li hosted link
+// (https://mpago.li/2hvNVkH, ~320,000 COP ≈ $100 USD). MercadoPago appends
+// query params when back_urls are configured on the preference:
+//   ?collection_status=approved|pending|rejected  ?payment_id=xxx  ?external_reference=xxx
+// If no back_urls, the buyer clicks "Ya pagué" on /lifetime100 to land here.
+//
+// Buyer enters email → POST /api/public/mercadopago/register → admin gets a
+// Slack alert, verifies in the MercadoPago dashboard, then grants access via
+// POST /api/webapp/admin/mercadopago/:id/activate.
+
+export function MercadoPagoPage() {
+  const [searchParams] = useSearchParams();
+  const mpStatus        = (searchParams.get("collection_status") || searchParams.get("status") || "").toLowerCase();
+  const mpReference     = searchParams.get("external_reference") || searchParams.get("reference") || "";
+  const mpTransactionId = searchParams.get("payment_id") || searchParams.get("collection_id") || searchParams.get("id") || "";
+
+  const isApproved = mpStatus === "approved";
+  const isDeclined = mpStatus === "rejected" || mpStatus === "cancelled" || mpStatus === "error";
+
+  const [lang, setLang]         = useState(getInitialLang);
+  const s                       = useLifetime100Strings(lang);
+  const [email, setEmail]       = useState("");
+  const [submitting, setSubmit] = useState(false);
+  const [submitted, setDone]    = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+
+  useEffect(() => {
+    document.title = s.mpagoPageTitle;
+  }, [s.mpagoPageTitle]);
+
+  const handleLangChange = (next: string) => {
+    setLang(next);
+    persistLang(next);
+  };
+
+  const handleRegister = async () => {
+    const trimmed = email.trim();
+    if (!isValidEmail(trimmed)) { setError(s.invalidEmail); return; }
+    setSubmit(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/public/mercadopago/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: trimmed,
+          mpReference:     mpReference     || null,
+          mpTransactionId: mpTransactionId || null,
+          mpStatus:        mpStatus        || null,
+        }),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || s.errorGeneric); return; }
+      setDone(true);
+    } catch {
+      setError(s.errorGeneric);
+    } finally {
+      setSubmit(false);
+    }
+  };
+
+  const pageStyle: React.CSSProperties = {
+    minHeight: "100vh",
+    background: "#120d14",
+    color: "#ffffff",
+    display: "flex",
+    flexDirection: "column",
+    overflowX: "hidden",
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: "rgba(44,44,46,0.85)",
+    backdropFilter: "blur(20px)",
+    WebkitBackdropFilter: "blur(20px)",
+    border: "1px solid rgba(255,180,84,0.3)",
+    borderRadius: 24,
+    padding: "28px 24px",
+    width: "100%",
+    maxWidth: 480,
+    margin: "0 auto",
+    boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
+  };
+
+  if (isDeclined) {
+    return (
+      <div style={pageStyle}>
+        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px" }}>
+          <a href="/" aria-label="PNPtv! home"><img src="/logo-header.png" alt="PNPtv!" style={{ height: 36 }} /></a>
+          <LangToggle lang={lang} onChange={handleLangChange} />
+        </header>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>
+          <div style={cardStyle}>
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,69,58,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#FF453A" strokeWidth="2.5" strokeLinecap="round" /></svg>
+            </div>
+            <h1 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 800, textAlign: "center" }}>{s.mpagoDeclinedTitle}</h1>
+            <p style={{ margin: "0 0 24px", fontSize: 14, color: "#8E8E93", textAlign: "center", lineHeight: 1.5 }}>{s.mpagoDeclinedBody}</p>
+            <a
+              href="/lifetime100"
+              style={{ display: "block", textAlign: "center", padding: "14px 20px", borderRadius: 14, border: "none", background: "linear-gradient(90deg,#ff3377,#ff9933)", color: "#fff", fontSize: 14, fontWeight: 700, textDecoration: "none" }}
+            >
+              {s.nequiTryAgain}
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <div style={pageStyle}>
+        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px" }}>
+          <a href="/" aria-label="PNPtv! home"><img src="/logo-header.png" alt="PNPtv!" style={{ height: 36 }} /></a>
+          <LangToggle lang={lang} onChange={handleLangChange} />
+        </header>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px" }}>
+          <div style={cardStyle}>
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(255,153,51,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#ff9933" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </div>
+            <h1 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 800, textAlign: "center" }}>{s.mpagoDoneTitle}</h1>
+            <p style={{ margin: "0 0 20px", fontSize: 14, color: "#8E8E93", textAlign: "center", lineHeight: 1.5 }}>{s.mpagoDoneBody}</p>
+            <a
+              href="/lifetime100/activate"
+              style={{ display: "block", textAlign: "center", padding: "12px 16px", borderRadius: 12, background: "rgba(255,180,84,0.12)", border: "1px solid rgba(255,180,84,0.3)", color: "#FFB454", fontSize: 13, fontWeight: 600, textDecoration: "none", marginBottom: 12 }}
+            >
+              {s.mpagoActivateLink}
+            </a>
+            <button
+              onClick={() => setDone(false)}
+              style={{ display: "block", width: "100%", padding: "10px", background: "none", border: "none", color: "#8E8E93", fontSize: 13, cursor: "pointer" }}
+            >
+              {s.mpagoTryAgain}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const title = isApproved ? s.mpagoSuccessTitle : s.mpagoPendingTitle;
+  const body  = isApproved ? s.mpagoSuccessBody  : s.mpagoPendingBody;
+  const iconColor = isApproved ? "#ff9933" : "#8E8E93";
+  const iconPath  = isApproved
+    ? "M5 13l4 4L19 7"
+    : "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
+
+  return (
+    <div style={pageStyle}>
+      <div aria-hidden="true" style={{ position: "fixed", top: "-20%", left: "50%", transform: "translateX(-50%)", width: "100vw", height: "100vw", background: "radial-gradient(circle, rgba(255,153,51,0.10) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+
+      <header style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px" }}>
+        <a href="/" aria-label="PNPtv! home"><img src="/logo-header.png" alt="PNPtv!" style={{ height: 36 }} /></a>
+        <LangToggle lang={lang} onChange={handleLangChange} />
+      </header>
+
+      <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 20px 80px" }}>
+        <div style={cardStyle}>
+          <div aria-hidden="true" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 4, background: "linear-gradient(90deg,#ff3377,#ff9933)", borderRadius: "24px 24px 0 0" }} />
+
+          <div style={{ width: 64, height: 64, borderRadius: "50%", background: `rgba(255,153,51,0.15)`, display: "flex", alignItems: "center", justifyContent: "center", margin: "8px auto 20px" }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d={iconPath} />
+            </svg>
+          </div>
+
+          <h1 style={{ margin: "0 0 10px", fontSize: 22, fontWeight: 900, textAlign: "center" }}>{title}</h1>
+          <p style={{ margin: "0 0 28px", fontSize: 14, color: "#8E8E93", textAlign: "center", lineHeight: 1.5 }}>{body}</p>
+
+          <label htmlFor="mp-email" style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#8E8E93", marginBottom: 6 }}>
+            {s.mpagoEmailLabel}
+          </label>
+          <input
+            id="mp-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setError(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter") handleRegister(); }}
+            placeholder="tu@correo.com"
+            disabled={submitting}
+            style={{ display: "block", width: "100%", boxSizing: "border-box", padding: "13px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff", fontSize: 16, marginBottom: 10, outline: "none", opacity: submitting ? 0.6 : 1 }}
+            aria-invalid={!!error}
+          />
+
+          {error && (
+            <p role="alert" style={{ margin: "0 0 14px", fontSize: 13, color: "#FF453A" }}>{error}</p>
+          )}
+
+          <button
+            onClick={handleRegister}
+            disabled={submitting || !email.trim()}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "15px 20px", borderRadius: 13, border: "none", background: submitting || !email.trim() ? "rgba(255,51,119,0.4)" : "linear-gradient(90deg,#ff3377,#ff9933)", color: "#fff", fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", cursor: submitting || !email.trim() ? "not-allowed" : "pointer", minHeight: 50 }}
+          >
+            {submitting && <Spinner size={16} />}
+            {submitting ? s.mpagoSubmitting : s.mpagoSubmit}
+          </button>
+
           <p style={{ margin: "20px 0 0", textAlign: "center", fontSize: 13, color: "#8E8E93" }}>
             {s.alreadyPaid}{" "}
             <a href="/lifetime100/activate" style={{ color: "#ff9933", fontWeight: 600, borderBottom: "1px solid rgba(255,153,51,0.5)", textDecoration: "none" }}>

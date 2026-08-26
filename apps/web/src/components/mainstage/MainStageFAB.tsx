@@ -9,7 +9,7 @@ export function MainStageFAB() {
   const t = useI18n();
   const [isLive, setIsLive] = useState(false);
   const [participantCount, setParticipantCount] = useState(0);
-  const isMainStageRoute = location.pathname === "/main-stage" || location.pathname === "/subscribe" || location.pathname === "/lifetime100" || location.pathname === "/nequinegocios";
+  const isMainStageRoute = location.pathname === "/main-stage" || location.pathname === "/subscribe" || location.pathname === "/lifetime100" || location.pathname === "/nequinegocios" || location.pathname === "/mercadopago";
 
   useEffect(() => {
     if (isMainStageRoute) return;

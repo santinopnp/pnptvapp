@@ -542,6 +542,46 @@ async function notifyNequiPendingActivation(opts) {
 }
 
 /**
+ * Notify #ops-payments when a buyer lands on /mercadopago and registers.
+ * Admin must verify payment in the MercadoPago dashboard and grant access via
+ * POST /api/webapp/admin/mercadopago/:id/activate.
+ */
+async function notifyMercadoPagoPendingActivation(opts) {
+  const channel = _paymentsChannel();
+  if (!_tok() || !channel) return;
+  try {
+    const { email = 'unknown', mpReference = 'N/A', mpTransactionId = 'N/A', mpStatus = 'N/A' } = opts || {};
+    const text = `:money_with_wings: MercadoPago: buyer registered — action required`;
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: '💳 MercadoPago — Buyer Registered', emoji: true },
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: 'A buyer completed the MercadoPago flow (mpago.li link, ~320k COP ≈ $100 USD). *Verify payment in the MercadoPago dashboard, then grant access via the admin activate endpoint.*' },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Email:*\n${email}` },
+          { type: 'mrkdwn', text: `*MP Status:*\n${mpStatus}` },
+          { type: 'mrkdwn', text: `*MP Reference:*\n\`${mpReference}\`` },
+          { type: 'mrkdwn', text: `*Transaction ID:*\n\`${mpTransactionId}\`` },
+        ],
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `<!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${_nowTs()} ET>` }],
+      },
+    ];
+    await _post(channel, text, blocks);
+  } catch (e) {
+    logger.warn('[slackOps] notifyMercadoPagoPendingActivation error', { error: e.message });
+  }
+}
+
+/**
  * Posts a Ru$h → USD conversion alert to #ops-payments.
  * Fired when a creator converts their Ru$h token balance into creator_earnings.
  * @param {object} opts
@@ -923,6 +963,7 @@ module.exports = {
   notifyCreatorApplication: _wrap('notifyCreatorApplication', notifyCreatorApplication),
   notifyNpJwt403: _wrap('notifyNpJwt403', notifyNpJwt403),
   notifyNequiPendingActivation: _wrap('notifyNequiPendingActivation', notifyNequiPendingActivation),
+  notifyMercadoPagoPendingActivation: _wrap('notifyMercadoPagoPendingActivation', notifyMercadoPagoPendingActivation),
   notifyRushConversion: _wrap('notifyRushConversion', notifyRushConversion),
   notifyNewBooking: _wrap('notifyNewBooking', notifyNewBooking),
   notifyCallReminder: _wrap('notifyCallReminder', notifyCallReminder),

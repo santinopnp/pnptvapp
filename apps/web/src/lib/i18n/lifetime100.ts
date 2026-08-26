@@ -123,6 +123,29 @@ export const strings = {
     nequiDoneBody: "We'll send your activation details to your email within minutes. Already have a code?",
     nequiActivateLink: "Activate your membership here",
     nequiTryAgain: "Try a different email",
+
+    // ── MercadoPago (mpago.li) entry on /lifetime100 ────────────────────────
+    mercadoPagoCtaTitle: "Pay with MercadoPago",
+    mercadoPagoCtaBody: "Charged in COP (~320,000 COP ≈ $100 USD). Manual activation within a few hours after we verify your payment.",
+    mercadoPagoCtaButton: "Open MercadoPago →",
+    mercadoPagoAlreadyPaid: "Already paid on MercadoPago?",
+    mercadoPagoAlreadyPaidLink: "Send us your email so we can activate you →",
+
+    // ── /mercadopago landing page ──────────────────────────────────────────
+    mpagoPageTitle: "Payment Confirmed — PNPtv!",
+    mpagoSuccessTitle: "Payment Received!",
+    mpagoSuccessBody: "Your MercadoPago payment was received. Enter your email below so we can send you your account activation details.",
+    mpagoPendingTitle: "Verifying Payment…",
+    mpagoPendingBody: "Your payment is being verified. Enter your email below and we'll contact you once confirmed.",
+    mpagoDeclinedTitle: "Payment Declined",
+    mpagoDeclinedBody: "It looks like your payment did not go through. Please try again or contact support.",
+    mpagoEmailLabel: "Your email address",
+    mpagoSubmit: "Send Me Activation Details",
+    mpagoSubmitting: "Sending…",
+    mpagoDoneTitle: "You're all set!",
+    mpagoDoneBody: "We'll send your activation details to your email within a few hours. Already have a code?",
+    mpagoActivateLink: "Activate your membership here",
+    mpagoTryAgain: "Try a different email",
   },
 
   es: {
@@ -250,6 +273,29 @@ export const strings = {
     nequiDoneBody: "Te enviaremos los detalles de activación a tu correo en minutos. ¿Ya tienes un código?",
     nequiActivateLink: "Activa tu membresía aquí",
     nequiTryAgain: "Usar otro correo",
+
+    // ── MercadoPago (mpago.li) entry on /lifetime100 ────────────────────────
+    mercadoPagoCtaTitle: "Paga con MercadoPago",
+    mercadoPagoCtaBody: "Se cobra en pesos (~320.000 COP ≈ $100 USD). Activación manual en pocas horas después de verificar tu pago.",
+    mercadoPagoCtaButton: "Abrir MercadoPago →",
+    mercadoPagoAlreadyPaid: "¿Ya pagaste en MercadoPago?",
+    mercadoPagoAlreadyPaidLink: "Envíanos tu correo y te activamos →",
+
+    // ── /mercadopago landing page ──────────────────────────────────────────
+    mpagoPageTitle: "Pago Confirmado — PNPtv!",
+    mpagoSuccessTitle: "¡Pago Recibido!",
+    mpagoSuccessBody: "Tu pago con MercadoPago fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
+    mpagoPendingTitle: "Verificando tu pago…",
+    mpagoPendingBody: "Tu pago está siendo verificado. Ingresa tu correo y te contactamos cuando sea confirmado.",
+    mpagoDeclinedTitle: "Pago Rechazado",
+    mpagoDeclinedBody: "Parece que tu pago no fue procesado. Intenta de nuevo o contáctanos.",
+    mpagoEmailLabel: "Tu correo electrónico",
+    mpagoSubmit: "Enviarme los detalles de activación",
+    mpagoSubmitting: "Enviando…",
+    mpagoDoneTitle: "¡Todo listo!",
+    mpagoDoneBody: "Te enviaremos los detalles de activación a tu correo en pocas horas. ¿Ya tienes un código?",
+    mpagoActivateLink: "Activa tu membresía aquí",
+    mpagoTryAgain: "Usar otro correo",
   },
 };
 

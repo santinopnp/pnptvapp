@@ -353,6 +353,9 @@ const Lifetime100 = lazy(() => import("@/pages/Lifetime100"));
 const NequiNegociosPage = lazy(() =>
   import("@/pages/Lifetime100").then((m) => ({ default: m.NequiNegociosPage }))
 );
+const MercadoPagoPage = lazy(() =>
+  import("@/pages/Lifetime100").then((m) => ({ default: m.MercadoPagoPage }))
+);
 const CryptoGuide = lazy(() => import("@/pages/CryptoGuide"));
 const GamificationPage = lazy(() => import("@/pages/GamificationPage"));
 const ReferralCenter = lazy(() => import("@/pages/ReferralCenter"));
@@ -1370,6 +1373,14 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <NequiNegociosPage />
+      </ModuleLoader>
+    ),
+  },
+  {
+    path: "/mercadopago",
+    element: (
+      <ModuleLoader>
+        <MercadoPagoPage />
       </ModuleLoader>
     ),
   },

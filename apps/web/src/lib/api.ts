@@ -8324,6 +8324,52 @@ export function activateNequiPayment(
   return request(`/api/webapp/admin/nequinegocios/${id}/activate`, { method: "POST" });
 }
 
+// ─── MercadoPago (mpago.li lifetime link) ─────────────────────────────────────
+
+export interface MercadoPagoActivation {
+  id: number;
+  email: string;
+  user_id: string | null;
+  username: string | null;
+  first_name: string | null;
+  mp_reference: string | null;
+  mp_transaction_id: string | null;
+  mp_status: string | null;
+  status: "pending" | "activated" | "rejected";
+  created_at: string;
+  activated_at: string | null;
+  notes: string | null;
+}
+
+export function registerMercadoPagoPayment(opts: {
+  email: string;
+  mpReference?: string | null;
+  mpTransactionId?: string | null;
+  mpStatus?: string | null;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  return request("/api/public/mercadopago/register", {
+    method: "POST",
+    body: JSON.stringify({
+      email: opts.email,
+      mpReference: opts.mpReference || null,
+      mpTransactionId: opts.mpTransactionId || null,
+      mpStatus: opts.mpStatus || null,
+    }),
+  });
+}
+
+export function listMercadoPagoActivations(
+  status: "pending" | "activated" | "rejected" | "all" = "pending"
+): Promise<{ success: boolean; activations: MercadoPagoActivation[] }> {
+  return request(`/api/webapp/admin/mercadopago?status=${status}`);
+}
+
+export function activateMercadoPagoPayment(
+  id: number
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  return request(`/api/webapp/admin/mercadopago/${id}/activate`, { method: "POST" });
+}
+
 // ─── Invite Links (Colombia Socio program) ────────────────────────────────────
 
 export interface InviteLink {

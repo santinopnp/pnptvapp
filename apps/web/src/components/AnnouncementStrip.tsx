@@ -357,7 +357,7 @@ export function AnnouncementStrip() {
 
   // Hide on /main-stage, payment pages, and inside a DM chat — no distractions
   // during checkout, and the fixed bottom strip would overlap the chat composer.
-  if (location.pathname === "/main-stage" || location.pathname === "/subscribe" || location.pathname === "/lifetime100" || location.pathname === "/nequinegocios") return null;
+  if (location.pathname === "/main-stage" || location.pathname === "/subscribe" || location.pathname === "/lifetime100" || location.pathname === "/nequinegocios" || location.pathname === "/mercadopago") return null;
   if (/^\/dm\/[^/]+/.test(location.pathname)) return null;
   if (!entry) return null;
 
