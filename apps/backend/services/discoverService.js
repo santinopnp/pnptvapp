@@ -66,12 +66,12 @@ async function discoverByTags(tags = [], textQuery = '', entity = 'all', page = 
 
   // --- channels ---
   if (shouldQuery('channels')) {
-    queries.channels = queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTags);
+    queries.channels = queryChannels(hasTags, tags, hasText, likePattern, limit, offset, viewerId, geoTags);
   }
 
   // --- videos ---
   if (shouldQuery('videos')) {
-    queries.videos = queryVideos(hasTags, tags, hasText, likePattern, limit, offset);
+    queries.videos = queryVideos(hasTags, tags, hasText, likePattern, limit, offset, viewerId);
   }
 
   // --- hangouts ---
@@ -167,7 +167,7 @@ function queryCreators(hasTags, tags, hasText, likePattern, limit, offset, geoTa
   );
 }
 
-function queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTags = []) {
+function queryChannels(hasTags, tags, hasText, likePattern, limit, offset, viewerId = null, geoTags = []) {
   const conditions = ['cc.is_active = TRUE'];
   const params = [];
   let idx = 1;
@@ -183,6 +183,30 @@ function queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTa
       `(cc.name ILIKE $${idx} OR cc.description ILIKE $${idx + 1})`
     );
     idx += 2;
+  }
+
+  // Access filter — hide channels the viewer has no right to. Owners always see their own.
+  // Anonymous callers see only free channels.
+  if (viewerId) {
+    params.push(String(viewerId));
+    const vIdx = idx++;
+    conditions.push(`(
+      cc.creator_id = $${vIdx}
+      OR cc.access_type = 'free'
+      OR (cc.access_type = 'prime' AND EXISTS (
+        SELECT 1 FROM user_entitlements ue
+        WHERE ue.user_id = $${vIdx} AND ue.add_on_id = 'prime'
+          AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+      ))
+      OR (cc.access_type IN ('subscription','paid') AND EXISTS (
+        SELECT 1 FROM creator_subscriptions cs
+        WHERE cs.subscriber_id = $${vIdx} AND cs.creator_id = cc.creator_id
+          AND cs.status = 'active'
+          AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+      ))
+    )`);
+  } else {
+    conditions.push(`cc.access_type = 'free'`);
   }
 
   // Region privacy — hide channels whose owning creator opted out of viewer's region.
@@ -205,7 +229,7 @@ function queryChannels(hasTags, tags, hasText, likePattern, limit, offset, geoTa
   );
 }
 
-function queryVideos(hasTags, tags, hasText, likePattern, limit, offset) {
+function queryVideos(hasTags, tags, hasText, likePattern, limit, offset, viewerId = null) {
   const conditions = ["cv.status = 'ready'"];
   const params = [];
   let idx = 1;
@@ -218,6 +242,30 @@ function queryVideos(hasTags, tags, hasText, likePattern, limit, offset) {
   if (hasText) {
     params.push(likePattern);
     conditions.push(`cv.title ILIKE $${idx++}`);
+  }
+
+  // Access filter via joined creator_channels — hide videos whose channel the viewer
+  // cannot access. Owners always see their own. Anonymous callers see only free channels.
+  if (viewerId) {
+    params.push(String(viewerId));
+    const vIdx = idx++;
+    conditions.push(`(
+      cc.creator_id = $${vIdx}
+      OR cc.access_type = 'free'
+      OR (cc.access_type = 'prime' AND EXISTS (
+        SELECT 1 FROM user_entitlements ue
+        WHERE ue.user_id = $${vIdx} AND ue.add_on_id = 'prime'
+          AND (ue.expires_at IS NULL OR ue.expires_at > NOW())
+      ))
+      OR (cc.access_type IN ('subscription','paid') AND EXISTS (
+        SELECT 1 FROM creator_subscriptions cs
+        WHERE cs.subscriber_id = $${vIdx} AND cs.creator_id = cc.creator_id
+          AND cs.status = 'active'
+          AND (cs.expires_at IS NULL OR cs.expires_at > NOW())
+      ))
+    )`);
+  } else {
+    conditions.push(`cc.access_type = 'free'`);
   }
 
   params.push(limit, offset);

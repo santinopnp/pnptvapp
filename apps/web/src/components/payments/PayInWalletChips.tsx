@@ -460,9 +460,10 @@ export function WalletPayCard({
       // whereas the legacy useFundWallet excludes Stripe by design. destination
       // uses CAIP-2 chain id + USDC contract on Base so the funding UI lands
       // USDC directly (no ETH → USDC swap step).
-      // Privy providers (Stripe/MoonPay) enforce their own minima (typically
-      // $10-15). Default to the plan amount exactly — do NOT bump to $20, that
-      // was creating a permanent overpay for $9.99/$15 plans.
+      // Stripe crypto onramp minimum is $15 USD; anything below silently fails
+      // with "Something went wrong setting up checkout". Floor the onramp
+      // amount at $15 so small tips ($10) and cheap plans still work — the
+      // leftover USDC lands in the user's wallet for the next purchase.
       await addFunds({
         destination: {
           address: activeWallet.address,
@@ -470,7 +471,7 @@ export function WalletPayCard({
           asset: _USDC_BASE,
         },
         fiat: {
-          defaultAmount: amountUsd.toFixed(2),
+          defaultAmount: Math.max(15, amountUsd).toFixed(2),
         },
       });
       // addFunds resolved — user closed the fund flow. Stripe settlement is

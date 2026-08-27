@@ -231,9 +231,11 @@ async function main() {
       await log(u.user_id, CHANNEL, 'failed', (e.message || '?').slice(0, 500));
     }
 
-    await sleep(800);
+    // Hostinger throttled us at ~800ms cadence (out_ratelimit + per-IP AUTH cap).
+    // 5s base + 10s pause every 25 = ~5.4s avg = ~11 emails/min = ~666/hr.
+    await sleep(5000);
     if ((sent + fail) % 25 === 0) {
-      await sleep(2000);
+      await sleep(10000);
       console.log(`  progress: sent=${sent} fail=${fail} skip=${skip} / ${targets.length}`);
     }
   }

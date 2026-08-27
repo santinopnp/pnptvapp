@@ -35,7 +35,7 @@ const TICK_JITTER_MS = 60_000;      // ± 60 s
 const MIN_VIEWERS    = 3;
 const MAX_HUMAN_MSGS_60S = 5;
 
-const WEIGHTS = { tip: 0.30, booking: 0.30, wellness: 0.40 };
+const WEIGHTS = { tip: 0.70, booking: 0.15, wellness: 0.15 };
 
 // ─── Message pools ──────────────────────────────────────────────────────────
 

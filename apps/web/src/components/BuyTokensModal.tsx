@@ -319,7 +319,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           chain: BASE_CAIP2,
           asset: USDC_BASE_ADDRESS,
         },
-        fiat: { defaultAmount: price.toFixed(0) },
+        fiat: { defaultAmount: Math.max(15, price).toFixed(0) },
       });
       refreshBalance();
     } catch (err: unknown) {
