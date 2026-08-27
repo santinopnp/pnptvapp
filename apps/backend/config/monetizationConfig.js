@@ -28,6 +28,27 @@ const SANTINO_USER_ID = '8599671840';
 const LEX_USER_ID = '8f5f4dd1-7bdb-4571-b026-e09d91113c91';
 const LEX_PRIME_HANGOUT_GROUP_ID = null; // hangout 785 was hard-deleted; not restored
 
+// Amadeus — Jonathan's stage persona (Content & Talent Producer, joined
+// 2026-08-09). Third founder-tier identity for PNPtv! Mode / Main Stage focus.
+const AMADEUS_USER_ID = '7bdabb03-b447-4e8e-b989-efe1b5e773fd';
+
+// PNPtv! Mode founders — permanent grant (pnptv_mode_expires_at='infinity').
+// Detection queries JOIN users WHERE pnptv_mode_expires_at > NOW(), but this
+// list is the source of truth for seeding + admin displays.
+const PNPTV_MODE_FOUNDER_IDS = [SANTINO_USER_ID, LEX_USER_ID, AMADEUS_USER_ID];
+
+// Tips landing during an active pnptv_mode_sessions row split 70/30
+// (creator/platform). Regular tips outside PNPtv! Mode keep the existing
+// TIP_CREATOR_RATE (1.0). The platform-side share funds Main Stage infra
+// (LiveKit egress, discovery push fan-out, moderation).
+const PNPTV_MODE_CREATOR_TIP_RATE  = 0.70;
+const PNPTV_MODE_PLATFORM_TIP_RATE = 0.30;
+
+// Grace period before a disconnected holder's session is considered ended.
+// Absorbs wifi hiccups + LiveKit reconnect (~5-15s typical). If holder
+// re-publishes within this window, session/lock stays intact.
+const PNPTV_MODE_GRACE_SECONDS = 60;
+
 // PRIME revenue split — 50% platform / 25% Santino / 25% Lex.
 // Preserves Santino's post-termination 50% platform-reinvestment decision and
 // splits the creator half equally between co-founders. Applies to every paid
@@ -73,6 +94,11 @@ module.exports = {
   GIFTED_ALLOWED_PERFORMER_USER_IDS,
   SANTINO_USER_ID,
   LEX_USER_ID,
+  AMADEUS_USER_ID,
+  PNPTV_MODE_FOUNDER_IDS,
+  PNPTV_MODE_CREATOR_TIP_RATE,
+  PNPTV_MODE_PLATFORM_TIP_RATE,
+  PNPTV_MODE_GRACE_SECONDS,
   PRIME_PLATFORM_RATE,
   PRIME_CREATOR_RATE,
   PRIME_REVENUE_RECIPIENTS,

@@ -369,6 +369,18 @@ const getState = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Common response for admin actions blocked by PNPtv! Mode lock.
+ * Frontend uses code=PNPTV_MODE_LOCKED to hide/disable the control.
+ */
+function respondPnptvModeLocked(res, op) {
+  return res.status(423).json({
+    success: false,
+    error: `Main Stage is in PNPtv! Mode — ${op} is locked while a founder is live.`,
+    code: 'PNPTV_MODE_LOCKED',
+  });
+}
+
+/**
  * POST /api/main-stage/mode
  * Admin only. Body: { mode }
  */
@@ -378,7 +390,12 @@ const setMode = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, error: 'mode is required' });
   }
 
-  await mainStageService.setMode(mode);
+  try {
+    await mainStageService.setMode(mode);
+  } catch (err) {
+    if (err.code === 'PNPTV_MODE_LOCKED') return respondPnptvModeLocked(res, 'mode');
+    throw err;
+  }
   await mainStageService.logAdminAction(req.user.id, 'set_mode', { mode });
 
   logger.info('[MainStage] mode set by admin', { userId: req.user.id, mode });
@@ -469,7 +486,12 @@ const setSpotlight = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, error: 'identity is not in the cammer queue' });
   }
 
-  await mainStageService.setSpotlight(String(cammer));
+  try {
+    await mainStageService.setSpotlight(String(cammer));
+  } catch (err) {
+    if (err.code === 'PNPTV_MODE_LOCKED') return respondPnptvModeLocked(res, 'spotlight');
+    throw err;
+  }
   await mainStageService.logAdminAction(req.user.id, 'set_spotlight', { cammer });
 
   return res.json({ success: true, spotlight: cammer });
@@ -608,15 +630,21 @@ const moderate = asyncHandler(async (req, res) => {
  * Admin only. Reshuffles the participant queue and advances spotlight.
  */
 const shuffle = asyncHandler(async (req, res) => {
-  await mainStageService.shuffleCammers();
+  try {
+    await mainStageService.shuffleCammers();
+  } catch (err) {
+    if (err.code === 'PNPTV_MODE_LOCKED') return respondPnptvModeLocked(res, 'shuffle');
+    throw err;
+  }
   await mainStageService.logAdminAction(req.user.id, 'shuffle_cammers');
   return res.json({ success: true });
 });
 
 /**
  * GET /api/main-stage/viewer-token
- * No auth required. Issues a subscribe-only LiveKit token for passive viewers.
- * Rate-limited at the route level by IP.
+ * Session auth + pnp-member entitlement required (gated at route level).
+ * Issues a subscribe-only LiveKit token for passive viewers.
+ * Rate-limited at the route level by IP (5/min).
  */
 const viewerToken = asyncHandler(async (req, res) => {
   const viewerId = `viewer_${crypto.randomBytes(6).toString('hex')}`;

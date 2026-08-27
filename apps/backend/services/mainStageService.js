@@ -91,6 +91,20 @@ const DIRECTUS_PUBLIC_URL   = (process.env.DIRECTUS_PUBLIC_URL   || 'https://cms
 // Every write refreshes the TTL; the rotation tick effectively heartbeats it too.
 const STATE_CACHE_TTL_S    = 86_400;
 
+// PNPtv! Mode — spotlight-lock format for founders (Santino/Lex/Amadeus) and
+// creators granted via users.pnptv_mode_expires_at. When engaged, mode is
+// forced to 'spotlight' pinned on the holder + admin overrides throw 423.
+const PNPTV_MODE_HOLDER_KEY      = 'mainstage:pnptvMode:holder';
+const PNPTV_MODE_SESSION_ID_KEY  = 'mainstage:pnptvMode:sessionId';
+const PNPTV_MODE_PREV_MODE_KEY   = 'mainstage:pnptvMode:prevMode';
+const PNPTV_MODE_GRACE_UNTIL_KEY = 'mainstage:pnptvMode:graceUntil';
+const PNPTV_MODE_STARTED_AT_KEY  = 'mainstage:pnptvMode:startedAt';
+const PNPTV_MODE_GRACE_TICK_MS   = 15_000;
+const { PNPTV_MODE_GRACE_SECONDS } = require('../config/monetizationConfig');
+// Feature flag — default ON. Set PNPTV_MODE_ENABLED=false in .env to disable
+// without rolling back code (kills detection + lock engagement completely).
+const PNPTV_MODE_ENABLED = process.env.PNPTV_MODE_ENABLED !== 'false';
+
 // ── Module-level io reference (injected via setIo) ───────────────────────────
 
 let _io = null;
@@ -317,6 +331,10 @@ async function getState() {
     media,
     camsVolRaw,
     autoplayRaw,
+    pnptvHolder,
+    pnptvSessionId,
+    pnptvStartedAt,
+    pnptvGraceUntil,
   ] = await Promise.all([
     redis.get('mainstage:mode'),
     redis.get('mainstage:spotlight:cammer'),
@@ -325,6 +343,10 @@ async function getState() {
     readMedia(),
     redis.get('mainstage:cams:volume'),
     redis.get('mainstage:autoplay:enabled'),
+    redis.get(PNPTV_MODE_HOLDER_KEY),
+    redis.get(PNPTV_MODE_SESSION_ID_KEY),
+    redis.get(PNPTV_MODE_STARTED_AT_KEY),
+    redis.get(PNPTV_MODE_GRACE_UNTIL_KEY),
   ]);
 
   return {
@@ -341,6 +363,13 @@ async function getState() {
     // Server-side music/video auto-rotation. Defaults to enabled (legacy behavior).
     // When false, autoRotateMedia is a no-op — admin must pick media manually.
     autoplay_enabled: autoplayRaw === null ? true : autoplayRaw !== '0',
+    pnptvMode: {
+      locked:     !!pnptvHolder,
+      holder:     pnptvHolder || null,
+      sessionId:  pnptvSessionId || null,
+      startedAt:  pnptvStartedAt ? parseInt(pnptvStartedAt, 10) : null,
+      graceUntil: pnptvGraceUntil ? parseInt(pnptvGraceUntil, 10) : null,
+    },
     counts: {
       participants: queue.length,
       guests: queue.filter((identity) => String(identity).startsWith('guest_')).length,
@@ -466,6 +495,8 @@ async function acquireFlipFence(key) {
 
 async function maybeAutoFlipMode(event, creatorsBefore, creatorsAfter, humansAfter) {
   const redis = getRedis();
+  // PNPtv! Mode owns the layout — auto-flip must not fight the lock.
+  if (await redis.get(PNPTV_MODE_HOLDER_KEY)) return;
   const currentMode = await redis.get(MODE_KEY);
 
   // Rule 1 — creator arrival edge
@@ -497,10 +528,254 @@ async function maybeAutoFlipMode(event, creatorsBefore, creatorsAfter, humansAft
   }
 }
 
+// ── PNPtv! Mode — spotlight-lock streaming format ────────────────────────────
+// When a user with users.pnptv_mode_expires_at > NOW() joins the Main Stage
+// as a cammer, mode is forced to 'spotlight' pinned on them + admin overrides
+// (setMode/setSpotlight/shuffle) throw 423 PNPTV_MODE_LOCKED until they leave.
+// A grace period (PNPTV_MODE_GRACE_SECONDS) absorbs LiveKit reconnect blips.
+
+/**
+ * Is the given identity currently granted PNPtv! Mode?
+ * Non-human identities (media bot, guests, viewers) always false.
+ */
+async function fetchPnptvModeGrant(identity) {
+  if (!PNPTV_MODE_ENABLED) return false;
+  if (!isHumanCammerIdentity(identity)) return false;
+  try {
+    const pool = getPool();
+    const { rows } = await pool.query(
+      `SELECT 1 FROM users
+        WHERE id::text = $1
+          AND pnptv_mode_expires_at IS NOT NULL
+          AND pnptv_mode_expires_at > NOW()
+        LIMIT 1`,
+      [String(identity)]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    logger.warn('[MainStage] fetchPnptvModeGrant failed', { identity, error: err.message });
+    return false;
+  }
+}
+
+async function isPnptvModeLocked() {
+  const redis = getRedis();
+  const holder = await redis.get(PNPTV_MODE_HOLDER_KEY);
+  return !!holder;
+}
+
+async function getPnptvModeStatus() {
+  const redis = getRedis();
+  const [holder, sessionId, startedAt, graceUntil] = await Promise.all([
+    redis.get(PNPTV_MODE_HOLDER_KEY),
+    redis.get(PNPTV_MODE_SESSION_ID_KEY),
+    redis.get(PNPTV_MODE_STARTED_AT_KEY),
+    redis.get(PNPTV_MODE_GRACE_UNTIL_KEY),
+  ]);
+  return {
+    locked:     !!holder,
+    holder:     holder || null,
+    sessionId:  sessionId || null,
+    startedAt:  startedAt ? parseInt(startedAt, 10) : null,
+    graceUntil: graceUntil ? parseInt(graceUntil, 10) : null,
+  };
+}
+
+async function createPnptvModeSession(holderUserId) {
+  try {
+    const pool = getPool();
+    const { rows } = await pool.query(
+      `INSERT INTO pnptv_mode_sessions (holder_user_id) VALUES ($1) RETURNING id`,
+      [String(holderUserId)]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // uq_pnptv_mode_sessions_active_per_holder — a prior lock didn't close
+    // its session row (bot crash mid-lock). Reuse the open session's id.
+    if (err.code === '23505') {
+      try {
+        const pool = getPool();
+        const { rows } = await pool.query(
+          `SELECT id FROM pnptv_mode_sessions
+            WHERE holder_user_id = $1 AND ended_at IS NULL
+            ORDER BY started_at DESC LIMIT 1`,
+          [String(holderUserId)]
+        );
+        return rows[0] || null;
+      } catch (_) { return null; }
+    }
+    logger.warn('[MainStage] createPnptvModeSession failed', { holderUserId, error: err.message });
+    return null;
+  }
+}
+
+async function closePnptvModeSession(sessionId) {
+  if (!sessionId) return;
+  try {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE pnptv_mode_sessions SET ended_at = NOW()
+        WHERE id = $1 AND ended_at IS NULL`,
+      [sessionId]
+    );
+  } catch (err) {
+    logger.warn('[MainStage] closePnptvModeSession failed', { sessionId, error: err.message });
+  }
+}
+
+/**
+ * Engage the lock for a holder that just joined the cammer queue.
+ * Returns { engaged, reconnected, alreadyLocked, sessionId }.
+ * First-come wins: if another founder is already locked, this is a no-op.
+ * Same-holder call clears any active grace period (reconnection path).
+ */
+async function engagePnptvModeLock(identity) {
+  const redis = getRedis();
+  const idStr = String(identity);
+
+  const currentHolder = await redis.get(PNPTV_MODE_HOLDER_KEY);
+  if (currentHolder === idStr) {
+    // Reconnect during grace — clear grace, keep lock intact.
+    await redis.del(PNPTV_MODE_GRACE_UNTIL_KEY);
+    logger.info('[MainStage] PNPtv! Mode grace cleared — holder reconnected', { holder: idStr });
+    if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:reconnected', { holder: idStr });
+    return { engaged: false, reconnected: true };
+  }
+  if (currentHolder) {
+    logger.info('[MainStage] PNPtv! Mode already locked by another founder — skipping', {
+      currentHolder, candidate: idStr,
+    });
+    return { engaged: false, alreadyLocked: true };
+  }
+
+  const prevMode = (await redis.get(MODE_KEY)) || 'cinema';
+  const sessionRow = await createPnptvModeSession(idStr);
+  const startedAt = Date.now();
+
+  await Promise.all([
+    redis.set(PNPTV_MODE_HOLDER_KEY, idStr, 'EX', STATE_CACHE_TTL_S),
+    redis.set(PNPTV_MODE_SESSION_ID_KEY, sessionRow?.id || '', 'EX', STATE_CACHE_TTL_S),
+    redis.set(PNPTV_MODE_STARTED_AT_KEY, String(startedAt), 'EX', STATE_CACHE_TTL_S),
+    redis.set(PNPTV_MODE_PREV_MODE_KEY, prevMode, 'EX', STATE_CACHE_TTL_S),
+    redis.del(PNPTV_MODE_GRACE_UNTIL_KEY),
+  ]);
+
+  // Direct redis writes — bypasses setMode/setSpotlight guards we install below.
+  // Long-hold nextAt so the rotation tick won't try to advance the spotlight.
+  await redis.set(MODE_KEY, 'spotlight', 'EX', STATE_CACHE_TTL_S);
+  await redis.set('mainstage:spotlight:cammer', idStr, 'EX', STATE_CACHE_TTL_S);
+  await redis.set('mainstage:spotlight:nextAt',
+    String(startedAt + STATE_CACHE_TTL_S * 1000),
+    'EX', STATE_CACHE_TTL_S);
+
+  logger.info('[MainStage] PNPtv! Mode lock engaged', {
+    holder: idStr, sessionId: sessionRow?.id, prevMode,
+  });
+
+  if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:locked', {
+    holder: idStr, sessionId: sessionRow?.id, startedAt,
+  });
+
+  await emitState();
+  return { engaged: true, sessionId: sessionRow?.id };
+}
+
+/**
+ * Start the grace timer for a holder that just left the cammer queue.
+ * No-op if the identity isn't the current holder. Grace tick + rotation
+ * tick both call checkPnptvModeGraceExpired to release the lock when it lapses.
+ */
+async function markPnptvModeGrace(identity) {
+  const redis = getRedis();
+  const currentHolder = await redis.get(PNPTV_MODE_HOLDER_KEY);
+  if (currentHolder !== String(identity)) return;
+  const graceUntil = Date.now() + PNPTV_MODE_GRACE_SECONDS * 1000;
+  await redis.set(PNPTV_MODE_GRACE_UNTIL_KEY, String(graceUntil),
+    'EX', PNPTV_MODE_GRACE_SECONDS + 30);
+  logger.info('[MainStage] PNPtv! Mode grace started', {
+    holder: identity, graceUntil, graceSeconds: PNPTV_MODE_GRACE_SECONDS,
+  });
+  if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:grace',
+    { holder: String(identity), graceUntil });
+}
+
+/**
+ * Called on every rotation + grace tick. Idempotent — survives bot restarts.
+ * Releases the lock only when: grace has lapsed AND holder is truly gone
+ * from the cammer queue.
+ */
+async function checkPnptvModeGraceExpired() {
+  const redis = getRedis();
+  const [holder, graceUntilRaw] = await Promise.all([
+    redis.get(PNPTV_MODE_HOLDER_KEY),
+    redis.get(PNPTV_MODE_GRACE_UNTIL_KEY),
+  ]);
+  if (!holder) return;
+  if (!graceUntilRaw) return;
+  const graceUntil = parseInt(graceUntilRaw, 10);
+  if (Date.now() < graceUntil) return;
+  const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
+  if (queue.includes(holder)) {
+    // Holder came back but grace key wasn't cleared for some reason — clean up.
+    await redis.del(PNPTV_MODE_GRACE_UNTIL_KEY);
+    logger.info('[MainStage] PNPtv! Mode grace cleared post-hoc — holder in queue', { holder });
+    return;
+  }
+  await disengagePnptvModeLock('grace_expired');
+}
+
+async function disengagePnptvModeLock(reason = 'unknown') {
+  const redis = getRedis();
+  const [holder, sessionId, prevMode] = await Promise.all([
+    redis.get(PNPTV_MODE_HOLDER_KEY),
+    redis.get(PNPTV_MODE_SESSION_ID_KEY),
+    redis.get(PNPTV_MODE_PREV_MODE_KEY),
+  ]);
+  if (!holder) return;
+
+  await Promise.all([
+    redis.del(PNPTV_MODE_HOLDER_KEY),
+    redis.del(PNPTV_MODE_SESSION_ID_KEY),
+    redis.del(PNPTV_MODE_STARTED_AT_KEY),
+    redis.del(PNPTV_MODE_PREV_MODE_KEY),
+    redis.del(PNPTV_MODE_GRACE_UNTIL_KEY),
+  ]);
+
+  await closePnptvModeSession(sessionId);
+
+  const restoreMode = VALID_MODES.has(prevMode) ? prevMode : 'cinema';
+  await redis.set(MODE_KEY, restoreMode, 'EX', STATE_CACHE_TTL_S);
+
+  // Release the pinned spotlight so normal rotation resumes on next tick.
+  const currentSpot = await redis.get('mainstage:spotlight:cammer');
+  if (currentSpot === holder) {
+    await redis.del('mainstage:spotlight:cammer');
+    await redis.del('mainstage:spotlight:nextAt');
+  }
+
+  logger.info('[MainStage] PNPtv! Mode lock released', {
+    holder, sessionId, restoreMode, reason,
+  });
+
+  if (_io) _io.to('mainstage').emit('mainstage:pnptvMode:unlocked',
+    { restoreMode, reason });
+
+  await emitState();
+}
+
+// Sentinel error the route layer converts to HTTP 423.
+function pnptvModeLockedError(op) {
+  const err = new Error(`Main Stage is in PNPtv! Mode — ${op} is locked`);
+  err.code = 'PNPTV_MODE_LOCKED';
+  err.status = 423;
+  return err;
+}
+
 // ── Mode ──────────────────────────────────────────────────────────────────────
 
 async function setMode(mode) {
   if (!VALID_MODES.has(mode)) throw new Error(`Invalid mode: ${mode}`);
+  if (await isPnptvModeLocked()) throw pnptvModeLockedError('mode');
   const redis = getRedis();
   await redis.set('mainstage:mode', mode, 'EX', STATE_CACHE_TTL_S);
   logger.info('[MainStage] mode set', { mode });
@@ -687,6 +962,16 @@ async function addCammer(identity) {
   const role = await fetchIdentityRole(identity);
   await cacheIdentityRole(identity, role);
 
+  // PNPtv! Mode: if this identity is granted, engage lock BEFORE the
+  // fallback spotlight assignment below — engagement pins the spotlight
+  // to this holder, so the subsequent `if (!current)` becomes a no-op.
+  try {
+    const hasGrant = await fetchPnptvModeGrant(identity);
+    if (hasGrant) await engagePnptvModeLock(identity);
+  } catch (err) {
+    logger.warn('[MainStage] pnptvMode engage check failed (non-fatal)', { identity, error: err.message });
+  }
+
   // If no spotlight yet, immediately set this cammer as spotlight.
   // Interval respects role — creators hold for 5 min, regulars for 90s.
   const current = await redis.get('mainstage:spotlight:cammer');
@@ -821,6 +1106,7 @@ return list
  * addCammer calls can't get their identity silently dropped.
  */
 async function shuffleCammers() {
+  if (await isPnptvModeLocked()) throw pnptvModeLockedError('shuffle');
   const redis   = getRedis();
   const nextAt  = Date.now() + ROTATE_INTERVAL_MS;
   const result = await redis.eval(
@@ -863,6 +1149,14 @@ async function addCammerForce(identity) {
   const role = await fetchIdentityRole(identity);
   await cacheIdentityRole(identity, role);
 
+  // PNPtv! Mode: engage lock if this identity holds a grant (see addCammer).
+  try {
+    const hasGrant = await fetchPnptvModeGrant(identity);
+    if (hasGrant) await engagePnptvModeLock(identity);
+  } catch (err) {
+    logger.warn('[MainStage] pnptvMode engage check failed (non-fatal, force path)', { identity, error: err.message });
+  }
+
   const current = await redis.get('mainstage:spotlight:cammer');
   if (!current) {
     const interval = role === 'creator' ? ROTATE_INTERVAL_CREATOR_MS : ROTATE_INTERVAL_REGULAR_MS;
@@ -902,11 +1196,24 @@ async function removeCammer(identity) {
 
   if (removed === 0) return; // identity was not in the queue — nothing to do
 
+  // PNPtv! Mode: if the holder just disconnected, start the grace timer.
+  // We do NOT release the lock immediately — LiveKit reconnect blips are
+  // common. The grace tick releases it if they don't come back in time.
+  try {
+    await markPnptvModeGrace(identity);
+  } catch (err) {
+    logger.warn('[MainStage] pnptvMode grace mark failed (non-fatal)', { identity, error: err.message });
+  }
+
   // If the removed cammer held the spotlight, advance to the next; otherwise
   // just refresh state. emitState is 200ms-debounced so any downstream flip
   // in maybeAutoFlipMode below coalesces with this into a single broadcast.
+  //
+  // Guard: don't advance while a pnptvMode grace is active — the holder
+  // still owns the spotlight for the grace window.
   const current = await redis.get('mainstage:spotlight:cammer');
-  if (current === String(identity)) {
+  const inGrace = await redis.get(PNPTV_MODE_GRACE_UNTIL_KEY);
+  if (current === String(identity) && !inGrace) {
     await advanceSpotlight();
   } else {
     await emitState();
@@ -920,6 +1227,7 @@ async function removeCammer(identity) {
 
 async function setSpotlight(identity) {
   if (!identity) throw new Error('identity required');
+  if (await isPnptvModeLocked()) throw pnptvModeLockedError('spotlight');
   const redis = getRedis();
   const roles = await readAllCammerRoles();
   const interval = roles[String(identity)] === 'creator'
@@ -1313,10 +1621,11 @@ async function sweepGhostCammers() {
 
 // ── Distributed rotation lock ─────────────────────────────────────────────────
 
-let _rotationInterval = null;
-let _autoMediaInterval = null;
-let _lockRenewInterval = null;
-let _lockToken        = null;
+let _rotationInterval    = null;
+let _autoMediaInterval   = null;
+let _lockRenewInterval   = null;
+let _pnptvGraceInterval  = null;
+let _lockToken           = null;
 
 /**
  * Acquire the Redis lock and, if successful, start the local rotation interval.
@@ -1334,6 +1643,23 @@ async function startRotation() {
   // Prune retired mode values (theater/karaoke/equal) from Redis state so
   // frontends don't receive a mode they can't render. Idempotent.
   try { await migrateLegacyModeIfNeeded(); } catch (_) { /* best-effort */ }
+
+  // PNPtv! Mode orphan recovery — a bot crash mid-lock leaves the holder key
+  // in Redis with no live cammer. If found, seed grace as expired so the
+  // next grace tick releases the lock cleanly.
+  try {
+    const orphanHolder = await redis.get(PNPTV_MODE_HOLDER_KEY);
+    if (orphanHolder) {
+      const queue = await redis.lrange('mainstage:spotlight:queue', 0, -1);
+      if (!queue.includes(orphanHolder)) {
+        const graceUntilRaw = await redis.get(PNPTV_MODE_GRACE_UNTIL_KEY);
+        if (!graceUntilRaw) {
+          await redis.set(PNPTV_MODE_GRACE_UNTIL_KEY, String(Date.now()), 'EX', 60);
+          logger.info('[MainStage] pnptvMode orphan lock detected on boot — grace queued for immediate release', { holder: orphanHolder });
+        }
+      }
+    }
+  } catch (_) { /* best-effort */ }
 
   async function tryAcquire() {
     const result = await redis.set(LOCK_KEY, _lockToken, 'NX', 'EX', LOCK_TTL_S);
@@ -1354,10 +1680,12 @@ async function startRotation() {
           // Lock was taken from us (e.g. crash + recovery); stop renewing
           clearInterval(_lockRenewInterval);
           clearInterval(_rotationInterval);
-          if (_autoMediaInterval) clearInterval(_autoMediaInterval);
-          _lockRenewInterval = null;
-          _rotationInterval  = null;
-          _autoMediaInterval = null;
+          if (_autoMediaInterval)  clearInterval(_autoMediaInterval);
+          if (_pnptvGraceInterval) clearInterval(_pnptvGraceInterval);
+          _lockRenewInterval  = null;
+          _rotationInterval   = null;
+          _autoMediaInterval  = null;
+          _pnptvGraceInterval = null;
           logger.warn('[MainStage] rotation lock lost — stopping local rotation');
           return;
         }
@@ -1374,6 +1702,10 @@ async function startRotation() {
       try {
         // Ghost-sweep first so the spotlight rotation operates on a clean queue
         await sweepGhostCammers();
+        // Also check pnptvMode grace here (belt + suspenders — the dedicated
+        // grace tick handles the sub-15s cadence; this covers the case where
+        // that tick was somehow missed).
+        await checkPnptvModeGraceExpired().catch(() => {});
         const mode = await redis.get('mainstage:mode');
         if (mode !== 'spotlight') return;
         const nextAtRaw = await redis.get('mainstage:spotlight:nextAt');
@@ -1384,6 +1716,16 @@ async function startRotation() {
         logger.error('[MainStage] rotation tick error', { error: err.message });
       }
     }, ROTATE_INTERVAL_REGULAR_MS);
+
+    // PNPtv! Mode grace tick — dedicated fast cadence so a 60s grace fires
+    // within one tick of expiring, not up to 90s later.
+    _pnptvGraceInterval = setInterval(async () => {
+      try {
+        await checkPnptvModeGraceExpired();
+      } catch (err) {
+        logger.warn('[MainStage] pnptvMode grace tick error', { error: err.message });
+      }
+    }, PNPTV_MODE_GRACE_TICK_MS);
 
     // Prime Video auto-rotation: fire once shortly after boot so the room
     // isn't silent on first load, then every AUTO_MEDIA_INTERVAL_MS.
@@ -1399,9 +1741,10 @@ async function startRotation() {
 }
 
 async function stopRotation() {
-  if (_lockRenewInterval) { clearInterval(_lockRenewInterval); _lockRenewInterval = null; }
-  if (_rotationInterval)  { clearInterval(_rotationInterval);  _rotationInterval  = null; }
-  if (_autoMediaInterval) { clearInterval(_autoMediaInterval); _autoMediaInterval = null; }
+  if (_lockRenewInterval)  { clearInterval(_lockRenewInterval);  _lockRenewInterval  = null; }
+  if (_rotationInterval)   { clearInterval(_rotationInterval);   _rotationInterval   = null; }
+  if (_autoMediaInterval)  { clearInterval(_autoMediaInterval);  _autoMediaInterval  = null; }
+  if (_pnptvGraceInterval) { clearInterval(_pnptvGraceInterval); _pnptvGraceInterval = null; }
 
   if (_lockToken) {
     try {
@@ -1553,4 +1896,12 @@ module.exports = {
   getPinnedAnnouncement,
   setPinnedAnnouncement,
   clearPinnedAnnouncement,
+  // PNPtv! Mode — spotlight-lock streaming format
+  fetchPnptvModeGrant,
+  isPnptvModeLocked,
+  getPnptvModeStatus,
+  engagePnptvModeLock,
+  disengagePnptvModeLock,
+  markPnptvModeGrace,
+  checkPnptvModeGraceExpired,
 };
