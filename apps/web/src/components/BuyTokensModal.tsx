@@ -201,12 +201,35 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     }
 
-    const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
-    if (!verified.ok) throw new Error(verified.reason || "verify_failed");
-    const credited = verified.rushCredited ?? expectedTokens;
-    setSuccess({ tokens: credited });
-    refreshBalance();
-    if (onSuccess) onSuccess(credited);
+    // Tx is now on-chain — retry verify up to 4 times over 40s so a transient
+    // RPC error or a slow indexer doesn't leave the user "paid but not
+    // credited". If all retries fail we surface the tx hash so the user can
+    // send it to support for manual reconciliation.
+    let lastReason: string | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
+        if (verified.ok) {
+          const credited = verified.rushCredited ?? expectedTokens;
+          setSuccess({ tokens: credited });
+          refreshBalance();
+          if (onSuccess) onSuccess(credited);
+          return;
+        }
+        lastReason = verified.reason || "verify_failed";
+      } catch (verifyErr) {
+        lastReason = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
+      }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 10_000));
+    }
+    reportWalletClientError("verifyWalletCheckoutTxAfterOnChain", new Error(lastReason || "verify_failed"), {
+      surface: "rush", intentId: intent.intentId, txHash, rail: railChoice,
+    });
+    throw new Error(
+      (es
+        ? `Transacción enviada pero la verificación falló. Guarda este hash y contáctanos: `
+        : `Transaction sent but verification failed. Save this hash and contact us: `) + txHash
+    );
   };
 
   const handleWalletPay = async (pkg: TokenPackage) => {
@@ -306,7 +329,37 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           }
           if (s.failed) throw new Error(es ? "El pago falló o expiró." : "Payment failed or expired.");
           if (popup && popup.closed) {
-            // User closed the popup — give up polling silently.
+            // User closed popup — the payment may have already settled or
+            // may still be in flight. Persist the invoice ID + poll for
+            // another 90s before giving up, so late confirmations still
+            // credit the user's balance.
+            try {
+              const pending = JSON.parse(localStorage.getItem("pnp_pending_np_orders") || "[]");
+              if (!pending.find((p: {id: string}) => p.id === orderId)) {
+                pending.push({ id: orderId, tokens: Number(pkg.tokens), ts: Date.now() });
+                localStorage.setItem("pnp_pending_np_orders", JSON.stringify(pending.slice(-10)));
+              }
+            } catch (_) { /* localStorage may be unavailable */ }
+            const graceUntil = Date.now() + 90_000;
+            setError(es ? "Verificando pago… puede tardar hasta 90s." : "Verifying payment… may take up to 90s.");
+            while (Date.now() < graceUntil) {
+              await new Promise((r) => setTimeout(r, 5000));
+              try {
+                const s2 = await getNowPaymentsOrderStatus(orderId);
+                if (s2.completed) {
+                  const credited = Number(pkg.tokens);
+                  setError(null);
+                  setSuccess({ tokens: credited });
+                  refreshBalance();
+                  if (onSuccess) onSuccess(credited);
+                  try {
+                    const pending = JSON.parse(localStorage.getItem("pnp_pending_np_orders") || "[]");
+                    localStorage.setItem("pnp_pending_np_orders", JSON.stringify(pending.filter((p: {id: string}) => p.id !== orderId)));
+                  } catch (_) { /* ignore */ }
+                  return;
+                }
+              } catch (_) { /* keep trying */ }
+            }
             return;
           }
         } catch (pollErr) {
@@ -317,6 +370,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      reportWalletClientError("buyTokensNowPayments", err, {
+        surface: "rush", packageId: pkg.id, npCoin,
+      });
       try { popup?.close(); } catch (_) { /* ignore */ }
     } finally {
       setNpFallbackPackageId(null);
