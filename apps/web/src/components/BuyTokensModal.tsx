@@ -11,6 +11,7 @@ import {
   buyTokensWithNowPayments,
   getNowPaymentsOrderStatus,
   assertPaymentUrl,
+  reportWalletClientError,
   type TokenPackage,
 } from "@/lib/api";
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
@@ -220,9 +221,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(/User rejected|user denied|cancel/i.test(msg)
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setError(isCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : msg);
+      if (!isCancel) {
+        reportWalletClientError("buyTokensWalletPay", err, {
+          surface: "rush", rail, packageId: pkg.id, tokens: Number(pkg.tokens),
+          address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        });
+      }
     } finally { setPayingPackageId(null); }
   };
 
@@ -239,9 +247,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       await _executeIntent(rail, { tokens }, tokens, usd);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setError(/User rejected|user denied|cancel/i.test(msg)
+      const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      setError(isCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
         : msg);
+      if (!isCancel) {
+        reportWalletClientError("buyTokensCustomPay", err, {
+          surface: "rush", rail, amountUsd: usd,
+          address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+        });
+      }
     } finally { setPayingCustom(false); }
   };
 
@@ -326,6 +341,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
       setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      reportWalletClientError("buyTokensAddFunds", err, {
+        surface: "rush", packageId: pkg.id, amountUsd: price,
+        address: activeWallet?.address, walletType: activeWallet?.walletClientType,
+      });
     }
   };
 
