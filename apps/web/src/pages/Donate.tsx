@@ -19,6 +19,7 @@ import {
   createCryptoPaymentIntent,
   recordCryptoTx,
   getCryptoPaymentStatus,
+  reportWalletClientError,
   type SubscriptionPlan,
 } from "@/lib/api";
 
@@ -164,6 +165,10 @@ export default function Donate() {
           (es ? "Transacción enviada pero no se pudo registrar. Guarda este hash: " : "Transaction sent but recording failed. Save this hash: ")
           + hash
         );
+        reportWalletClientError("donateRecordTxFailed", recErr, {
+          surface: "donate", planId: plan.id, token, txHash: hash,
+          paymentId: intent.paymentId, address: embeddedWallet?.address,
+        });
         return;
       }
 
@@ -188,6 +193,13 @@ export default function Donate() {
       stopPoll(); setPayStatus("error");
       const msg = err?.shortMessage || err?.message || (es ? "Error en transacción." : "Transaction failed.");
       setPayError(msg);
+      const isCancel = /User rejected|user denied|cancel/i.test(String(msg));
+      if (!isCancel) {
+        reportWalletClientError("donateWalletPay", err, {
+          surface: "donate", planId: plan.id, token,
+          address: embeddedWallet?.address, walletType: embeddedWallet?.walletClientType,
+        });
+      }
     }
   }, [privyAuthed, embeddedWallet, privyLogin, stopPoll, es, refreshUser]);
 

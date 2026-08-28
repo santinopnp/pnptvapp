@@ -276,10 +276,17 @@ export interface WalletPayCardProps {
 }
 
 export function WalletPayCard({
-  surface, amountUsd, entitlementSpec, metadata,
+  surface, amountUsd: amountUsdRaw, entitlementSpec, metadata,
   label, onSuccess, onError, lang = "en", compact = false,
 }: WalletPayCardProps) {
   const es = lang === "es";
+  // Caller can pass NaN if plans haven't loaded yet or price parse fails
+  // (parseFloat("") → NaN). Guard downstream .toFixed / Math.max / balance
+  // comparisons — a "$NaN" button or `defaultAmount:"NaN"` addFunds call
+  // silently breaks the flow. Fall back to $0 rendering; the button is
+  // disabled below if amountUsd <= 0.
+  const amountUsd = Number.isFinite(amountUsdRaw) && amountUsdRaw > 0 ? amountUsdRaw : 0;
+  const priceReady = amountUsd > 0;
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
@@ -553,7 +560,11 @@ export function WalletPayCard({
       {/* If the wallet has enough USDC, show Pay as the primary CTA. Otherwise
           demote Pay and promote "Fund with card" so a zero-balance user gets a
           single obvious next step instead of two similar-looking buttons. */}
-      {canAfford ? (
+      {!priceReady ? (
+        <div className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-center text-sm text-pnp-textSecondary">
+          {es ? "Cargando precio…" : "Loading price…"}
+        </div>
+      ) : canAfford ? (
         <button
           type="button"
           onClick={handlePay}
