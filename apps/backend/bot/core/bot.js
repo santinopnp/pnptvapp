@@ -2250,6 +2250,21 @@ const startBot = async () => {
       logger.warn(`Dash order expiry scheduler initialization failed: ${error.message}`);
     }
 
+    // Reconciles wallet-checkout intents whose on-chain tx confirmed but
+    // never got verify-tx'd by the client (tab closed, network drop). Runs
+    // every 60s, polls Alchemy for pending intents with tx_hash, then calls
+    // the same fulfillment path the sync verify-tx route uses. Replaces
+    // the missing Privy/Alchemy webhook signal.
+    try {
+      const WalletIntentReconciler = require('./schedulers/walletIntentReconciler');
+      const walletIntentReconciler = new WalletIntentReconciler();
+      walletIntentReconciler.start();
+      global.walletIntentReconciler = walletIntentReconciler;
+      logger.info('✓ Wallet intent reconciler initialized and started');
+    } catch (error) {
+      logger.warn(`Wallet intent reconciler initialization failed: ${error.message}`);
+    }
+
     // Initialize proactive reminder service
     try {
       const ProactiveReminderService = require('../../services/proactiveReminderService');
