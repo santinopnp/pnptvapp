@@ -198,13 +198,12 @@ support@pnptv.app
   let recentlySent = new Set();
   if (!FORCE) {
     const { rows: recentRows } = await query(`
-      SELECT DISTINCT target_user_id
-      FROM notifications
-      WHERE entity_type = $1
-        AND entity_id LIKE $2
-        AND created_at > NOW() - INTERVAL '${COOLDOWN_DAYS} days'
-    `, [ENTITY_TYPE, ENTITY_PREFIX + '%']);
-    recentlySent = new Set(recentRows.map(r => r.target_user_id));
+      SELECT DISTINCT user_id
+      FROM broadcast_dedup
+      WHERE batch_id LIKE $1
+        AND sent_at > NOW() - INTERVAL '${COOLDOWN_DAYS} days'
+    `, [ENTITY_PREFIX + '%']);
+    recentlySent = new Set(recentRows.map(r => r.user_id));
   }
 
   const targets      = users.filter(u => !recentlySent.has(u.id));
@@ -240,13 +239,12 @@ support@pnptv.app
         await sendSystemDM(SYSTEM_SENDER, u.id, text, query);
         stats.dm++;
 
-        // Record for cooldown tracking
+        // Record for cooldown tracking — PRIVATE table, never write to notifications
         await query(`
-          INSERT INTO notifications
-            (type, category, priority, actor_id, target_user_id, entity_type, entity_id, message)
-          VALUES ('broadcast', 'system', 'normal', $1, $2, $3, $4, $5)
+          INSERT INTO broadcast_dedup (batch_id, user_id)
+          VALUES ($1, $2)
           ON CONFLICT DO NOTHING
-        `, [SYSTEM_SENDER, u.id, ENTITY_TYPE, entityId, text.slice(0, 200)]);
+        `, [entityId, u.id]);
       } catch (err) {
         stats.dmFailed++;
         if (stats.dmFailed <= 5 || stats.dmFailed % 100 === 0) {

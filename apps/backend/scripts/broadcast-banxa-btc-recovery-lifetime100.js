@@ -58,6 +58,7 @@ const ALL_USERS     = process.argv.includes('--all-users');
 const RESEND        = process.argv.includes('--resend');
 const ANNUAL        = process.argv.includes('--annual');
 const DUAL          = process.argv.includes('--dual');   // $100 lifetime + $50 annual in one message
+const INCLUDE_PRIME = process.argv.includes('--include-prime'); // do not filter out users who already hold PRIME
 
 const windowArg     = process.argv.find(a => a.startsWith('--window-hours='));
 const WINDOW_HOURS  = windowArg ? parseInt(windowArg.split('=')[1], 10) : 168;
@@ -510,6 +511,14 @@ async function main() {
       : RESEND ? BATCH_ID + '%'
       : ANNUAL ? 'banxa-btc-annual50%'
       : 'banxa-btc-%';
+    const primeGuard = INCLUDE_PRIME ? '' : `
+        AND NOT EXISTS (
+          SELECT 1 FROM user_entitlements ue
+          WHERE ue.user_id::text = u.id::text
+            AND ue.add_on_id IN ('prime', 'pnp-member')
+            AND ue.is_consumed = false
+            AND (ue.is_lifetime = true OR ue.expires_at > NOW())
+        )`;
     const { rows } = await query(`
       SELECT DISTINCT ON (u.id)
         u.id        AS user_id,
@@ -522,18 +531,11 @@ async function main() {
       WHERE COALESCE(u.is_active, true) = true
         AND (u.username IS NULL OR u.username NOT LIKE 'deleted_%')
         AND COALESCE(u.tier, 'free') <> 'banned'
+        ${primeGuard}
         AND NOT EXISTS (
-          SELECT 1 FROM user_entitlements ue
-          WHERE ue.user_id::text = u.id::text
-            AND ue.add_on_id IN ('prime', 'pnp-member')
-            AND ue.is_consumed = false
-            AND (ue.is_lifetime = true OR ue.expires_at > NOW())
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM notifications n
-          WHERE n.entity_type = 'broadcast'
-            AND n.entity_id LIKE $1
-            AND n.target_user_id::text = u.id::text
+          SELECT 1 FROM broadcast_dedup bd
+          WHERE bd.batch_id LIKE $1
+            AND bd.user_id = u.id::text
         )
       ORDER BY u.id
     `, [dedupLike]);
@@ -569,10 +571,9 @@ async function main() {
             AND (ue.is_lifetime = true OR ue.expires_at > NOW())
         )
         AND NOT EXISTS (
-          SELECT 1 FROM notifications n
-          WHERE n.entity_type = 'broadcast'
-            AND n.entity_id   LIKE $2
-            AND n.target_user_id::text = dso.user_id::text
+          SELECT 1 FROM broadcast_dedup bd
+          WHERE bd.batch_id LIKE $2
+            AND bd.user_id = dso.user_id::text
         )
       ORDER BY dso.user_id, dso.created_at DESC
     `, [String(WINDOW_HOURS), BATCH_ID + '%']);
@@ -606,6 +607,8 @@ async function main() {
     // ── Helper: create one NowPayments invoice ──────────────────────────────
     async function createInvoice(planId, amount, planLabel) {
       const orderId = `pnptv-banxa-${planId}-${user_id}-${Date.now()}`;
+      // NP rejects malformed emails (.con, .comm, invalid TLDs) — skip in mass-broadcast mode
+      const includeEmail = realEmail && !INCLUDE_PRIME;
       const resp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
         price_amount:      amount,
         price_currency:    'usd',
@@ -615,7 +618,7 @@ async function main() {
         ipn_callback_url:  `${WEBAPP_URL}/api/webhooks/nowpayments`,
         success_url:       `${WEBAPP_URL}/lifetime100?nowpayments=success&order=${encodeURIComponent(orderId)}`,
         cancel_url:        `${WEBAPP_URL}/lifetime100`,
-        ...(realEmail ? { customer_email: realEmail } : {}),
+        ...(includeEmail ? { customer_email: realEmail } : {}),
       }, {
         headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
         timeout: 15000,
@@ -670,6 +673,7 @@ async function main() {
       if (!ltOk && !anOk) { stats.failed++; await sleep(API_DELAY_MS); continue; }
     } else {
       const orderId = `pnptv-banxa-${user_id}-${Date.now()}`;
+      const includeEmail = realEmail && !INCLUDE_PRIME;
       try {
         const resp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
           price_amount:      PLAN_AMOUNT,
@@ -680,7 +684,7 @@ async function main() {
           ipn_callback_url:  `${WEBAPP_URL}/api/webhooks/nowpayments`,
           success_url:       `${WEBAPP_URL}/lifetime100?nowpayments=success&order=${encodeURIComponent(orderId)}`,
           cancel_url:        `${WEBAPP_URL}/lifetime100`,
-          ...(realEmail ? { customer_email: realEmail } : {}),
+          ...(includeEmail ? { customer_email: realEmail } : {}),
         }, {
           headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
           timeout: 15000,
@@ -700,18 +704,14 @@ async function main() {
         ANNUAL ? 'banxa_btc_annual50' : ALL_USERS ? 'banxa_btc_allcast' : 'banxa_btc_recovery');
     }
 
-    // 2. Log dedup entry
-    const dedupOrderId = DUAL ? `dual-${user_id}-${Date.now()}` : (mainOrderId || `dual-${user_id}`);
+    // 2. Log dedup entry — PRIVATE table (broadcast_dedup), NOT notifications.
+    // Never write to the user-facing notifications table from broadcast scripts.
     try {
       await query(`
-        INSERT INTO notifications
-          (type, category, priority, actor_id, target_user_id, entity_type, entity_id, message)
-        VALUES ('broadcast', 'system', 'normal', $1, $2, $3, $4, $5)
+        INSERT INTO broadcast_dedup (batch_id, user_id)
+        VALUES ($1, $2)
         ON CONFLICT DO NOTHING
-      `, [
-        SYSTEM_SENDER, String(user_id), 'broadcast', BATCH_ID,
-        `banxa-btc-broadcast:${dedupOrderId}`,
-      ]);
+      `, [BATCH_ID, String(user_id)]);
     } catch (err) {
       console.warn(`  ⚠ dedup log insert failed: ${err.message}`);
     }

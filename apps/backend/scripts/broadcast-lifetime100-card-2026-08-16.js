@@ -146,10 +146,9 @@ async function main() {
           AND (ue.is_lifetime = true OR ue.expires_at > NOW())
       )
       AND NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.entity_type = 'broadcast'
-          AND n.entity_id LIKE $1
-          AND n.target_user_id::text = u.id::text
+        SELECT 1 FROM broadcast_dedup bd
+        WHERE bd.batch_id LIKE $1
+          AND bd.user_id = u.id::text
       )
     ORDER BY u.id
   `, [BATCH_ID + '%']);
@@ -178,17 +177,13 @@ async function main() {
       continue;
     }
 
-    // 1. Dedup log (best-effort — do this first so a mid-loop crash still records intent)
+    // 1. Dedup log (best-effort — PRIVATE table, never write to user-facing notifications)
     try {
       await query(`
-        INSERT INTO notifications
-          (type, category, priority, actor_id, target_user_id, entity_type, entity_id, message)
-        VALUES ('broadcast', 'system', 'normal', $1, $2, $3, $4, $5)
+        INSERT INTO broadcast_dedup (batch_id, user_id)
+        VALUES ($1, $2)
         ON CONFLICT DO NOTHING
-      `, [
-        SYSTEM_SENDER, String(user_id), 'broadcast', BATCH_ID,
-        `lifetime100-card-broadcast:${user_id}-${Date.now()}`,
-      ]);
+      `, [BATCH_ID, String(user_id)]);
     } catch (err) {
       console.warn(`  ⚠ dedup log insert failed: ${err.message}`);
     }
