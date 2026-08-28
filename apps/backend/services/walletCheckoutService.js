@@ -283,6 +283,7 @@ async function verifyAndFulfillEth(opts) {
 
   const pool = getPool();
   const client = await pool.connect();
+  let intentIdForFallback = null;
   try {
     await client.query('BEGIN');
 
@@ -323,13 +324,18 @@ async function verifyAndFulfillEth(opts) {
         ORDER BY created_at DESC
         LIMIT 1
         FOR UPDATE`,
-      [txHash, fromAddress || '', amountEthReceived]
+      // Pass null (not '') for missing fromAddress so lower('') doesn't
+      // silently match users with wallet_address = '' (empty-string writes
+      // from a Privy edge case would let a fresh checkout hijack another
+      // user's pending intent).
+      [txHash, fromAddress || null, amountEthReceived]
     );
     if (intentRows.length === 0) {
       await client.query('ROLLBACK');
       return { ok: false, reason: 'no_matching_intent' };
     }
     const intent = intentRows[0];
+    intentIdForFallback = intent.id;
 
     // Value guard — allow 2% under (price moved unfavorably during broadcast).
     const expectedEth = Number(intent.expected_amount_native);
@@ -387,10 +393,27 @@ async function verifyAndFulfillEth(opts) {
     return { ok: true, intentId: intent.id, entitlementId, rushCredited: fulfillment.rushCredited || 0 };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    // Mark the intent grant_failed OUTSIDE the rolled-back transaction so a
+    // reconciler / operator can see stuck intents and retry (previously
+    // fulfillment throws left status='pending' + no error trail).
+    if (intentIdForFallback) {
+      await _markGrantFailed(pool, intentIdForFallback, txHash, err.message).catch(() => {});
+    }
     throw err;
   } finally {
     client.release();
   }
+}
+
+async function _markGrantFailed(pool, intentId, txHash, errMsg) {
+  await pool.query(
+    `UPDATE checkout_intents
+       SET status = 'grant_failed',
+           grant_result = jsonb_build_object('reason', 'grant_error', 'error', $3::text, 'failed_at', NOW()::text),
+           tx_hash = COALESCE(tx_hash, $2)
+     WHERE id = $1 AND status IN ('pending', 'confirmed')`,
+    [intentId, txHash, String(errMsg || 'unknown').slice(0, 500)]
+  );
 }
 
 /**
@@ -411,6 +434,7 @@ async function verifyAndFulfillUsdc(opts) {
 
   const pool = getPool();
   const client = await pool.connect();
+  let intentIdForFallback = null;
   try {
     await client.query('BEGIN');
 
@@ -454,13 +478,15 @@ async function verifyAndFulfillUsdc(opts) {
         ORDER BY created_at DESC
         LIMIT 1
         FOR UPDATE`,
-      [txHash, amountReceived, fromAddress || '']
+      // See ETH counterpart above — null over '' avoids empty-string collision.
+      [txHash, amountReceived, fromAddress || null]
     );
     if (intentRows.length === 0) {
       await client.query('ROLLBACK');
       return { ok: false, reason: 'no_matching_intent' };
     }
     const intent = intentRows[0];
+    intentIdForFallback = intent.id;
 
     // Amount guard — the tx_hash-primary match still gets amount-validated here
     // so a $0.01 transfer can't fulfill a $9.99 intent even if the frontend
@@ -518,6 +544,9 @@ async function verifyAndFulfillUsdc(opts) {
     return { ok: true, intentId: intent.id, entitlementId, rushCredited: fulfillment.rushCredited || 0 };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (intentIdForFallback) {
+      await _markGrantFailed(pool, intentIdForFallback, txHash, err.message).catch(() => {});
+    }
     throw err;
   } finally {
     client.release();
