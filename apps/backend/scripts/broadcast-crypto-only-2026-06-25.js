@@ -143,10 +143,10 @@ support@pnptv.app
   let alreadySent = new Set();
   if (!FORCE) {
     const { rows: alreadyRows } = await query(`
-      SELECT target_user_id FROM notifications
-      WHERE entity_type = 'broadcast' AND entity_id = $1
+      SELECT user_id FROM broadcast_dedup
+      WHERE batch_id = $1
     `, [ENTITY_ID]);
-    alreadySent = new Set(alreadyRows.map(r => r.target_user_id));
+    alreadySent = new Set(alreadyRows.map(r => r.user_id));
   }
   const isNew = (u) => !alreadySent.has(u.id);
 
@@ -173,13 +173,12 @@ support@pnptv.app
         await sendSystemDM(SANTINO_ID, u.id, text, query);
         stats.dm++;
 
-        // Mark broadcast as sent for idempotency
+        // Mark broadcast as sent for idempotency — PRIVATE table, never write to notifications
         await query(`
-          INSERT INTO notifications
-            (type, category, priority, actor_id, target_user_id, entity_type, entity_id, message)
-          VALUES ('broadcast', 'system', 'normal', $1, $2, 'broadcast', $3, $4)
+          INSERT INTO broadcast_dedup (batch_id, user_id)
+          VALUES ($1, $2)
           ON CONFLICT DO NOTHING
-        `, [SANTINO_ID, u.id, ENTITY_ID, text.slice(0, 200)]);
+        `, [ENTITY_ID, u.id]);
 
         // Telegram bridge (only if user has Telegram linked)
         if (u.telegram) {
