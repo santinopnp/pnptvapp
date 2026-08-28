@@ -16314,6 +16314,141 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
   return res.json({ ok: true });
 }));
 
+// ── Rewarded video ads — Grindr-style unlock framework ────────────────────
+//
+// Free-tier users can watch a 30s rewarded video ad to unlock features
+// temporarily (Main Stage extend, PRIME video single-watch, etc). Basic
+// and PRIME are exempt server-side (adUnlockService.isTierEligibleForAds).
+//
+// Feature flag: `ads:enabled` in Redis. Default OFF. Turn on from admin or
+// `docker exec redis-pnptv redis-cli -a $REDIS_PASSWORD SET pnpapp:ads:enabled 1`
+//
+// Networks: TrafficJunky (primary) posts S2S callbacks to /callback with a
+// signed payload. Signature verify is stubbed until we have the shared
+// secret from their dashboard — AD_VERIFY_MOCK=1 in env accepts all
+// callbacks (dev only). Production requires a valid signature.
+
+const adCallbackLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// POST /api/ads/rewarded/callback — S2S postback from the ad network.
+// Body/query params:
+//   user_id      Our platform user id (passed as sub_id when we mount the SDK)
+//   surface      Which unlock to grant ('mainstage_extend' etc)
+//   ad_network   'trafficjunky' | 'exoclick' | ...
+//   ad_txn_id    Network transaction id — idempotency key
+//   signature    HMAC-SHA256 hex of (user_id + surface + ad_txn_id) with shared secret
+app.post('/api/ads/rewarded/callback', adCallbackLimiter, express.json(), asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const body = { ...(req.body || {}), ...(req.query || {}) };
+  const { user_id, surface, ad_network, ad_txn_id, signature } = body;
+
+  if (!user_id || !surface || !ad_network || !ad_txn_id) {
+    return res.status(400).json({ ok: false, error: 'missing_params' });
+  }
+
+  const mockMode = process.env.AD_VERIFY_MOCK === '1';
+  if (!mockMode) {
+    const secret = process.env[`AD_SECRET_${String(ad_network).toUpperCase()}`];
+    if (!secret) {
+      logger.warn('[ads-callback] no secret configured for network', { ad_network });
+      return res.status(503).json({ ok: false, error: 'network_not_configured' });
+    }
+    const crypto = require('crypto');
+    const expected = crypto.createHmac('sha256', secret)
+      .update(`${user_id}.${surface}.${ad_txn_id}`)
+      .digest('hex');
+    if (!signature || signature.length !== expected.length
+        || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      logger.warn('[ads-callback] invalid signature', { ad_network, ad_txn_id });
+      return res.status(401).json({ ok: false, error: 'invalid_signature' });
+    }
+  }
+
+  // Look up user tier for the eligibility check — free only.
+  const { rows: userRows } = await query(
+    'SELECT tier, role FROM users WHERE id = $1::text LIMIT 1',
+    [String(user_id)]
+  );
+  if (!userRows.length) return res.status(404).json({ ok: false, error: 'user_not_found' });
+
+  const result = await adUnlockService.grantUnlock({
+    userId: user_id,
+    surface,
+    adNetwork: ad_network,
+    adTxnId: ad_txn_id,
+    userTier: userRows[0].tier,
+    userRole: userRows[0].role,
+    meta: { ip: req.ip, ua: (req.get('user-agent') || '').slice(0, 200) },
+  });
+  if (!result.ok) return res.status(400).json({ ok: false, error: result.reason });
+  return res.json({ ok: true, expiresAt: result.expiresAt });
+}));
+
+// GET /api/ads/rewarded/status?surface=X — client polls to know if the
+// unlock landed after the ad completed (SDK callback is asynchronous).
+app.get('/api/ads/rewarded/status', requireSessionAuth, asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const surface = String(req.query.surface || '');
+  if (!adUnlockService.isValidSurface(surface)) {
+    return res.status(400).json({ ok: false, error: 'invalid_surface' });
+  }
+  const userId = req.session?.user?.id;
+  const expiresAt = await adUnlockService.getActiveUnlockExpiresAt(userId, surface);
+  const rate = await adUnlockService.getRateLimitStatus(userId, surface);
+  return res.json({
+    ok: true,
+    surface,
+    active: !!expiresAt,
+    expiresAt,
+    rate,
+  });
+}));
+
+// GET /api/ads/config — public tier-aware config. Returns:
+//   showAds     true iff user is free-tier AND feature flag is on
+//   surfaces    metadata about each unlock (TTL etc) for the client to render
+//   networks    zone IDs by network (empty until TrafficJunky approves)
+app.get('/api/ads/config', requireSessionAuth, asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const enabled = await adUnlockService.isFeatureEnabled();
+  const user = req.session?.user;
+  const eligible = adUnlockService.isTierEligibleForAds(user?.tier, user?.role);
+  const showAds = enabled && eligible;
+
+  const surfaces = adUnlockService.ALLOWED_SURFACES.map(s => ({
+    id: s,
+    ttlSec: adUnlockService.SURFACE_TTL_SEC[s],
+  }));
+
+  // Zone IDs live in env so operator can rotate without deploy. Empty
+  // strings until TrafficJunky approves and we get real zone IDs.
+  const networks = {
+    trafficjunky: {
+      publisherId: process.env.TRAFFICJUNKY_PUBLISHER_ID || null,
+      zones: {
+        mainstage_extend:   process.env.TJ_ZONE_MAINSTAGE_EXTEND || null,
+        prime_video_single: process.env.TJ_ZONE_PRIME_VIDEO_SINGLE || null,
+        nearby_premium:     process.env.TJ_ZONE_NEARBY_PREMIUM || null,
+        dm_extra:           process.env.TJ_ZONE_DM_EXTRA || null,
+      },
+    },
+  };
+
+  return res.json({
+    ok: true,
+    showAds,
+    capPerDay: adUnlockService.ALLOWED_GRANTS_PER_DAY,
+    surfaces,
+    networks: showAds ? networks : null,
+  });
+}));
+
 // ── Privy webhook — svix-signed events (wallet.created, user.linked, etc.) ──
 // Registration: Privy Dashboard → Webhooks → add URL https://pnptv.app/api/webhooks/privy
 // and copy the signing secret into PRIVY_WEBHOOK_SECRET (format: whsec_<base64>).
