@@ -31,6 +31,18 @@ export const strings = {
     cryptoEthLabel: "ETH",
     cryptoBtcLabel: "BTC",
 
+    // ── Banxa "buy crypto with card" hint (BTC only) ──────────────────────────
+    banxaHintTitle: "💳 Don't have a crypto wallet?",
+    banxaHintBody:
+      "Copy the BTC address below → open checkout.banxa.com → paste it as the destination and pay with your credit or debit card. Your plan activates automatically.",
+    banxaHintCta: "Open checkout.banxa.com →",
+
+    // ── Widget reliability (loading, error, reload, fallback) ─────────────────
+    widgetLoading: "Loading payment widget…",
+    widgetFailed: "Widget didn't load. Open the payment page in a new tab instead:",
+    widgetFallbackCta: "Open full payment page →",
+    widgetReload: "Reload widget",
+
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
       "Pay once — full access forever, no renewals ever.",
@@ -42,8 +54,6 @@ export const strings = {
 
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Good to know",
-    noticeManualActivation:
-      "Activation is done manually — usually within 2 hours, up to 24 max. That hands-on onboarding is one of the reasons we can offer this at $100 instead of $250.",
     noticeFundraising:
       "Your $100 goes directly to building PNPtv — founders' price while we finish.",
     noticeEarlyAccess:
@@ -187,6 +197,18 @@ export const strings = {
     cryptoEthLabel: "ETH",
     cryptoBtcLabel: "BTC",
 
+    // ── Banxa "buy crypto with card" hint (BTC only) ──────────────────────────
+    banxaHintTitle: "💳 ¿No tienes wallet cripto?",
+    banxaHintBody:
+      "Copia la dirección BTC de abajo → abre checkout.banxa.com → pégala como destino y paga con tu tarjeta de crédito o débito. Tu plan se activa automáticamente.",
+    banxaHintCta: "Abrir checkout.banxa.com →",
+
+    // ── Widget reliability (loading, error, reload, fallback) ─────────────────
+    widgetLoading: "Cargando widget de pago…",
+    widgetFailed: "El widget no cargó. Abre la página de pago en una pestaña nueva:",
+    widgetFallbackCta: "Abrir página completa de pago →",
+    widgetReload: "Recargar widget",
+
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
       "Paga una vez — acceso completo para siempre, sin renovaciones.",
@@ -198,8 +220,6 @@ export const strings = {
 
     // ── "Before you pay" notice ────────────────────────────────────────────────
     noticeTitle: "Bueno saber",
-    noticeManualActivation:
-      "La activación se hace manualmente — normalmente en menos de 2 horas, máximo 24. Esa atención personal es una de las razones por las que podemos ofrecerlo a $100 en vez de $250.",
     noticeFundraising:
       "Tu $100 va directamente a construir PNPtv — precio de fundadores mientras terminamos.",
     noticeEarlyAccess:

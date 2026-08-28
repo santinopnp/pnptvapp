@@ -225,7 +225,21 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<InvoiceState | null>(null);
+  const [widgetLoaded, setWidgetLoaded] = useState(false);
+  const [widgetErrored, setWidgetErrored] = useState(false);
+  const [widgetReloadKey, setWidgetReloadKey] = useState(0);
   const emailInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!invoice) return;
+    setWidgetLoaded(false);
+    setWidgetErrored(false);
+    const timeoutId = window.setTimeout(() => {
+      setWidgetErrored((prev) => (widgetLoaded ? prev : true));
+    }, 8000);
+    return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice?.nowpaymentsInvoiceId, widgetReloadKey]);
 
   useEffect(() => {
     if (invoice) return;
@@ -286,8 +300,77 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
             {s.cryptoAfterPay}
           </p>
 
+          {invoice.payCurrency === "btc" && (
+            <div
+              style={{
+                margin: "0 0 12px",
+                padding: "12px 14px",
+                background: "rgba(255,180,84,0.12)",
+                border: "1px solid rgba(255,180,84,0.35)",
+                borderRadius: 12,
+              }}
+            >
+              <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 700, color: "#ffb454" }}>
+                {s.banxaHintTitle}
+              </p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#e5e5ea", lineHeight: 1.5 }}>
+                {s.banxaHintBody}
+              </p>
+              <a
+                href="https://checkout.banxa.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-block",
+                  padding: "8px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#0d0510",
+                  background: "#ffb454",
+                  borderRadius: 8,
+                  textDecoration: "none",
+                }}
+              >
+                {s.banxaHintCta}
+              </a>
+            </div>
+          )}
+
+          <a
+            href={invoice.invoiceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block",
+              margin: "0 0 10px",
+              padding: "10px 12px",
+              fontSize: 12,
+              color: "#93c5fd",
+              textDecoration: "none",
+              background: "rgba(59,153,252,0.08)",
+              border: "1px solid rgba(59,153,252,0.25)",
+              borderRadius: 10,
+              textAlign: "center",
+            }}
+          >
+            🔗 {s.widgetFallbackCta}
+          </a>
+
+          {widgetErrored && (
+            <div style={{
+              margin: "0 0 10px", padding: "10px 12px",
+              fontSize: 12, color: "#fca5a5",
+              background: "rgba(220,38,38,0.10)",
+              border: "1px solid rgba(220,38,38,0.35)",
+              borderRadius: 10,
+            }}>
+              {s.widgetFailed}
+            </div>
+          )}
+
           <div
             style={{
+              position: "relative",
               width: "100%",
               height: 480,
               borderRadius: 14,
@@ -296,17 +379,54 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
               border: "1px solid rgba(255,180,84,0.25)",
             }}
           >
+            {!widgetLoaded && !widgetErrored && (
+              <div style={{
+                position: "absolute", inset: 0, zIndex: 2,
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center",
+                gap: 10, background: "#0d0510",
+                color: "#8E8E93", fontSize: 12,
+              }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: "50%",
+                  border: "3px solid rgba(255,180,84,0.25)",
+                  borderTopColor: "#ffb454",
+                  animation: "spin 0.8s linear infinite",
+                }} />
+                <span>{s.widgetLoading}</span>
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+              </div>
+            )}
             <iframe
+              key={`np-widget-${widgetReloadKey}`}
               src={widgetSrc}
               title="NowPayments checkout"
               width="100%"
               height="480"
               frameBorder="0"
               scrolling="yes"
+              referrerPolicy="strict-origin-when-cross-origin"
+              sandbox="allow-scripts allow-forms allow-popups allow-same-origin allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox"
+              onLoad={() => { setWidgetLoaded(true); setWidgetErrored(false); }}
+              onError={() => setWidgetErrored(true)}
               style={{ display: "block", border: 0, width: "100%", height: 480, background: "#fff" }}
               allow="payment"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => { setWidgetLoaded(false); setWidgetErrored(false); setWidgetReloadKey((n) => n + 1); }}
+            style={{
+              display: "block", width: "100%", marginTop: 8,
+              padding: "8px 12px", fontSize: 12, fontWeight: 600,
+              color: "#93c5fd", background: "rgba(59,153,252,0.08)",
+              border: "1px solid rgba(59,153,252,0.25)",
+              borderRadius: 10, cursor: "pointer", minHeight: 40,
+            }}
+          >
+            🔄 {s.widgetReload}
+          </button>
 
           <p style={{ margin: "16px 0 8px", fontSize: 11, fontWeight: 600, color: "#8E8E93" }}>
             {s.cryptoOpenWallet}
@@ -1002,7 +1122,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               listStyleType: "disc",
             }}
           >
-            <li style={{ marginBottom: 8 }}>{s.noticeManualActivation}</li>
             <li style={{ marginBottom: 8 }}>{s.noticeFundraising}</li>
             <li style={{ marginBottom: 8 }}>{s.noticeEarlyAccess}</li>
             <li>{s.noticeInProgress}</li>
