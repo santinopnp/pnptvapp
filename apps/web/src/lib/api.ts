@@ -8729,6 +8729,29 @@ export function getMainStageViewerToken(): Promise<MainStageTokenResponse> {
   return request("/api/main-stage/viewer-token");
 }
 
+// Free-tier teaser token — returned when the gate is open, otherwise fetch
+// throws with the 403 body available on error.response for the UI to
+// render a countdown.
+export interface MainStageGateState {
+  enabled: boolean;
+  isOpen: boolean;
+  currentCloseAt: number | null;   // epoch ms
+  nextOpenAt: number | null;       // epoch ms
+  windows?: Array<{ start_utc: string; duration_min: number }>;
+}
+export function getMainStageFreeViewerToken(): Promise<MainStageTokenResponse & { gateState?: MainStageGateState }> {
+  return request("/api/main-stage/free-viewer-token");
+}
+export function getMainStageGateState(): Promise<{ success: true; gateState: MainStageGateState }> {
+  return request("/api/main-stage/gate-state");
+}
+export function setMainStageGateConfig(body: {
+  enabled?: boolean;
+  windows?: Array<{ start_utc: string; duration_min: number }>;
+}): Promise<{ success: true; gateState: MainStageGateState }> {
+  return request("/api/main-stage/gate-config", { method: "POST", body });
+}
+
 export function getMainStageJoinCheck(): Promise<MainStageJoinCheck> {
   return request<{ success: boolean } & MainStageJoinCheck>("/api/main-stage/join-check");
 }

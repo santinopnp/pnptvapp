@@ -3,7 +3,7 @@ import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useI18n } from "@/lib/i18n";
 import { useMainStage } from "@/hooks/useMainStage";
 import { getFeaturedPrimeVideos, getAssetUrl, type PrimeVideo } from "@/lib/directus";
-import { getMainStagePin, setMainStagePin, clearMainStagePin, type MainStagePin } from "@/lib/api";
+import { getMainStagePin, setMainStagePin, clearMainStagePin, getMainStageGateState, setMainStageGateConfig, type MainStagePin, type MainStageGateState } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import InvitePanel from "@/components/mainstage/InvitePanel";
 import type { MainStageState } from "@/hooks/useMainStage";
@@ -559,6 +559,14 @@ export function AdminPanelContent({
             <InvitePanel />
           </section>
         )}
+
+        {/* Free-tier gate config — admin toggle for the 1h/12h teaser window */}
+        {isAdmin && (
+          <section>
+            <div className="h-px bg-white/[0.06] mb-4" />
+            <GatePanel />
+          </section>
+        )}
       </div>
     </div>
   );
@@ -761,5 +769,110 @@ export function AdminDrawer({ state, admin, cammerInfos, onClose, isAdmin, local
         />
       </aside>
     </>
+  );
+}
+
+// Admin panel for the free-tier gate: enable/disable + edit the daily
+// window schedule. Two default windows (03:00 + 15:00 UTC) create a 1h-on
+// / 12h-cooldown pattern optimized for Americas + Asia evening.
+function GatePanel() {
+  const [state, setState] = useState<MainStageGateState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    getMainStageGateState().then(r => setState(r.gateState)).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    if (!state) return;
+    setSaving(true); setErr("");
+    try {
+      const r = await setMainStageGateConfig({ enabled: !state.enabled });
+      setState(r.gateState);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Toggle failed");
+    } finally { setSaving(false); }
+  };
+
+  const updateWindow = async (idx: number, patch: Partial<{ start_utc: string; duration_min: number }>) => {
+    if (!state?.windows) return;
+    const next = state.windows.map((w, i) => (i === idx ? { ...w, ...patch } : w));
+    setSaving(true); setErr("");
+    try {
+      const r = await setMainStageGateConfig({ windows: next });
+      setState(r.gateState);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Save failed");
+    } finally { setSaving(false); }
+  };
+
+  if (!state) return <div className="text-white/40 text-xs">Loading gate…</div>;
+
+  const nextOpen = state.nextOpenAt ? new Date(state.nextOpenAt) : null;
+  const currentClose = state.currentCloseAt ? new Date(state.currentCloseAt) : null;
+
+  return (
+    <div>
+      <h3 className="text-white/50 text-[10px] font-bold uppercase tracking-widest mb-2.5">
+        Free-tier gate
+      </h3>
+      <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-white text-sm font-semibold">
+              {state.enabled ? "ON" : "OFF"}
+            </div>
+            <div className="text-white/50 text-[11px]">
+              {state.enabled
+                ? (state.isOpen
+                    ? `Open — closes ${currentClose?.toISOString().slice(11, 16)} UTC`
+                    : `Closed — next open ${nextOpen?.toISOString().slice(0, 16).replace('T', ' ')} UTC`)
+                : "Free users are fully blocked"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={toggle}
+            disabled={saving}
+            className="min-h-[36px] px-4 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+            style={{ background: state.enabled ? "#7a2323" : "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            {saving ? "…" : state.enabled ? "Disable" : "Enable"}
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-white/50 text-[10px] uppercase tracking-widest">Windows (UTC)</div>
+          {state.windows?.map((w, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="time"
+                value={w.start_utc}
+                onChange={(e) => updateWindow(i, { start_utc: e.target.value })}
+                disabled={saving}
+                className="bg-black/40 border border-white/10 rounded px-2 py-1 text-white text-sm"
+              />
+              <span className="text-white/40 text-xs">for</span>
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                value={w.duration_min}
+                onChange={(e) => updateWindow(i, { duration_min: Number(e.target.value) })}
+                disabled={saving}
+                className="bg-black/40 border border-white/10 rounded px-2 py-1 text-white text-sm w-16"
+              />
+              <span className="text-white/40 text-xs">min</span>
+            </div>
+          ))}
+        </div>
+
+        {err && <div className="text-red-400 text-xs">{err}</div>}
+        <div className="text-white/35 text-[10px]">
+          Basic + PRIME + admin always bypass this gate.
+        </div>
+      </div>
+    </div>
   );
 }

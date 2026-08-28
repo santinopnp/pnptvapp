@@ -19905,6 +19905,29 @@ app.get(
   mainStageController.viewerToken,
 );
 
+// Free-tier teaser token — session auth only, no tier requirement. The
+// controller checks mainStageGateService.getState() and 403s with
+// MAIN_STAGE_GATED when the gate is disabled or outside a window.
+// Same IP rate-limit as viewer-token to prevent flood.
+app.get(
+  '/api/main-stage/free-viewer-token',
+  mainStageViewerTokenLimiter,
+  requireSessionAuth,
+  mainStageController.freeViewerToken,
+);
+
+// Public gate-state read — powers the countdown UI without needing to hold
+// a token. Rate-limited via mainStageStateLimiter (same 120/min IP).
+app.get('/api/main-stage/gate-state', mainStageStateLimiter, mainStageController.gateStatePublic);
+
+// Admin write for gate config (enable/disable + window times).
+app.post(
+  '/api/main-stage/gate-config',
+  requireSessionAuth,
+  roleGuard('admin', 'superadmin'),
+  mainStageController.setGateConfig,
+);
+
 // GET /api/main-stage/cammers — active publishers in main-stage-prime for the
 // community-feed Spotlight rail. Backed by the Redis spotlight queue (updated
 // by mainStageService on cammer join/leave) so no LiveKit RPC per request.
