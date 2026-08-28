@@ -15793,10 +15793,22 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
     throw err;
   }
 
+  // On receipt-fetch failure, unstamp tx_hash so the intent stays retryable
+  // — otherwise a transient Alchemy RPC error blocks all future attempts on
+  // this intent even after RPC recovers.
+  const unstamp = async () => {
+    try {
+      await dbQuery(
+        `UPDATE checkout_intents SET tx_hash = NULL WHERE id = $1 AND tx_hash = $2 AND status = 'pending'`,
+        [Number(intentId), txHash]
+      );
+    } catch (_) { /* best-effort */ }
+  };
+
   // Dispatch by token: ETH parses native transfer, USDC parses ERC20 log.
   if (String(intent.token).toUpperCase() === 'ETH') {
     const receipt = await _fetchEthTransferReceipt(txHash, intent.receiving_address);
-    if (!receipt.ok) return res.status(422).json({ error: receipt.reason, txHash });
+    if (!receipt.ok) { await unstamp(); return res.status(422).json({ error: receipt.reason, txHash }); }
     const result = await walletCheckoutService.verifyAndFulfillEth({
       txHash,
       fromAddress: receipt.from,
@@ -15808,6 +15820,7 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   // Fetch on-chain tx receipt + parse USDC Transfer log via Alchemy.
   const receipt = await _fetchUsdcTransferReceipt(txHash, intent.receiving_address);
   if (!receipt.ok) {
+    await unstamp();
     return res.status(422).json({ error: receipt.reason, txHash });
   }
 
