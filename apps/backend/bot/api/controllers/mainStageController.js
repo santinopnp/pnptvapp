@@ -17,6 +17,7 @@ const { kickFromMainStageRoom } = mainStageService;
 const livekitService    = require('../../../services/livekitService');
 const mainStageConsentService = require('../../../services/mainStageConsentService');
 const EntitlementAccessService = require('../../../services/entitlementAccessService');
+const mainStageGateService = require('../../../services/mainStageGateService');
 // RoomServiceClient is accessed via livekitService.getRoomClient() — no local import needed.
 
 // ── Media source allowlist / SSRF guard ───────────────────────────────────────
@@ -666,6 +667,104 @@ const viewerToken = asyncHandler(async (req, res) => {
 });
 
 /**
+ * GET /api/main-stage/free-viewer-token
+ * Session-auth only. Issues a short-TTL Main Stage viewer token to free-tier
+ * users during a currently-open gating window. TTL is clamped to the window
+ * close so the token can't outlive the 1h teaser. When the gate is disabled
+ * or closed, returns 403 with {code, gateState} so the frontend can render
+ * a countdown + upgrade CTA.
+ */
+const freeViewerToken = asyncHandler(async (req, res) => {
+  const gateState = await mainStageGateService.getState();
+  if (!gateState.enabled || !gateState.isOpen) {
+    return res.status(403).json({
+      success: false,
+      code: 'MAIN_STAGE_GATED',
+      error: gateState.enabled ? 'Main Stage is closed right now.' : 'Free-tier access is disabled.',
+      gateState: {
+        enabled: gateState.enabled,
+        isOpen: gateState.isOpen,
+        nextOpenAt: gateState.nextOpenAt,
+        currentCloseAt: gateState.currentCloseAt,
+        windows: gateState.windows,
+      },
+    });
+  }
+
+  const ttlSeconds = await mainStageGateService.freeViewerTokenTtlSec();
+  const viewerId = `free_${crypto.randomBytes(6).toString('hex')}`;
+  const lkToken = await livekitService.generateToken(
+    ROOM_NAME,
+    viewerId,
+    'Viewer (Free)',
+    false,
+    { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds }
+  );
+  logger.info('[MainStage] free-viewer token issued', {
+    ip: req.ip, userId: req.user?.id, ttlSeconds, closeAt: gateState.currentCloseAt,
+  });
+  return res.json({
+    success: true,
+    token: lkToken,
+    livekitUrl: livekitService.LIVEKIT_WS_URL,
+    roomName: ROOM_NAME,
+    identity: viewerId,
+    gateState: {
+      isOpen: true,
+      currentCloseAt: gateState.currentCloseAt,
+      nextOpenAt: gateState.nextOpenAt,
+    },
+  });
+});
+
+/**
+ * GET /api/main-stage/gate-state
+ * Public read. Returns whether the gate is enabled, whether it's currently
+ * open, and the next/current window boundaries. Used by the free-tier UI
+ * to render a countdown even without a token.
+ */
+const gateStatePublic = asyncHandler(async (_req, res) => {
+  const state = await mainStageGateService.getState();
+  return res.json({
+    success: true,
+    gateState: {
+      enabled: state.enabled,
+      isOpen: state.isOpen,
+      currentCloseAt: state.currentCloseAt,
+      nextOpenAt: state.nextOpenAt,
+      windows: state.windows,
+    },
+  });
+});
+
+/**
+ * POST /api/main-stage/gate-config   (admin only, wired at route level)
+ * Body: { enabled?: boolean, windows?: [{start_utc, duration_min}] }
+ */
+const setGateConfig = asyncHandler(async (req, res) => {
+  const { enabled, windows } = req.body || {};
+  if (typeof enabled === 'boolean') await mainStageGateService.setEnabled(enabled);
+  if (Array.isArray(windows)) {
+    // Validate each entry — refuse malformed input outright so the admin sees
+    // an error instead of silently falling back to defaults on read.
+    for (const w of windows) {
+      if (!w || typeof w.start_utc !== 'string' || !/^\d{2}:\d{2}$/.test(w.start_utc)) {
+        return res.status(400).json({ success: false, error: 'window.start_utc must be HH:MM' });
+      }
+      if (!Number.isFinite(w.duration_min) || w.duration_min <= 0 || w.duration_min > 24 * 60) {
+        return res.status(400).json({ success: false, error: 'window.duration_min must be 1..1440' });
+      }
+    }
+    await mainStageGateService.setWindows(windows);
+  }
+  const state = await mainStageGateService.getState();
+  logger.info('[MainStage] gate config updated', {
+    adminId: req.user?.id, enabled: state.enabled, windows: state.windows,
+  });
+  return res.json({ success: true, gateState: state });
+});
+
+/**
  * POST /api/main-stage/vote-skip
  * Auth required. Member/Prime/Admin only. Records a skip vote for the
  * currently playing video. When the threshold is reached advanceVideo()
@@ -795,6 +894,9 @@ const clearPin = asyncHandler(async (req, res) => {
 module.exports = {
   token,
   viewerToken,
+  freeViewerToken,
+  gateStatePublic,
+  setGateConfig,
   getState,
   getJoinCheck,
   acceptConsents,

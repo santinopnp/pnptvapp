@@ -11,7 +11,7 @@ import {
 import { ConnectionState, RoomEvent, Track } from "livekit-client";
 import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
 import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
-import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite } from "@/lib/api";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageGateState, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageGateState } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/hooks/useAuth";
 import { useMusicPlayer } from "@/hooks/useMusicPlayer";
@@ -490,11 +490,21 @@ export default function MainStage() {
   // with the guest token.
   const { room, isJoined, join, cooldownSeconds, clearCooldown, sessionStartedAt, sessionLimitSeconds, canScreenShare, participantTier } = useMainStageRoom();
 
-  // Auth state — viewer mode only applies to unauthenticated users.
+  // Auth state — viewer mode covers unauthenticated visitors AND free-tier
+  // logged-in users (who can watch during the gate window but never publish).
   const { user, isLoading: isAuthLoading } = useAuth();
-  // Any logged-in user is a cammer. Viewer mode is for unauthenticated visitors only.
-  const canParticipate = user !== null;
+  const hasMemberAccess = !!user && (
+    user.role === "admin" || user.role === "superadmin"
+    || user.tier === "PRIME" || user.tier === "prime"
+    || user.tier === "member"
+  );
+  const canParticipate = hasMemberAccess;
   const isViewerMode = !isGuestMode && !isAuthLoading && !canParticipate;
+  const isFreeTierViewer = isViewerMode && !!user;
+
+  // Gate state — free-tier viewer needs to know when the window opens/closes
+  // so the countdown UI + auto-disconnect at close both work. Null until fetched.
+  const [gateState, setGateState] = useState<MainStageGateState | null>(null);
 
   // Viewer-mode state
   const [viewerLkToken, setViewerLkToken] = useState<string | null>(null);
@@ -955,26 +965,71 @@ export default function MainStage() {
     setViewerConnecting(true);
     setViewerError(null);
     try {
-      const res = await getMainStageViewerToken();
+      // Free-tier logged-in users use the gated teaser endpoint; unauthenticated
+      // visitors fall through to the legacy viewer-token (member-only guard).
+      const res = isFreeTierViewer
+        ? await getMainStageFreeViewerToken()
+        : await getMainStageViewerToken();
       setViewerLkToken(res.token);
       setViewerLkUrl(res.livekitUrl);
-      // Clear any previous refresh timer and schedule refresh 15 min before 2h expiry.
+      if ('gateState' in res && res.gateState) {
+        setGateState(res.gateState as MainStageGateState);
+      }
+      // Refresh timer: free-tier tokens expire at window close (< 1h), so
+      // don't schedule a 1h-45m refresh — the whole point is that access ends.
       if (viewerRefreshRef.current) clearTimeout(viewerRefreshRef.current);
-      viewerRefreshRef.current = setTimeout(async () => {
-        try {
-          const refreshed = await getMainStageViewerToken();
-          setViewerLkToken(refreshed.token);
-          setViewerLkUrl(refreshed.livekitUrl);
-        } catch {
-          // On failure, let the connection expire naturally.
-        }
-      }, (2 * 60 - 15) * 60 * 1000);
-    } catch {
-      setViewerError("Couldn't connect to Main Stage. Please try again.");
+      if (!isFreeTierViewer) {
+        viewerRefreshRef.current = setTimeout(async () => {
+          try {
+            const refreshed = await getMainStageViewerToken();
+            setViewerLkToken(refreshed.token);
+            setViewerLkUrl(refreshed.livekitUrl);
+          } catch {
+            // On failure, let the connection expire naturally.
+          }
+        }, (2 * 60 - 15) * 60 * 1000);
+      }
+    } catch (err: unknown) {
+      // Free-tier gate closed → surface gate info so the UI renders the
+      // countdown instead of a generic error toast.
+      const errObj = err as { status?: number; code?: string; data?: { gateState?: MainStageGateState } };
+      if (isFreeTierViewer && errObj?.status === 403 && errObj?.code === 'MAIN_STAGE_GATED') {
+        if (errObj.data?.gateState) setGateState(errObj.data.gateState);
+        setViewerError(null); // gated view is its own render branch, not an error
+      } else {
+        setViewerError("Couldn't connect to Main Stage. Please try again.");
+      }
     } finally {
       setViewerConnecting(false);
     }
-  }, []);
+  }, [isFreeTierViewer]);
+
+  // Fetch gate state on mount for free-tier viewers so we can render the
+  // countdown even before they click "Watch" (or if the gate is currently
+  // closed, we show it immediately instead of after a failed watch attempt).
+  useEffect(() => {
+    if (!isFreeTierViewer) return;
+    getMainStageGateState()
+      .then((r) => setGateState(r.gateState))
+      .catch(() => { /* silent — countdown UI shows "loading" state */ });
+    const id = setInterval(() => {
+      getMainStageGateState().then(r => setGateState(r.gateState)).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [isFreeTierViewer]);
+
+  // Auto-disconnect at window close for free-tier viewers so an expired
+  // LiveKit connection doesn't sit there showing a frozen frame.
+  useEffect(() => {
+    if (!isFreeTierViewer || !viewerLkToken || !gateState?.currentCloseAt) return;
+    const msUntilClose = gateState.currentCloseAt - Date.now();
+    if (msUntilClose <= 0) {
+      setViewerLkToken(null);
+      return;
+    }
+    const t = setTimeout(() => setViewerLkToken(null), msUntilClose);
+    return () => clearTimeout(t);
+  }, [isFreeTierViewer, viewerLkToken, gateState?.currentCloseAt]);
 
   // Cleanup viewer refresh timer on unmount.
   useEffect(() => {
@@ -1161,6 +1216,57 @@ export default function MainStage() {
           className="flex-shrink-0 h-16 animate-pulse"
           style={{ background: "rgba(10,10,15,0.9)", borderTop: "1px solid rgba(255,255,255,0.06)" }}
         />
+      </div>
+    );
+  }
+
+  // Free-tier gated view — logged-in free-tier user, gate enabled, window
+  // currently closed. Shows countdown to next open + PRIME upgrade CTA.
+  if (isFreeTierViewer && !viewerLkToken && gateState?.enabled && !gateState?.isOpen) {
+    const nextOpen = gateState.nextOpenAt ? new Date(gateState.nextOpenAt) : null;
+    const secondsUntil = nextOpen ? Math.max(0, Math.floor((nextOpen.getTime() - Date.now()) / 1000)) : null;
+    const hrs = secondsUntil !== null ? Math.floor(secondsUntil / 3600) : 0;
+    const mins = secondsUntil !== null ? Math.floor((secondsUntil % 3600) / 60) : 0;
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
+        <div className="w-20 h-20 rounded-3xl flex items-center justify-center"
+             style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}>
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div className="max-w-sm">
+          <p className="text-white font-bold text-2xl mb-2">Main Stage is closed</p>
+          <p className="text-white/70 text-sm mb-4">
+            Free access opens twice daily for one hour. Next window in:
+          </p>
+          <p className="text-4xl font-bold text-transparent bg-clip-text mb-6"
+             style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>
+            {secondsUntil !== null ? `${hrs}h ${mins}m` : "—"}
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            type="button"
+            onClick={() => navigate('/subscribe')}
+            className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
+            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            Skip the wait — go PRIME
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="min-h-[44px] w-full rounded-2xl text-sm font-semibold text-white/70 border border-white/10 bg-white/[0.06]"
+          >
+            Back home
+          </button>
+        </div>
+        <p className="text-[11px] text-white/40 max-w-xs">
+          Windows open at {gateState.windows?.map(w => w.start_utc).join(' + ')} UTC daily.
+          PRIME members always have access.
+        </p>
       </div>
     );
   }
