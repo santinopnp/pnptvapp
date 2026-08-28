@@ -174,8 +174,24 @@ export default function Donate() {
 
       setPayStatus("waiting");
 
+      // Absolute polling deadline — without this, a stuck backend / provider
+      // status of "pending" would poll every 4s forever until the tab is
+      // closed. Base txs finalize in ~10s; 5 min covers the worst case.
+      const pollDeadline = Date.now() + 5 * 60 * 1000;
       pollRef.current = setInterval(async () => {
         if (!mountedRef.current) { stopPoll(); return; }
+        if (Date.now() > pollDeadline) {
+          stopPoll();
+          if (mountedRef.current) {
+            setPayStatus("error");
+            setPayError(
+              (es
+                ? "Se agotó el tiempo esperando confirmación. Guarda este hash y contáctanos: "
+                : "Timed out waiting for confirmation. Save this hash and contact us: ") + hash
+            );
+          }
+          return;
+        }
         try {
           const s = await getCryptoPaymentStatus(intent.paymentId);
           if (!mountedRef.current) return;
