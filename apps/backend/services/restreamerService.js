@@ -353,10 +353,12 @@ async function deleteProcess(refId) {
  * Return a lightweight health summary for all known ingest processes.
  * Never throws — returns [] on any error so callers can always iterate.
  *
- * Each entry shape:
- *   { streamId: string, refId: string, state: string, isLive: boolean, isFailed: boolean }
+ * `isFailed` is true only for genuine errors (state='failed'). `isEnded` covers
+ * both clean exits ('finished') and errors ('failed'). Prior version bundled
+ * 'finished' into isFailed and produced spurious health alerts every time a
+ * creator ended a stream cleanly.
  *
- * @returns {Promise<Array<{streamId: string, refId: string, state: string, isLive: boolean, isFailed: boolean}>>}
+ * @returns {Promise<Array<{streamId: string, refId: string, state: string, isLive: boolean, isFailed: boolean, isEnded: boolean}>>}
  */
 async function getStreamHealthSummary() {
   try {
@@ -367,15 +369,15 @@ async function getStreamHealthSummary() {
       const refId = proc.reference || proc.id.replace('restreamer-ui:ingest:', '');
       const state = proc.state?.exec || 'unknown';
       const isLive = state === 'running';
-      // 'finished' can mean the process exited without being explicitly stopped —
-      // treat it as a failure signal alongside 'failed'.
-      const isFailed = state === 'failed' || state === 'finished';
+      const isFailed = state === 'failed';
+      const isEnded = state === 'failed' || state === 'finished';
       return {
         streamId: proc.id,
         refId,
         state,
         isLive,
         isFailed,
+        isEnded,
       };
     });
   } catch (_) {

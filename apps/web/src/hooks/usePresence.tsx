@@ -31,9 +31,11 @@ const POLL_INTERVAL_MS = 20_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const CHUNK_SIZE = 50;
 const FIRST_REFRESH_DEBOUNCE_MS = 250;
+const ERROR_THRESHOLD = 3;
 
-async function fetchPresenceChunked(ids: string[]): Promise<PresenceMap> {
+async function fetchPresenceChunked(ids: string[]): Promise<{ presence: PresenceMap; errored: boolean }> {
   const out: PresenceMap = {};
+  let errored = false;
   for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
     const chunk = ids.slice(i, i + CHUNK_SIZE);
     try {
@@ -42,10 +44,10 @@ async function fetchPresenceChunked(ids: string[]): Promise<PresenceMap> {
         for (const p of res.presence) out[String(p.id)] = !!p.online;
       }
     } catch {
-      // ignore — next poll tick will retry
+      errored = true;
     }
   }
-  return out;
+  return { presence: out, errored };
 }
 
 export function PresenceProvider({ children }: { children: React.ReactNode }) {
@@ -56,10 +58,20 @@ export function PresenceProvider({ children }: { children: React.ReactNode }) {
   const pollTimerRef = useRef<number | null>(null);
   const heartbeatTimerRef = useRef<number | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const errorStreakRef = useRef<number>(0);
+  const backoffUntilRef = useRef<number>(0);
 
   const refreshIds = useCallback(async (ids: string[]) => {
     if (ids.length === 0) return;
-    const fresh = await fetchPresenceChunked(ids);
+    const { presence: fresh, errored } = await fetchPresenceChunked(ids);
+    if (errored) {
+      errorStreakRef.current += 1;
+      if (errorStreakRef.current >= ERROR_THRESHOLD) {
+        backoffUntilRef.current = Date.now() + 5 * 60_000;
+      }
+    } else {
+      errorStreakRef.current = 0;
+    }
     setPresence((prev) => {
       let changed = false;
       const next = { ...prev };
@@ -128,7 +140,10 @@ export function PresenceProvider({ children }: { children: React.ReactNode }) {
       try { socket.emit("presence:heartbeat"); } catch { /* ignore */ }
     }, HEARTBEAT_INTERVAL_MS);
 
+    // Circuit breaker: after ERROR_THRESHOLD consecutive fetch failures, poll
+    // less aggressively for 5 minutes so we don't hammer a struggling backend.
     pollTimerRef.current = window.setInterval(() => {
+      if (Date.now() < backoffUntilRef.current) return;
       const ids = Array.from(interestRef.current.keys());
       refreshIds(ids);
     }, POLL_INTERVAL_MS);

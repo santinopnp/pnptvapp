@@ -509,10 +509,13 @@ function initSocketIO(io) {
         socket.join('mainstage');
       }
     } catch (_kickCheckErr) {
-      // Redis failure: fail open (join the room) to avoid locking out all users
-      // on Redis downtime. Kick enforcement at chat-send/reaction-send still applies.
-      logger.warn('mainstage: kicked-set check failed on connect (fail open)', { userId: user.id, error: _kickCheckErr.message });
-      socket.join('mainstage');
+      // Fail-closed: if we can't verify the kick set, do not admit the socket.
+      // Redis outages are rare enough that the safety win outweighs the UX cost.
+      logger.error('mainstage: kicked-set check failed on connect (fail closed)', { userId: user.id, error: _kickCheckErr.message });
+      socket.emit('mainstage:error', {
+        code: 'SERVER_UNAVAILABLE',
+        message: 'Main Stage is temporarily unavailable. Please try again shortly.',
+      });
     }
 
     // Host-bot A/B split — sockets in bucket A join `mainstage:hostbot`
