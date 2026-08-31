@@ -17240,6 +17240,132 @@ app.get('/api/pnp-fam', softAuth, asyncHandler(async (_req, res) => {
   return res.json({ users });
 }));
 
+// ── Dismiss the one-time PNP Fam welcome modal ──────────────────────────────
+// Called by PnpFamWelcomeModal on close. Idempotent: writes NOW() to
+// pnptv_fam_welcome_seen_at only if it's still NULL, so a race between two
+// tabs can't lose the original timestamp.
+app.post('/api/pnp-fam/welcome-dismiss', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const { rows } = await getPool().query(
+    `UPDATE users
+        SET pnptv_fam_welcome_seen_at = NOW(),
+            updated_at                = NOW()
+      WHERE id = $1
+        AND pnptv_fam_welcome_seen_at IS NULL
+      RETURNING pnptv_fam_welcome_seen_at`,
+    [userId]
+  );
+  return res.json({ ok: true, dismissedAt: rows[0]?.pnptv_fam_welcome_seen_at || null });
+}));
+
+// ── Dismiss the one-time PNP Fam benefits modal ─────────────────────────────
+app.post('/api/pnp-fam/benefits-dismiss', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const { rows } = await getPool().query(
+    `UPDATE users
+        SET pnptv_fam_benefits_seen_at = NOW(),
+            updated_at                 = NOW()
+      WHERE id = $1
+        AND pnptv_fam_benefits_seen_at IS NULL
+      RETURNING pnptv_fam_benefits_seen_at`,
+    [userId]
+  );
+  try {
+    const crm = require('../../services/pnpFamCrmService');
+    crm.logEvent(userId, 'benefits_dismissed', {});
+  } catch (_) {}
+  return res.json({ ok: true, dismissedAt: rows[0]?.pnptv_fam_benefits_seen_at || null });
+}));
+
+// ── PNP Fam feed layout (read + write) ──────────────────────────────────────
+// Layout shape: { mode: 'fam' | 'standard', shortcuts: [{type, ref, label}] }
+// where type ∈ hangout|creator|wellness|channel|main_stage|dm and max 3.
+app.get('/api/pnp-fam/layout', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const { rows } = await getPool().query(
+    `SELECT pnptv_fam_feed_layout FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  const layout = rows[0]?.pnptv_fam_feed_layout || { mode: 'fam', shortcuts: [] };
+  return res.json({ layout });
+}));
+
+app.put('/api/pnp-fam/layout', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const body = req.body || {};
+  const mode = body.mode === 'standard' ? 'standard' : 'fam';
+  const rawShortcuts = Array.isArray(body.shortcuts) ? body.shortcuts.slice(0, 3) : [];
+  const ALLOWED_TYPES = new Set(['hangout', 'creator', 'wellness', 'channel', 'main_stage', 'dm']);
+  const shortcuts = rawShortcuts
+    .filter(s => s && ALLOWED_TYPES.has(String(s.type)))
+    .map(s => ({
+      type: String(s.type),
+      ref: s.ref != null ? String(s.ref).slice(0, 128) : null,
+      label: s.label != null ? String(s.label).slice(0, 64) : null,
+    }));
+  const layout = { mode, shortcuts };
+  await getPool().query(
+    `UPDATE users SET pnptv_fam_feed_layout = $2::jsonb, updated_at = NOW()
+      WHERE id = $1`,
+    [userId, JSON.stringify(layout)]
+  );
+  try {
+    const crm = require('../../services/pnpFamCrmService');
+    crm.logEvent(userId, 'customizer_saved', { mode, shortcut_count: shortcuts.length });
+  } catch (_) {}
+  return res.json({ ok: true, layout });
+}));
+
+// ── Client-side CRM event beacon ────────────────────────────────────────────
+// Fam-only. Non-fam POSTs no-op silently at the service layer.
+app.post('/api/pnp-fam/event', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const { type, payload } = req.body || {};
+  const crm = require('../../services/pnpFamCrmService');
+  const result = await crm.logEvent(userId, String(type || ''), payload || {});
+  return res.json(result);
+}));
+
+// ── Content-credit beacon (called when Fam accesses exclusive content) ──────
+// Idempotent per (fam, creator, type, ref, day) via service dedup.
+app.post('/api/pnp-fam/credit', requireSessionAuth, asyncHandler(async (req, res) => {
+  const userId = String(req.session?.user?.id || '');
+  if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+  const { creatorId, contentType, contentRef, minutes } = req.body || {};
+  const crm = require('../../services/pnpFamCrmService');
+  const result = await crm.logContentCredit(
+    userId, String(creatorId || ''), String(contentType || ''),
+    contentRef ? String(contentRef) : null,
+    minutes ? { minutes: Number(minutes) } : {}
+  );
+  return res.json(result);
+}));
+
+// ── Admin CRM ───────────────────────────────────────────────────────────────
+app.get('/api/admin/pnp-fam/segments', requireSessionAuth, adminGuard, asyncHandler(async (_req, res) => {
+  const crm = require('../../services/pnpFamCrmService');
+  const segments = await crm.getSegments();
+  return res.json({ segments });
+}));
+
+app.get('/api/admin/pnp-fam/members', requireSessionAuth, adminGuard, asyncHandler(async (_req, res) => {
+  const crm = require('../../services/pnpFamCrmService');
+  const members = await crm.listMembersSummary();
+  return res.json({ members });
+}));
+
+app.get('/api/admin/pnp-fam/members/:id', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const crm = require('../../services/pnpFamCrmService');
+  const profile = await crm.getMemberProfile(String(req.params.id));
+  if (!profile) return res.status(404).json({ error: 'not_found' });
+  return res.json({ profile });
+}));
+
 // ── Channel video upload + AI assist + publish (universal — replaces the
 //    admin-only /admin/prime-videos flow for non-admin creators) ─────────────
 {

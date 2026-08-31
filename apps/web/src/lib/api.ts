@@ -1157,6 +1157,19 @@ export interface UserProfile {
   // PNP Fam — inner-circle leadership subset (rose-gold badge). Public flag.
   pnptvFam?: boolean;
   pnptvFamSince?: string | null;
+  // True when the one-time PNP Fam welcome modal has not yet been dismissed.
+  pnptvFamWelcomePending?: boolean;
+  // True when the one-time PNP Fam benefits modal has not yet been dismissed.
+  pnptvFamBenefitsPending?: boolean;
+  // Persistent feed layout preferences for Fam members.
+  pnptvFamFeedLayout?: {
+    mode: "fam" | "standard";
+    shortcuts: Array<{
+      type: "hangout" | "creator" | "wellness" | "channel" | "main_stage" | "dm";
+      ref: string | null;
+      label: string | null;
+    }>;
+  };
   // Crystal Creator — active premium creator pass.
   crystalCreator?: boolean;
   // Camel-case mirror of partner_badge_color (backend now returns both).

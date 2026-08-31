@@ -334,6 +334,7 @@ const StreamManagement = lazy(() => import("@/pages/admin/StreamManagement"));
 const SupportDashboard = lazy(() => import("@/pages/admin/SupportDashboard"));
 const AccessMatrix = lazy(() => import("@/pages/admin/AccessMatrix"));
 const CreatorSubscriptions = lazy(() => import("@/pages/admin/CreatorSubscriptions"));
+const PnpFamCrm = lazy(() => import("@/pages/admin/PnpFamCrm"));
 const XAutoCampaigns = lazy(() => import("@/pages/admin/XAutoCampaigns"));
 // MeruLinks removed 2026-08 (Meru retired)
 const DuplicateAccounts = lazy(() => import("@/pages/admin/DuplicateAccounts"));
@@ -1024,6 +1025,14 @@ export const router = createBrowserRouter([
         element: (
           <ModuleLoader>
             <CreatorSubscriptions />
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "pnp-fam",
+        element: (
+          <ModuleLoader>
+            <PnpFamCrm />
           </ModuleLoader>
         ),
       },

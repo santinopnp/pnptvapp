@@ -11,6 +11,7 @@ import { UpcomingEvents } from "@/components/events/UpcomingEvents";
 import { NearbyWidget } from "@/components/NearbyWidget";
 import { useI18n } from "@/lib/i18n";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
+import { PnpFamHomeStrip } from "@/components/badges/PnpFamHomeStrip";
 import { getCryptoGuideStatus } from "@/lib/api";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
@@ -431,6 +432,10 @@ export default function Home() {
       {/* Feed / Hangouts toggle removed — each section has its own page now */}
 
       {/* Hashtag pills removed — feed tabs (All / Following) are in SocialFeedTabs */}
+
+      {/* PNP Fam home strip — shortcuts + feed toggle + Crystal Creator upsell.
+          Renders nothing for non-fam users. */}
+      {viewMode === "feed" && <PnpFamHomeStrip />}
 
       {/* View content */}
       {viewMode === "feed" ? (

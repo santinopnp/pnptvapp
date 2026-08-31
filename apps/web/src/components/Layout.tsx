@@ -15,6 +15,7 @@ const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m)
 
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
+import { PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
 import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus } from "@/lib/api";
@@ -1730,6 +1731,10 @@ export function Layout() {
       }`}>
         <Outlet />
       </main>
+
+      {/* PNP Fam one-time welcome modal — auto-fires for fam members OR on
+          ?preview=pnp-fam-welcome (Santino canary). */}
+      <PnpFamWelcomeGate />
 
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (

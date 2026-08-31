@@ -60,6 +60,73 @@ const strings = {
     availableForCalls: "Available for calls",
     currentlyUnavailable: "Currently unavailable",
 
+    // ── PNP Fam welcome modal (one-time on next login for fam members) ───────
+    pnpFamWelcome: {
+      eyebrow: "Welcome to the",
+      wordmark: "PNP Fam",
+      body: "You helped build PNPtv. You'll always have a spot in the family — as leader, friend, and Fam.",
+      signature: "— Carlos and Moises\nAKA Santino and Lex",
+      enter: "Enter",
+    },
+
+    // ── PNP Fam benefits modal (fires after welcome dismissal) ───────────────
+    pnpFamBenefits: {
+      eyebrow: "What being",
+      wordmarkA: "PNP Fam",
+      eyebrowB: "unlocks",
+      benefit1Title: "Full exclusive access",
+      benefit1Body: "Every creator's paid content, on the house.",
+      benefit2Title: "Creators still get paid",
+      benefit2Body: "PNPtv compensates creators proportionally every time a Fam member streams their content. Nothing you watch is \"free\" for them.",
+      benefit3Title: "Your own feed",
+      benefit3Body: "Crystal Creators first, plus up to 3 shortcuts to what you use most. Change it or turn it off any time.",
+      benefit4Title: "Direct line to Crystal Creators",
+      benefit4Body: "Priority DMs, gift Crystal passes, unlock private drops.",
+      benefit5Title: "You're part of the studio",
+      benefit5Body: "Early features, direct input, and a permanent seat at the table.",
+      consentClause: "No creator on PNPtv is ever used for free content without their consent. Fam access runs through the same compensation pipeline.",
+      setupFeed: "Set up my feed",
+      later: "Later",
+    },
+
+    // ── PNP Fam feed customizer ──────────────────────────────────────────────
+    pnpFamCustomizer: {
+      title: "Pin what you love",
+      subtitle: "Pick up to 3 shortcuts. They'll live at the top of your feed.",
+      shortcutTypes: {
+        hangout: "Hangout",
+        creator: "Creator",
+        wellness: "Wellness",
+        channel: "Channel",
+        main_stage: "Main Stage",
+        dm: "Direct chat",
+      },
+      addShortcut: "Add a shortcut",
+      remove: "Remove",
+      save: "Save my feed",
+      skip: "Skip",
+      searchPlaceholder: "Search…",
+      pickTypeFirst: "Pick a type first",
+      maxReached: "You've pinned 3 — remove one to add another.",
+    },
+
+    // ── PNP Fam feed toggle ──────────────────────────────────────────────────
+    pnpFamFeedToggle: {
+      famMode: "Fam feed",
+      standardMode: "Standard feed",
+      shortcutsHeader: "Your pins",
+      customize: "Customize",
+    },
+
+    // ── PNP Fam upsell (gift Crystal) ────────────────────────────────────────
+    pnpFamUpsell: {
+      supportTitle: "Support a Crystal Creator this month",
+      supportBody: "Your Fam access is on us — but every stream a creator makes for you deserves more. Gift them a Crystal pass and keep the studio warm.",
+      giftCrystal: "Gift Crystal",
+      giftCrystalTo: "Gift Crystal to {name}",
+      dismiss: "Not now",
+    },
+
     // ── Unified badge system (icon + tooltip) ─────────────────────────────────
     badges: {
       sinceLabel: "Since {date}",
@@ -561,6 +628,73 @@ const strings = {
     verifiedCreator: "Creador verificado",
     availableForCalls: "Disponible para llamadas",
     currentlyUnavailable: "No disponible ahora",
+
+    // ── PNP Fam welcome modal (one-time on next login for fam members) ───────
+    pnpFamWelcome: {
+      eyebrow: "Bienvenido a la",
+      wordmark: "PNP Fam",
+      body: "Ayudaste a construir PNPtv. Siempre tendrás un lugar en la familia — como líder, amigo, y Fam.",
+      signature: "— Carlos y Moises\naka Santino y Lex",
+      enter: "Entrar",
+    },
+
+    // ── PNP Fam benefits modal (fires after welcome dismissal) ───────────────
+    pnpFamBenefits: {
+      eyebrow: "Lo que ser",
+      wordmarkA: "PNP Fam",
+      eyebrowB: "te da",
+      benefit1Title: "Acceso exclusivo total",
+      benefit1Body: "Todo el contenido de pago de cada creador, sin costo.",
+      benefit2Title: "Los creadores siguen cobrando",
+      benefit2Body: "PNPtv compensa a los creadores proporcionalmente cada vez que un Fam consume su contenido. Nada de lo que ves es \"gratis\" para ellos.",
+      benefit3Title: "Tu propio feed",
+      benefit3Body: "Crystal Creators primero, más 3 accesos rápidos a lo que más usas. Cámbialo o desactívalo cuando quieras.",
+      benefit4Title: "Línea directa con Crystal Creators",
+      benefit4Body: "DMs prioritarios, regala pases Crystal, desbloquea drops privados.",
+      benefit5Title: "Eres parte del estudio",
+      benefit5Body: "Funciones anticipadas, aporte directo, y un lugar permanente en la mesa.",
+      consentClause: "Ningún creador de PNPtv se usa para contenido gratuito sin su consentimiento. El acceso Fam pasa por el mismo pipeline de compensación.",
+      setupFeed: "Configurar mi feed",
+      later: "Después",
+    },
+
+    // ── PNP Fam feed customizer ──────────────────────────────────────────────
+    pnpFamCustomizer: {
+      title: "Ancla lo que amas",
+      subtitle: "Elige hasta 3 accesos rápidos. Vivirán en la parte superior de tu feed.",
+      shortcutTypes: {
+        hangout: "Hangout",
+        creator: "Creador",
+        wellness: "Wellness",
+        channel: "Canal",
+        main_stage: "Main Stage",
+        dm: "Chat directo",
+      },
+      addShortcut: "Añadir acceso",
+      remove: "Quitar",
+      save: "Guardar mi feed",
+      skip: "Omitir",
+      searchPlaceholder: "Buscar…",
+      pickTypeFirst: "Elige un tipo primero",
+      maxReached: "Ya ancladiste 3 — quita uno para añadir otro.",
+    },
+
+    // ── PNP Fam feed toggle ──────────────────────────────────────────────────
+    pnpFamFeedToggle: {
+      famMode: "Feed Fam",
+      standardMode: "Feed estándar",
+      shortcutsHeader: "Tus anclados",
+      customize: "Personalizar",
+    },
+
+    // ── PNP Fam upsell (gift Crystal) ────────────────────────────────────────
+    pnpFamUpsell: {
+      supportTitle: "Apoya a un Crystal Creator este mes",
+      supportBody: "Tu acceso Fam va por la casa — pero cada stream que un creador hace por ti merece más. Regálale un pase Crystal y mantén el estudio encendido.",
+      giftCrystal: "Regalar Crystal",
+      giftCrystalTo: "Regalar Crystal a {name}",
+      dismiss: "Ahora no",
+    },
 
     // ── Unified badge system (icon + tooltip) ─────────────────────────────────
     badges: {
