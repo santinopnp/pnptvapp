@@ -741,17 +741,18 @@ class CreatorService {
     } catch (_) { /* non-fatal, use default */ }
 
     // Content-compliance gate: if the creator doesn't yet have 4 minutes of
-    // exclusive video content, the membership "start" is held — expires_at stays
-    // NULL (not counted as active by EntitlementAccessService.hasEntitlement)
-    // until ContentComplianceService.markCompliantIfNewlyQualified unlocks it.
+    // exclusive video content, the membership stays 'compliance_hold=true' — but
+    // we still set expires_at to now + durationDays so the sub isn't invisible
+    // to the expiry cron (previously left NULL → active-forever limbo, broke
+    // reminders + churn sweep for 10+ historical rows fixed on 2026-08-31).
+    // EntitlementAccessService uses compliance_hold (not expires_at IS NULL)
+    // to decide visibility, so setting a real timestamp here doesn't grant
+    // premature access to held-content subs.
     const ContentComplianceService = require('./contentComplianceService');
     const isContentCompliant = await ContentComplianceService.isCompliant(creatorId);
 
-    let expiresAt = null;
-    if (isContentCompliant) {
-      expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + durationDays);
-    }
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + durationDays);
 
     // Wrap all DB writes in a transaction so a mid-flight crash leaves no partial state
     const { getPool } = require('../config/postgres');
@@ -942,6 +943,41 @@ class CreatorService {
         creatorId,
         error: notifyErr.message,
       });
+    }
+
+    // Notify SUBSCRIBER on the happy path — they get an in-app row + push
+    // "subscription confirmed". Without this the checkout modal closed and
+    // the buyer had zero confirmation on their notifications feed (Santino
+    // reported 2026-08-31: paid $1 for Lex + $1 for DUKE, saw nothing).
+    if (isContentCompliant) {
+      try {
+        const creatorNameRes = await query(
+          'SELECT COALESCE(first_name, username, $1::text) AS name FROM users WHERE id = $1',
+          [String(creatorId)]
+        );
+        const creatorName = creatorNameRes.rows[0]?.name || 'the creator';
+        NotificationEmitter.emit({
+          type: 'creator_subscription_confirmed',
+          category: 'commerce',
+          priority: 'normal',
+          actorId: creatorId,
+          targetUserId: String(subscriberId),
+          entityType: 'creator_subscription',
+          entityId: String(rows[0].id),
+          message: `You subscribed to ${creatorName} for $${parseFloat(priceUsd).toFixed(2)}/mo. Access is unlocked.`,
+          metadata: {
+            url: `/c/${creatorId}`,
+            pushTitle: 'Subscription confirmed',
+            pushBody: `You subscribed to ${creatorName}. Tap to open their profile.`,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+            priceUsd,
+          },
+        }).catch(() => {});
+      } catch (confirmNotifErr) {
+        logger.warn('subscribeToCreator: subscriber confirm-notice failed (non-fatal)', {
+          subscriberId, creatorId, error: confirmNotifErr.message,
+        });
+      }
     }
 
     // Notify SUBSCRIBER on compliance-hold — they paid but got no active
