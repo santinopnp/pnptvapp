@@ -98,6 +98,8 @@ async function loadFollowers(creatorId) {
      JOIN users u ON u.id = uf.follower_id
      WHERE uf.following_id = $1
        AND u.telegram IS NOT NULL
+       AND u.deleted_at IS NULL
+       AND COALESCE(u.tier, 'free') != 'banned'
        AND COALESCE(
              (u.notification_preferences->'going_live'->>'bot')::boolean,
              true
@@ -326,7 +328,11 @@ async function notifyMainStage(creatorId, creatorName, channelRef) {
     let socketSingleton;
     try { socketSingleton = require('./socketSingleton'); } catch { return; }
     const io = socketSingleton.getIO?.() || socketSingleton.get?.();
-    if (io) io.to('mainstage').emit('mainstage:creator-live', payload);
+    if (io) {
+      io.to('mainstage').emit('mainstage:creator-live', payload);
+    } else {
+      logger.warn('goingLiveBroadcast: mainstage:creator-live NOT emitted — socket.io not initialized', { creatorId, channelRef });
+    }
   } catch (err) {
     logger.warn('goingLiveBroadcast: notifyMainStage error', { creatorId, error: err.message });
   }
