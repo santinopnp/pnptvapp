@@ -15021,6 +15021,45 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true, type: 'crystal_creator' });
   }
 
+  // crystal_service: fan booked a premium service (private call, custom
+  // content, priority DM, private main stage, BTS sub). Records a booking row
+  // + fires creator DM + Slack ops ping. Same idempotency guard as wallet.
+  if (order.plan_id === 'crystal_service') {
+    const meta = order.metadata || {};
+    const serviceId = Number(meta.serviceId);
+    const targetCreatorId = String(meta.targetCreatorId || order.creator_id || '');
+    const buyerId = String(order.user_id || '');
+    if (!serviceId || !targetCreatorId || !buyerId) {
+      logger.error('[Crystal] IPN: crystal_service missing ids', { order_id });
+      return res.status(422).json({ error: 'crystal_service:missing_ids' });
+    }
+    try {
+      const CrystalSvc = require('../../services/crystalServiceService');
+      const { bookingId, alreadyApplied } = await CrystalSvc.recordBooking({
+        serviceId,
+        creatorUserId: targetCreatorId,
+        buyerUserId: buyerId,
+        serviceType: meta.serviceType || 'unknown',
+        priceCents: Number(meta.priceCents) || Math.round((parseFloat(order.usd_amount) || 0) * 100),
+        paymentProvider: 'nowpayments',
+        paymentRef: `np:${payment_id}`,
+        buyerNote: meta.buyerNote || null,
+        fulfillmentDays: meta.fulfillmentDays || null,
+      });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:crystal_service:${payment_id}${alreadyApplied ? ':dup' : ''}`]
+      );
+      logger.info('[Crystal] IPN: crystal_service booking recorded', {
+        order_id, bookingId, alreadyApplied, targetCreatorId, buyerId, serviceId,
+      });
+    } catch (svcErr) {
+      logger.error('[Crystal] IPN: crystal_service record failed', { order_id, error: svcErr.message });
+      return res.status(500).json({ error: 'crystal_service:record_failed' });
+    }
+    return res.json({ received: true, type: 'crystal_service' });
+  }
+
   // promo_token_bundle: bespoke one-off promos (e.g. $40 pay → $50 buyer tokens +
   // 10% shared bonus to co-founders + 20/40/40 cash split). All parameters live in
   // DSO metadata — no plan row. Minted by apps/backend/scripts/mint-promo-bundle-*.js.

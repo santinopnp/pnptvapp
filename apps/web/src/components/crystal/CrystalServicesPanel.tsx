@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Phone, Camera, MessageSquareHeart, Radio, Layers, Lock } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 
 type ServiceType = "private_call" | "custom_content" | "priority_dm" | "private_main_stage" | "bts_subscription";
 type Audience = "public" | "crystal" | "inner_circle" | "fam";
@@ -48,6 +50,15 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
   const [services, setServices] = useState<Service[]>([]);
   const [viewerAudience, setViewerAudience] = useState<Audience>("public");
   const [loading, setLoading] = useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Which service row has its inline booking panel expanded, and which
+  // provider was picked. Null = no panel open.
+  const [openBookingId, setOpenBookingId] = useState<number | null>(null);
+  const [bookingProvider, setBookingProvider] = useState<"wallet" | "nowpayments" | null>(null);
+  const [bookingNote, setBookingNote] = useState<string>("");
+  const [npLoading, setNpLoading] = useState<number | null>(null);
+  const [npError, setNpError] = useState<string | null>(null);
+  const bookingPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,17 +89,75 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
           payload: { creator: creatorUsername, service: s.serviceType, action: "book" },
         }),
       }).catch(() => {});
-      // Route to the checkout flow — reuses existing hosted-link/creator
-      // subscription patterns. Concrete booking wiring lands in Phase 2;
-      // for now navigate to a query-param URL the profile page can catch.
-      if (typeof window !== "undefined") {
-        window.location.assign(
-          `/c/${creatorUsername || creatorId}?service=${encodeURIComponent(s.serviceType)}&service_id=${s.id}`
-        );
-      }
+      // Toggle the inline booking panel — no navigation.
+      setOpenBookingId((prev) => (prev === s.id ? null : s.id));
+      setBookingProvider(null);
+      setBookingNote("");
+      setNpError(null);
+      // Scroll the panel into view after paint.
+      setTimeout(() => {
+        bookingPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 150);
     },
-    [creatorId, creatorUsername]
+    [creatorUsername]
   );
+
+  // Deep-link ?service=<type>&service_id=<id> → auto-open the booking panel
+  // for that row on first render (e.g. arriving from a shared checkout link).
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || services.length === 0) return;
+    const wantId = Number(searchParams.get("service_id"));
+    if (!wantId) return;
+    const svc = services.find((s) => s.id === wantId);
+    if (!svc || !svc.canBook) return;
+    autoOpenedRef.current = true;
+    setOpenBookingId(wantId);
+    setTimeout(() => {
+      bookingPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+  }, [services, searchParams]);
+
+  async function handleNowPayments(s: Service) {
+    setNpError(null);
+    setNpLoading(s.id);
+    try {
+      const resp = await fetch(`/api/creators/${encodeURIComponent(creatorId)}/services/${s.id}/book`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "nowpayments", buyerNote: bookingNote || undefined }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "checkout_unavailable");
+      }
+      const json = await resp.json();
+      const url = json?.invoiceUrl as string | undefined;
+      if (!url) throw new Error("no_invoice_url");
+      // NP checkout can't be iframed — centered popup per memory rule.
+      const w = 480, h = 720;
+      const left = (window.screen.width - w) / 2;
+      const top = (window.screen.height - h) / 2;
+      window.open(url, "np_crystal_service", `width=${w},height=${h},left=${left},top=${top}`);
+    } catch (err) {
+      setNpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNpLoading(null);
+    }
+  }
+
+  function handleBookingSuccess() {
+    // Close panel + strip URL param so a refresh doesn't reopen.
+    setOpenBookingId(null);
+    setBookingProvider(null);
+    if (searchParams.get("service_id")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("service");
+      next.delete("service_id");
+      setSearchParams(next, { replace: true });
+    }
+  }
 
   if (loading || services.length === 0) return null;
 
@@ -194,12 +263,16 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                       onClick={() => handleBook(s)}
                       className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-transform hover:scale-[1.03] active:scale-95"
                       style={{
-                        background: "linear-gradient(135deg, #d8b9ff, #6b4c7f)",
+                        background: openBookingId === s.id
+                          ? "linear-gradient(135deg, #10b981, #059669)"
+                          : "linear-gradient(135deg, #d8b9ff, #6b4c7f)",
                         color: "#0a0612",
                         boxShadow: "0 2px 8px rgba(60,26,77,0.5)",
                       }}
                     >
-                      {t.profile.crystalServices.book}
+                      {openBookingId === s.id
+                        ? (es ? "Cerrar" : "Close")
+                        : t.profile.crystalServices.book}
                     </button>
                   ) : (
                     <span
@@ -211,6 +284,73 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                     </span>
                   )}
                 </div>
+
+                {openBookingId === s.id && s.canBook && (
+                  <div
+                    ref={bookingPanelRef}
+                    className="mt-3 pt-3 border-t border-white/10"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Optional buyer note — custom_content needs the brief;
+                        other services accept an optional message to the creator. */}
+                    <label className="block text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: "#d8b9ff" }}>
+                      {s.serviceType === "custom_content"
+                        ? (es ? "Describe lo que quieres" : "Describe what you want")
+                        : (es ? "Nota para el creador (opcional)" : "Note for the creator (optional)")}
+                    </label>
+                    <textarea
+                      value={bookingNote}
+                      onChange={(e) => setBookingNote(e.target.value.slice(0, 1000))}
+                      rows={s.serviceType === "custom_content" ? 3 : 2}
+                      placeholder={s.serviceType === "custom_content"
+                        ? (es ? "Ej: video de 3 min, con clouds, POV… (máx 1000)" : "e.g. 3-min video, clouds, POV… (max 1000)")
+                        : (es ? "Opcional" : "Optional")}
+                      className="w-full text-[12px] rounded-lg p-2 mb-2 outline-none"
+                      style={{ background: "rgba(0,0,0,0.35)", color: "#f5f0ff", border: "1px solid rgba(216,185,255,0.25)" }}
+                    />
+
+                    <div className="grid grid-cols-2 gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setBookingProvider((p) => (p === "wallet" ? null : "wallet"))}
+                        className={`py-2 rounded-lg font-bold text-xs text-white transition-all ${bookingProvider === "wallet" ? "ring-2 ring-emerald-300" : ""}`}
+                        style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+                      >
+                        💳 {es ? "Billetera USDC" : "USDC Wallet"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNowPayments(s)}
+                        disabled={npLoading === s.id}
+                        className="py-2 rounded-lg font-bold text-xs text-white disabled:opacity-60"
+                        style={{ background: "linear-gradient(135deg,#f97316,#ea580c)" }}
+                      >
+                        {npLoading === s.id ? "…" : (es ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                      </button>
+                    </div>
+                    {npError && (
+                      <p className="text-[11px] mb-2" style={{ color: "#ff6b6b" }}>{npError}</p>
+                    )}
+                    {bookingProvider === "wallet" && (
+                      <WalletPayCard
+                        surface="crystal_service"
+                        amountUsd={s.priceCents / 100}
+                        entitlementSpec={{
+                          serviceId: s.id,
+                          creatorUserId: creatorId,
+                          serviceType: s.serviceType,
+                          buyerNote: bookingNote || undefined,
+                          fulfillmentDays: s.fulfillmentDays || undefined,
+                        }}
+                        metadata={{ source: "crystal_services_panel", serviceId: s.id }}
+                        label={`${t.profile.crystalServices.types[s.serviceType]} — ${centsToUsd(s.priceCents)}`}
+                        lang={es ? "es" : "en"}
+                        onSuccess={handleBookingSuccess}
+                        compact
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             </li>
           );

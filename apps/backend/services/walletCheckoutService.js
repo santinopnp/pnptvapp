@@ -657,8 +657,13 @@ async function _fulfillCrystalService(client, { userId, entitlementSpec, provide
     throw new Error(`_fulfillCrystalService: creator mismatch (intentId=${intentId})`);
   }
 
-  // Snap price from the DB row (never trust the intent amount for accounting)
+  // Server-authoritative price check — client's declared amountUsd must match
+  // the service's DB price (within 1 cent tolerance for float rounding).
   const priceCents = Number(gate.price_cents);
+  const declaredCents = Math.round((Number(amountUsd) || 0) * 100);
+  if (Math.abs(priceCents - declaredCents) > 1) {
+    throw new Error(`_fulfillCrystalService: price mismatch (intent=${declaredCents}¢ expected=${priceCents}¢) — refusing to fulfill`);
+  }
   const paymentRef = `checkout_intent:${intentId}`;
 
   const { bookingId, alreadyApplied } = await CrystalSvc.recordBooking({
