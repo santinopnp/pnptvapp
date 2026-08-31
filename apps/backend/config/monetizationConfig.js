@@ -78,6 +78,14 @@ const CONTENT_COMPLIANCE_REFUND_MULTIPLIER = 1.05;
 // that other rule — he is explicitly subject to content compliance.
 const CONTENT_COMPLIANCE_EXEMPT_USER_IDS = [SANTINO_USER_ID];
 
+// ── Crystal Creator pass pricing ─────────────────────────────────────────────
+// Self-purchase price shown ONLY on /api/creator/crystal/self and its checkout.
+// Gift price shown ONLY on /api/creators/:id/crystal/gift and its checkout.
+// These two constants MUST never appear in the same response schema or log line.
+const CRYSTAL_CREATOR_SELF_PRICE_CENTS = 10000;  // $100/mo — creator self-purchases
+const CRYSTAL_CREATOR_GIFT_PRICE_CENTS = 15000;  // $150/mo — fan gifts to creator
+const CRYSTAL_CREATOR_COMMISSION_PCT   = 15;      // 15% platform cut (creator keeps 85%)
+
 // Earnings hold period: newly-recorded earnings sit in 'holding' status for this
 // many hours before maturing to 'available'. This gives the platform time to
 // process any refund or chargeback before paying out the creator.
@@ -91,6 +99,9 @@ module.exports = {
   TIP_CREATOR_RATE,
   EARNINGS_HOLD_HOURS,
   EARNINGS_HOLD_HOURS_EFIPAY,
+  CRYSTAL_CREATOR_SELF_PRICE_CENTS,
+  CRYSTAL_CREATOR_GIFT_PRICE_CENTS,
+  CRYSTAL_CREATOR_COMMISSION_PCT,
   GIFTED_ALLOWED_PERFORMER_USER_IDS,
   SANTINO_USER_ID,
   LEX_USER_ID,

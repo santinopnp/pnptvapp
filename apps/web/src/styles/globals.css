@@ -921,3 +921,47 @@
   75%  { opacity: 1; transform: scale(1) translateY(-4px); }
   100% { opacity: 0; transform: scale(0.95) translateY(-12px); }
 }
+
+/* ── Crystal Creator animations ─────────────────────────────────────────────
+   Shimmering conic-gradient ring around Crystal Creator avatars + the
+   animated profile-header background band. All durations are intentionally
+   slow (3–8 s) to keep the effect elegant rather than distracting. */
+
+@keyframes crystal-shimmer {
+  0%   { background-position:   0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes crystal-facets {
+  0%,100% { filter: hue-rotate(0deg) brightness(1); }
+  50%     { filter: hue-rotate(30deg) brightness(1.1); }
+}
+
+/* Avatar ring: wraps the avatar <span> with a 3-px conic-gradient border.
+   Uses padding so the ring is visible around the round avatar without
+   overlapping it. z-index stays below the online-presence dot (z-10). */
+.crystal-ring {
+  background: conic-gradient(from 0deg, #b8f5ff, #d4bfff, #ffd7f5, #b8f5ff);
+  background-size: 200% 200%;
+  animation: crystal-shimmer 3s linear infinite;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Profile header background band for Crystal Creators. Applied at 0.4
+   opacity via Tailwind opacity utility on the wrapping element. */
+.crystal-header {
+  background: linear-gradient(120deg, #b8f5ff, #d4bfff, #ffd7f5, #b8f5ff);
+  background-size: 200% 200%;
+  animation: crystal-shimmer 6s linear infinite, crystal-facets 8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crystal-ring,
+  .crystal-header {
+    animation: none !important;
+  }
+}

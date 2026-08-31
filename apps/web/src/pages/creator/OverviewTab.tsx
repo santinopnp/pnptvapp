@@ -2,16 +2,14 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import type { CreatorDashboard as DashboardData } from "@/lib/api";
+import { checkoutCrystalSelf } from "@/lib/api";
 import type { CreatorStrings } from "@/lib/i18n/creator";
-import { TIER_UPGRADE_THRESHOLDS, TIER_CONFIG, type TierId } from "@/components/profile/CreatorEnrollmentWizard";
 import { AppShell, RightRail, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { useI18n } from "@/lib/i18n";
 
-const TIERS: { key: "ice" | "crystal" | "diamond"; label: string; price: number; emoji: string }[] = [
-  { key: "ice", label: "Ice", price: 5, emoji: "❄" },
-  { key: "crystal", label: "Crystal", price: 10, emoji: "🔮" },
-  { key: "diamond", label: "Diamond", price: 15, emoji: "💎" },
-];
+// Legacy ice/crystal/diamond TIERS array removed — Crystal Creator is now a
+// private invite-only add-on (crystal_creator_passes table), not a tier.
 
 interface OverviewTabProps {
   dashboard: DashboardData & { success: boolean };
@@ -31,7 +29,46 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const creatorRole = (authUser as (typeof authUser & { creator_role?: string }) | null)?.creator_role ?? null;
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
-  const tierInfo = TIERS.find((tier) => tier.key === dashboard.creatorType);
+
+  // Crystal Creator — backend adds these fields to the dashboard response.
+  // TODO(backend): confirm getCreatorDashboard returns crystalCreator, crystalActiveUntil, crystalInvited.
+  const crystalActive = (dashboard as unknown as { crystalCreator?: boolean }).crystalCreator === true;
+  const crystalActiveUntil: string | null = (dashboard as unknown as { crystalActiveUntil?: string | null }).crystalActiveUntil ?? null;
+  const crystalInvited = (dashboard as unknown as { crystalInvited?: boolean }).crystalInvited === true;
+
+  // Crystal Creator checkout state — mirrors Subscribe.tsx walletPanelPlanId pattern.
+  const [crystalWalletOpen, setCrystalWalletOpen] = React.useState(false);
+  const [crystalNpLoading, setCrystalNpLoading] = React.useState(false);
+  const [crystalNpError, setCrystalNpError] = React.useState<string | null>(null);
+  const crystalWalletPanelRef = React.useRef<HTMLDivElement>(null);
+
+  function handleCrystalWalletToggle() {
+    setCrystalNpError(null);
+    setCrystalWalletOpen((prev) => !prev);
+    if (!crystalWalletOpen) {
+      setTimeout(() => {
+        crystalWalletPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 100);
+    }
+  }
+
+  async function handleCrystalNowPayments() {
+    setCrystalNpError(null);
+    setCrystalNpLoading(true);
+    try {
+      const res = await checkoutCrystalSelf("nowpayments");
+      if (!res.invoiceUrl) throw new Error("No invoice URL returned");
+      const w = 520;
+      const h = 700;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+      window.open(res.invoiceUrl, "crystal_np_self", `width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`);
+    } catch (err) {
+      setCrystalNpError(err instanceof Error ? err.message : "Could not open checkout");
+    } finally {
+      setCrystalNpLoading(false);
+    }
+  }
 
   // Desktop right rail — for-you recommendations scoped to the creator's own profile
   const creatorUserId = authUser?.dbId ? String(authUser.dbId) : null;
@@ -142,71 +179,101 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
         </div>
       </div>
 
-      {/* Tier badge + subscriber upgrade progress */}
-      {(() => {
-        const tierId = (dashboard.creatorType as TierId | "full_time" | null | undefined);
-        const isStructuredTier = tierId === "ice" || tierId === "crystal" || tierId === "diamond";
-        const tierCfg = isStructuredTier ? TIER_CONFIG[tierId as TierId] : null;
-        const upgradeInfo = isStructuredTier ? TIER_UPGRADE_THRESHOLDS[tierId as TierId] : null;
-        const nextTierCfg = upgradeInfo?.nextTier ? TIER_CONFIG[upgradeInfo.nextTier] : null;
-        const threshold = upgradeInfo?.subscribersNeeded ?? null;
-        const subCount = dashboard.subscriberCount ?? 0;
-        const pct = threshold ? Math.min((subCount / threshold) * 100, 100) : null;
+      {/* Subscription price card (always visible) */}
+      <div className="glass-card-sm p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-sm font-medium text-white">{t.creatorTypeDefault}</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {t.overviewPricePerMonth((dashboard.priceUsd ?? 0).toFixed(2))} &middot; {t.revenueSplit}
+            </p>
+          </div>
+          {dashboard.verified && (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="#5ED1C4" aria-label={t.overviewVerifiedAria}>
+              <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          )}
+        </div>
+      </div>
 
-        return (
-          <div className="glass-card-sm p-4 mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <p className="text-sm font-medium text-white">
-                  {dashboard.creatorType === "full_time" ? t.creatorTypeFullTime
-                    : dashboard.creatorType === "diamond" ? `💎 ${t.creatorTypeDiamond}`
-                    : dashboard.creatorType === "crystal" ? `🔮 ${t.creatorTypeCrystal}`
-                    : dashboard.creatorType === "ice" ? `❄ ${t.creatorTypeIce}`
-                    : t.creatorTypeDefault}
-                </p>
-                <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                  {t.overviewPricePerMonth((dashboard.priceUsd ?? 0).toFixed(2))} &middot; {t.revenueSplit}
-                </p>
+      {/* Crystal Creator status card — only shown when invited or active.
+          Active creators see a read-only status pill.
+          Invited-but-not-yet-active creators see the same two-provider
+          checkout UX used on CreatorProfilePage (wallet inline panel +
+          NowPayments hosted popup). */}
+      {(crystalActive || crystalInvited) && (
+        <div
+          className="glass-card-sm mb-4"
+          style={{ borderColor: crystalWalletOpen ? "rgba(52,199,89,0.35)" : "rgba(184,245,255,0.25)" }}
+        >
+          <div className="p-4">
+            {crystalActive ? (
+              <div className="flex items-center gap-2">
+                <span
+                  className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
+                  style={{ color: "#1a1a2e" }}
+                >
+                  Crystal Creator 💎
+                </span>
+                <span className="text-[10px] font-semibold" style={{ color: "#5ED1C4" }}>Active</span>
+                <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {crystalActiveUntil === null || crystalActiveUntil === "infinity"
+                    ? "— lifetime"
+                    : `until ${new Date(crystalActiveUntil).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`}
+                </span>
               </div>
-              {dashboard.verified && (
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="#5ED1C4" aria-label={t.overviewVerifiedAria}>
-                  <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              )}
-            </div>
-
-            {/* Next-tier upgrade progress */}
-            {isStructuredTier && threshold && pct !== null && nextTierCfg && (
-              <div className="mt-1">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                    {subCount >= threshold
-                      ? t.overviewAutoUpgradeReady(nextTierCfg.name)
-                      : t.overviewMoreSubsToNext(threshold - subCount, nextTierCfg.name)}
-                  </span>
-                  <span className="text-[11px] font-semibold" style={{ color: subCount >= threshold ? "#5ED1C4" : "#fff" }}>
-                    {subCount}/{threshold}
-                  </span>
-                </div>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
-                  <div
-                    className="h-full rounded-full transition-all duration-700"
-                    style={{
-                      width: `${pct}%`,
-                      background: subCount >= threshold
-                        ? "#5ED1C4"
-                        : (tierCfg?.gradient ?? "linear-gradient(to right, #D4007A, #E69138)"),
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-            {isStructuredTier && !threshold && tierId === "diamond" && (
-              <p className="text-[11px] mt-1" style={{ color: "#5ED1C4" }}>{t.overviewDiamondTopTier}</p>
+            ) : (
+              <>
+                <p className="text-sm font-semibold text-white mb-0.5">You've been invited to Crystal Creator</p>
+                <p className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  Unlock exclusive benefits, animated badge, lower commission, and priority placement — $100/mo
+                </p>
+              </>
             )}
           </div>
-        );
-      })()}
+
+          {/* Two-provider checkout buttons — only for invited-not-yet-active */}
+          {!crystalActive && crystalInvited && (
+            <>
+              <div className="px-4 pb-4 grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleCrystalWalletToggle}
+                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletOpen ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  💳 Upgrade $100
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCrystalNowPayments}
+                  disabled={crystalNpLoading}
+                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
+                >
+                  {crystalNpLoading ? "…" : "₿ Any crypto"}
+                </button>
+              </div>
+              {crystalNpError && (
+                <p className="px-4 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
+              )}
+              {crystalWalletOpen && (
+                <div className="px-4 pb-4" ref={crystalWalletPanelRef}>
+                  <WalletPayCard
+                    surface="crystal_self"
+                    amountUsd={100}
+                    entitlementSpec={{ type: "crystal_self" }}
+                    metadata={{ source: "creator_overview_tab" }}
+                    label="Upgrade to Crystal Creator · $100/mo"
+                    lang={tGlobal.lang === "es" ? "es" : "en"}
+                    onSuccess={() => {
+                      setCrystalWalletOpen(false);
+                    }}
+                    compact
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Withdrawable amount card */}
       {withdrawable > 0 && (

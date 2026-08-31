@@ -14,6 +14,8 @@ interface Props {
   className?: string;
   onClick?: (e: React.MouseEvent) => void;
   partnerBadgeColor?: string | null;
+  /** When true, renders an animated conic-gradient Crystal Creator ring around the avatar. Crystal ring takes precedence over partnerBadgeColor. */
+  crystalCreator?: boolean;
 }
 
 const SIZE_PX: Record<AvatarSize, number> = {
@@ -46,6 +48,7 @@ export function UserAvatar({
   className = "",
   onClick,
   partnerBadgeColor = null,
+  crystalCreator = false,
 }: Props) {
   const id = userId != null ? String(userId) : "";
   const online = usePresence(showOnline ? id : null);
@@ -77,13 +80,18 @@ export function UserAvatar({
     />
   ) : null;
 
-  const inner = (
+  // 3 px of crystal ring padding so the ring is visible around the avatar circle.
+  // The ring element itself is a sibling layer behind; the online dot (z-10)
+  // lives inside the avatar span and sits naturally above the ring.
+  const RING_PAD = 3;
+
+  const avatarSpan = (
     <span
-      className={`relative inline-block flex-shrink-0 ${className}`}
+      className={`relative inline-block flex-shrink-0 ${crystalCreator ? "" : className}`}
       style={{
         width: px,
         height: px,
-        ...(partnerBadgeColor
+        ...(!crystalCreator && partnerBadgeColor
           ? {
               boxShadow: `0 0 0 2px ${partnerBadgeColor}, 0 0 0 4px rgba(0,0,0,0.6)`,
               borderRadius: "50%",
@@ -121,6 +129,24 @@ export function UserAvatar({
       )}
     </span>
   );
+
+  const inner = crystalCreator ? (
+    <span
+      className={`crystal-ring ${className}`}
+      style={{
+        width: px + RING_PAD * 2,
+        height: px + RING_PAD * 2,
+        padding: RING_PAD,
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      {avatarSpan}
+    </span>
+  ) : avatarSpan;
 
   if (linkToProfile && id) {
     return (

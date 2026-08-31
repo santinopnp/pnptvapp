@@ -1,9 +1,13 @@
 /**
  * CreatorCard — compact dark glass card for a creator profile.
  *
- * Shows avatar, username, creator type badge, online indicator, and a
- * "Book a Call" gradient button.  Clicking the card or button opens
- * <BookCallModal>.
+ * Shows avatar, username, Crystal Creator badge (if applicable), online
+ * indicator, and a "Book a Call" gradient button.  Clicking the card or
+ * button opens <BookCallModal>.
+ *
+ * Legacy ice/crystal/diamond CreatorType union is kept for backward
+ * compatibility with imports elsewhere; the display logic has been replaced
+ * by the Crystal Creator flag.
  */
 
 import React, { useState } from "react";
@@ -13,6 +17,7 @@ import { isCreatorPayLocked } from "@/lib/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** @deprecated Legacy tier values — kept only for type compatibility. Use crystalCreator flag instead. */
 export type CreatorType =
   | "ice"
   | "crystal"
@@ -27,52 +32,27 @@ export interface CreatorCardCreator {
   creator_type: CreatorType;
   creator_price_usd: number;
   bio?: string | null;
+  /** True when this creator has an active Crystal Creator pass. */
+  crystalCreator?: boolean;
 }
 
 export interface CreatorCardProps {
   creator: CreatorCardCreator;
   isOnline?: boolean;
   className?: string;
+  /** Explicit override for the Crystal Creator flag (falls back to creator.crystalCreator). */
+  crystalCreator?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const CREATOR_TYPE_LABELS: Record<CreatorType, string> = {
-  ice: "Ice",
-  crystal: "Crystal",
-  diamond: "Diamond",
-  occasional: "Occasional",
-  full_time: "Full Time",
-};
-
-function CreatorTypeBadge({ type }: { type: CreatorType }) {
-  if (type === "full_time") {
-    return (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-        style={{
-          background: "linear-gradient(90deg, #D4007A, #E69138)",
-          color: "#fff",
-        }}
-      >
-        Full Time
-      </span>
-    );
-  }
-
-  const colorMap: Record<Exclude<CreatorType, "full_time">, React.CSSProperties> = {
-    ice: { background: "rgba(59,130,246,0.18)", color: "#60A5FA" },
-    crystal: { background: "rgba(6,182,212,0.18)", color: "#22D3EE" },
-    diamond: { background: "rgba(139,92,246,0.18)", color: "#A78BFA" },
-    occasional: { background: "rgba(156,163,175,0.18)", color: "#9CA3AF" },
-  };
-
+function CrystalPill() {
   return (
     <span
-      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide"
-      style={colorMap[type as Exclude<CreatorType, "full_time">]}
+      className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
+      style={{ color: "#1a1a2e" }}
     >
-      {CREATOR_TYPE_LABELS[type]}
+      Crystal 💎
     </span>
   );
 }
@@ -94,7 +74,9 @@ export function CreatorCard({
   creator,
   isOnline = false,
   className,
+  crystalCreator,
 }: CreatorCardProps) {
+  const isCrystal = crystalCreator ?? creator.crystalCreator ?? false;
   const [modalOpen, setModalOpen] = useState(false);
 
   return (
@@ -162,7 +144,7 @@ export function CreatorCard({
 
         {/* Info section */}
         <div className="flex flex-col gap-2 p-3">
-          {/* Name + badge row */}
+          {/* Name + Crystal badge row */}
           <div className="flex items-center gap-2 min-w-0">
             <span
               className="text-sm font-semibold truncate"
@@ -170,9 +152,8 @@ export function CreatorCard({
             >
               @{creator.username}
             </span>
+            {isCrystal && <CrystalPill />}
           </div>
-
-          <CreatorTypeBadge type={creator.creator_type} />
 
           {/* Bio */}
           {creator.bio && (

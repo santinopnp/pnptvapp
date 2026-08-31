@@ -45,6 +45,8 @@ import {
   deleteCoverPhoto,
   tipTokens,
   getWalletBalance,
+  checkoutCrystalGift,
+  checkoutCrystalSelf,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
@@ -53,6 +55,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
@@ -350,6 +353,16 @@ export default function CreatorProfilePage() {
   const [reportSending, setReportSending] = useState(false);
   const [reportSent, setReportSent] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+
+  // Crystal Creator checkout state.
+  // crystalWalletMode: which inline WalletPayCard panel is currently open.
+  // 'gift'  = fan gifting this creator; 'self' = creator self-upgrading.
+  const [crystalWalletMode, setCrystalWalletMode] = useState<"gift" | "self" | null>(null);
+  const [crystalNpLoading, setCrystalNpLoading] = useState<"gift" | "self" | null>(null);
+  const [crystalNpError, setCrystalNpError] = useState<string | null>(null);
+  const crystalWalletPanelRef = useRef<HTMLDivElement>(null);
+  // Whale Pigs — only loaded when the viewer is an active Crystal Creator (own profile).
+  const [whalePigs, setWhalePigs] = useState<Array<{ id: string; username: string | null; first_name: string | null; photo_url: string | null }> | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const tipPanelRef = useRef<HTMLDivElement>(null);
@@ -704,6 +717,59 @@ export default function CreatorProfilePage() {
     navigate(`/profile/${userId}`);
   }
 
+  // Load Whale Pigs when own-profile Crystal Creator opens their profile.
+  // Endpoint is gated to active Crystal Creators server-side.
+  useEffect(() => {
+    if (!isOwnProfile || !data?.creator?.crystalCreator) {
+      setWhalePigs(null);
+      return;
+    }
+    fetch("/api/creator/crystal/whale-pigs", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => { if (body?.users) setWhalePigs(body.users); })
+      .catch(() => { /* non-fatal */ });
+  }, [isOwnProfile, data?.creator?.crystalCreator]);
+
+  // Toggle the inline WalletPayCard panel for Crystal gift or self-upgrade.
+  // Mirrors Subscribe.tsx's walletPanelPlanId toggle pattern.
+  function handleCrystalWalletToggle(mode: "gift" | "self") {
+    if (!isAuthenticated) { navigate("/login"); return; }
+    setCrystalNpError(null);
+    setCrystalWalletMode((prev) => (prev === mode ? null : mode));
+    // Auto-scroll to the panel after it opens (100ms for DOM paint).
+    setTimeout(() => {
+      crystalWalletPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 100);
+  }
+
+  // Open NowPayments hosted checkout in a centered popup (iframe-blocked per memory).
+  async function handleCrystalNowPayments(mode: "gift" | "self") {
+    if (!isAuthenticated) { navigate("/login"); return; }
+    if (!data) return;
+    setCrystalNpError(null);
+    setCrystalNpLoading(mode);
+    try {
+      let invoiceUrl: string | undefined;
+      if (mode === "gift") {
+        const res = await checkoutCrystalGift(data.creator.id, "nowpayments");
+        invoiceUrl = res.invoiceUrl;
+      } else {
+        const res = await checkoutCrystalSelf("nowpayments");
+        invoiceUrl = res.invoiceUrl;
+      }
+      if (!invoiceUrl) throw new Error("No invoice URL returned");
+      const w = 520;
+      const h = 700;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+      window.open(invoiceUrl, "crystal_np_checkout", `width=${w},height=${h},left=${left},top=${top},scrollbars=yes,resizable=yes`);
+    } catch (err) {
+      setCrystalNpError(err instanceof Error ? err.message : "Could not open checkout");
+    } finally {
+      setCrystalNpLoading(null);
+    }
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -727,6 +793,13 @@ export default function CreatorProfilePage() {
 
   const { creator } = data;
   const displayName = creator.first_name || creator.username;
+
+  // Crystal Creator fields come from /api/public/creator/:username (routes.js
+  // adds them from users.crystal_creator_active_until + crystal_creator_invited_at).
+  const creatorIsCrystal = creator.crystalCreator === true;
+  const crystalActiveUntil = creator.crystalActiveUntil ?? null;
+  const crystalInvited = creator.crystalInvited === true;
+
   // Legacy Ice/Crystal/Diamond tier label removed 2026-07-24 — creators set
   // their own price. CTA copy prioritises the concrete offer: price + content
   // volume + benefit summary.
@@ -754,6 +827,16 @@ export default function CreatorProfilePage() {
         <div className="flex flex-col lg:min-w-0 lg:rounded-2xl lg:overflow-hidden lg:border lg:border-white/5" style={{ background: "var(--pnp-bg, #121212)" }}>
         {/* ── Cover + avatar overlay ─────────────────────────────────── */}
         <div className="relative">
+          {/* Crystal animated header band — sits above the cover image at 0.4
+              opacity so the cover art remains visible beneath. Hidden unless
+              the creator is an active Crystal Creator. */}
+          {creatorIsCrystal && (
+            <div
+              className="crystal-header absolute top-0 left-0 right-0 pointer-events-none z-[1]"
+              style={{ opacity: 0.4, height: 140 }}
+              aria-hidden="true"
+            />
+          )}
           <div
             className="w-full"
             style={{
@@ -885,16 +968,12 @@ export default function CreatorProfilePage() {
               )}
             </>
           )}
-          {/* Avatar overlap (78px per mockup; xl=80 rounds cleanly) */}
+          {/* Avatar overlap (78px per mockup; xl=80 rounds cleanly).
+              When creator is Crystal, the crystal-ring animation replaces
+              the static accent border — we suppress the wrapper boxShadow
+              so both don't stack visually. */}
           <div className="absolute left-4" style={{ bottom: -34 }}>
-            <div
-              className="rounded-full"
-              style={{
-                padding: 3,
-                background: "var(--pnp-bg, #121212)",
-                boxShadow: "0 0 0 2px var(--pnp-accent, #D4007A)",
-              }}
-            >
+            {creatorIsCrystal ? (
               <UserAvatar
                 userId={creator.id}
                 photoUrl={creator.photo_url}
@@ -902,8 +981,27 @@ export default function CreatorProfilePage() {
                 size="xl"
                 showOnline={false}
                 linkToProfile={false}
+                crystalCreator
               />
-            </div>
+            ) : (
+              <div
+                className="rounded-full"
+                style={{
+                  padding: 3,
+                  background: "var(--pnp-bg, #121212)",
+                  boxShadow: "0 0 0 2px var(--pnp-accent, #D4007A)",
+                }}
+              >
+                <UserAvatar
+                  userId={creator.id}
+                  photoUrl={creator.photo_url}
+                  displayName={creator.first_name || creator.username}
+                  size="xl"
+                  showOnline={false}
+                  linkToProfile={false}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -912,7 +1010,7 @@ export default function CreatorProfilePage() {
           {/* Identity row */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[18px] font-bold text-white truncate">{displayName}</span>
                 {creator.creator_verified && (
                   <span
@@ -921,6 +1019,14 @@ export default function CreatorProfilePage() {
                     aria-label="Verified"
                   >
                     <CheckCircle2 size={12} className="text-white" strokeWidth={3} />
+                  </span>
+                )}
+                {creatorIsCrystal && (
+                  <span
+                    className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
+                    style={{ color: "#1a1a2e" }}
+                  >
+                    Crystal 💎
                   </span>
                 )}
               </div>
@@ -968,6 +1074,177 @@ export default function CreatorProfilePage() {
           {/* Bio */}
           {creator.bio && (
             <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
+          )}
+
+          {/* Crystal Creator CTA block — three mutually exclusive branches:
+              1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator"
+              2. Creator self-view + invited + not yet active → "Upgrade to Crystal Creator"
+              3. Creator self-view + already active → "Crystal Creator (active until …)" */}
+          {/* Crystal Creator CTA block — three mutually exclusive branches:
+              1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator $150/mo"
+                 Two buttons: PNPtv Wallet (inline WalletPayCard) + Any crypto (NP popup)
+              2. Creator self-view + invited + not yet active → "Upgrade to Crystal Creator $100/mo"
+                 Same two-button pattern, self-upgrade price.
+              3. Creator self-view + already active → read-only status pill */}
+          {creatorIsCrystal && !isOwnProfile && (
+            <div
+              className="mb-3 rounded-xl border"
+              style={{ borderColor: crystalWalletMode === "gift" ? "rgba(52,199,89,0.35)" : "rgba(184,245,255,0.3)", background: "rgba(184,245,255,0.05)" }}
+            >
+              <div className="p-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white">Crystal Creator</p>
+                  <p className="text-[11px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    {t.lang === "es"
+                      ? "Regálale a este creador un pase Crystal Creator — $150/mes"
+                      : "Gift this creator a Crystal Creator pass — $150/mo"}
+                  </p>
+                </div>
+              </div>
+              <div className="px-3 pb-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => handleCrystalWalletToggle("gift")}
+                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletMode === "gift" ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  {t.lang === "es" ? "💳 Regalar $150" : "💳 Gift $150"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCrystalNowPayments("gift")}
+                  disabled={crystalNpLoading === "gift"}
+                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
+                >
+                  {crystalNpLoading === "gift" ? "…" : (t.lang === "es" ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                </button>
+              </div>
+              {crystalNpError && crystalWalletMode !== "gift" && (
+                <p className="px-3 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
+              )}
+              {crystalWalletMode === "gift" && (
+                <div className="px-3 pb-3" ref={crystalWalletPanelRef} onClick={(e) => e.stopPropagation()}>
+                  <WalletPayCard
+                    surface="crystal_gift"
+                    amountUsd={150}
+                    entitlementSpec={{ type: "crystal_gift", creatorId: data?.creator?.id }}
+                    metadata={{ source: "creator_profile", creatorId: data?.creator?.id }}
+                    label={`Gift Crystal Creator · $150/mo — ${displayName}`}
+                    lang={(user?.language as "es" | "en") || "en"}
+                    onSuccess={() => {
+                      setCrystalWalletMode(null);
+                    }}
+                    compact
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {!creatorIsCrystal && isOwnProfile && crystalInvited && (
+            <div
+              className="mb-3 rounded-xl border"
+              style={{ borderColor: crystalWalletMode === "self" ? "rgba(52,199,89,0.35)" : "rgba(184,245,255,0.3)", background: "rgba(184,245,255,0.05)" }}
+            >
+              <div className="p-3">
+                <p className="text-xs font-bold text-white mb-0.5">
+                  {t.lang === "es" ? "Fuiste invitado a Crystal Creator" : "You've been invited to Crystal Creator"}
+                </p>
+                <p className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {t.lang === "es"
+                    ? "Desbloquea beneficios exclusivos e insignia animada — $100/mes"
+                    : "Unlock exclusive benefits & animated badge — $100/mo"}
+                </p>
+              </div>
+              <div className="px-3 pb-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => handleCrystalWalletToggle("self")}
+                  className={`py-2.5 rounded-lg font-bold text-sm text-white transition-all ${crystalWalletMode === "self" ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  {t.lang === "es" ? "💳 Suscribirme $100" : "💳 Upgrade $100"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCrystalNowPayments("self")}
+                  disabled={crystalNpLoading === "self"}
+                  className="py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-60"
+                >
+                  {crystalNpLoading === "self" ? "…" : (t.lang === "es" ? "₿ Cualquier cripto" : "₿ Any crypto")}
+                </button>
+              </div>
+              {crystalNpError && crystalWalletMode !== "self" && (
+                <p className="px-3 pb-3 text-[11px]" style={{ color: "#ff6b6b" }}>{crystalNpError}</p>
+              )}
+              {crystalWalletMode === "self" && (
+                <div className="px-3 pb-3" ref={crystalWalletPanelRef} onClick={(e) => e.stopPropagation()}>
+                  <WalletPayCard
+                    surface="crystal_self"
+                    amountUsd={100}
+                    entitlementSpec={{ type: "crystal_self" }}
+                    metadata={{ source: "creator_profile_self" }}
+                    label="Upgrade to Crystal Creator · $100/mo"
+                    lang={(user?.language as "es" | "en") || "en"}
+                    onSuccess={() => {
+                      setCrystalWalletMode(null);
+                    }}
+                    compact
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {creatorIsCrystal && isOwnProfile && (
+            <div
+              className="mb-3 rounded-xl border p-3"
+              style={{ borderColor: "rgba(184,245,255,0.3)", background: "rgba(184,245,255,0.05)" }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
+                  style={{ color: "#1a1a2e" }}
+                >
+                  Crystal Creator 💎
+                </span>
+                <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {crystalActiveUntil === null || crystalActiveUntil === "infinity"
+                    ? (t.lang === "es" ? "Activo — de por vida" : "Active — lifetime")
+                    : (t.lang === "es"
+                        ? `Activo hasta ${new Date(crystalActiveUntil).toLocaleDateString("es", { month: "short", day: "numeric", year: "numeric" })}`
+                        : `Active until ${new Date(crystalActiveUntil).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`)}
+                </span>
+              </div>
+
+              {/* Whale Pig Circle — VIP audience curated by Santino & Lex. Only
+                  visible to active Crystal Creators viewing their own profile.
+                  DM deep-link opens the platform DM thread directly. */}
+              {whalePigs && whalePigs.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/5">
+                  <p className="text-[11px] font-bold text-white mb-1.5">
+                    {t.lang === "es" ? "🐷 Tu Whale Pig Circle" : "🐷 Your Whale Pig Circle"}
+                  </p>
+                  <p className="text-[10px] leading-snug mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    {t.lang === "es"
+                      ? "Nuestra audiencia VIP — los que más gastan y amigos personales de Santino y Lex. DM directo."
+                      : "Our VIP audience — top spenders and personal friends of Santino & Lex. DM them directly."}
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {whalePigs.map((wp) => (
+                      <a
+                        key={wp.id}
+                        href={`/dm/${wp.id}`}
+                        className="flex items-center gap-2 p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] transition min-w-0"
+                      >
+                        <img
+                          src={wp.photo_url || "/uploads/avatars/default.webp"}
+                          alt=""
+                          className="w-8 h-8 rounded-full flex-shrink-0 object-cover bg-white/10"
+                        />
+                        <span className="text-[11px] text-white truncate">
+                          @{wp.username || wp.first_name || wp.id.slice(0, 6)}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Onboarding tutorial banner — visible only when arriving via the

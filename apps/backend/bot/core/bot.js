@@ -2161,17 +2161,6 @@ const startBot = async () => {
       logger.warn(`X analytics ingestion scheduler initialization failed: ${error.message}`);
     }
 
-    // Initialize creator tier auto-upgrade scheduler (daily)
-    try {
-      const CreatorTierUpgradeScheduler = require('./schedulers/creatorTierUpgradeScheduler');
-      const creatorTierUpgradeScheduler = new CreatorTierUpgradeScheduler();
-      creatorTierUpgradeScheduler.start();
-      global.creatorTierUpgradeScheduler = creatorTierUpgradeScheduler;
-      logger.info('✓ Creator tier upgrade scheduler initialized and started');
-    } catch (error) {
-      logger.warn(`Creator tier upgrade scheduler initialization failed: ${error.message}`);
-    }
-
     // Initialize creator availability ping scheduler (55 min interval)
     try {
       const CreatorAvailabilityPingScheduler = require('./schedulers/creatorAvailabilityPingScheduler');

@@ -58,17 +58,6 @@ const xCampaignWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Tier change — 3/hr per user. Prevents rapid toggling that could exploit
-// entitlement propagation windows or confuse downstream billing state.
-const changeTierLimiter = rateLimit({
-  windowMs: 3600_000,
-  max: 3,
-  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
-  message: { error: 'Too many tier changes. Try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 // Subscription toggle — 5/hr per user. Prevents rapid open/close cycles
 // from creating billing edge-cases on the creator's subscriber list.
 const toggleSubLimiter = rateLimit({
@@ -232,9 +221,6 @@ router.get('/dashboard', authGuard, creatorGuard, creatorController.getDashboard
 router.get('/wallet', authGuard, creatorController.getWalletAddress);
 // FIX 5: creatorGuard added — prevents non-creators from writing a wallet address
 router.post('/wallet', authGuard, creatorGuard, walletWriteLimiter, creatorController.saveWalletAddress);
-
-// Creator tier change
-router.post('/change-tier', authGuard, creatorGuard, changeTierLimiter, creatorController.changeTier);
 
 // Toggle whether the creator accepts new memberships
 router.post('/toggle-subscription', authGuard, creatorGuard, toggleSubLimiter, creatorController.toggleSubscription);

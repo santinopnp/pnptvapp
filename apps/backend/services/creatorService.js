@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 const NotificationEmitter = require('./notificationEmitter');
 const sendSystemDM = require('./sendSystemDM');
 const { CREATOR_REVENUE_RATE, PLATFORM_COMMISSION_RATE, EARNINGS_HOLD_HOURS } = require('../config/monetizationConfig');
+const { CRYSTAL_CREATOR_SELF_PRICE_CENTS, CRYSTAL_CREATOR_GIFT_PRICE_CENTS } = require('../config/monetizationConfig');
 
 const TEASER_SECRET = process.env.TEASER_SECRET || (() => {
   if (process.env.NODE_ENV === 'production') {
@@ -2312,6 +2313,353 @@ class CreatorService {
         logger.warn('notifyCreatorActivated: delivery error (non-fatal)', { userId, error: err.message });
       }
     });
+  }
+
+  // ── Crystal Creator pass management ─────────────────────────────────────────
+
+  /**
+   * Activate (or extend) a Crystal Creator pass for a user.
+   *
+   * Semantics:
+   *  - months === null       → lifetime pass (expires_at NULL, stored as 'infinity' on users col)
+   *  - months > 0            → extend: new expiry = MAX(NOW(), current active_until) + months * 30 days
+   *  - stripeSubscriptionId  → sets auto_renew=true; next_bill_at = new expiresAt
+   *
+   * Idempotency: guarded by `idx_ccp_payment_ref_unique` and
+   * `idx_ccp_stripe_sub_unique` — retried webhooks short-circuit and return
+   * the existing pass row instead of double-crediting time.
+   *
+   * Concurrency: takes a row-level lock on the active pass (SELECT ... FOR UPDATE)
+   * inside a transaction, so two simultaneous IPNs serialise instead of racing.
+   *
+   * @param {string} userId
+   * @param {object} opts
+   * @param {boolean} opts.isGift
+   * @param {string|null} opts.giftedBy
+   * @param {string|null} opts.giftNote
+   * @param {number|null} opts.months                — null = lifetime
+   * @param {string} opts.provider                   — stripe|wallet_usdc|nowpayments|founder_grant
+   * @param {string|null} opts.ref                   — payment reference (invoice id / tx hash)
+   * @param {string|null} opts.stripeSubscriptionId  — Stripe subscription id (for recurring)
+   * @param {number} opts.priceCents
+   * @returns {Promise<{passId: string, expiresAt: string|null, alreadyApplied?: boolean}>}
+   */
+  static async activateCrystalPass(userId, {
+    isGift = false, giftedBy = null, giftNote = null, months = 1,
+    provider, ref = null, stripeSubscriptionId = null, priceCents,
+  }) {
+    const { getPool } = require('../config/postgres');
+    const isLifetime = months == null;
+    const client = await getPool().connect();
+    try {
+      await client.query('BEGIN');
+
+      // ── Idempotency: same payment_ref or stripe_subscription_id ────────────
+      if (ref || stripeSubscriptionId) {
+        const dup = await client.query(
+          `SELECT id, expires_at FROM crystal_creator_passes
+            WHERE ($1::text IS NOT NULL AND payment_ref = $1)
+               OR ($2::text IS NOT NULL AND stripe_subscription_id = $2)
+            LIMIT 1`,
+          [ref, stripeSubscriptionId]
+        );
+        if (dup.rows[0]) {
+          await client.query('COMMIT');
+          logger.info('CreatorService.activateCrystalPass: idempotent short-circuit', {
+            userId, passId: dup.rows[0].id, ref, stripeSubscriptionId,
+          });
+          return { passId: dup.rows[0].id, expiresAt: dup.rows[0].expires_at, alreadyApplied: true };
+        }
+      }
+
+      // ── Lock existing active pass (if any) to serialize concurrent renewals
+      const { rows: existing } = await client.query(
+        `SELECT id, expires_at FROM crystal_creator_passes
+          WHERE creator_user_id = $1 AND status = 'active'
+          FOR UPDATE`,
+        [String(userId)]
+      );
+
+      // Compute new expiry
+      let expiresAt;
+      if (isLifetime) {
+        expiresAt = null;
+      } else {
+        const currentUntil = existing[0]?.expires_at;
+        const base = currentUntil && new Date(currentUntil) > new Date()
+          ? new Date(currentUntil)
+          : new Date();
+        base.setDate(base.getDate() + months * 30);
+        expiresAt = base.toISOString();
+      }
+      const nextBillAt = (stripeSubscriptionId && expiresAt) ? expiresAt : null;
+
+      // Extend or create
+      let passId;
+      if (existing[0]) {
+        // Extend existing active pass in place
+        const upd = await client.query(
+          `UPDATE crystal_creator_passes
+              SET expires_at             = $2,
+                  next_bill_at           = $3,
+                  payment_ref            = COALESCE($4, payment_ref),
+                  stripe_subscription_id = COALESCE($5, stripe_subscription_id),
+                  auto_renew             = ($5::text IS NOT NULL) OR auto_renew,
+                  payment_provider       = $6,
+                  price_paid_cents       = $7,
+                  is_gift                = $8,
+                  gifted_by_user_id      = COALESCE($9, gifted_by_user_id),
+                  gift_note              = COALESCE($10, gift_note),
+                  updated_at             = NOW()
+            WHERE id = $1
+          RETURNING id`,
+          [existing[0].id, expiresAt, nextBillAt, ref, stripeSubscriptionId, provider,
+           priceCents, isGift, giftedBy ? String(giftedBy) : null,
+           giftNote ? String(giftNote).slice(0, 500) : null]
+        );
+        passId = upd.rows[0].id;
+      } else {
+        const ins = await client.query(
+          `INSERT INTO crystal_creator_passes
+             (creator_user_id, expires_at, next_bill_at, price_paid_cents,
+              is_gift, gifted_by_user_id, gift_note,
+              payment_provider, payment_ref, stripe_subscription_id, auto_renew, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')
+           RETURNING id`,
+          [
+            String(userId), expiresAt, nextBillAt, priceCents,
+            isGift, giftedBy ? String(giftedBy) : null,
+            giftNote ? String(giftNote).slice(0, 500) : null,
+            provider, ref, stripeSubscriptionId,
+            !!stripeSubscriptionId,
+          ]
+        );
+        passId = ins.rows[0].id;
+      }
+
+      // Sync denormalized users columns (invited_at set on first grant so the
+      // /crystal/self endpoint gates work for grantees who never applied)
+      const activeUntilExpr = isLifetime ? `'infinity'::timestamptz` : `$2::timestamptz`;
+      const params = isLifetime ? [String(userId)] : [String(userId), expiresAt];
+      await client.query(
+        `UPDATE users
+           SET crystal_creator_active_until = ${activeUntilExpr},
+               crystal_creator_invited_at   = COALESCE(crystal_creator_invited_at, NOW()),
+               creator_verified             = TRUE,
+               updated_at                   = NOW()
+         WHERE id = $1`,
+        params
+      );
+
+      await client.query('COMMIT');
+      logger.info('CreatorService.activateCrystalPass: pass activated', {
+        userId, passId, isGift, isLifetime, months, provider,
+        stripeSubscriptionId: stripeSubscriptionId || null,
+      });
+      return { passId, expiresAt };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Cancel the active Crystal Creator pass.
+   *
+   * Flips status → 'cancelled', stops auto_renew, but does NOT clear
+   * expires_at — already-paid time is honoured. crystal_creator_active_until
+   * on users stays set until expires_at passes (a cron sweep clears it).
+   *
+   * For Stripe subs, we ALSO tell Stripe to cancel_at_period_end so the user
+   * isn't charged again. Best-effort; Stripe failure does not block DB cancel.
+   *
+   * @param {string} userId
+   * @returns {Promise<boolean>} — true if a pass was found and cancelled
+   */
+  static async cancelCrystalPass(userId) {
+    const { rows } = await query(
+      `UPDATE crystal_creator_passes
+          SET status         = 'cancelled',
+              cancelled_at   = NOW(),
+              auto_renew     = FALSE,
+              next_bill_at   = NULL,
+              updated_at     = NOW()
+        WHERE creator_user_id = $1
+          AND status = 'active'
+        RETURNING id, stripe_subscription_id`,
+      [String(userId)]
+    );
+    if (!rows.length) return false;
+
+    // Best-effort Stripe cancel (period-end so paid time is honoured)
+    const stripeSubId = rows[0].stripe_subscription_id;
+    if (stripeSubId && process.env.STRIPE_SECRET_KEY) {
+      try {
+        const Stripe = require('stripe');
+        const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+        await stripe.subscriptions.update(stripeSubId, { cancel_at_period_end: true });
+        logger.info('CreatorService.cancelCrystalPass: Stripe sub set to cancel_at_period_end', {
+          userId, stripeSubId,
+        });
+      } catch (err) {
+        logger.warn('CreatorService.cancelCrystalPass: Stripe cancel failed (DB cancel stands)', {
+          userId, stripeSubId, error: err.message,
+        });
+      }
+    }
+    logger.info('CreatorService.cancelCrystalPass: pass cancelled', { userId });
+    return true;
+  }
+
+  /**
+   * Cron sweep: mark expired passes and clear denormalized user col.
+   * Called periodically (see queueService). Returns count of rows swept.
+   */
+  static async sweepExpiredCrystalPasses() {
+    const { rowCount: passesSwept } = await query(
+      `UPDATE crystal_creator_passes
+          SET status = 'expired', updated_at = NOW()
+        WHERE status IN ('active','cancelled')
+          AND expires_at IS NOT NULL
+          AND expires_at <= NOW()`
+    );
+    const { rowCount: usersSwept } = await query(
+      `UPDATE users
+          SET crystal_creator_active_until = NULL,
+              updated_at = NOW()
+        WHERE crystal_creator_active_until IS NOT NULL
+          AND crystal_creator_active_until <> 'infinity'::timestamptz
+          AND crystal_creator_active_until <= NOW()`
+    );
+    if (passesSwept || usersSwept) {
+      logger.info('CreatorService.sweepExpiredCrystalPasses', { passesSwept, usersSwept });
+    }
+    return { passesSwept, usersSwept };
+  }
+
+  /**
+   * Check whether a user currently has an active Crystal Creator pass.
+   * Uses the denormalized users.crystal_creator_active_until column for speed.
+   *
+   * @param {string} userId
+   * @returns {Promise<boolean>}
+   */
+  static async isCrystalCreator(userId) {
+    const { rows } = await query(
+      `SELECT 1 FROM users
+        WHERE id = $1
+          AND crystal_creator_active_until > NOW()`,
+      [String(userId)]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * The Crystal Creator benefits catalog — single source of truth.
+   * Returned by /api/creator/crystal/self so the dashboard renders it
+   * without hard-coding the list on the frontend. EN + ES parallel arrays;
+   * ordering matters (marketing lead-with-desire first).
+   */
+  static crystalBenefitsCatalog() {
+    return [
+      {
+        id: 'whale_pig_circle',
+        icon: '🐷',
+        en: { title: 'Whale Pig Circle', body: 'Direct, personalized exposure to our VIP audience — top spenders and personal friends of Santino & Lex. See who they are, DM them straight, and get invited to their private hangouts.' },
+        es: { title: 'Whale Pig Circle', body: 'Exposición directa y personalizada a nuestra audiencia VIP — los que más gastan y amigos personales de Santino y Lex. Ve quiénes son, escríbeles directo y entra a sus hangouts privados.' },
+      },
+      {
+        id: 'higher_split',
+        icon: '💰',
+        en: { title: '85% revenue share', body: 'You keep 85% of every subscriber payment (vs 80% standard). Zero commission on tips from Whale Pigs.' },
+        es: { title: '85% del ingreso', body: 'Te quedas con el 85% de cada pago de suscriptor (vs 80% estándar). 0% de comisión en propinas de los Whale Pigs.' },
+      },
+      {
+        id: 'crystal_badge',
+        icon: '💎',
+        en: { title: 'Animated Crystal badge', body: 'Shimmering ring around your avatar and gradient header on your profile — instantly recognizable in Discover, Nearby, and every chat.' },
+        es: { title: 'Insignia Crystal animada', body: 'Anillo brillante alrededor de tu avatar y encabezado con degradado en tu perfil — se reconoce al instante en Discover, Nearby y en cada chat.' },
+      },
+      {
+        id: 'discover_priority',
+        icon: '🏆',
+        en: { title: 'Priority in Discover', body: 'Your profile ranks above basic creators in Discover, Nearby, and Search results.' },
+        es: { title: 'Prioridad en Discover', body: 'Tu perfil aparece antes que los creadores básicos en Discover, Nearby y resultados de búsqueda.' },
+      },
+      {
+        id: 'main_stage_slot',
+        icon: '🎬',
+        en: { title: 'Main Stage rotation', body: 'A daily on-air callout of your handle by Santino or Lex during Main Stage sessions.' },
+        es: { title: 'Rotación en Main Stage', body: 'Mención diaria en vivo de tu usuario por Santino o Lex durante las sesiones del Main Stage.' },
+      },
+      {
+        id: 'kickoff_call',
+        icon: '🎧',
+        en: { title: 'Kickoff call with Lex', body: 'A one-on-one 30-min call to plan your Crystal launch: content cadence, pricing, and audience match.' },
+        es: { title: 'Kickoff call con Lex', body: 'Llamada 1 a 1 de 30 min para planear tu arranque Crystal: cadencia de contenido, precios y match de audiencia.' },
+      },
+      {
+        id: 'verified_badge',
+        icon: '✅',
+        en: { title: 'Auto-verified checkmark', body: 'Your account gets the verified badge automatically the moment your pass activates.' },
+        es: { title: 'Checkmark verificado automático', body: 'Tu cuenta recibe la insignia verificada apenas se active tu pass.' },
+      },
+      {
+        id: 'early_access',
+        icon: '🚀',
+        en: { title: 'Early access to new features', body: 'You get every new PNPtv feature before anyone else and can influence how it ships.' },
+        es: { title: 'Acceso anticipado a novedades', body: 'Recibes cada nueva función de PNPtv antes que nadie y puedes influir en cómo se lanza.' },
+      },
+      {
+        id: 'slack_channel',
+        icon: '💬',
+        en: { title: 'Private Slack channel', body: 'Direct line to Santino, Lex, and the ops team for feedback, requests, and quick escalations.' },
+        es: { title: 'Canal Slack privado', body: 'Línea directa con Santino, Lex y el equipo de ops para feedback, requests y escalados rápidos.' },
+      },
+    ];
+  }
+
+  /**
+   * Return the Whale Pigs list — only callable by an active Crystal Creator.
+   * Throws if the caller is not Crystal.
+   *
+   * @param {string} callerUserId
+   */
+  static async listWhalePigsForCrystal(callerUserId) {
+    const isCrystal = await CreatorService.isCrystalCreator(callerUserId);
+    if (!isCrystal) {
+      const err = new Error('not_crystal_creator');
+      err.status = 403;
+      throw err;
+    }
+    const { rows } = await query(
+      `SELECT id, username, first_name, photo_file_id AS photo_url, bio
+         FROM users
+        WHERE is_whale_pig = TRUE
+        ORDER BY LOWER(COALESCE(username, first_name, id))`
+    );
+    return rows.map(r => ({
+      id: String(r.id),
+      username: r.username || null,
+      first_name: r.first_name || null,
+      photo_url: r.photo_url || null,
+      bio: r.bio || null,
+    }));
+  }
+
+  /**
+   * Return an array of user ids who currently hold an active Crystal Creator pass.
+   * Uses the denormalized users column for O(1) index scan.
+   *
+   * @returns {Promise<string[]>}
+   */
+  static async listActiveCrystalCreators() {
+    const { rows } = await query(
+      `SELECT id FROM users WHERE crystal_creator_active_until > NOW()`
+    );
+    return rows.map(r => String(r.id));
   }
 }
 

@@ -14882,6 +14882,96 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
+  // crystal_creator: pass activation for both self-purchases ($100) and fan gifts ($150)
+  if (order.plan_id === 'crystal_creator') {
+    const crystalMeta = order.metadata || {};
+    const isGift = crystalMeta.isGift === true || crystalMeta.isGift === 'true';
+    // targetCreatorId is in metadata for gift orders; order.creator_id also holds it.
+    // For self-purchases, order.user_id is the creator.
+    const targetCreatorId = isGift
+      ? (crystalMeta.targetCreatorId || (order.creator_id ? String(order.creator_id) : null))
+      : String(order.user_id);
+
+    if (!targetCreatorId) {
+      logger.error('[Crystal] IPN: missing targetCreatorId', { order_id, isGift });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, 'crystal_creator:missing_targetCreatorId']
+      ).catch(() => {});
+      return res.status(422).json({ error: 'crystal_creator:missing_targetCreatorId' });
+    }
+
+    try {
+      const CreatorSvc = require('../../services/creatorService');
+      await CreatorSvc.activateCrystalPass(targetCreatorId, {
+        isGift,
+        giftedBy: isGift ? (crystalMeta.giftedBy || null) : null,
+        giftNote: isGift ? (crystalMeta.giftNote || null) : null,
+        months: 1,
+        provider: 'nowpayments',
+        ref: `np:${payment_id}`,
+        priceCents: Math.round((parseFloat(order.usd_amount) || 0) * 100),
+      });
+    } catch (crystalGrantErr) {
+      logger.error('[Crystal] IPN: activateCrystalPass failed', { order_id, error: crystalGrantErr.message });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `crystal_creator:grant_failed:${crystalGrantErr.message}`.slice(0, 500)]
+      ).catch(() => {});
+      return res.status(500).json({ error: 'crystal_creator:grant_failed' });
+    }
+
+    await dbQuery(
+      `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2 WHERE btcpay_invoice_id = $1`,
+      [order_id, `nowpayments:crystal_creator:${payment_id}`]
+    );
+
+    // Notify target creator via in-app notification (no price disclosed)
+    try {
+      const NotificationEmitterCrystal = require('../../services/notificationEmitter');
+      const msgType = isGift ? 'crystal_creator_gifted' : 'crystal_creator_activated';
+      const msgText = isGift
+        ? 'A fan just gifted you a Crystal Creator pass — your badge is now active!'
+        : 'Your Crystal Creator pass is now active! Enjoy your new benefits.';
+      await NotificationEmitterCrystal.emit({
+        type: msgType,
+        category: 'commerce',
+        priority: 'high',
+        targetUserId: String(targetCreatorId),
+        entityType: 'crystal_creator_pass',
+        entityId: String(order_id),
+        message: msgText,
+        metadata: { url: '/creator/dashboard', pushTitle: 'Crystal Creator activated!', pushBody: msgText },
+      }).catch(() => {});
+    } catch (_) { /* non-fatal */ }
+
+    // Slack ops ping — creator handle only, no dollar amounts (price-secrecy invariant).
+    // Uses notifyRushConversion slot (freeform plan label) routed to #ops-payments.
+    try {
+      const slackOps = require('../../services/slackOpsService');
+      const { rows: creatorRow } = await dbQuery(
+        `SELECT username FROM users WHERE id = $1`, [targetCreatorId]
+      ).catch(() => ({ rows: [] }));
+      const handle = creatorRow[0]?.username ? `@${creatorRow[0].username}` : targetCreatorId;
+      const label = isGift ? 'gift' : 'self-purchase';
+      // Price-secrecy: amount=0, plan label carries the signal instead.
+      slackOps.notifyPaymentSuccess({
+        orderId: order_id,
+        userId: targetCreatorId,
+        username: handle,
+        amount: '',
+        currency: '',
+        plan: `Crystal Creator pass (${label})`,
+        provider: 'NowPayments',
+      }).catch(() => {});
+    } catch (_) { /* non-fatal */ }
+
+    logger.info('[Crystal] IPN: Crystal Creator pass activated', {
+      order_id, targetCreatorId, isGift, payment_id,
+    });
+    return res.json({ received: true, type: 'crystal_creator' });
+  }
+
   // promo_token_bundle: bespoke one-off promos (e.g. $40 pay → $50 buyer tokens +
   // 10% shared bonus to co-founders + 20/40/40 cash split). All parameters live in
   // DSO metadata — no plan row. Minted by apps/backend/scripts/mint-promo-bundle-*.js.
@@ -15532,7 +15622,7 @@ app.post('/api/wallet/checkout/initiate', walletSpendLimiter, requireSessionAuth
   const { rail, surface, entitlementSpec: clientSpec = {}, metadata = {} } = req.body || {};
 
   if (!rail || !['usdc', 'rush', 'eth'].includes(rail)) return res.status(400).json({ error: 'invalid rail' });
-  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call']);
+  const ALLOWED_SURFACES = new Set(['tip', 'creator_sub', 'rush', 'membership', 'prime', 'donation', 'call', 'crystal_self', 'crystal_gift']);
   if (!ALLOWED_SURFACES.has(surface)) return res.status(400).json({ error: 'invalid or unsupported surface' });
 
   // Resolve canonical price + entitlement spec from the DB. Everything below
@@ -15716,6 +15806,40 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
         endAt: spec?.endAt ? String(spec.endAt) : null,
         clientNotes: typeof spec?.clientNotes === 'string' ? spec.clientNotes.slice(0, 1000) : null,
         email: typeof spec?.email === 'string' ? spec.email.slice(0, 320) : null,
+      },
+    };
+  }
+
+  if (surface === 'crystal_self') {
+    // Invite gate — enforced here (HTTP layer) AND in walletCheckoutService (fulfillment layer).
+    const { rows: invRows } = await dbQuery(
+      `SELECT crystal_creator_invited_at FROM users WHERE id = $1 LIMIT 1`, [userId]
+    );
+    if (!invRows[0] || !invRows[0].crystal_creator_invited_at) {
+      throwErr('not_invited', 403);
+    }
+    const { CRYSTAL_CREATOR_SELF_PRICE_CENTS } = require('../../config/monetizationConfig');
+    return {
+      amountUsd: CRYSTAL_CREATOR_SELF_PRICE_CENTS / 100,
+      resolvedSpec: { months: 1 },
+    };
+  }
+
+  if (surface === 'crystal_gift') {
+    // creatorId is required — the fan is gifting a specific creator.
+    const giftCreatorId = spec?.creatorId ? String(spec.creatorId) : null;
+    if (!giftCreatorId) throwErr('creatorId required for crystal_gift', 400);
+    const { rows: crRows } = await dbQuery(
+      `SELECT id, creator_status FROM users WHERE id = $1 LIMIT 1`, [giftCreatorId]
+    );
+    if (!crRows[0] || crRows[0].creator_status !== 'active') throwErr('creator not found or inactive', 404);
+    const { CRYSTAL_CREATOR_GIFT_PRICE_CENTS } = require('../../config/monetizationConfig');
+    return {
+      amountUsd: CRYSTAL_CREATOR_GIFT_PRICE_CENTS / 100,
+      resolvedSpec: {
+        creatorId: giftCreatorId,
+        giftNote: typeof spec?.giftNote === 'string' ? spec.giftNote.slice(0, 500) : null,
+        months: 1,
       },
     };
   }
@@ -16715,6 +16839,262 @@ app.post('/api/webapp/matrix/dm/:userId/message',       requireSessionAuth, asyn
 // Creator monetization routes
 app.use('/api/webapp/creator', creatorRoutes);
 
+// ── Crystal Creator pass routes ────────────────────────────────────────────────
+// Price-secrecy invariant: self endpoint exposes ONLY selfPriceCents ($100).
+// Gift endpoint exposes ONLY giftPriceCents ($150). Never both in the same response.
+
+// GET /api/creator/crystal/self — invited creator's own Crystal status
+app.get('/api/creator/crystal/self', requireSessionAuth, asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const { CRYSTAL_CREATOR_SELF_PRICE_CENTS: SELF_PRICE } = require('../../config/monetizationConfig');
+  const userId = String(req.session.user.id);
+
+  const { rows } = await dbQuery(
+    `SELECT crystal_creator_invited_at, crystal_creator_active_until FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (!rows[0] || !rows[0].crystal_creator_invited_at) {
+    return res.status(403).json({ error: 'not_invited', message: 'You have not been invited to Crystal Creator.' });
+  }
+  const activeUntil = rows[0].crystal_creator_active_until;
+  const active = activeUntil
+    ? (String(activeUntil) === 'infinity' || new Date(activeUntil) > new Date())
+    : false;
+  return res.json({
+    invited: true,
+    active,
+    activeUntil: activeUntil ? String(activeUntil) : null,
+    selfPriceCents: SELF_PRICE,
+  });
+}));
+
+// POST /api/creator/crystal/self/checkout — initiate Crystal Creator self-purchase ($100)
+// Providers: 'wallet' (USDC on Base via walletCheckoutService) | 'nowpayments' (hosted invoice)
+// Returns:
+//   wallet      → { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
+//   nowpayments → { nowpaymentsInvoiceId, invoiceUrl }
+const crystalSelfCheckoutLimiter = require('express-rate-limit')({
+  windowMs: 3600_000,
+  max: 5,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  message: { error: 'Too many checkout requests. Please wait before retrying.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/api/creator/crystal/self/checkout', requireSessionAuth, crystalSelfCheckoutLimiter, asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const { CRYSTAL_CREATOR_SELF_PRICE_CENTS: SELF_PRICE } = require('../../config/monetizationConfig');
+  const userId = String(req.session.user.id);
+
+  const { provider } = req.body || {};
+  if (!provider || !['wallet', 'nowpayments'].includes(provider)) {
+    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet' or 'nowpayments'" });
+  }
+
+  // Invite gate
+  const { rows } = await dbQuery(
+    `SELECT crystal_creator_invited_at FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (!rows[0] || !rows[0].crystal_creator_invited_at) {
+    return res.status(403).json({ error: 'not_invited' });
+  }
+
+  const usdAmount = SELF_PRICE / 100;
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+
+  // ── Wallet (USDC on Base) ────────────────────────────────────────────────
+  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with
+  // surface='crystal_self'. This route must not duplicate that logic.
+  if (provider === 'wallet') {
+    return res.status(400).json({
+      error: 'wallet_path_changed',
+      message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_self" directly.',
+    });
+  }
+
+  // ── NowPayments (hosted invoice) ─────────────────────────────────────────
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).json({ error: 'nowpayments_not_configured' });
+  }
+
+  const orderId = `pnptv-crystal-self-${userId}-${Date.now()}`;
+  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
+
+  try {
+    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
+      price_amount: usdAmount,
+      price_currency: 'usd',
+      order_id: orderId,
+      order_description: 'Crystal Creator pass – PNPtv!',
+      ipn_callback_url: ipnCallbackUrl,
+      success_url: `${webappUrl}/creator/dashboard?crystal=1`,
+      cancel_url: `${webappUrl}/creator/dashboard`,
+    }, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
+    if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
+    const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+
+    await dbQuery(
+      `INSERT INTO dash_subscription_orders
+         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
+       VALUES ($1, 'crystal_creator', NULL, $2, $3, 'pending', $4)
+       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+      [
+        userId, usdAmount, orderId,
+        JSON.stringify({
+          provider: 'nowpayments',
+          flow: 'crystal_creator_self',
+          invoiceUrl,
+          nowpaymentsInvoiceId: String(npInvoiceId),
+          isGift: false,
+        }),
+      ]
+    );
+
+    logger.info('[Crystal] NowPayments invoice created (self)', { userId, orderId, usdAmount });
+    return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
+  } catch (err) {
+    logger.error('[Crystal] NowPayments invoice creation failed (self)', { userId, error: err.message });
+    return res.status(502).json({ error: 'checkout_unavailable' });
+  }
+}));
+
+// GET /api/creators/:id/crystal/gift — PUBLIC: creator name + gift price only ($150)
+app.get('/api/creators/:id/crystal/gift', asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const { CRYSTAL_CREATOR_GIFT_PRICE_CENTS: GIFT_PRICE } = require('../../config/monetizationConfig');
+  const creatorId = String(req.params.id);
+
+  const { rows } = await dbQuery(
+    `SELECT id, username, first_name, creator_status FROM users WHERE id = $1`,
+    [creatorId]
+  );
+  if (!rows[0] || rows[0].creator_status !== 'active') {
+    return res.status(404).json({ error: 'creator_not_found' });
+  }
+  const u = rows[0];
+  return res.json({
+    creatorId: String(u.id),
+    creatorUsername: u.username || null,
+    displayName: u.first_name || u.username || 'Creator',
+    giftPriceCents: GIFT_PRICE,
+  });
+}));
+
+// POST /api/creators/:id/crystal/gift/checkout — initiate Crystal Creator gift ($150)
+// Providers: 'wallet' (USDC on Base via walletCheckoutService) | 'nowpayments' (hosted invoice)
+// Auth: optional (anonymous gifts allowed for public page; wallet requires session)
+// Returns:
+//   wallet      → { intentId, receivingAddress, usdcContract, amountUsdc, expiresAt, gasPolicyId }
+//   nowpayments → { nowpaymentsInvoiceId, invoiceUrl }
+const crystalGiftCheckoutLimiter = require('express-rate-limit')({
+  windowMs: 3600_000,
+  max: 5,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  message: { error: 'Too many checkout requests. Please wait before retrying.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/api/creators/:id/crystal/gift/checkout', crystalGiftCheckoutLimiter, asyncHandler(async (req, res) => {
+  const { query: dbQuery } = require('../../config/postgres');
+  const { CRYSTAL_CREATOR_GIFT_PRICE_CENTS: GIFT_PRICE } = require('../../config/monetizationConfig');
+  const creatorId = String(req.params.id);
+
+  const { provider } = req.body || {};
+  if (!provider || !['wallet', 'nowpayments'].includes(provider)) {
+    return res.status(400).json({ error: 'invalid_provider', message: "provider must be 'wallet' or 'nowpayments'" });
+  }
+
+  const giftNote = typeof req.body?.giftNote === 'string' ? req.body.giftNote.slice(0, 500) : null;
+  // Gifter identity — optional (anonymous gifts allowed for public page, but wallet requires auth)
+  const giftedBy = req.session?.user?.id ? String(req.session.user.id) : null;
+
+  // Wallet provider requires a logged-in gifter so we can attribute the intent.
+  if (provider === 'wallet' && !giftedBy) {
+    return res.status(401).json({ error: 'unauthenticated', message: 'Wallet payments require a signed-in account.' });
+  }
+
+  const { rows } = await dbQuery(
+    `SELECT id, creator_status FROM users WHERE id = $1`,
+    [creatorId]
+  );
+  if (!rows[0] || rows[0].creator_status !== 'active') {
+    return res.status(404).json({ error: 'creator_not_found' });
+  }
+
+  const usdAmount = GIFT_PRICE / 100;
+  const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+
+  // ── Wallet (USDC on Base) ────────────────────────────────────────────────
+  // WalletPayCard hits POST /api/wallet/checkout/initiate directly with
+  // surface='crystal_gift'. This route must not duplicate that logic.
+  if (provider === 'wallet') {
+    return res.status(400).json({
+      error: 'wallet_path_changed',
+      message: 'Wallet USDC purchases use POST /api/wallet/checkout/initiate with surface="crystal_gift" directly.',
+    });
+  }
+
+  // ── NowPayments (hosted invoice) ─────────────────────────────────────────
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.status(503).json({ error: 'nowpayments_not_configured' });
+  }
+
+  const orderId = `pnptv-crystal-gift-${creatorId}-${Date.now()}`;
+  const ipnCallbackUrl = `${webappUrl}/api/webhooks/nowpayments`;
+
+  try {
+    const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
+      price_amount: usdAmount,
+      price_currency: 'usd',
+      order_id: orderId,
+      order_description: 'Crystal Creator gift – PNPtv!',
+      ipn_callback_url: ipnCallbackUrl,
+      success_url: `${webappUrl}/c/${creatorId}?crystal_gift=1`,
+      cancel_url: `${webappUrl}/c/${creatorId}`,
+    }, {
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      timeout: 10000,
+    });
+    const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
+    if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
+    const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+
+    await dbQuery(
+      `INSERT INTO dash_subscription_orders
+         (user_id, plan_id, email, usd_amount, btcpay_invoice_id, creator_id, status, metadata)
+       VALUES ($1, 'crystal_creator', NULL, $2, $3, $4, 'pending', $5)
+       ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+      [
+        giftedBy, // NULL for anonymous gifts — never fall back to creator (double-counts them as the buyer)
+        usdAmount,
+        orderId,
+        creatorId,
+        JSON.stringify({
+          provider: 'nowpayments',
+          flow: 'crystal_creator_gift',
+          invoiceUrl,
+          nowpaymentsInvoiceId: String(npInvoiceId),
+          isGift: true,
+          giftedBy,
+          giftNote,
+          targetCreatorId: creatorId,
+        }),
+      ]
+    );
+
+    logger.info('[Crystal] NowPayments invoice created (gift)', { creatorId, giftedBy, orderId, usdAmount });
+    return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
+  } catch (err) {
+    logger.error('[Crystal] Gift invoice creation failed (NowPayments)', { creatorId, error: err.message });
+    return res.status(502).json({ error: 'checkout_unavailable' });
+  }
+}));
+
 // Channel cover image upload — separate from creatorRoutes because it needs its own multer middleware
 app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLimiter, channelCoverUpload.single('cover'), verifyMagicBytes(IMAGE_MIMES), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -16750,6 +17130,78 @@ app.post('/api/webapp/creator/channels/:id/cover', requireSessionAuth, uploadLim
   return res.json({ success: true, coverImageUrl: coverUrl });
 }));
 
+
+// ── Crystal Creator pass — cancel-self endpoint ─────────────────────────────
+// Creator ends their own subscription. Already-paid time is honoured (pass
+// stays active until expires_at); auto_renew is turned off. Stripe subs get
+// cancel_at_period_end so no further charge fires.
+app.post('/api/creator/crystal/self/cancel', requireSessionAuth, asyncHandler(async (req, res) => {
+  const CreatorSvc = require('../../services/creatorService');
+  const userId = String(req.session.user.id);
+  const ok = await CreatorSvc.cancelCrystalPass(userId);
+  return res.json({ ok });
+}));
+
+// ── Crystal benefits catalog (public — used on marketing surfaces + dashboard)
+app.get('/api/creator/crystal/benefits', asyncHandler(async (_req, res) => {
+  const CreatorSvc = require('../../services/creatorService');
+  return res.json({ benefits: CreatorSvc.crystalBenefitsCatalog() });
+}));
+
+// ── Whale Pigs list gated for active Crystal Creators only ─────────────────
+// The public /api/whale-pigs list returns everyone; this endpoint is only
+// callable by an active Crystal Creator — that's the load-bearing perk
+// ("direct personalized exposure with Whale Pigs") that differentiates the tier.
+app.get('/api/creator/crystal/whale-pigs', requireSessionAuth, asyncHandler(async (req, res) => {
+  const CreatorSvc = require('../../services/creatorService');
+  try {
+    const users = await CreatorSvc.listWhalePigsForCrystal(String(req.session.user.id));
+    return res.json({ users });
+  } catch (err) {
+    if (err.status === 403) return res.status(403).json({ error: 'not_crystal_creator' });
+    throw err;
+  }
+}));
+
+// ── Whale Pigs — public list + admin toggle ─────────────────────────────────
+// Whale Pigs are a curated VIP audience: top spenders + personal friends of
+// Santino & Lex. They see Crystal Creators first, unlock a private group, and
+// carry a 0% commission on tips they send to Crystal Creators. The set is
+// small and hand-picked — no auto-promotion.
+app.get('/api/whale-pigs', softAuth, asyncHandler(async (_req, res) => {
+  const { rows } = await getPool().query(
+    `SELECT id, username, first_name, photo_file_id AS photo_url, bio
+       FROM users
+      WHERE is_whale_pig = TRUE
+      ORDER BY LOWER(COALESCE(username, first_name, id))`
+  );
+  return res.json({
+    users: rows.map(r => ({
+      id: String(r.id),
+      username: r.username || null,
+      first_name: r.first_name || null,
+      photo_url: r.photo_url || null,
+      bio: r.bio || null,
+    })),
+  });
+}));
+
+app.post('/api/admin/users/:id/whale-pig', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const targetId = String(req.params.id);
+  const isWhalePig = req.body?.isWhalePig === true;
+  const { rows } = await getPool().query(
+    `UPDATE users
+        SET is_whale_pig = $2, updated_at = NOW()
+      WHERE id = $1
+    RETURNING is_whale_pig`,
+    [targetId, isWhalePig]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
+  logger.info('[whale-pig] toggle', {
+    adminId: req.session?.user?.id, targetId, is_whale_pig: rows[0].is_whale_pig,
+  });
+  return res.json({ ok: true, is_whale_pig: rows[0].is_whale_pig });
+}));
 
 // ── Channel video upload + AI assist + publish (universal — replaces the
 //    admin-only /admin/prime-videos flow for non-admin creators) ─────────────
@@ -19390,7 +19842,10 @@ app.get('/api/public/creator/:username',
               creator_subscription_paused, pnptv_id,
               creator_role, creator_enabled_at, created_at,
               followers_count, following_count,
-              amazon_wishlist_url
+              amazon_wishlist_url,
+              crystal_creator_active_until,
+              crystal_creator_invited_at,
+              is_whale_pig
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
        LIMIT 1`,
@@ -19821,6 +20276,24 @@ app.get('/api/public/creator/:username',
         isPrime,
         memberSince: creator.creator_enabled_at || creator.created_at || null,
         amazon_wishlist_url: creator.amazon_wishlist_url || null,
+        crystalCreator: (() => {
+          const u = creator.crystal_creator_active_until;
+          if (!u) return false;
+          // pg returns Postgres 'infinity' timestamptz as JS Infinity (Number),
+          // not as the string 'infinity'. Check both to be safe.
+          if (u === Infinity || String(u) === 'infinity' || String(u) === 'Infinity') return true;
+          const d = new Date(u);
+          return !isNaN(d.getTime()) && d > new Date();
+        })(),
+        crystalActiveUntil: (() => {
+          const u = creator.crystal_creator_active_until;
+          if (!u) return null;
+          if (u === Infinity || String(u) === 'infinity' || String(u) === 'Infinity') return 'infinity';
+          const d = new Date(u);
+          return isNaN(d.getTime()) ? null : d.toISOString();
+        })(),
+        crystalInvited: !!creator.crystal_creator_invited_at,
+        isWhalePig: !!creator.is_whale_pig,
       },
       isSubscribed,
       viewerSubscription,

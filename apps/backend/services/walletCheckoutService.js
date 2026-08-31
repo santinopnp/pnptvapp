@@ -34,7 +34,9 @@ const TOKENS_PER_USD = 6;  // See memory: feedback_token_rate.md
 
 const VALID_SURFACES = new Set([
   'donation', 'membership', 'prime', 'creator_sub', 'call', 'rush', 'channel', 'hangout',
-  'tip',  // creator tips (in-call, in-stream, in-hangout) — credits creator earnings, no entitlement
+  'tip',          // creator tips (in-call, in-stream, in-hangout) — credits creator earnings, no entitlement
+  'crystal_self', // Crystal Creator pass — invited creator self-purchase ($100/mo)
+  'crystal_gift', // Crystal Creator pass — fan gifts to a creator ($150/mo)
 ]);
 
 // ── Ru$h rail ──────────────────────────────────────────────────────────────
@@ -164,6 +166,20 @@ async function initiateUsdcPurchase(opts) {
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+
+  // crystal_self is invite-only. Verify before creating any intent row.
+  if (surface === 'crystal_self') {
+    const { rows: invRows } = await query(
+      `SELECT crystal_creator_invited_at FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    if (!invRows[0] || !invRows[0].crystal_creator_invited_at) {
+      const err = new Error('walletCheckout: crystal_self — user has not been invited to Crystal Creator');
+      err.statusCode = 403;
+      err.code = 'not_invited';
+      throw err;
+    }
+  }
 
   const receivingAddress = RECEIVING_ADDRESS();
   if (!receivingAddress) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
@@ -602,7 +618,145 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   if (surface === 'call') {
     return _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd });
   }
+  if (surface === 'crystal_self') {
+    return _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: false });
+  }
+  if (surface === 'crystal_gift') {
+    return _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: true });
+  }
   return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
+}
+
+/**
+ * Fulfill a Crystal Creator wallet-USDC purchase (self or gift).
+ *
+ * `isGift` is passed by _fulfill() based on the surface ('crystal_self' vs
+ * 'crystal_gift') — NEVER read from entitlementSpec to prevent surface spoofing.
+ *
+ * Server-side prices are authoritative:
+ *   crystal_self → CRYSTAL_CREATOR_SELF_PRICE_CENTS ($100)
+ *   crystal_gift → CRYSTAL_CREATOR_GIFT_PRICE_CENTS ($150)
+ *
+ * entitlementSpec accepted fields:
+ *   {
+ *     creatorId: string,  // for crystal_gift — creator receiving the pass
+ *     giftNote: string|null,
+ *     months: 1,
+ *   }
+ *
+ * Delegates to creatorService.activateCrystalPass which writes to
+ * crystal_creator_passes and updates users.crystal_creator_active_until.
+ * Called from within an outer PG transaction — activateCrystalPass uses the
+ * module-level `query` (separate pool connection) rather than the passed client
+ * because it handles its own transactional logic. The outer intent status flip
+ * commits atomically after this returns.
+ */
+async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift }) {
+  const {
+    CRYSTAL_CREATOR_SELF_PRICE_CENTS,
+    CRYSTAL_CREATOR_GIFT_PRICE_CENTS,
+  } = require('../config/monetizationConfig');
+
+  // All pricing is server-authoritative — never trusts client-sent amounts.
+  const priceCents = isGift ? CRYSTAL_CREATOR_GIFT_PRICE_CENTS : CRYSTAL_CREATOR_SELF_PRICE_CENTS;
+
+  // Target creator:
+  //   crystal_self → the purchasing user IS the creator receiving the pass.
+  //   crystal_gift → entitlementSpec.creatorId is the creator to gift.
+  let targetCreatorId;
+  let giftedBy;
+  if (isGift) {
+    targetCreatorId = entitlementSpec?.creatorId ? String(entitlementSpec.creatorId) : null;
+    giftedBy = String(userId);
+  } else {
+    targetCreatorId = String(userId);
+    giftedBy = null;
+    // Invite-only guard for self-purchase. initiateUsdcPurchase already checked
+    // this before the intent was created, but the fulfill path may be called
+    // from the Alchemy webhook (verifyAndFulfillUsdc) so we re-verify here.
+    const { rows: invRows } = await query(
+      `SELECT crystal_creator_invited_at FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    if (!invRows[0] || !invRows[0].crystal_creator_invited_at) {
+      logger.error('[walletCheckout] _fulfillCrystalPass: self-purchase on uninvited user — refusing grant', {
+        userId, intentId,
+      });
+      // Return without granting; the outer transaction will still mark the
+      // intent confirmed so the funds are not lost — ops team resolves manually.
+      return { entitlementId: null, rushCredited: 0, giftedCredited: 0, crystalCreatorActivated: false };
+    }
+  }
+
+  const giftNote = typeof entitlementSpec?.giftNote === 'string'
+    ? entitlementSpec.giftNote.slice(0, 500)
+    : null;
+  const months = Number(entitlementSpec?.months) >= 1 ? Math.min(Number(entitlementSpec.months), 12) : 1;
+
+  if (!targetCreatorId) {
+    throw new Error(`_fulfillCrystalPass: creatorId required in entitlementSpec for crystal_gift (intentId=${intentId})`);
+  }
+
+  // creatorService.activateCrystalPass uses the shared pool (module-level query),
+  // not the transaction client — it manages its own UPDATE on crystal_creator_passes
+  // and users. The outer transaction wraps only the intent status flip.
+  const CreatorSvc = require('./creatorService');
+  await CreatorSvc.activateCrystalPass(String(targetCreatorId), {
+    isGift,
+    giftedBy,
+    giftNote: isGift ? giftNote : null,
+    months,
+    provider,
+    ref: `checkout_intent:${intentId}`,
+    priceCents,
+  });
+
+  // Fire-and-forget in-app notification to target creator.
+  setImmediate(() => {
+    try {
+      const NotificationEmitter = require('./notificationEmitter');
+      const msgType = isGift ? 'crystal_creator_gifted' : 'crystal_creator_activated';
+      const msgText = isGift
+        ? 'A fan just gifted you a Crystal Creator pass — your badge is now active!'
+        : 'Your Crystal Creator pass is now active! Enjoy your new benefits.';
+      NotificationEmitter.emit({
+        type: msgType,
+        category: 'commerce',
+        priority: 'high',
+        targetUserId: String(targetCreatorId),
+        entityType: 'crystal_creator_pass',
+        entityId: String(intentId),
+        message: msgText,
+        metadata: { url: '/creator/dashboard', pushTitle: 'Crystal Creator activated!', pushBody: msgText },
+      }).catch(() => {});
+    } catch { /* non-fatal */ }
+  });
+
+  // Fire-and-forget Slack ops ping (no dollar amounts — price-secrecy invariant).
+  setImmediate(async () => {
+    try {
+      const slackOps = require('./slackOpsService');
+      const { rows } = await query(`SELECT username FROM users WHERE id = $1`, [String(targetCreatorId)]).catch(() => ({ rows: [] }));
+      const handle = rows[0]?.username ? `@${rows[0].username}` : String(targetCreatorId);
+      const label = isGift ? 'gift' : 'self-purchase';
+      slackOps.notifyPaymentSuccess({
+        orderId: `checkout_intent:${intentId}`,
+        userId: String(targetCreatorId),
+        username: handle,
+        amount: '',
+        currency: '',
+        plan: `Crystal Creator pass (${label}) — wallet`,
+        provider: 'wallet_usdc',
+      }).catch(() => {});
+    } catch { /* non-fatal */ }
+  });
+
+  logger.info('[walletCheckout] Crystal Creator pass activated via wallet_usdc', {
+    intentId, targetCreatorId, isGift, priceCents, provider,
+  });
+
+  // Return shape consistent with _fulfillEntitlement for the verify-tx caller.
+  return { entitlementId: null, rushCredited: 0, giftedCredited: 0, crystalCreatorActivated: true };
 }
 
 /**

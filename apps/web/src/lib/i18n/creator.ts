@@ -22,12 +22,19 @@ const strings = {
     statTotalEarnings: "Total Earnings",
     statExclusivePosts: "Exclusive Posts",
 
-    // Overview — creator type labels
+    // Overview — creator type labels (legacy ice/crystal/diamond removed 2026-08-31)
     creatorTypeFullTime: "Full-Time Creator",
-    creatorTypeDiamond: "Diamond Creator",
-    creatorTypeCrystal: "Crystal Creator",
-    creatorTypeIce: "Ice Creator",
     creatorTypeDefault: "Creator",
+
+    // Crystal Creator
+    crystalCreatorLabel: "Crystal Creator",
+    crystalCreatorSelfCta: "Upgrade to Crystal Creator",
+    crystalCreatorGiftCta: "Gift Crystal Creator",
+    crystalCreatorSelfPrice: "$100 / month",
+    crystalCreatorGiftPrice: "$150 / month",
+    crystalCreatorActiveUntil: (date: string) => `Crystal until ${date}`,
+    crystalCreatorLifetime: "Crystal Creator (lifetime)",
+    crystalCreatorInvited: "You've been invited to Crystal Creator",
 
     // Overview — plan detail
     revenueSplit: "70/30 revenue split",
@@ -187,9 +194,6 @@ const strings = {
     // Eligible section
     eligibleTitle: "You're eligible!",
     eligibleSubtitle: "You meet all the criteria to become a creator. Choose your path:",
-    iceCreatorLabel: "Ice Creator",
-    iceStartingTier: "Starting tier",
-    iceDesc: "70/30 revenue split. As you grow your audience, you unlock Crystal and Diamond tiers with higher earnings potential.",
     activateAsCreatorBtn: "Activate as Creator",
     fullTimeCreatorLabel: "Full-Time Creator",
     fullTimeDesc: "Verified badge. Featured placement. Live streams. Interview with Santino required.",
@@ -923,10 +927,17 @@ const strings = {
     statExclusivePosts: "Posts Exclusivos",
 
     creatorTypeFullTime: "Creador de Tiempo Completo",
-    creatorTypeDiamond: "Creador Diamante",
-    creatorTypeCrystal: "Creador Cristal",
-    creatorTypeIce: "Creador Hielo",
     creatorTypeDefault: "Creador",
+
+    // Crystal Creator
+    crystalCreatorLabel: "Crystal Creator",
+    crystalCreatorSelfCta: "Actualiza a Crystal Creator",
+    crystalCreatorGiftCta: "Regala Crystal Creator",
+    crystalCreatorSelfPrice: "$100 / mes",
+    crystalCreatorGiftPrice: "$150 / mes",
+    crystalCreatorActiveUntil: (date: string) => `Crystal hasta ${date}`,
+    crystalCreatorLifetime: "Crystal Creator (de por vida)",
+    crystalCreatorInvited: "Has sido invitado a Crystal Creator",
 
     revenueSplit: "División 70/30 de ingresos",
 
@@ -1068,9 +1079,6 @@ const strings = {
 
     eligibleTitle: "¡Eres elegible!",
     eligibleSubtitle: "Cumples todos los criterios para convertirte en creador. Elige tu camino:",
-    iceCreatorLabel: "Creador Hielo",
-    iceStartingTier: "Nivel inicial",
-    iceDesc: "División 70/30 de ingresos. A medida que creces tu audiencia, desbloqueas los niveles Cristal y Diamante con mayor potencial de ganancias.",
     activateAsCreatorBtn: "Activar como Creador",
     fullTimeCreatorLabel: "Creador de Tiempo Completo",
     fullTimeDesc: "Insignia verificada. Posición destacada. Transmisiones en vivo. Se requiere entrevista con Santino.",

@@ -114,9 +114,8 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   }, []);
 
   // ── Price editor ─────────────────────────────────────────────────────────────
-  // 2026-07-24: Ice/Crystal/Diamond tiers deprecated. Creators now set their
-  // own monthly price in [$1, $500]. Value mirrors to their canonical paid
-  // channel automatically via CreatorService.updateCreatorPrice.
+  // Creators set their own monthly price in [$1, $500]. Value mirrors to
+  // their canonical paid channel automatically via CreatorService.updateCreatorPrice.
   const PRICE_MIN = 1;
   const PRICE_MAX = 500;
   const [priceInput, setPriceInput] = useState<string>(
@@ -816,7 +815,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
       {/* Membership toggle */}
       <div className="glass-card-sm p-5">
         {liveEligibility && !liveEligibility.canPostExclusive ? (
-          /* Ice tier — show locked state with progress indicator */
+          /* Not yet eligible — show locked state with follower progress indicator */
           <div>
             <div className="flex items-start gap-3">
               <div
@@ -851,7 +850,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             </div>
           </div>
         ) : (
-          /* Crystal / Diamond tier — show toggle */
+          /* Eligible — show membership toggle */
           <div>
             <div className="flex items-center justify-between">
               <div>
@@ -1030,8 +1029,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         </button>
       </div>
 
-      {/* Monthly subscription price editor (replaces the deprecated
-          Ice/Crystal/Diamond tier switcher, 2026-07-24). */}
+      {/* Monthly subscription price editor. */}
       {dashboard.creatorType !== "full_time" && (
         <div className="glass-card-sm p-5">
           <p className="text-sm font-semibold text-white mb-1">{t.settingsPriceCardTitle}</p>

@@ -454,7 +454,6 @@ const saveWalletAddress = async (req, res) => {
   }
 };
 
-// POST /api/webapp/creator/change-tier
 const toggleSubscription = async (req, res) => {
   try {
     const userRes = await query(
@@ -480,58 +479,6 @@ const toggleSubscription = async (req, res) => {
   } catch (err) {
     logger.error('toggleSubscription error', err);
     return res.status(500).json({ error: 'Failed to update subscription setting' });
-  }
-};
-
-const changeTier = async (req, res) => {
-  try {
-    const { tier } = req.body || {};
-    const validTiers = { ice: 5.00, crystal: 10.00, diamond: 15.00 };
-    if (!tier || !validTiers[tier]) {
-      return res.status(400).json({ error: 'Invalid tier. Choose ice, crystal, or diamond.' });
-    }
-
-    const userRes = await query(
-      'SELECT creator_status, creator_type, creator_subscriber_count, username FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    const user = userRes.rows[0];
-    if (!user || user.creator_status !== 'active') {
-      return res.status(403).json({ error: 'Creator profile not active' });
-    }
-    if (user.creator_type === 'full_time') {
-      return res.status(403).json({ error: 'Full-time creators cannot change tier via self-service.' });
-    }
-    if (user.creator_type === tier) {
-      return res.status(400).json({ error: 'Already on this tier' });
-    }
-
-    const oldTier = user.creator_type;
-    await query(
-      'UPDATE users SET creator_type = $1, creator_price_usd = $2 WHERE id = $3',
-      [tier, validTiers[tier], req.user.id]
-    );
-
-    // Operator notification (non-fatal)
-    try {
-      const adminId = process.env.ADMIN_ID;
-      if (adminId) {
-        const { getBotInstance } = require('../../../bot/core/bot');
-        const bot = getBotInstance();
-        if (bot) {
-          const handle = user.username ? `@${user.username}` : String(req.user.id);
-          await bot.telegram.sendMessage(
-            adminId,
-            `🔄 Creator tier changed\nUser: ${handle} (ID: ${req.user.id})\nOld tier: ${oldTier} → New tier: ${tier}\nActive subscribers: ${user.creator_subscriber_count || 0}`
-          );
-        }
-      }
-    } catch (_) {}
-
-    return res.json({ success: true, tier, price: validTiers[tier] });
-  } catch (err) {
-    logger.error('changeTier error', err);
-    return res.status(500).json({ error: 'Failed to change tier' });
   }
 };
 
@@ -2106,7 +2053,6 @@ module.exports = {
   getWalletAddress,
   saveWalletAddress,
   toggleSubscription,
-  changeTier,
   listActiveCreators,
   getStrikes,
   issueStrike,

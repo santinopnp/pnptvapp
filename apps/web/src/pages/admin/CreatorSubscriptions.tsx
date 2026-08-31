@@ -47,14 +47,7 @@ function isExpired(expiresAt: string): boolean {
   return new Date(expiresAt) < new Date();
 }
 
-const CREATOR_TYPE_BADGE: Record<
-  string,
-  "default" | "accent" | "success" | "warning" | "error"
-> = {
-  ice: "default",
-  crystal: "success",
-  diamond: "accent",
-};
+// CREATOR_TYPE_BADGE (ice/crystal/diamond) removed — legacy tier system retired.
 
 const STATUS_BADGE: Record<
   string,
@@ -1223,13 +1216,26 @@ export default function CreatorSubscriptions() {
       ),
     },
     {
-      key: "creator_type",
-      header: t.users.tier,
-      render: (row: CreatorSubscriptionSummary) => (
-        <Badge variant={CREATOR_TYPE_BADGE[row.creator_type ?? ""] ?? "default"}>
-          {row.creator_type ?? "—"}
-        </Badge>
-      ),
+      key: "crystal",
+      header: "Crystal",
+      // TODO(backend): confirm getCreatorSubscriptions returns crystalCreator: bool,
+      // crystalActiveUntil: string|null on each CreatorSubscriptionSummary row.
+      render: (row: CreatorSubscriptionSummary) => {
+        const rowAny = row as unknown as { crystalCreator?: boolean; crystalActiveUntil?: string | null };
+        if (!rowAny.crystalCreator) return <span className="text-pnp-textSecondary text-xs">—</span>;
+        const until = rowAny.crystalActiveUntil;
+        const label = (!until || until === "infinity")
+          ? "lifetime"
+          : new Date(until).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+        return (
+          <span
+            className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide"
+            style={{ color: "#1a1a2e" }}
+          >
+            💎 {label}
+          </span>
+        );
+      },
     },
     {
       key: "creator_price_usd",

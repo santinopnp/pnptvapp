@@ -1492,7 +1492,7 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
 }
 
 export type WalletCheckoutRail = "usdc" | "rush" | "eth";
-export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip";
+export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip" | "crystal_self" | "crystal_gift";
 
 export interface WalletCheckoutInitiateResult {
   ok: true;
@@ -1900,13 +1900,11 @@ export function clearVideoUploadResume(): void {
   localStorage.removeItem(RESUME_KEY);
 }
 
-export function changeTier(tier: "ice" | "crystal" | "diamond"): Promise<{ success: boolean; tier: string; price: number }> {
-  return request("/api/webapp/creator/change-tier", { method: "POST", body: { tier } });
-}
+// changeTier() removed 2026-08-31 — ice/crystal/diamond tier system retired.
+// Crystal Creator API lives further down in this file (search "Crystal Creator pass").
 
 /**
  * Set the creator's monthly subscription price ($1-$500).
- * Replaces the deprecated Ice/Crystal/Diamond tier switcher (2026-07-24).
  * Mirrors the price to the creator's canonical paid channel.
  */
 export function setCreatorPrice(priceUsd: number): Promise<{ success: boolean; priceUsd: number }> {
@@ -9857,6 +9855,14 @@ export interface CreatorPublicProfile {
     isPrime: boolean;
     memberSince: string | null;
     amazon_wishlist_url: string | null;
+    /** True when this creator has an active Crystal Creator pass. */
+    crystalCreator?: boolean;
+    /** ISO date or the string "infinity" for lifetime; null if not a Crystal Creator. */
+    crystalActiveUntil?: string | null;
+    /** True when the creator has been invited to buy Crystal Creator (unlocks self-checkout). */
+    crystalInvited?: boolean;
+    /** True when this user is in the Whale Pigs circle (VIP audience). */
+    isWhalePig?: boolean;
   };
   isSubscribed: boolean;
   /** Sub details when viewer is subscribed; null otherwise. */
@@ -10387,6 +10393,112 @@ export async function getCryptoPaymentStatus(paymentId: number): Promise<CryptoP
     credentials: "include",
   });
   if (!res.ok) throw new Error("Failed to get crypto payment status");
+  return res.json();
+}
+
+// ── Crystal Creator pass ────────────────────────────────────────────────────
+// Two prices intentionally live on two endpoints (never returned in the same
+// response): self-purchase = $100/mo, gift = $150/mo.
+
+// Only "nowpayments" is passed to checkoutCrystal*(). The wallet-USDC path is
+// driven by WalletPayCard hitting /api/wallet/checkout/initiate directly with
+// surface="crystal_self"|"crystal_gift" — no separate function needed here.
+export type CrystalCheckoutProvider = "nowpayments";
+
+export interface CrystalSelfStatus {
+  invited: boolean;
+  active: boolean;
+  activeUntil: string | null;   // ISO or "infinity"
+  selfPriceCents: number;
+  autoRenew?: boolean;
+}
+
+export interface CrystalGiftInfo {
+  creatorId: string;
+  creatorUsername: string | null;
+  displayName: string;
+  giftPriceCents: number;
+}
+
+export interface CrystalCheckoutResponse {
+  provider: CrystalCheckoutProvider;
+  nowpaymentsInvoiceId: string;
+  invoiceUrl: string;
+}
+
+export async function getCrystalSelf(): Promise<CrystalSelfStatus> {
+  const res = await fetch(`${API_BASE}/api/creator/crystal/self`, { credentials: "include" });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load Crystal status");
+  return res.json();
+}
+
+export async function checkoutCrystalSelf(provider: CrystalCheckoutProvider): Promise<CrystalCheckoutResponse> {
+  const res = await fetch(`${API_BASE}/api/creator/crystal/self/checkout`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Crystal self checkout failed");
+  return res.json();
+}
+
+export async function getCrystalGift(creatorId: string): Promise<CrystalGiftInfo> {
+  const res = await fetch(`${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/crystal/gift`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load gift info");
+  return res.json();
+}
+
+export async function checkoutCrystalGift(
+  creatorId: string,
+  provider: CrystalCheckoutProvider,
+  giftNote?: string | null,
+): Promise<CrystalCheckoutResponse> {
+  const res = await fetch(`${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/crystal/gift/checkout`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, giftNote: giftNote ?? undefined }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Crystal gift checkout failed");
+  return res.json();
+}
+
+export async function cancelCrystalSelf(): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/api/creator/crystal/self/cancel`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Crystal cancel failed");
+  return res.json();
+}
+
+// ── Whale Pigs ──────────────────────────────────────────────────────────────
+
+export interface WhalePigUser {
+  id: string;
+  username: string | null;
+  first_name: string | null;
+  photo_url: string | null;
+  bio?: string | null;
+}
+
+export async function listWhalePigs(): Promise<{ users: WhalePigUser[] }> {
+  const res = await fetch(`${API_BASE}/api/whale-pigs`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to load Whale Pigs");
+  return res.json();
+}
+
+export async function adminToggleWhalePig(userId: string, isWhalePig: boolean): Promise<{ ok: boolean; is_whale_pig: boolean }> {
+  const res = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(userId)}/whale-pig`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ isWhalePig }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to toggle Whale Pig");
   return res.json();
 }
 
