@@ -180,30 +180,11 @@ const startCronJobs = async (bot = null) => {
       }
     });
 
-    // Lifetime100 abandoned-cart rescue dispatcher — runs at 7/22/37/52 of each
-    // hour so the NowPayments + BTCPay reconcilers (above) have had a chance to
-    // mark stale waiting invoices as expired first. Sends a Santino DM with a
-    // fresh $95 NowPayments invoice + Banxa walkthrough to users whose lifetime100
-    // checkout expired and who don't already hold a pnp-member/prime entitlement.
-    // Self-skips users rescued in the last 30 days (cooldown via metadata.source).
-    cron.schedule(process.env.LIFETIME100_RESCUE_CRON || '7,22,37,52 * * * *', async () => {
-      try {
-        const { runOnce: runLifetime100Rescue } = require('./rescue-lifetime100-2026-06-26');
-        const result = await runLifetime100Rescue({ maxBatch: 50, verbose: false });
-        if (!result.ok) {
-          logger.warn('Lifetime100 rescue: failed', { error: result.error });
-        } else if (result.cohortSize > 0) {
-          logger.info('Lifetime100 rescue: dispatch complete', {
-            cohortSize: result.cohortSize,
-            tgSent: result.stats.tgSent,
-            emailSent: result.stats.emailSent,
-            invoiceFail: result.stats.invoiceFail,
-          });
-        }
-      } catch (err) {
-        logger.error('Lifetime100 rescue cron failed', { error: err.message });
-      }
-    });
+    // Lifetime100 abandoned-cart rescue dispatcher — scheduled via BullMQ
+    // (services/queueService.js:'lifetime100-rescue', workers/index.js case).
+    // Previously double-scheduled here AND on the queue, which caused the
+    // rescue to fire twice per tick and write two breadcrumb DSO rows per
+    // cohort user every 15 min (~800 extra rows/hr on 2026-08-29 → 08-31).
 
     // Meru reconciliation — RETIRED 2026-08 (Meru removed)
     // cron.schedule kept as comment so schedule slots are not accidentally reused.
