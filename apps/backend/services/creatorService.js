@@ -810,18 +810,31 @@ class CreatorService {
         WHERE NOT user_entitlements.is_lifetime
       `, [String(subscriberId), String(creatorId), paymentId || null, expiresAt, durationDays]);
 
-      // Record earnings (70/30 split) — held for EARNINGS_HOLD_HOURS before maturing to 'available'.
-      // Skipped while content-compliance-held: ContentComplianceService.markCompliantIfNewlyQualified
-      // inserts this same row once the creator qualifies and the membership actually starts.
-      if (isContentCompliant) {
-        const amountCreator = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
-        const amountPlatform = Math.round(priceUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
+      // Record earnings (70/30 split). Always insert so the payment is tracked
+      // even when compliance-held — otherwise held payments sit invisibly in
+      // limbo (subscriber's money debited, no earnings row anywhere, no path
+      // to refund if creator never becomes compliant).
+      //   - Compliant → status='holding', matures to 'available' after EARNINGS_HOLD_HOURS
+      //   - Held      → status='pending', available_at=NULL. ContentComplianceService
+      //                 .markCompliantIfNewlyQualified promotes it to 'holding' when
+      //                 the creator hits the content minimum. Held-sub refund cron
+      //                 (queueService) voids it if compliance is never reached.
+      const amountCreator = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
+      const amountPlatform = Math.round(priceUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
 
+      if (isContentCompliant) {
         await client.query(
           `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
            VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
            ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING`,
           [creatorId, rows[0].id, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), paymentId || null]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
+           VALUES ($1, $2, $3, $4, $5, 'pending', NULL, $6, date_trunc('month', CURRENT_DATE)::date)
+           ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING`,
+          [creatorId, rows[0].id, priceUsd, amountCreator, amountPlatform, paymentId || null]
         );
       }
 
@@ -2456,6 +2469,56 @@ class CreatorService {
         userId, passId, isGift, isLifetime, months, provider,
         stripeSubscriptionId: stripeSubscriptionId || null,
       });
+
+      // Zoho integration — fire-and-forget after commit so failures never
+      // roll back the DB write. Each service self-guards via env flags.
+      setImmediate(async () => {
+        try {
+          // Fetch user for email + display fields the Zoho services need
+          const { rows: userRows } = await query(
+            `SELECT id, email, first_name, last_name, username FROM users WHERE id = $1`,
+            [String(userId)]
+          );
+          const u = userRows[0];
+          if (!u) return;
+
+          const zohoSync = require('./zohoSyncService');
+          zohoSync.syncOneUser(String(userId)).catch(() => {});
+
+          const zohoBooks = require('./zohoBooksService');
+          if (zohoBooks.isConfigured()) {
+            // For gifts, invoice the GIFTER (they paid); for self, the same user
+            const billedUserId = isGift && giftedBy ? String(giftedBy) : String(userId);
+            const { rows: billedRows } = billedUserId === String(userId)
+              ? { rows: userRows }
+              : await query(`SELECT id, email, first_name, last_name, username FROM users WHERE id = $1`, [billedUserId]);
+            const billed = billedRows[0] || u;
+            zohoBooks.logCrystalPassPayment({
+              userId: String(billed.id),
+              userEmail: billed.email,
+              userName: billed.first_name,
+              username: billed.username,
+              isGift,
+              priceCents,
+              paymentProvider: provider,
+              paymentRef: ref || `pass:${passId}`,
+              targetCreatorId: String(userId),
+            }).catch(() => {});
+          }
+
+          const zohoCampaigns = require('./zohoCampaignsService');
+          if (zohoCampaigns.isConfigured() && u.email) {
+            zohoCampaigns.addToCrystalCreators({
+              email: u.email, firstName: u.first_name, lastName: u.last_name, pnptvId: String(u.id),
+            }).catch(() => {});
+          }
+        } catch (hookErr) {
+          logger.warn('[CreatorService.activateCrystalPass] zoho hook failed (non-fatal)', {
+            userId, error: hookErr.message,
+          });
+        }
+      });
+
       return { passId, expiresAt };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
@@ -2510,6 +2573,23 @@ class CreatorService {
       }
     }
     logger.info('CreatorService.cancelCrystalPass: pass cancelled', { userId });
+
+    // Zoho sync + Campaigns list removal (fire-and-forget)
+    setImmediate(async () => {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        zohoSync.syncOneUser(String(userId)).catch(() => {});
+
+        const zohoCampaigns = require('./zohoCampaignsService');
+        if (zohoCampaigns.isConfigured()) {
+          const { rows } = await query(`SELECT email FROM users WHERE id = $1`, [String(userId)]);
+          if (rows[0]?.email) {
+            zohoCampaigns.removeFromCrystalCreators(rows[0].email).catch(() => {});
+          }
+        }
+      } catch { /* non-fatal */ }
+    });
+
     return true;
   }
 

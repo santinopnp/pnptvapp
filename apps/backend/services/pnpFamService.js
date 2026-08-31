@@ -79,6 +79,25 @@ async function markPnptvFam(userId) {
     }
     await client.query('COMMIT');
     logger.info('[pnp-fam] promoted', { userId, entitlements: LIFETIME_ADD_ONS });
+
+    // Fire-and-forget Zoho sync (CRM PNPtv_Fam=TRUE + Campaigns list add)
+    setImmediate(async () => {
+      try {
+        require('./zohoSyncService').syncOneUser(String(userId)).catch(() => {});
+        const zohoCampaigns = require('./zohoCampaignsService');
+        if (zohoCampaigns.isConfigured()) {
+          const { rows: ur } = await getPool().query(
+            `SELECT email, first_name, last_name FROM users WHERE id = $1`, [String(userId)]
+          );
+          if (ur[0]?.email) {
+            zohoCampaigns.addToPnptvFam({
+              email: ur[0].email, firstName: ur[0].first_name, lastName: ur[0].last_name, pnptvId: String(userId),
+            }).catch(() => {});
+          }
+        }
+      } catch { /* non-fatal */ }
+    });
+
     return rows[0];
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) {}
@@ -105,6 +124,22 @@ async function unmarkPnptvFam(userId) {
   );
   if (!rows.length) return null;
   logger.info('[pnp-fam] demoted', { userId });
+
+  setImmediate(async () => {
+    try {
+      require('./zohoSyncService').syncOneUser(String(userId)).catch(() => {});
+      const zohoCampaigns = require('./zohoCampaignsService');
+      if (zohoCampaigns.isConfigured()) {
+        const { rows: ur } = await getPool().query(
+          `SELECT email FROM users WHERE id = $1`, [String(userId)]
+        );
+        if (ur[0]?.email) {
+          zohoCampaigns.removeFromPnptvFam(ur[0].email).catch(() => {});
+        }
+      }
+    } catch { /* non-fatal */ }
+  });
+
   return rows[0];
 }
 

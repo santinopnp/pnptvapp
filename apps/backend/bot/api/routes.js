@@ -12488,40 +12488,55 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
       throw err;
     }
   } else {
-    // Legacy path — balance_tokens only, single UPDATE.
-    const debitResult = await dbQuery(
-      `UPDATE user_token_wallets
-       SET balance_tokens = balance_tokens - $2, updated_at = NOW()
-       WHERE user_id = $1 AND balance_tokens >= $2
-       RETURNING balance_tokens`,
-      [subscriberId, tokenCost]
-    );
-    if (!debitResult.rows.length) {
-      // Return BOTH balance and gifted so the frontend can explain WHY:
-      // a user with 180 gifted but 0 balance would otherwise see "you have 0"
-      // and think their money vanished. gifted is scoped to Santino live tips
-      // + santinofurioso first-month sub only (per gifted-spend rules).
-      const walletRow = await dbQuery(
-        `SELECT COALESCE(balance_tokens,0) AS bal, COALESCE(gifted_balance,0) AS gifted
-           FROM user_token_wallets WHERE user_id = $1`,
-        [subscriberId]
-      );
-      const current = walletRow.rows[0]?.bal ?? 0;
-      const gifted = walletRow.rows[0]?.gifted ?? 0;
-      return res.status(402).json({
-        success: false,
-        error: 'Insufficient tokens balance',
-        code: 'INSUFFICIENT_TOKENS',
-        required: tokenCost,
-        current,
-        gifted,
-        giftedLocked: gifted > 0,
+    // Standard creator-sub path — debits balance only (no gifted spend). Routes
+    // through tokenLedger.debit so token_ledger has an audit row for finance /
+    // support / refund reconciliation. Previously used a raw UPDATE which
+    // silently drained wallets with no audit trail.
+    const tokenLedger = require('../../services/tokenLedgerService');
+    // Deterministic sourceId shared with the sub row + creator_earnings so all
+    // three tables (ledger, subscription, earnings) reconcile on a single key.
+    const preTokenPaymentId = `tokens:csub:${subscriberId}:${creatorId}:${Date.now()}`;
+    try {
+      const debitOut = await tokenLedger.debit({
+        userId: subscriberId,
+        amount: tokenCost,
+        reason: 'membership_purchase',
+        sourceType: 'creator_subscription',
+        sourceId: preTokenPaymentId,
+        actorId: 'user',
+        metadata: { creatorId: String(creatorId), priceUsd },
       });
+      newBalance = Number(debitOut.balance_after);
+      spentBalance = Number(debitOut.spent_balance);
+      spentGifted = Number(debitOut.spent_gifted); // will be 0 (no allowGifted)
+    } catch (err) {
+      if (err.code === 'INSUFFICIENT_FUNDS') {
+        const walletRow = await dbQuery(
+          `SELECT COALESCE(balance_tokens,0) AS bal, COALESCE(gifted_balance,0) AS gifted
+             FROM user_token_wallets WHERE user_id = $1`,
+          [subscriberId]
+        );
+        const current = walletRow.rows[0]?.bal ?? 0;
+        const gifted = walletRow.rows[0]?.gifted ?? 0;
+        return res.status(402).json({
+          success: false,
+          error: 'Insufficient tokens balance',
+          code: 'INSUFFICIENT_TOKENS',
+          required: tokenCost,
+          current,
+          gifted,
+          giftedLocked: gifted > 0,
+        });
+      }
+      throw err;
     }
-    newBalance = Number(debitResult.rows[0].balance_tokens);
+    // Stash on req so the shared subscribe/refund block below can reuse it.
+    req._tokenPaymentId = preTokenPaymentId;
   }
-  // Generate a deterministic payment ID so creator_earnings ON CONFLICT works
-  const tokenPaymentId = `tokens:csub:${subscriberId}:${creatorId}:${Date.now()}`;
+  // Generate a deterministic payment ID so creator_earnings ON CONFLICT works.
+  // Path B already picked one for its ledger row above; reuse it so all three
+  // tables (ledger, subscription, earnings) share a single reconciliation key.
+  const tokenPaymentId = req._tokenPaymentId || `tokens:csub:${subscriberId}:${creatorId}:${Date.now()}`;
   try {
     const CreatorService = require('../../services/creatorService');
     await CreatorService.subscribeToCreator(subscriberId, String(creatorId), tokenPaymentId);
@@ -12533,18 +12548,29 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
     logger.info('[wallet/pay-creator-sub] Tokens creator sub granted', { subscriberId, creatorId, tokenCost, newBalance });
     return res.json({ success: true, newBalance, priceUsd });
   } catch (subErr) {
-    // Refund — restore exactly what was debited (balance + gifted). Wrong
-    // side would silently convert gifted → spendable balance, breaking the
+    // Refund — via tokenLedger.credit so the refund lands in token_ledger and
+    // pairs cleanly with the debit row for audit + drift-check. Wrong-side
+    // routing would silently convert gifted → spendable balance, breaking the
     // creator-guard invariant.
     if (spentGifted > 0 || spentBalance > 0) {
-      await dbQuery(
-        `UPDATE user_token_wallets
-           SET balance_tokens = balance_tokens + $2,
-               gifted_balance = LEAST(gifted_balance + $3, 3600),
-               updated_at = NOW()
-         WHERE user_id = $1`,
-        [subscriberId, spentBalance, spentGifted]
-      ).catch(() => {});
+      const tokenLedger = require('../../services/tokenLedgerService');
+      try {
+        await tokenLedger.credit({
+          userId: subscriberId,
+          balanceDelta: spentBalance,
+          giftedDelta: spentGifted,
+          reason: 'refund_credit',
+          sourceType: 'creator_subscription',
+          sourceId: tokenPaymentId,
+          actorId: 'system',
+          metadata: { creatorId: String(creatorId), reason: 'subscribeToCreator_failed', priceUsd },
+        });
+      } catch (refundErr) {
+        logger.error('[wallet/pay-creator-sub] REFUND FAILED — manual intervention needed', {
+          subscriberId, creatorId, tokenCost, spentBalance, spentGifted,
+          origErr: subErr.message, refundErr: refundErr.message, tokenPaymentId,
+        });
+      }
     }
     logger.error('[wallet/pay-creator-sub] sub failed, Tokens refunded', {
       subscriberId, creatorId, tokenCost, spentBalance, spentGifted, err: subErr.message,
@@ -17227,6 +17253,10 @@ app.post('/api/admin/users/:id/whale-pig', requireSessionAuth, adminGuard, async
   logger.info('[whale-pig] admin toggle', {
     adminId: req.session?.user?.id, targetId,
     is_whale_pig: rows[0].is_whale_pig, is_pnptv_fam: rows[0].is_pnptv_fam,
+  });
+  // Fire-and-forget Zoho sync so CRM Whale_Pig checkbox flips within seconds
+  setImmediate(() => {
+    require('../../services/zohoSyncService').syncOneUser(targetId).catch(() => {});
   });
   return res.json({ ok: true, is_whale_pig: rows[0].is_whale_pig, is_pnptv_fam: rows[0].is_pnptv_fam });
 }));

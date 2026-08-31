@@ -32,9 +32,18 @@ const BATCH_SIZE = 100;
 function tierFor(row) {
   if (row.role === 'superadmin' || row.role === 'admin') return 'co_founder';
   if (row.role === 'star') return 'star';
+  // Crystal Creator is a premium sub-tier of creator — surface it in the picklist
+  // so segmentation ("all Crystal Creators") is a one-click filter in Zoho.
+  if (row.crystal_creator_active) return 'crystal_creator';
   if (row.creator_status === 'approved' || row.creator_status === 'active' || row.role === 'creator' || row.performer_status === 'active') return 'creator';
   return null;
 }
+
+// Zoho v2 API rejects the entire record if it contains a custom field that
+// doesn't exist in the module. The 6 tier fields below (Crystal_*, PNPtv_Fam*,
+// Whale_Pig) must be created in Zoho CRM → Contacts BEFORE flipping this flag.
+// See docs comment at bottom of file for the exact spec.
+const TIER_FIELDS_READY = process.env.ZOHO_SYNC_TIER_FIELDS === '1';
 
 /**
  * @param {object} opts
@@ -68,6 +77,18 @@ async function _loadCreators({ delta = false, mode = 'creators' } = {}) {
       u.id, u.first_name, u.last_name, u.email, u.username,
       u.role, u.creator_status, u.creator_type, u.bio, u.city, u.country,
       u.slack_legal_ack_at,
+      u.crystal_creator_active_until,
+      u.crystal_creator_invited_at,
+      u.is_pnptv_fam,
+      u.pnptv_fam_since,
+      u.is_whale_pig,
+      (
+        u.crystal_creator_active_until IS NOT NULL
+        AND (
+          u.crystal_creator_active_until::text IN ('infinity','Infinity')
+          OR u.crystal_creator_active_until > NOW()
+        )
+      ) AS crystal_creator_active,
       COALESCE(p.status, 'none') AS performer_status,
       COALESCE(SUM(ce.amount_creator) FILTER (
         WHERE ce.status IN ('available','paid_out','holding')
@@ -134,6 +155,23 @@ function _toZohoContact(row) {
     c.Legal_Package_Acknowledged_At = row.slack_legal_ack_at
       ? new Date(row.slack_legal_ack_at).toISOString()
       : null;
+  }
+  // Tier fields — only emitted when Zoho custom fields exist (env flag). Zoho
+  // v2 rejects the whole record if it contains unknown fields, so keep off
+  // until the fields are created in the workspace.
+  if (TIER_FIELDS_READY) {
+    const u = row.crystal_creator_active_until;
+    const isInfinity = u && (String(u) === 'infinity' || String(u) === 'Infinity');
+    c.Crystal_Creator = !!row.crystal_creator_active;
+    c.Crystal_Active_Until = u && !isInfinity
+      ? new Date(u).toISOString().slice(0, 10)  // Zoho Date field = YYYY-MM-DD
+      : null;
+    c.Crystal_Invited = !!row.crystal_creator_invited_at;
+    c.PNPtv_Fam = !!row.is_pnptv_fam;
+    c.PNPtv_Fam_Since = row.pnptv_fam_since
+      ? new Date(row.pnptv_fam_since).toISOString()
+      : null;
+    c.Whale_Pig = !!row.is_whale_pig;
   }
   return c;
 }
@@ -206,4 +244,57 @@ function start() {
   logger.info('[zohoSync] nightly delta sync scheduled — 08:00 UTC (03:00 America/Bogota)');
 }
 
-module.exports = { runSync, start };
+/**
+ * Sync ONE user immediately — called from activation hooks (Crystal pass
+ * activated, Whale Pig / PNPtv Fam toggled) so Zoho reflects the change
+ * within seconds instead of waiting for the nightly delta. Fire-and-forget:
+ * failures are logged, never thrown.
+ *
+ * @param {string} userId
+ */
+async function syncOneUser(userId) {
+  if (!zoho.isConfigured()) return;
+  try {
+    const { rows } = await query(`
+      SELECT
+        u.id, u.first_name, u.last_name, u.email, u.username,
+        u.role, u.creator_status, u.creator_type, u.bio, u.city, u.country,
+        u.slack_legal_ack_at,
+        u.crystal_creator_active_until,
+        u.crystal_creator_invited_at,
+        u.is_pnptv_fam,
+        u.pnptv_fam_since,
+        u.is_whale_pig,
+        (
+          u.crystal_creator_active_until IS NOT NULL
+          AND (
+            u.crystal_creator_active_until::text IN ('infinity','Infinity')
+            OR u.crystal_creator_active_until > NOW()
+          )
+        ) AS crystal_creator_active,
+        COALESCE(p.status, 'none') AS performer_status,
+        COALESCE(SUM(ce.amount_creator) FILTER (WHERE ce.status IN ('available','paid_out','holding')), 0)::numeric AS lifetime_earnings,
+        COALESCE(SUM(ce.amount_creator) FILTER (WHERE ce.status IN ('available','paid_out','holding') AND ce.created_at >= date_trunc('month', NOW())), 0)::numeric AS month_earnings,
+        COALESCE(sub.active_count, 0) AS active_subs,
+        EXISTS (SELECT 1 FROM creator_2257_records r WHERE r.user_id = u.id AND r.verification_status='approved') AS verified_2257,
+        (SELECT (verified_at + INTERVAL '1 year')::date FROM creator_2257_records r WHERE r.user_id = u.id AND r.verification_status='approved' ORDER BY verified_at DESC LIMIT 1) AS verify_expiry
+      FROM users u
+      LEFT JOIN performers p ON p.user_id = u.id
+      LEFT JOIN creator_earnings ce ON ce.creator_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS active_count FROM creator_subscriptions cs
+         WHERE cs.creator_id = u.id AND cs.status='active'
+      ) sub ON true
+      WHERE u.id = $1
+      GROUP BY u.id, p.status, sub.active_count
+    `, [String(userId)]);
+    if (!rows.length) return;
+    const contact = _toZohoContact(rows[0]);
+    const result = await zoho.upsertContactByPnptvId(String(userId), contact);
+    logger.info('[zohoSync] single-user sync', { userId, action: result?.action || 'skipped' });
+  } catch (err) {
+    logger.warn('[zohoSync] single-user sync failed (non-fatal)', { userId, error: err.message });
+  }
+}
+
+module.exports = { runSync, start, syncOneUser };
