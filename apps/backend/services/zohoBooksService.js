@@ -84,30 +84,53 @@ function _headers(token) {
 async function _ensureContact({ userId, email, firstName, lastName, username }) {
   const token = await getAccessToken();
   const orgId = process.env.ZOHO_BOOKS_ORG_ID;
-  const displayName = (firstName || username || 'PNPtv user').slice(0, 200);
+  // Use "First (@handle) — PNPtv-<id>" as the unique display name so pre-Books
+  // contacts with the same first name don't collide (Books enforces uniqueness
+  // on contact_name). PNPtv-<id> is the disambiguator; strip-safe.
+  const uniqueSuffix = ` — PNPtv-${String(userId).slice(0, 12)}`;
+  const displayName = ((firstName || username || 'PNPtv user') + (username ? ` (@${username})` : '') + uniqueSuffix).slice(0, 200);
   try {
-    // Search by contact_number (we use PNPtv user id as the natural key)
-    const search = await axios.get(`${API}/contacts`, {
+    // 1. Search by contact_number (our natural key)
+    const searchByNum = await axios.get(`${API}/contacts`, {
       headers: _headers(token),
       params: { organization_id: orgId, contact_number: String(userId) },
       timeout: 15000,
     });
-    const existing = search.data?.contacts?.[0];
-    if (existing?.contact_id) return existing.contact_id;
+    const foundByNum = searchByNum.data?.contacts?.[0];
+    if (foundByNum?.contact_id) return foundByNum.contact_id;
 
-    // Create new
-    const create = await axios.post(`${API}/contacts`, {
-      contact_name: displayName,
-      contact_number: String(userId),
-      contact_type: 'customer',
-      contact_persons: email ? [{
-        first_name: firstName || 'PNPtv',
-        last_name: lastName || username || 'user',
-        email,
-        is_primary_contact: true,
-      }] : [],
-    }, { headers: _headers(token), params: { organization_id: orgId }, timeout: 15000 });
-    return create.data?.contact?.contact_id || null;
+    // 2. Try to create — most requests hit this path
+    try {
+      const create = await axios.post(`${API}/contacts`, {
+        contact_name: displayName,
+        contact_number: String(userId),
+        contact_type: 'customer',
+        contact_persons: email ? [{
+          first_name: firstName || 'PNPtv',
+          last_name: lastName || username || 'user',
+          email,
+          is_primary_contact: true,
+        }] : [],
+      }, { headers: _headers(token), params: { organization_id: orgId }, timeout: 15000 });
+      return create.data?.contact?.contact_id || null;
+    } catch (createErr) {
+      const code = createErr.response?.data?.code;
+      // 3062 = name already exists. Search by name + update contact_number
+      // on the existing row so next call short-circuits at step 1.
+      if (code !== 3062) throw createErr;
+      const searchByName = await axios.get(`${API}/contacts`, {
+        headers: _headers(token),
+        params: { organization_id: orgId, contact_name_contains: displayName.slice(0, 50) },
+        timeout: 15000,
+      });
+      const matched = (searchByName.data?.contacts || []).find(cn => cn.contact_name === displayName);
+      if (!matched?.contact_id) throw createErr;
+      // Patch contact_number for future idempotency
+      await axios.put(`${API}/contacts/${matched.contact_id}`, {
+        contact_number: String(userId),
+      }, { headers: _headers(token), params: { organization_id: orgId }, timeout: 15000 }).catch(() => {});
+      return matched.contact_id;
+    }
   } catch (err) {
     logger.warn('[zohoBooks] contact upsert failed', { userId, error: err.response?.data || err.message });
     return null;
@@ -154,17 +177,18 @@ async function logCrystalPassPayment(opts) {
     const token = await getAccessToken();
     const orgId = process.env.ZOHO_BOOKS_ORG_ID;
 
+    // Custom fields are deliberately NOT sent — they'd require pre-created
+    // Books custom_fields matching each api_name, and the info fits fine in
+    // notes + reference_number. Filing this comment here so future readers
+    // don't try to add them back and hit "Uno o más campos personalizados
+    // no existen." (error code 120100).
     const invoice = await axios.post(`${API}/invoices`, {
       customer_id: contactId,
       reference_number: paymentRef,
       line_items: [{ item_id: itemId, quantity: 1, rate: usd }],
       notes: isGift
-        ? `Crystal Creator gift → target ${targetCreatorId}. Paid via ${paymentProvider}.`
-        : `Crystal Creator self-purchase. Paid via ${paymentProvider}.`,
-      custom_fields: [
-        { customfield_id: null, api_name: 'cf_paymentprovider', value: paymentProvider },
-        { customfield_id: null, api_name: 'cf_targetcreator',   value: String(targetCreatorId || userId) },
-      ],
+        ? `Crystal Creator gift → target ${targetCreatorId}. Paid via ${paymentProvider}. Ref ${paymentRef}.`
+        : `Crystal Creator self-purchase. Paid via ${paymentProvider}. Ref ${paymentRef}.`,
     }, { headers: _headers(token), params: { organization_id: orgId, send: false }, timeout: 20000 });
 
     const invoiceId = invoice.data?.invoice?.invoice_id;
