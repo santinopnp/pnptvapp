@@ -1106,7 +1106,7 @@ export default function PostCard({
             if (!m || m.kind !== "channel_promo") return null;
             const channelSlug = (m.channel_slug as string | undefined) || "";
             const channelName = (m.channel_name as string | undefined) || "";
-            const accessType = (m.access_type as "free" | "prime" | "subscription" | "paid" | undefined) || "free";
+            const accessType = (m.access_type as "free" | "prime" | "subscription" | "paid" | "bts" | undefined) || "free";
             const creatorUsername = (m.creator_username as string | undefined) || "";
             const priceUsd = m.price_usd as number | null | undefined;
             const videoUrl = ((m.video_url as string | undefined) && (m.video_url as string).length > 10)

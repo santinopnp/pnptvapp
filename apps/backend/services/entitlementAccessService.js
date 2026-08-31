@@ -802,6 +802,29 @@ class EntitlementAccessService {
           code: 'PRIME_REQUIRED',
         };
       }
+      if (accessType === 'bts') {
+        // BTS channel — gated by an active bts_subscription (Crystal Service).
+        // Owner bypass already handled above. Anyone else needs the paid
+        // service booking within the past 30 days.
+        try {
+          const CrystalSvc = require('./crystalServiceService');
+          const creatorId = resource.creator_id ? String(resource.creator_id) : null;
+          if (creatorId && await CrystalSvc.hasActiveBtsSubscription(userId, creatorId)) {
+            return { allowed: true, reason: 'bts_subscription_active', scoped: true };
+          }
+        } catch (btsErr) {
+          logger.warn('hasResourceAccess: BTS check failed', {
+            userId, resourceId: resource.id, error: btsErr.message,
+          });
+        }
+        return {
+          allowed: false,
+          reason: 'requires_bts_subscription',
+          accessType: 'bts',
+          creatorId: resource.creator_id ? String(resource.creator_id) : undefined,
+          code: 'BTS_SUBSCRIPTION_REQUIRED',
+        };
+      }
       if (accessType === 'paid' || accessType === 'subscription') {
         // Paid/subscription channels = monthly subscription, BASIC or PRIME
         // members only. FREE users must upgrade first.

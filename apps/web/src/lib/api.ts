@@ -1184,7 +1184,7 @@ export interface ChannelPromoMetadata {
   channel_name: string;
   creator_id: string;
   creator_username: string | null;
-  access_type: "free" | "subscription" | "prime" | "paid";
+  access_type: "free" | "subscription" | "prime" | "paid" | "bts";
   price_usd: number | null;
   video_id: number;
   video_directus_id: string;
@@ -1247,7 +1247,7 @@ export interface SocialPostItem {
   is_video_exclusive?: boolean;
   unlock_target?: "prime" | "creator_sub" | "paid";
   // Channel access gate fields (populated via LEFT JOIN creator_channels in feed queries)
-  channel_access_type?: "free" | "prime" | "paid" | "subscription" | null;
+  channel_access_type?: "free" | "prime" | "paid" | "subscription" | "bts" | null;
   channel_creator_id?: string | null;
   plan_slug?: string | null;
   creator_channel_url?: string | null;
@@ -9317,7 +9317,7 @@ export interface ChannelVideo {
     id: number;
     slug: string;
     name: string;
-    access_type: "free" | "subscription" | "prime" | "paid";
+    access_type: "free" | "subscription" | "prime" | "paid" | "bts";
     price_usd: number | null;
   };
 }
@@ -9836,7 +9836,7 @@ export interface PublicCreatorChannel {
   name: string;
   slug: string;
   cover_image_url: string | null;
-  access_type: "free" | "prime" | "subscription" | "paid";
+  access_type: "free" | "prime" | "subscription" | "paid" | "bts";
   price_usd: number;
   post_count: number;
   subscriber_count: number;

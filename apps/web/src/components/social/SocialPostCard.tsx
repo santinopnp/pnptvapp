@@ -228,7 +228,7 @@ function resolveChannelPromoCta(
     channel_slug?: string;
     channel_name?: string;
     creator_username?: string | null;
-    access_type?: "free" | "prime" | "subscription" | "paid";
+    access_type?: "free" | "prime" | "subscription" | "paid" | "bts";
     price_usd?: number | null;
     video_url?: string;
     video_directus_id?: string;
