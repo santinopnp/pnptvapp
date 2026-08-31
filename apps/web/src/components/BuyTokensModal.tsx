@@ -94,9 +94,19 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationSuccess, setActivationSuccess] = useState<number | null>(null);
 
-  // Load packages on open
+  // Load packages on open. Also resets transient UI state (error / success /
+  // activation echo / custom amount) so a re-opened modal doesn't show stale
+  // results from a previous session.
   useEffect(() => {
     if (!isOpen) return;
+    setError(null);
+    setSuccess(null);
+    setActivationSuccess(null);
+    setActivationError(null);
+    setActivationCode("");
+    setPayingPackageId(null);
+    setPayingCustom(false);
+    setNpFallbackPackageId(null);
     setLoadingPackages(true);
     getTokenPackages()
       .then((res) => {
@@ -321,7 +331,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
       );
       if (!popup) {
-        window.location.href = res.checkoutUrl;
+        // Popup blocked. Instead of navigating away (loses the modal + user
+        // context), show an error with a clickable link the user can tap.
+        setError(es
+          ? `El navegador bloqueó la ventana. Toca aquí para abrir el checkout: ${res.checkoutUrl}`
+          : `Your browser blocked the popup. Tap here to open checkout: ${res.checkoutUrl}`);
+        setNpFallbackPackageId(null);
         return;
       }
       const orderId = res.invoiceId;

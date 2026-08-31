@@ -42,7 +42,7 @@ export default function PostDetail() {
   // When the post is gated (403 from the API or scoped resource lock), capture
   // the upsell context so we render the "Upgrade to PRIME" card instead of a
   // generic "Post Not Found" message.
-  const [locked, setLocked] = useState<{ upgradeUrl: string; reason: "prime" | "creator" | "member" } | null>(null);
+  const [locked, setLocked] = useState<{ upgradeUrl: string; reason: "prime" | "creator" | "member" | "bts"; creatorId?: string } | null>(null);
   const [contentDisclaimer, setContentDisclaimer] = useState(user?.contentDisclaimer || false);
 
   useEffect(() => {
@@ -66,15 +66,24 @@ export default function PostDetail() {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 403) {
           const code = err.code || "";
-          const reason: "prime" | "creator" | "member" =
-            code === "CREATOR_SUBSCRIPTION_REQUIRED" || err.details?.kind === "creator"
-              ? "creator"
-              : code === "MEMBER_REQUIRED"
-                ? "member"
-                : "prime";
+          const creatorId = err.details?.creatorId as string | undefined;
+          const reason: "prime" | "creator" | "member" | "bts" =
+            code === "BTS_SUBSCRIPTION_REQUIRED"
+              ? "bts"
+              : code === "CREATOR_SUBSCRIPTION_REQUIRED" || err.details?.kind === "creator"
+                ? "creator"
+                : code === "MEMBER_REQUIRED"
+                  ? "member"
+                  : "prime";
+          // BTS lock deep-links straight to the creator's profile with the
+          // service pre-selected — one tap → booking flow.
+          const btsUpgradeUrl = reason === "bts" && creatorId
+            ? `/profile/${creatorId}#services`
+            : err.details?.upgradeUrl || "/subscribe";
           setLocked({
-            upgradeUrl: err.details?.upgradeUrl || "/subscribe",
+            upgradeUrl: btsUpgradeUrl,
             reason,
+            creatorId,
           });
         } else {
           setError(err instanceof Error ? err.message : "Post not found.");
@@ -145,21 +154,34 @@ export default function PostDetail() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
           </svg>
           <p className="text-white font-semibold mb-1">
-            {locked.reason === "creator"
-              ? "Subscribe to unlock this video"
-              : "PRIME members only"}
+            {locked.reason === "bts"
+              ? "◈ Behind-the-scenes drop"
+              : locked.reason === "creator"
+                ? "Subscribe to unlock this video"
+                : "PRIME members only"}
           </p>
           <p className="text-sm mb-5" style={{ color: "var(--pnp-text-secondary)" }}>
-            {locked.reason === "creator"
-              ? "This video is exclusive to the creator's subscribers."
-              : "Upgrade to PRIME to watch this video and unlock all exclusive content."}
+            {locked.reason === "bts"
+              ? "Only fans with an active BTS subscription can see this creator's behind-the-scenes posts. $50/month, cancel anytime."
+              : locked.reason === "creator"
+                ? "This video is exclusive to the creator's subscribers."
+                : "Upgrade to PRIME to watch this video and unlock all exclusive content."}
           </p>
           <Link
             to={locked.upgradeUrl}
             className="inline-flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-xl text-white transition-opacity hover:opacity-80"
-            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            style={{
+              background: locked.reason === "bts"
+                ? "linear-gradient(135deg, #b8f5ff, #d4bfff)"
+                : "linear-gradient(135deg, #D4007A, #E69138)",
+              color: locked.reason === "bts" ? "#1a1a2e" : "#fff",
+            }}
           >
-            {locked.reason === "member" ? "Become a Member" : "Upgrade to PRIME"}
+            {locked.reason === "bts"
+              ? "Get BTS access ◈"
+              : locked.reason === "member"
+                ? "Become a Member"
+                : "Upgrade to PRIME"}
           </Link>
         </div>
       )}

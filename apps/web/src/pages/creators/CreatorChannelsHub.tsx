@@ -17,6 +17,7 @@ const ACCESS_LABELS: Record<string, { label: string; color: string }> = {
   subscription: { label: "Subscription", color: "#D4007A" },
   prime:        { label: "PRIME",        color: "#E69138" },
   paid:         { label: "Pay-per-view", color: "#9B59B6" },
+  bts:          { label: "BTS ◈",        color: "#d8b9ff" },
 };
 
 function ChannelVideoRow({
@@ -150,7 +151,7 @@ function ChannelCard({
             channelId={channel.id}
             channelName={channel.name}
             channelSlug={channel.slug ?? String(channel.id)}
-            accessType={channel.accessType as "free" | "subscription" | "prime" | "paid"}
+            accessType={channel.accessType as "free" | "subscription" | "prime" | "paid" | "bts"}
             pricePerMonth={channel.priceUsd ?? null}
             creatorUsername={user?.username ?? null}
             onPublished={() => { loadVideos(); onVideoPublished?.(); }}
@@ -201,10 +202,19 @@ export function CreatorChannelsHub() {
   const [createForm, setCreateForm] = React.useState({
     name: "",
     description: "",
-    accessType: "subscription" as "free" | "subscription" | "prime" | "paid",
+    accessType: "subscription" as "free" | "subscription" | "prime" | "paid" | "bts",
   });
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState<string | null>(null);
+  // BTS is a Crystal-Creator-only perk. Fetch active state so we only show
+  // the "BTS ◈" option to eligible creators. Non-active → option hidden.
+  const [isCrystalActive, setIsCrystalActive] = React.useState<boolean>(false);
+  React.useEffect(() => {
+    fetch("/api/creator/crystal/self", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.active) setIsCrystalActive(true); })
+      .catch(() => { /* non-fatal — non-invited creators return 403, no BTS option */ });
+  }, []);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -326,7 +336,15 @@ export function CreatorChannelsHub() {
                   <option value="free">Free — all registered members</option>
                   <option value="subscription">Subscription — your paid fans</option>
                   <option value="paid">Pay-per-view — one-time purchase</option>
+                  {isCrystalActive && (
+                    <option value="bts">BTS ◈ — Crystal insiders only</option>
+                  )}
                 </select>
+                {createForm.accessType === "bts" && (
+                  <p className="text-[11px] mt-1.5 leading-snug" style={{ color: "#d8b9ff" }}>
+                    Behind-the-scenes drop channel — visible only to fans with an active BTS subscription ($50/month).
+                  </p>
+                )}
               </div>
             </div>
             {createError && <p className="text-xs text-red-400">{createError}</p>}

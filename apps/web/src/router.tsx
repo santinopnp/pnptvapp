@@ -383,6 +383,7 @@ const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorChannelsHu
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
 const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWizard"));
 const CrystalServiceBookings = lazy(() => import("@/pages/creator/CrystalServiceBookings"));
+const PrivateCall = lazy(() => import("@/pages/PrivateCall"));
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
 const Models = lazy(() => import("@/pages/Models"));
@@ -1161,6 +1162,16 @@ export const router = createBrowserRouter([
     element: (
       <ModuleLoader>
         <MainStageGuestJoin />
+      </ModuleLoader>
+    ),
+  },
+  // Private Crystal Service call — creator + buyer only, gated by booking id.
+  // Standalone route (no Layout shell) so the LiveKit video takes full viewport.
+  {
+    path: "/private-call/:bookingId",
+    element: (
+      <ModuleLoader>
+        <PrivateCall />
       </ModuleLoader>
     ),
   },

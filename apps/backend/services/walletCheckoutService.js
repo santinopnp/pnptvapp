@@ -685,7 +685,32 @@ async function _fulfillCrystalService(client, { userId, entitlementSpec, provide
     return { bookingId, alreadyApplied: true };
   }
 
-  // Fire-and-forget notifications: creator DM + Slack ops ping.
+  // LiveKit auto-schedule for private_call / private_main_stage.
+  // Deterministic room name so re-runs / retries land on the same room; the
+  // /private-call/:bookingId frontend page fetches a fresh token from
+  // /api/creator/services/bookings/:bookingId/livekit-token when either party
+  // joins. Stored on booking.metadata so the endpoint can validate ownership.
+  const isLiveKitCall = gate.service.service_type === 'private_call'
+                       || gate.service.service_type === 'private_main_stage';
+  const livekitRoomName = isLiveKitCall ? `crystal-call-${bookingId}` : null;
+  if (isLiveKitCall) {
+    try {
+      await query(
+        `UPDATE creator_service_bookings
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                        || jsonb_build_object('livekitRoomName', $2::text)
+          WHERE id = $1`,
+        [bookingId, livekitRoomName]
+      );
+    } catch (err) {
+      logger.warn('[walletCheckout] _fulfillCrystalService: livekit room name write failed (non-fatal)', {
+        bookingId, error: err.message,
+      });
+    }
+  }
+
+  // Fire-and-forget notifications: creator DM + buyer DM (LiveKit call links)
+  // + Slack ops ping.
   setImmediate(async () => {
     try {
       const { rows: buyerRows } = await query(
@@ -693,12 +718,30 @@ async function _fulfillCrystalService(client, { userId, entitlementSpec, provide
       );
       const buyer = buyerRows[0] || {};
       const buyerHandle = buyer.username ? `@${buyer.username}` : (buyer.first_name || String(userId).slice(0, 8));
-      const dmText = `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${(priceCents / 100).toFixed(0)} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\nManage: https://pnptv.app/creators/services`;
+      const priceUsd = (priceCents / 100).toFixed(0);
+      const callLink = livekitRoomName
+        ? `https://pnptv.app/private-call/${bookingId}`
+        : null;
 
-      if (/^\d+$/.test(String(creatorUserId))) {
-        let bot = null;
-        try { bot = require('../bot/core/bot'); } catch { /* no bot */ }
-        if (bot?.telegram) await bot.telegram.sendMessage(creatorUserId, dmText).catch(() => {});
+      // Creator DM — new booking notification. Includes call link if applicable.
+      const creatorDm = livekitRoomName
+        ? `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${priceUsd} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\n📞 Coordinate the time with them, then join the private LiveKit room:\n${callLink}\n\nManage: https://pnptv.app/creators/services`
+        : `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${priceUsd} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\nManage: https://pnptv.app/creators/services`;
+
+      let bot = null;
+      try { bot = require('../bot/core/bot'); } catch { /* no bot */ }
+      if (bot?.telegram && /^\d+$/.test(String(creatorUserId))) {
+        await bot.telegram.sendMessage(creatorUserId, creatorDm).catch(() => {});
+      }
+
+      // Buyer DM — only for LiveKit calls; other services (custom_content,
+      // priority_dm, bts_subscription) don't need a call link.
+      if (livekitRoomName && bot?.telegram && /^\d+$/.test(String(userId))) {
+        const creatorHandle = gate.service.username
+          ? `@${gate.service.username}`
+          : (gate.service.first_name || 'the creator');
+        const buyerDm = `💎 Your ${gate.service.service_type.replace(/_/g, ' ')} with ${creatorHandle} is confirmed.\n\n📞 Coordinate the time with them, then join the private LiveKit room:\n${callLink}\n\nBoth of you need this link — nobody else can join.`;
+        await bot.telegram.sendMessage(userId, buyerDm).catch(() => {});
       }
 
       try {
@@ -707,7 +750,7 @@ async function _fulfillCrystalService(client, { userId, entitlementSpec, provide
           orderId: paymentRef,
           userId: String(userId),
           username: buyerHandle,
-          amount: (priceCents / 100).toFixed(0),
+          amount: priceUsd,
           currency: 'USD',
           plan: `Crystal service: ${gate.service.service_type}`,
           provider: `wallet_usdc → @${gate.service.username || creatorUserId}`,
