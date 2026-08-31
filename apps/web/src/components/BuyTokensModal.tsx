@@ -395,7 +395,11 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     if (!activeWallet) return;
     const price = Number(pkg.usd);
     setError(null);
+    setPayingPackageId(pkg.id);
     try {
+      // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
+      // lands in their embedded wallet. defaultAmount clamps to ≥$15 to satisfy
+      // Stripe onramp minimums even for smaller packs (leftover is spendable).
       await addFunds({
         destination: {
           address: activeWallet.address,
@@ -404,7 +408,31 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         },
         fiat: { defaultAmount: Math.max(15, price).toFixed(0) },
       });
-      refreshBalance();
+      // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
+      // the on-chain Ru$h purchase automatically so the card user gets the
+      // one-tap "pay and get Ru$h" experience instead of a two-step manual flow.
+      const deadline = Date.now() + 60_000;
+      let bal = walletUsdc ?? 0;
+      while (Date.now() < deadline && bal < price) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const b = await getWalletUsdcBalance(activeWallet.address).catch(() => null);
+        if (b && b.hasWallet) {
+          bal = b.usdc;
+          setWalletUsdc(b.usdc);
+        }
+      }
+      if (bal >= price) {
+        await _executeIntent(
+          "usdc",
+          { tokens: Number(pkg.tokens), packageId: pkg.id },
+          Number(pkg.tokens),
+          null,
+        );
+      } else {
+        setError(es
+          ? "El pago con tarjeta se está procesando. Cuando llegue el USDC vuelve a tocar el paquete."
+          : "Card payment is still processing. Once USDC arrives, tap the package again.");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
@@ -413,6 +441,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         surface: "rush", packageId: pkg.id, amountUsd: price,
         address: activeWallet?.address, walletType: activeWallet?.walletClientType,
       });
+    } finally {
+      setPayingPackageId(null);
     }
   };
 
@@ -575,22 +605,22 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               </p>
             </div>
           ) : (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-center">
-              <p className="text-sm font-semibold text-white mb-2">
-                {es ? "Crea tu billetera para continuar" : "Create your wallet to continue"}
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-4 text-center">
+              <p className="text-sm font-bold text-emerald-300 mb-1">
+                {es ? "💳 Paga con tarjeta" : "💳 Pay with your card"}
               </p>
-              <p className="text-[11px] text-white/60 mb-3 leading-snug">
+              <p className="text-[11px] text-white/70 mb-3 leading-snug">
                 {es
-                  ? "Una billetera integrada gratuita te permite comprar Ru$h con tarjeta y usarlo en toda la app."
-                  : "A free embedded wallet lets you buy Ru$h with your card and spend it anywhere on the app."}
+                  ? "Crédito, débito, Apple Pay o Google Pay. Creamos tu billetera automáticamente — sin apps ni frases raras."
+                  : "Credit, debit, Apple Pay, or Google Pay. We set up your wallet automatically — no apps, no seed phrases."}
               </p>
               <button
                 type="button"
                 onClick={() => login()}
-                className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
-                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+                style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
               >
-                {es ? "Crear billetera" : "Create wallet"}
+                {es ? "Empezar" : "Get started"}
               </button>
             </div>
           )}
@@ -734,19 +764,20 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                       : (walletEth != null && ethUsdPrice != null && walletEth >= ethNeeded);
                     const isPaying = payingPackageId === pkg.id;
                     const disabled = isPaying || success !== null;
-                    // Card fallback is USDC-only (Privy Stripe onramp lands USDC).
+                    // No-balance path always falls back to card via Privy's
+                    // Stripe onramp (settles USDC on Base regardless of the
+                    // selected rail — ETH-rail users still pay with card, they
+                    // just receive USDC and the follow-up buy runs on USDC).
                     const onClick = () => canAfford
                       ? handleWalletPay(pkg)
-                      : rail === "usdc" ? handleFundForPackage(pkg) : undefined;
+                      : handleFundForPackage(pkg);
                     const subLabel = isPaying
-                      ? (es ? "Firmando…" : "Signing…")
+                      ? (es ? "Procesando…" : "Processing…")
                       : canAfford
                         ? (rail === "eth"
                             ? `Ξ ${ethNeeded.toFixed(6)} ETH`
                             : `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`)
-                        : rail === "usdc"
-                          ? `$${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`
-                          : (es ? "Sin ETH" : "Not enough ETH");
+                        : `💳 $${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`;
                     return (
                       <button
                         key={pkg.id}
