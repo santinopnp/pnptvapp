@@ -252,6 +252,22 @@ async function initializeQueues() {
     jobId: 'cron-media-cleanup',
   });
 
+  // Crystal Creator pass sweep — daily at 04:00 UTC; marks expired rows +
+  // clears users.crystal_creator_active_until when past due.
+  await cronQueue.add('crystal-pass-sweep', {}, {
+    repeat: { pattern: '0 4 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crystal-pass-sweep',
+  });
+
+  // Crystal Creator renewal reminder — daily at 15:00 UTC (10:00 Bogotá,
+  // solid morning slot for the LATAM cohort). T-3 days before expires_at.
+  await cronQueue.add('crystal-renewal-reminder', {}, {
+    repeat: { pattern: '0 15 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crystal-renewal-reminder',
+  });
+
   // Creator eligibility batch — daily at 03:10 UTC
   await cronQueue.add('creator-eligibility', {}, {
     repeat: { pattern: '10 3 * * *', tz: 'UTC' },
@@ -271,6 +287,15 @@ async function initializeQueues() {
     repeat: { pattern: '0 9 * * *', tz: 'UTC' },
     attempts: 2, removeOnFail: false,
     jobId: 'cron-creator-renewal',
+  });
+
+  // Held-sub refund sweep — daily at 09:30 UTC. Refunds Ru$h to subscribers
+  // whose creator never met the 4-min content-compliance threshold within
+  // CREATOR_HELD_REFUND_AFTER_DAYS (default 30) days of payment.
+  await cronQueue.add('creator-held-refund', {}, {
+    repeat: { pattern: '30 9 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-creator-held-refund',
   });
 
   // Channel/hangout subscription renewal — daily at 09:15 UTC

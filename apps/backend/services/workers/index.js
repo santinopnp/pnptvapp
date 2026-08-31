@@ -422,6 +422,28 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'crystal-pass-sweep': {
+      try {
+        const CreatorService = require('../creatorService');
+        const r = await CreatorService.sweepExpiredCrystalPasses();
+        if (r.passesSwept || r.usersSwept) logger.info('Crystal pass sweep', r);
+      } catch (err) {
+        logger.error('Crystal pass sweep cron error', { error: err.message });
+      }
+      return;
+    }
+
+    case 'crystal-renewal-reminder': {
+      try {
+        const CreatorService = require('../creatorService');
+        const r = await CreatorService.sendCrystalRenewalReminders();
+        if (r.sent || r.failed) logger.info('Crystal renewal reminders sent', r);
+      } catch (err) {
+        logger.error('Crystal renewal reminder cron error', { error: err.message });
+      }
+      return;
+    }
+
     case 'video-leak-detector': {
       const { cache } = require('../../config/redis');
       const BusinessNotificationService = _safeRequire('../businessNotificationService');
@@ -537,6 +559,14 @@ async function cronProcessor(job) {
       if (!CreatorPayoutService) { logger.warn('[BullMQ] creator-renewal: service not found'); return; }
       const results = await CreatorPayoutService.runSubscriptionRenewals();
       logger.info('Creator subscription renewal completed', results);
+      return;
+    }
+
+    case 'creator-held-refund': {
+      const CreatorPayoutService = _safeRequire('../creatorPayoutService');
+      if (!CreatorPayoutService) { logger.warn('[BullMQ] creator-held-refund: service not found'); return; }
+      const results = await CreatorPayoutService.runHeldSubscriptionRefunds();
+      logger.info('Creator held-sub refund sweep completed', results);
       return;
     }
 

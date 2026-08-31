@@ -682,6 +682,24 @@ class CreatorService {
     // deduplication in creator_earnings, silently losing earnings on duplicate calls.
     if (!paymentId) throw new Error('subscribeToCreator: paymentId is required');
 
+    // Idempotency guard: if an active subscription already exists for this
+    // (subscriber, creator) pair, return the existing row instead of creating
+    // a duplicate. This prevents double-debits when the client retries or
+    // when parallel token payment paths race (bug: id=a68b3c26, 2026-08-31).
+    const existingCheck = await query(
+      `SELECT id, expires_at FROM creator_subscriptions
+        WHERE subscriber_id=$1 AND creator_id=$2 AND status='active'
+          AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY started_at DESC LIMIT 1`,
+      [subscriberId, creatorId]
+    );
+    if (existingCheck.rows[0]) {
+      logger.info('[subscribeToCreator] active sub already exists — no-op', {
+        subscriberId, creatorId, existingId: existingCheck.rows[0].id, paymentId,
+      });
+      return { subscriptionId: existingCheck.rows[0].id, alreadyActive: true };
+    }
+
     // Validate creator is active (outside transaction — read-only, no locking needed)
     const creatorRes = await query(
       'SELECT creator_status, creator_locked, creator_subscription_paused, creator_price_usd FROM users WHERE id = $1',
@@ -1050,6 +1068,58 @@ class CreatorService {
     } catch (autoJoinErr) {
       logger.warn('subscribeToCreator: auto-join to channel hangout failed (non-fatal)', {
         subscriberId, creatorId, error: autoJoinErr.message,
+      });
+    }
+
+    // Post-sale notifications — email receipt + Slack ops ping.
+    // These mirror what walletCheckoutService._notifyPurchaseSuccess does for the
+    // USDC wallet path. Wrapped in fire-and-forget try/catch so a notification
+    // failure never blocks the entitlement grant.
+    try {
+      const subscriberEmailRes = await query(
+        'SELECT email FROM users WHERE id = $1',
+        [subscriberId]
+      );
+      const subscriberEmail = subscriberEmailRes.rows[0]?.email || null;
+
+      // Email receipt
+      try {
+        const PaymentNotificationService = require('./paymentNotificationService');
+        await PaymentNotificationService.deliverPurchaseConfirmation(String(subscriberId), {
+          planId: 'creator_monthly',
+          planName: 'Creator Subscription',
+          amount: priceUsd,
+          transactionId: paymentId,
+          provider: 'rush_tokens',
+          expiryDate: expiresAt,
+          isLifetime: false,
+        });
+      } catch (emailErr) {
+        logger.warn('[subscribeToCreator] email receipt failed (non-critical)', {
+          subscriberId, creatorId, error: emailErr.message,
+        });
+      }
+
+      // Slack ops ping
+      try {
+        const slackOps = require('./slackOpsService');
+        await slackOps.notifyPaymentSuccess({
+          orderId: paymentId,
+          userId: subscriberId,
+          amount: priceUsd,
+          currency: 'USD',
+          plan: 'Creator Subscription',
+          txId: paymentId,
+          provider: 'Ru$h Tokens',
+        });
+      } catch (slackErr) {
+        logger.warn('[subscribeToCreator] slack ops ping failed (non-critical)', {
+          subscriberId, creatorId, error: slackErr.message,
+        });
+      }
+    } catch (notifyFatalErr) {
+      logger.warn('[subscribeToCreator] post-sale notification block error (non-critical)', {
+        subscriberId, creatorId, error: notifyFatalErr.message,
       });
     }
 
@@ -2334,32 +2404,35 @@ class CreatorService {
    * Activate (or extend) a Crystal Creator pass for a user.
    *
    * Semantics:
-   *  - months === null       → lifetime pass (expires_at NULL, stored as 'infinity' on users col)
-   *  - months > 0            → extend: new expiry = MAX(NOW(), current active_until) + months * 30 days
-   *  - stripeSubscriptionId  → sets auto_renew=true; next_bill_at = new expiresAt
+   *  - months === null   → lifetime pass (expires_at NULL, stored as 'infinity' on users col)
+   *  - months > 0        → extend: new expiry = MAX(NOW(), current active_until) + months * 30 days
    *
-   * Idempotency: guarded by `idx_ccp_payment_ref_unique` and
-   * `idx_ccp_stripe_sub_unique` — retried webhooks short-circuit and return
-   * the existing pass row instead of double-crediting time.
+   * No auto-charge: the T-3 renewal-reminder cron sends a DM+email with a
+   * 1-tap link, and the user re-checks-out via the same wallet/NP flow.
+   *
+   * Idempotency: guarded by `idx_ccp_payment_ref_unique` — retried webhooks
+   * short-circuit and return the existing pass row instead of double-crediting.
    *
    * Concurrency: takes a row-level lock on the active pass (SELECT ... FOR UPDATE)
    * inside a transaction, so two simultaneous IPNs serialise instead of racing.
+   *
+   * Renewals: extending an existing active row RESETS reminder_sent_at so the
+   * next T-3 reminder DM fires for the new cycle.
    *
    * @param {string} userId
    * @param {object} opts
    * @param {boolean} opts.isGift
    * @param {string|null} opts.giftedBy
    * @param {string|null} opts.giftNote
-   * @param {number|null} opts.months                — null = lifetime
-   * @param {string} opts.provider                   — stripe|wallet_usdc|nowpayments|founder_grant
-   * @param {string|null} opts.ref                   — payment reference (invoice id / tx hash)
-   * @param {string|null} opts.stripeSubscriptionId  — Stripe subscription id (for recurring)
+   * @param {number|null} opts.months        — null = lifetime
+   * @param {string} opts.provider           — wallet_usdc|nowpayments|founder_grant
+   * @param {string|null} opts.ref           — payment reference (invoice id / tx hash)
    * @param {number} opts.priceCents
    * @returns {Promise<{passId: string, expiresAt: string|null, alreadyApplied?: boolean}>}
    */
   static async activateCrystalPass(userId, {
     isGift = false, giftedBy = null, giftNote = null, months = 1,
-    provider, ref = null, stripeSubscriptionId = null, priceCents,
+    provider, ref = null, priceCents,
   }) {
     const { getPool } = require('../config/postgres');
     const isLifetime = months == null;
@@ -2367,19 +2440,18 @@ class CreatorService {
     try {
       await client.query('BEGIN');
 
-      // ── Idempotency: same payment_ref or stripe_subscription_id ────────────
-      if (ref || stripeSubscriptionId) {
+      // ── Idempotency: same payment_ref → short-circuit ─────────────────────
+      if (ref) {
         const dup = await client.query(
           `SELECT id, expires_at FROM crystal_creator_passes
-            WHERE ($1::text IS NOT NULL AND payment_ref = $1)
-               OR ($2::text IS NOT NULL AND stripe_subscription_id = $2)
+            WHERE payment_ref = $1
             LIMIT 1`,
-          [ref, stripeSubscriptionId]
+          [ref]
         );
         if (dup.rows[0]) {
           await client.query('COMMIT');
           logger.info('CreatorService.activateCrystalPass: idempotent short-circuit', {
-            userId, passId: dup.rows[0].id, ref, stripeSubscriptionId,
+            userId, passId: dup.rows[0].id, ref,
           });
           return { passId: dup.rows[0].id, expiresAt: dup.rows[0].expires_at, alreadyApplied: true };
         }
@@ -2405,28 +2477,26 @@ class CreatorService {
         base.setDate(base.getDate() + months * 30);
         expiresAt = base.toISOString();
       }
-      const nextBillAt = (stripeSubscriptionId && expiresAt) ? expiresAt : null;
 
       // Extend or create
       let passId;
       if (existing[0]) {
-        // Extend existing active pass in place
+        // Extend existing active pass in place — reset reminder_sent_at so the
+        // renewal-reminder cron re-fires for the new cycle.
         const upd = await client.query(
           `UPDATE crystal_creator_passes
-              SET expires_at             = $2,
-                  next_bill_at           = $3,
-                  payment_ref            = COALESCE($4, payment_ref),
-                  stripe_subscription_id = COALESCE($5, stripe_subscription_id),
-                  auto_renew             = ($5::text IS NOT NULL) OR auto_renew,
-                  payment_provider       = $6,
-                  price_paid_cents       = $7,
-                  is_gift                = $8,
-                  gifted_by_user_id      = COALESCE($9, gifted_by_user_id),
-                  gift_note              = COALESCE($10, gift_note),
-                  updated_at             = NOW()
+              SET expires_at        = $2,
+                  reminder_sent_at  = NULL,
+                  payment_ref       = COALESCE($3, payment_ref),
+                  payment_provider  = $4,
+                  price_paid_cents  = $5,
+                  is_gift           = $6,
+                  gifted_by_user_id = COALESCE($7, gifted_by_user_id),
+                  gift_note         = COALESCE($8, gift_note),
+                  updated_at        = NOW()
             WHERE id = $1
           RETURNING id`,
-          [existing[0].id, expiresAt, nextBillAt, ref, stripeSubscriptionId, provider,
+          [existing[0].id, expiresAt, ref, provider,
            priceCents, isGift, giftedBy ? String(giftedBy) : null,
            giftNote ? String(giftNote).slice(0, 500) : null]
         );
@@ -2434,17 +2504,16 @@ class CreatorService {
       } else {
         const ins = await client.query(
           `INSERT INTO crystal_creator_passes
-             (creator_user_id, expires_at, next_bill_at, price_paid_cents,
+             (creator_user_id, expires_at, price_paid_cents,
               is_gift, gifted_by_user_id, gift_note,
-              payment_provider, payment_ref, stripe_subscription_id, auto_renew, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')
+              payment_provider, payment_ref, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
            RETURNING id`,
           [
-            String(userId), expiresAt, nextBillAt, priceCents,
+            String(userId), expiresAt, priceCents,
             isGift, giftedBy ? String(giftedBy) : null,
             giftNote ? String(giftNote).slice(0, 500) : null,
-            provider, ref, stripeSubscriptionId,
-            !!stripeSubscriptionId,
+            provider, ref,
           ]
         );
         passId = ins.rows[0].id;
@@ -2467,7 +2536,6 @@ class CreatorService {
       await client.query('COMMIT');
       logger.info('CreatorService.activateCrystalPass: pass activated', {
         userId, passId, isGift, isLifetime, months, provider,
-        stripeSubscriptionId: stripeSubscriptionId || null,
       });
 
       // Zoho integration — fire-and-forget after commit so failures never
@@ -2531,12 +2599,13 @@ class CreatorService {
   /**
    * Cancel the active Crystal Creator pass.
    *
-   * Flips status → 'cancelled', stops auto_renew, but does NOT clear
-   * expires_at — already-paid time is honoured. crystal_creator_active_until
-   * on users stays set until expires_at passes (a cron sweep clears it).
+   * Flips status → 'cancelled' but does NOT clear expires_at — already-paid
+   * time is honoured. crystal_creator_active_until on users stays set until
+   * expires_at passes (sweepExpiredCrystalPasses cron clears it).
    *
-   * For Stripe subs, we ALSO tell Stripe to cancel_at_period_end so the user
-   * isn't charged again. Best-effort; Stripe failure does not block DB cancel.
+   * There is no auto-charge to stop (NP + wallet are one-off invoices), so
+   * cancel is purely a "don't remind me to renew" flag. The T-3 renewal
+   * reminder cron skips cancelled rows automatically.
    *
    * @param {string} userId
    * @returns {Promise<boolean>} — true if a pass was found and cancelled
@@ -2546,32 +2615,13 @@ class CreatorService {
       `UPDATE crystal_creator_passes
           SET status         = 'cancelled',
               cancelled_at   = NOW(),
-              auto_renew     = FALSE,
-              next_bill_at   = NULL,
               updated_at     = NOW()
         WHERE creator_user_id = $1
           AND status = 'active'
-        RETURNING id, stripe_subscription_id`,
+        RETURNING id`,
       [String(userId)]
     );
     if (!rows.length) return false;
-
-    // Best-effort Stripe cancel (period-end so paid time is honoured)
-    const stripeSubId = rows[0].stripe_subscription_id;
-    if (stripeSubId && process.env.STRIPE_SECRET_KEY) {
-      try {
-        const Stripe = require('stripe');
-        const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-        await stripe.subscriptions.update(stripeSubId, { cancel_at_period_end: true });
-        logger.info('CreatorService.cancelCrystalPass: Stripe sub set to cancel_at_period_end', {
-          userId, stripeSubId,
-        });
-      } catch (err) {
-        logger.warn('CreatorService.cancelCrystalPass: Stripe cancel failed (DB cancel stands)', {
-          userId, stripeSubId, error: err.message,
-        });
-      }
-    }
     logger.info('CreatorService.cancelCrystalPass: pass cancelled', { userId });
 
     // Zoho sync + Campaigns list removal (fire-and-forget)
@@ -2617,6 +2667,90 @@ class CreatorService {
       logger.info('CreatorService.sweepExpiredCrystalPasses', { passesSwept, usersSwept });
     }
     return { passesSwept, usersSwept };
+  }
+
+  /**
+   * T-3 renewal reminder cron. Finds active (non-cancelled) passes that expire
+   * in the next 3 days and haven't been reminded yet; sends DM + email with
+   * a 1-tap renewal link. Marks reminder_sent_at so we don't double-DM.
+   *
+   * Renewal link: /c/<username>?renew=1 → CreatorProfilePage auto-opens the
+   * self-checkout panel. Same flow as first-time purchase; activateCrystalPass
+   * extends the row in place instead of creating a new one.
+   *
+   * Skips: cancelled rows (user opted out), lifetime rows (never expire),
+   * gift-only recipients whose gifter probably renews for them (they see the
+   * banner in-app anyway).
+   *
+   * @returns {Promise<{sent:number, failed:number, skipped:number}>}
+   */
+  static async sendCrystalRenewalReminders() {
+    const { rows: due } = await query(
+      `SELECT ccp.id AS pass_id, ccp.creator_user_id, ccp.expires_at, ccp.is_gift,
+              u.username, u.first_name, u.email,
+              u.language, u.tier
+         FROM crystal_creator_passes ccp
+         JOIN users u ON u.id = ccp.creator_user_id
+        WHERE ccp.status = 'active'
+          AND ccp.expires_at IS NOT NULL
+          AND ccp.expires_at BETWEEN NOW() AND NOW() + INTERVAL '3 days'
+          AND ccp.reminder_sent_at IS NULL
+          AND ccp.is_gift = FALSE
+        LIMIT 200`
+    );
+
+    let sent = 0, failed = 0, skipped = 0;
+    if (!due.length) return { sent, failed, skipped };
+
+    let bot = null;
+    let emailService = null;
+    try { bot = require('../bot/core/bot'); } catch { /* bot unavailable */ }
+    try { emailService = require('./emailService'); } catch { /* email unavailable */ }
+
+    for (const row of due) {
+      try {
+        const es = row.language === 'es';
+        const daysLeft = Math.max(1, Math.round((new Date(row.expires_at) - Date.now()) / (24 * 60 * 60 * 1000)));
+        const renewUrl = `${process.env.WEBAPP_URL || 'https://pnptv.app'}/c/${encodeURIComponent(row.username || row.creator_user_id)}?renew=1`;
+
+        const dmText = es
+          ? `💎 Tu Crystal Creator vence en ${daysLeft} día${daysLeft === 1 ? '' : 's'}.\n\nRenueva con 1 tap por 30 días más — $100.\n\n${renewUrl}`
+          : `💎 Your Crystal Creator pass expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.\n\n1-tap renewal for another 30 days — $100.\n\n${renewUrl}`;
+
+        // Telegram DM: users.id doubles as the TG chat id for TG-signed-up
+        // users. Web-only signups have UUID ids that fail here — try/catch
+        // silently swallows and we fall through to email.
+        if (/^\d+$/.test(String(row.creator_user_id)) && bot?.telegram) {
+          await bot.telegram.sendMessage(row.creator_user_id, dmText).catch(() => {});
+        }
+
+        // Email
+        if (row.email && emailService?.send) {
+          await emailService.send({
+            to: row.email,
+            subject: es
+              ? `Crystal Creator vence en ${daysLeft} día${daysLeft === 1 ? '' : 's'}`
+              : `Crystal Creator expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+            html: `<p style="font-size:15px;line-height:1.5">${dmText.replace(/\n\n/g, '</p><p style="font-size:15px;line-height:1.5">').replace(/\n/g, '<br>')}</p><p><a href="${renewUrl}" style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#b8f5ff,#d4bfff);color:#1a1a2e;font-weight:bold;text-decoration:none;border-radius:8px">${es ? 'Renovar ahora' : 'Renew now'}</a></p>`,
+          }).catch(() => {});
+        }
+
+        // Mark sent so we don't re-DM if the cron fires again before expiry.
+        await query(
+          `UPDATE crystal_creator_passes SET reminder_sent_at = NOW() WHERE id = $1`,
+          [row.pass_id]
+        );
+        sent++;
+      } catch (err) {
+        logger.warn('[crystal-renewal-reminder] send failed', {
+          passId: row.pass_id, userId: row.creator_user_id, error: err.message,
+        });
+        failed++;
+      }
+    }
+
+    logger.info('[crystal-renewal-reminder] cycle complete', { due: due.length, sent, failed, skipped });
+    return { sent, failed, skipped };
   }
 
   /**

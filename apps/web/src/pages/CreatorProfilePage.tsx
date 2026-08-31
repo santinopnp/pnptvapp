@@ -732,6 +732,21 @@ export default function CreatorProfilePage() {
       .catch(() => { /* non-fatal */ });
   }, [isOwnProfile, data?.creator?.crystalCreator]);
 
+  // ?renew=1 deep-link → auto-open the self-checkout panel on arrival.
+  // Fired by the T-3 Crystal renewal reminder DM/email so one tap → paying.
+  // Only opens when the viewer is the invited creator; noop otherwise.
+  useEffect(() => {
+    if (!data?.creator) return;
+    if (searchParams.get("renew") !== "1") return;
+    if (!isOwnProfile) return;
+    if (!data.creator.crystalInvited) return;
+    // Self-mode = renewal for the creator viewing own profile.
+    setCrystalWalletMode("self");
+    setTimeout(() => {
+      crystalWalletPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 200);
+  }, [data?.creator, isOwnProfile, searchParams]);
+
   // Toggle the inline WalletPayCard panel for Crystal gift or self-upgrade.
   // Mirrors Subscribe.tsx's walletPanelPlanId toggle pattern.
   function handleCrystalWalletToggle(mode: "gift" | "self") {
@@ -1081,11 +1096,13 @@ export default function CreatorProfilePage() {
               2. Creator self-view + invited + not yet active → "Upgrade to Crystal Creator"
               3. Creator self-view + already active → "Crystal Creator (active until …)" */}
           {/* Crystal Creator CTA block — three mutually exclusive branches:
-              1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator $150/mo"
+              1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator $150 / 30 days"
                  Two buttons: PNPtv Wallet (inline WalletPayCard) + Any crypto (NP popup)
-              2. Creator self-view + invited + not yet active → "Upgrade to Crystal Creator $100/mo"
+              2. Creator self-view + invited + not yet active → "Upgrade to Crystal Creator $100 / 30 days"
                  Same two-button pattern, self-upgrade price.
-              3. Creator self-view + already active → read-only status pill */}
+              3. Creator self-view + already active → read-only status pill
+              Deep-link ?renew=1 auto-opens the self-checkout panel on mount (for
+              the T-3 renewal reminder DM/email). */}
           {creatorIsCrystal && !isOwnProfile && (
             <div
               className="mb-3 rounded-xl border"
@@ -1096,8 +1113,8 @@ export default function CreatorProfilePage() {
                   <p className="text-xs font-bold text-white">Crystal Creator</p>
                   <p className="text-[11px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     {t.lang === "es"
-                      ? "Regálale a este creador un pase Crystal Creator — $150/mes"
-                      : "Gift this creator a Crystal Creator pass — $150/mo"}
+                      ? "Regálale a este creador un pase Crystal Creator — $150 por 30 días"
+                      : "Gift this creator a Crystal Creator pass — $150 for 30 days"}
                   </p>
                 </div>
               </div>
@@ -1127,7 +1144,7 @@ export default function CreatorProfilePage() {
                     amountUsd={150}
                     entitlementSpec={{ type: "crystal_gift", creatorId: data?.creator?.id }}
                     metadata={{ source: "creator_profile", creatorId: data?.creator?.id }}
-                    label={`Gift Crystal Creator · $150/mo — ${displayName}`}
+                    label={`Gift Crystal Creator · $150 / 30 days — ${displayName}`}
                     lang={(user?.language as "es" | "en") || "en"}
                     onSuccess={() => {
                       setCrystalWalletMode(null);
@@ -1149,8 +1166,8 @@ export default function CreatorProfilePage() {
                 </p>
                 <p className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {t.lang === "es"
-                    ? "Desbloquea beneficios exclusivos e insignia animada — $100/mes"
-                    : "Unlock exclusive benefits & animated badge — $100/mo"}
+                    ? "Desbloquea beneficios exclusivos e insignia animada — $100 por 30 días"
+                    : "Unlock exclusive benefits & animated badge — $100 for 30 days"}
                 </p>
               </div>
               <div className="px-3 pb-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
@@ -1179,7 +1196,7 @@ export default function CreatorProfilePage() {
                     amountUsd={100}
                     entitlementSpec={{ type: "crystal_self" }}
                     metadata={{ source: "creator_profile_self" }}
-                    label="Upgrade to Crystal Creator · $100/mo"
+                    label="Upgrade to Crystal Creator · $100 / 30 days"
                     lang={(user?.language as "es" | "en") || "en"}
                     onSuccess={() => {
                       setCrystalWalletMode(null);
