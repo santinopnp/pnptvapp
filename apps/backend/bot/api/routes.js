@@ -12617,45 +12617,61 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
   const priceUsd = parseFloat(pkg.price_usd);
   // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
   const tokenCost = Math.round(priceUsd * 6);
-  // Atomic debit
-  const debitResult = await dbQuery(
-    `UPDATE user_token_wallets
-     SET balance_tokens = balance_tokens - $2, updated_at = NOW()
-     WHERE user_id = $1 AND balance_tokens >= $2
-     RETURNING balance_tokens`,
-    [memberId, tokenCost]
-  );
-  if (!debitResult.rows.length) {
-    const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [memberId]);
-    const current = walletRow.rows[0]?.bal ?? 0;
-    return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
-  }
-  const newBalance = Number(debitResult.rows[0].balance_tokens);
-  // Create a payment record so onCallPaymentSuccess can run its full flow.
-  // The wallet debit above already committed — if ANY downstream step throws
-  // (payment insert CHECK violation, credits grant failure, etc.) we must
-  // refund the tokens BEFORE returning the error. Prior to 2026-08-31 the
-  // payment-create call sat outside the try/catch, so a CHECK-constraint
-  // violation dropped 360 Ru$h off Santino's balance with no ledger row.
-  const PaymentModel = require('../../models/paymentModel');
+
+  // Debit + payment insert in ONE transaction. The pre-2026-08-31 code raw-
+  // UPDATEd user_token_wallets (auto-commit) then created the payment outside
+  // a txn — a failure between the two dropped tokens with no ledger row and
+  // no payment. Now: BEGIN → tokenLedger.debit (writes token_ledger AND
+  // wallet) → PaymentModel.create → COMMIT (or ROLLBACK to undo both).
+  const tokenLedger = require('../../services/tokenLedgerService');
+  const { getClient: getPgClient } = require('../../config/postgres');
   const paymentId = require('crypto').randomUUID();
+  const paymentMetadata = {
+    type: 'call_package',
+    packageId: pkg.id,
+    packageSku: pkg.sku,
+    ...(startTimeUtc ? { startTimeUtc } : {}),
+    ...(endTimeUtc ? { endTimeUtc } : {}),
+    ...(clientNotes ? { clientNotes } : {}),
+  };
+  const client = await getPgClient();
+  let newBalance;
   try {
-    await PaymentModel.create({
-      paymentId,
+    await client.query('BEGIN');
+    const debitRes = await tokenLedger.debit({
       userId: memberId,
-      planId: null,
-      amount: priceUsd,
-      currency: 'USD',
-      provider: 'tokens',
-      metadata: {
-        type: 'call_package',
-        packageId: pkg.id,
-        packageSku: pkg.sku,
-        ...(startTimeUtc ? { startTimeUtc } : {}),
-        ...(endTimeUtc ? { endTimeUtc } : {}),
-        ...(clientNotes ? { clientNotes } : {}),
-      },
+      amount: tokenCost,
+      reason: 'call_book',
+      sourceType: 'call_package',
+      sourceId: paymentId,
+      actorId: String(memberId),
+      metadata: { paymentId, packageId: pkg.id, packageSku: pkg.sku, priceUsd },
+      externalClient: client,
     });
+    newBalance = Number(debitRes?.balance_after ?? debitRes?.total ?? 0);
+    await client.query(
+      `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
+       VALUES ($1, $1, $2, NULL, 'tokens', $3, 'USD', 'pending', $4::jsonb, NOW(), NOW())`,
+      [paymentId, memberId, priceUsd, JSON.stringify(paymentMetadata)]
+    );
+    await client.query('COMMIT');
+  } catch (debitOrPayErr) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    if (debitOrPayErr.code === 'INSUFFICIENT_FUNDS' || /insufficient/i.test(debitOrPayErr.message || '')) {
+      const walletRow = await dbQuery(`SELECT COALESCE(balance_tokens,0) AS bal FROM user_token_wallets WHERE user_id = $1`, [memberId]);
+      const current = walletRow.rows[0]?.bal ?? 0;
+      return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
+    }
+    logger.error('[wallet/pay-call] debit or payment insert failed', { memberId, pkg: pkg.id, tokenCost, err: debitOrPayErr.message });
+    return res.status(500).json({ success: false, error: 'No se pudo iniciar el pago. Intenta de nuevo.' });
+  }
+  client.release();
+
+  // Grant credits + notifications OUTSIDE the txn. If this throws, the payment
+  // already exists — refund the ledger so the user isn't left holding an
+  // orphan payment with no credits.
+  try {
     const CallCheckoutSvc = require('../../services/callCheckoutService');
     await CallCheckoutSvc.onCallPaymentSuccess(paymentId);
     const { cache } = require('../../config/redis');
@@ -12666,22 +12682,23 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
     logger.info('[wallet/pay-call] Tokens call credits granted', { memberId, packageId: pkg.id, tokenCost, newBalance });
     return res.json({ success: true, newBalance, packageId: pkg.id, priceUsd, paymentId });
   } catch (callErr) {
-    // Refund the wallet debit — orphan debits with no ledger row are the worst
-    // possible outcome (user paid, got nothing, we can't easily reconstruct).
     let refundedBalance = null;
     try {
-      const refundRow = await dbQuery(
-        `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1 RETURNING balance_tokens`,
-        [memberId, tokenCost]
-      );
-      refundedBalance = Number(refundRow.rows[0]?.balance_tokens ?? NaN);
+      const refund = await tokenLedger.credit({
+        userId: memberId,
+        amount: tokenCost,
+        reason: 'call_refund',
+        sourceType: 'call_package',
+        sourceId: paymentId,
+        actorId: 'system',
+        metadata: { paymentId, packageId: pkg.id, reason: 'onCallPaymentSuccess_failed' },
+      });
+      refundedBalance = Number(refund?.balance_after ?? NaN);
     } catch (refundErr) {
       logger.error('[wallet/pay-call] REFUND FAILED — manual intervention needed', {
-        memberId, pkg: pkg.id, tokenCost, origErr: callErr.message, refundErr: refundErr.message,
+        memberId, pkg: pkg.id, tokenCost, paymentId, origErr: callErr.message, refundErr: refundErr.message,
       });
     }
-    // Mark payment void so it doesn't show as completed in history (best-effort;
-    // if the payment insert itself failed, the row doesn't exist and this no-ops).
     await dbQuery(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]).catch(() => {});
     logger.error('[wallet/pay-call] call credits failed, Tokens refunded', {
       memberId, pkg: pkg.id, tokenCost, refundedBalance, err: callErr.message,
@@ -17513,6 +17530,68 @@ app.get('/api/creator/services/bookings', requireSessionAuth, asyncHandler(async
   const bookings = await crystalSvc.listBookingsForCreator(creatorId, { status, limit: 200 });
   return res.json({ bookings });
 }));
+
+// ── LiveKit token for a Crystal Service call booking ────────────────────────
+// Either the creator or the buyer of a private_call / private_main_stage
+// booking can hit this to get a JIT token to join the private LiveKit room.
+// Fresh per call so leaked tokens expire within (duration + 1h) buffer.
+app.post('/api/creator/services/bookings/:bookingId/livekit-token',
+  requireSessionAuth,
+  asyncHandler(async (req, res) => {
+    const bookingId = String(req.params.bookingId);
+    const userId = String(req.session.user.id);
+    const { rows } = await getPool().query(
+      `SELECT b.id, b.creator_user_id, b.buyer_user_id, b.service_type, b.status,
+              b.metadata, s.duration_minutes, u.username, u.first_name
+         FROM creator_service_bookings b
+         JOIN creator_services s ON s.id = b.service_id
+         JOIN users u ON u.id = $2
+        WHERE b.id = $1
+        LIMIT 1`,
+      [bookingId, userId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'booking_not_found' });
+    const b = rows[0];
+    const isCreator = String(b.creator_user_id) === userId;
+    const isBuyer = String(b.buyer_user_id) === userId;
+    if (!isCreator && !isBuyer) return res.status(403).json({ error: 'not_a_participant' });
+    if (b.service_type !== 'private_call' && b.service_type !== 'private_main_stage') {
+      return res.status(400).json({ error: 'not_a_livekit_booking' });
+    }
+    if (!['paid', 'fulfilled'].includes(b.status)) {
+      return res.status(409).json({ error: 'booking_not_active', status: b.status });
+    }
+    const meta = b.metadata || {};
+    const roomName = meta.livekitRoomName || `crystal-call-${bookingId}`;
+    const ttlSeconds = ((Number(b.duration_minutes) || 60) + 60) * 60;  // duration + 1h buffer
+    const livekitService = require('../../services/livekitService');
+    try {
+      const token = await livekitService.generateToken(
+        roomName,
+        userId,
+        b.username || b.first_name || (isCreator ? 'Creator' : 'Fan'),
+        isCreator,                     // moderator flag
+        {
+          ttlSeconds,
+          canPublishAudio: true,
+          canPublishVideo: true,
+        }
+      );
+      return res.json({
+        token,
+        livekitUrl: livekitService.LIVEKIT_WS_URL,
+        roomName,
+        isModerator: isCreator,
+        durationMinutes: Number(b.duration_minutes) || 60,
+      });
+    } catch (err) {
+      logger.error('[crystal-service] livekit-token generation failed', {
+        bookingId, userId, error: err.message,
+      });
+      return res.status(500).json({ error: 'token_generation_failed' });
+    }
+  })
+);
 
 // ── Creator dashboard: mark a booking fulfilled or cancelled ───────────────
 // Body: { newStatus: 'fulfilled'|'cancelled', fulfillmentNote?: string }
