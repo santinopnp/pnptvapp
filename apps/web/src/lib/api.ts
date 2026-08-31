@@ -9868,8 +9868,10 @@ export interface CreatorPublicProfile {
     crystalActiveUntil?: string | null;
     /** True when the creator has been invited to buy Crystal Creator (unlocks self-checkout). */
     crystalInvited?: boolean;
-    /** True when this user is in the Whale Pigs circle (VIP audience). */
-    isWhalePig?: boolean;
+    /** True when this creator is in PNPtv Fam (contributor tier — publicly badge-able). */
+    pnptvFam?: boolean;
+    /** ISO date since when they've been PNPtv Fam. */
+    pnptvFamSince?: string | null;
   };
   isSubscribed: boolean;
   /** Sub details when viewer is subscribed; null otherwise. */

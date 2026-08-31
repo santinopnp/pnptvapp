@@ -2573,8 +2573,8 @@ class CreatorService {
       {
         id: 'higher_split',
         icon: '💰',
-        en: { title: '85% revenue share', body: 'You keep 85% of every subscriber payment (vs 70% standard). Zero commission on tips from Whale Pigs.' },
-        es: { title: '85% del ingreso', body: 'Te quedas con el 85% de cada pago de suscriptor (vs 70% estándar). 0% de comisión en propinas de los Whale Pigs.' },
+        en: { title: '85% revenue share', body: 'You keep 85% of every subscriber payment (vs 70% standard). Zero commission on tips from the Inner Circle.' },
+        es: { title: '85% del ingreso', body: 'Te quedas con el 85% de cada pago de suscriptor (vs 70% estándar). 0% de comisión en propinas del Inner Circle.' },
       },
       {
         id: 'crystal_badge',
