@@ -18,7 +18,7 @@ const getMainMenu = (language = 'en', isPrime = false) => {
       subscribe: '💎 Subscribe to PRIME',
       nearby: '📍 Nearby Users',
       hangouts: '🎥 Hangouts',
-      videorama: '🎶 Videorama',
+      videorama: '🎶 PNP Channels',
       live: '📺 Live',
       support: '🆘 Help and support',
       settings: '⚙️ Settings',
@@ -32,7 +32,7 @@ const getMainMenu = (language = 'en', isPrime = false) => {
       subscribe: '💎 Suscribirse a PRIME',
       nearby: '📍 Usuarios Cercanos',
       hangouts: '🎥 Hangouts',
-      videorama: '🎶 Videorama',
+      videorama: '🎶 PNP Channels',
       live: '📺 En Vivo',
       support: '🆘 Ayuda y soporte',
       settings: '⚙️ Configuración',
@@ -71,7 +71,7 @@ const getMainMenu = (language = 'en', isPrime = false) => {
       },
       {
         text: l.videorama,
-        url: `${PNPTV_APP_BASE}/videorama`,
+        url: `${PNPTV_APP_BASE}/channels`,
       },
     ],
     [
@@ -85,7 +85,7 @@ const getMainMenu = (language = 'en', isPrime = false) => {
     [{ text: l.nearby, callback_data: 'menu_nearby' }],
     [
       { text: l.hangouts, url: `${PNPTV_APP_BASE}/hangouts` },
-      { text: l.videorama, url: `${PNPTV_APP_BASE}/videorama` },
+      { text: l.videorama, url: `${PNPTV_APP_BASE}/channels` },
     ],
     [
       { text: l.live, url: `${PNPTV_APP_BASE}/live` },

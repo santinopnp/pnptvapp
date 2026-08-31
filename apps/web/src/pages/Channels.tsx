@@ -784,8 +784,10 @@ function ChannelDetailView({
     // mux_status='waiting' forever — the reconciler skips them. Only flag as
     // processing when there is genuinely no playable URL yet.
     const hasPlayableUrl = !!v.mux_playback_id || !!v.video_url;
-    const isProcessing = v.status === "processing"
-      || ((v.mux_status === "preparing" || v.mux_status === "waiting") && !hasPlayableUrl);
+    const isFailed = v.mux_status === "errored" || v.mux_status === "cancelled" || v.status === "failed";
+    const isProcessing = !isFailed && (v.status === "processing"
+      || ((v.mux_status === "preparing" || v.mux_status === "waiting") && !hasPlayableUrl));
+    const isUnavailable = isFailed || (!hasPlayableUrl && !isProcessing);
     const duration = formatDuration(v.duration_sec);
 
     // Thumbnail fallback chain: gif_url (hover only) → thumbnail_url → placeholder
@@ -813,7 +815,7 @@ function ChannelDetailView({
         <div
           className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer overflow-hidden"
           onClick={() => {
-            if (isProcessing) return;
+            if (isProcessing || isUnavailable) return;
             setVideoPlayerError(false);
             setPlayingVideo({
               url: v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : v.video_url,
@@ -834,10 +836,10 @@ function ChannelDetailView({
               alt={v.title}
               className={[
                 "w-full h-full object-cover transition-transform duration-200",
-                isProcessing ? "saturate-0 opacity-60" : "group-hover:scale-105",
+                isProcessing || isUnavailable ? "saturate-0 opacity-60" : "group-hover:scale-105",
               ].join(" ")}
-              onMouseEnter={(e) => { if (animatedThumb && !isProcessing) (e.currentTarget as HTMLImageElement).src = animatedThumb; }}
-              onMouseLeave={(e) => { if (staticThumb && animatedThumb && !isProcessing) (e.currentTarget as HTMLImageElement).src = staticThumb; }}
+              onMouseEnter={(e) => { if (animatedThumb && !isProcessing && !isUnavailable) (e.currentTarget as HTMLImageElement).src = animatedThumb; }}
+              onMouseLeave={(e) => { if (staticThumb && animatedThumb && !isProcessing && !isUnavailable) (e.currentTarget as HTMLImageElement).src = staticThumb; }}
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
           ) : (
@@ -849,8 +851,8 @@ function ChannelDetailView({
             </div>
           )}
 
-          {/* Play overlay — hidden during processing */}
-          {!isProcessing && (
+          {/* Play overlay — hidden during processing or unavailable */}
+          {!isProcessing && !isUnavailable && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors pointer-events-none">
               <div className="w-12 h-12 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
                 <svg className="w-6 h-6 text-white drop-shadow ml-1" fill="currentColor" viewBox="0 0 24 24">
@@ -861,7 +863,7 @@ function ChannelDetailView({
           )}
 
           {/* Duration badge — bottom-right */}
-          {duration && !isProcessing && (
+          {duration && !isProcessing && !isUnavailable && (
             <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[11px] font-semibold text-white tabular-nums pointer-events-none" style={{ background: "rgba(0,0,0,0.72)" }}>
               {duration}
             </span>
@@ -872,6 +874,16 @@ function ChannelDetailView({
             <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white animate-pulse pointer-events-none" style={{ background: "rgba(234,179,8,0.85)" }}>
               <span className="w-1.5 h-1.5 rounded-full bg-white" />
               Processing…
+            </span>
+          )}
+
+          {/* Unavailable badge — bottom-left (red) */}
+          {isUnavailable && (
+            <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white pointer-events-none" style={{ background: "rgba(220,38,38,0.9)" }}>
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              Unavailable
             </span>
           )}
 
@@ -3148,7 +3160,7 @@ function ChannelsInner() {
   );
 }
 
-// ── Videorama VOD Browser ────────────────────────────────────────────────────
+// ── PNP Channels VOD Browser ─────────────────────────────────────────────────
 
 function VideoramaInner() {
   const navigate = useNavigate();
@@ -3231,7 +3243,7 @@ function VideoramaInner() {
     return (
       <>
         <Helmet>
-          <title>Videorama — PNPtv!</title>
+          <title>PNP Channels — PNPtv!</title>
         </Helmet>
         <div className="max-w-6xl mx-auto px-4 py-6">
           <ChannelDetailView
@@ -3250,7 +3262,7 @@ function VideoramaInner() {
   return (
     <>
       <Helmet>
-        <title>Videorama — PNPtv!</title>
+        <title>PNP Channels — PNPtv!</title>
         <meta name="description" content="Browse exclusive PNPtv video channels" />
       </Helmet>
       <div className="max-w-6xl xl:max-w-7xl mx-auto px-4 py-6 space-y-6">
@@ -3266,7 +3278,7 @@ function VideoramaInner() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Videorama</h1>
+              <h1 className="text-2xl font-bold text-pnp-textPrimary">PNP Channels</h1>
             </div>
             <p className="text-sm text-pnp-textSecondary">
               {loading ? "Loading..." : `${total} channel${total !== 1 ? "s" : ""} · exclusive videos from your creators`}
@@ -3533,7 +3545,7 @@ export function Videorama() {
   const { user } = useAuth();
 
   if (!user || user.tier === "free") {
-    return <MembersOnlyWall message="Videorama exclusive videos require a PNPtv! membership." />;
+    return <MembersOnlyWall message="PNP Channels exclusive videos require a PNPtv! membership." />;
   }
 
   return <VideoramaInner />;

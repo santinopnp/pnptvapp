@@ -321,7 +321,7 @@ class PlaylistAdminService {
 
       if (media.length === 0) {
         await ctx.editMessageText(
-          'No media found in the library. Upload some media first with /uploadvideorama',
+          'No media found in the library. Upload some media first with /uploadchannel',
           Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'playlist_cancel')]])
         );
         return;
@@ -573,7 +573,7 @@ class PlaylistAdminService {
         `✅ *Playlist Created!*\n\n` +
         `📝 Name: ${session.data.name}\n` +
         `🎵 Items: ${session.data.items.length}\n\n` +
-        `Your playlist is now available in Videorama!`,
+        `Your playlist is now available in PNP Channels!`,
         { parse_mode: 'Markdown' }
       );
 

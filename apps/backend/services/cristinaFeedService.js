@@ -53,7 +53,7 @@ const CATEGORIES = {
       'Write a short tip explaining how Hangouts work on pnptv.app — users can create or join group video calls, chat rooms, and meet new people in real time.',
       'Write a short tip about PNP Television Live — users can watch live streams, tip performers, and even go live themselves if they are creators.',
       'Write a short tip about the Social feed on pnptv.app — users can post text, photos, and videos, follow other members, and interact with the community.',
-      'Write a short tip about Videorama on pnptv.app — curated video playlists and VOD content from creators. Mention PRIME members get access to exclusive content.',
+      'Write a short tip about PNP Channels on pnptv.app — curated video channels and VOD content from creators. Mention PRIME members get access to exclusive content.',
       'Write a short tip about DMs (direct messages) on pnptv.app — users can send private messages, share media, and connect one-on-one. PRIME members get unlimited DMs.',
       'Write a short tip about the Radio feature on pnptv.app — community radio with curated playlists playing 24/7. Perfect background vibes.',
       'Write a short tip about following creators on pnptv.app — users can follow their favorite creators, get notified when they go live, and support them with tips.',

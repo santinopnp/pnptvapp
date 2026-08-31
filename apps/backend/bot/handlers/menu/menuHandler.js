@@ -69,7 +69,7 @@ function buildPrimeMenuKeyboard(lang = 'en') {
     pnpLive: 'PNP Live | Hombres Latinos en Webcam',
     pnpApp: 'PNP tv App | Área PRIME',
     hangouts: '🎥 Hangouts',
-    videorama: '🎶 Videorama',
+    videorama: '🎶 PNP Channels',
     profile: '👤 Mi Perfil',
     support: '🆘 Ayuda y soporte',
   } : {
@@ -77,7 +77,7 @@ function buildPrimeMenuKeyboard(lang = 'en') {
     pnpLive: 'PNP Live | Latino Men on Webcam',
     pnpApp: 'PNP tv App | PRIME area',
     hangouts: '🎥 Hangouts',
-    videorama: '🎶 Videorama',
+    videorama: '🎶 PNP Channels',
     profile: '👤 My Profile',
     support: '🆘 Help and support',
   };
@@ -88,7 +88,7 @@ function buildPrimeMenuKeyboard(lang = 'en') {
     [Markup.button.url(labels.pnpApp, `${PNPTV_APP_BASE}/login`)],
     [
       Markup.button.url(labels.hangouts, `${PNPTV_APP_BASE}/hangouts`),
-      Markup.button.url(labels.videorama, `${PNPTV_APP_BASE}/videorama`),
+      Markup.button.url(labels.videorama, `${PNPTV_APP_BASE}/channels`),
     ],
     [
       Markup.button.callback(labels.profile, 'menu:profile'),
@@ -106,7 +106,7 @@ function buildFreeMenuKeyboard(lang = 'en') {
     subscribe: '💎 Suscribirse a PRIME',
     nearby: '📍 PNP Connect',
     hangouts: '🎥 Hangouts',
-    videorama: '🎶 Videorama',
+    videorama: '🎶 PNP Channels',
     live: '📺 En Vivo',
     login: '🔐 Iniciar sesión',
     support: '🆘 Ayuda y soporte',
@@ -116,7 +116,7 @@ function buildFreeMenuKeyboard(lang = 'en') {
     subscribe: '💎 Subscribe to PRIME',
     nearby: '📍 PNP Connect',
     hangouts: '🎥 Hangouts',
-    videorama: '🎶 Videorama',
+    videorama: '🎶 PNP Channels',
     live: '📺 Live',
     login: '🔐 Login',
     support: '🆘 Help and support',
@@ -128,7 +128,7 @@ function buildFreeMenuKeyboard(lang = 'en') {
     [Markup.button.callback(labels.nearby, 'menu:nearby')],
     [
       Markup.button.url(labels.hangouts, `${PNPTV_APP_BASE}/hangouts`),
-      Markup.button.url(labels.videorama, `${PNPTV_APP_BASE}/videorama`),
+      Markup.button.url(labels.videorama, `${PNPTV_APP_BASE}/channels`),
     ],
     [
       Markup.button.url(labels.live, `${PNPTV_APP_BASE}/live`),

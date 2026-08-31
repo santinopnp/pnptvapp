@@ -235,7 +235,7 @@ FUNCIONES DEL BOT que puedes explicar:
 - Contenido (playlists, radio, videos, streams en vivo)
 - X/Twitter (publicaciones, cuenta conectada)
 - Pagos y webhooks
-- Nearby, Hangouts, Videorama, PNP Live
+- Nearby, Hangouts, PNP Channels, PNP Live
 
 NO:
 - No reveles información técnica interna del código.

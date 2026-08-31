@@ -317,7 +317,7 @@ const registerMenuHandlers = (bot) => {
         const keyboard = Markup.inlineKeyboard([
           [
             Markup.button.callback(lang === 'es' ? '🎥 PNP Hangouts' : '🎥 PNP Hangouts', 'hangouts_menu'),
-            Markup.button.callback(lang === 'es' ? '🎶 PNP Videorama' : '🎶 PNP Videorama', 'menu_videorama'),
+            Markup.button.callback(lang === 'es' ? '🎶 PNP Channels' : '🎶 PNP Channels', 'menu_videorama'),
           ],
           [Markup.button.callback(lang === 'es' ? '🔙 Volver' : '🔙 Back', 'back_to_main')],
         ]);

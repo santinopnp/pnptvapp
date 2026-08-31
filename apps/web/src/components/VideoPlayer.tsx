@@ -70,6 +70,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
+    const [playbackError, setPlaybackError] = useState<string | null>(null);
     // When an intro is configured, gate playback until the curtain completes
     // (or the user hits Skip). Once dismissed, the intro never re-shows for
     // this mount — replays go straight to video.
@@ -91,6 +92,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       const video = localRef.current;
       if (!video || !src) return;
 
+      setPlaybackError(null);
       hlsRef.current?.destroy();
       hlsRef.current = null;
 
@@ -107,6 +109,9 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         const hls = new Hls({ enableWorker: true });
         hls.loadSource(src);
         hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal) setPlaybackError(data.details || "playback_error");
+        });
         hlsRef.current = hls;
         return () => {
           hls.destroy();
@@ -114,6 +119,18 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         };
       }
     }, [src]);
+
+    const handleVideoError = () => {
+      setPlaybackError("playback_error");
+    };
+
+    const handleRetry = () => {
+      const video = localRef.current;
+      if (!video) return;
+      setPlaybackError(null);
+      video.load();
+      video.play().catch(() => {});
+    };
 
     const passThroughSrc = isHlsSource(src) ? undefined : (src ?? undefined);
 
@@ -174,9 +191,28 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onPlay={handlePlay}
+          onError={handleVideoError}
           autoPlay={intro ? false : autoPlay}
           {...rest}
         />
+
+        {/* Playback error overlay with retry */}
+        {playbackError && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 p-6 text-center" style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(4px)" }}>
+            <svg className="w-10 h-10 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <div className="text-white text-sm font-semibold">Video unavailable</div>
+            <p className="text-white/70 text-xs max-w-xs">This video couldn't be played. It may still be processing or the source is temporarily unreachable.</p>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="mt-1 px-4 py-2 rounded-full bg-white/10 text-white text-sm font-semibold hover:bg-white/20 transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        )}
 
         {/* Intro curtain — 16s branded opener with the video's channel/title/
             performers burned in. Sits above the video, hides it visually and

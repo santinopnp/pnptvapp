@@ -25,7 +25,7 @@ function getStandardButtonOptions(language = 'en') {
   const botUsername = process.env.BOT_USERNAME || 'pnplatinotv_bot';
   const mainRoomUrl = 'https://meet.jit.si/pnptv-main-room#config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false';
   const hangoutsUrl = process.env.HANGOUTS_WEB_APP_URL || 'https://pnptv.app/hangouts';
-  const videoramaUrl = process.env.VIDEORAMA_URL || 'https://pnptv.app/videorama-app/';
+  const videoramaUrl = process.env.VIDEORAMA_URL || 'https://pnptv.app/channels';
 
   const translations = {
     en: {
@@ -33,7 +33,7 @@ function getStandardButtonOptions(language = 'en') {
       plans: '💎 Subscribe to PRIME',
       main_room: '🎥 PNPtv Main Room',
       hangouts: '🎭 PNPtv Hangouts',
-      videorama: '🎬 PNPtv Videorama',
+      videorama: '🎬 PNP Channels',
       pnp_live: '📺 PNP Live',
       nearby: '📍 Check Who is Nearby',
       profile: '📝 Edit My Profile',
@@ -45,7 +45,7 @@ function getStandardButtonOptions(language = 'en') {
       plans: '💎 Suscribirse a PRIME',
       main_room: '🎥 Sala Principal PNPtv',
       hangouts: '🎭 PNPtv Hangouts',
-      videorama: '🎬 PNPtv Videorama',
+      videorama: '🎬 PNP Channels',
       pnp_live: '📺 PNP Live',
       nearby: '📍 Ver quién está cerca',
       profile: '📝 Editar mi perfil',

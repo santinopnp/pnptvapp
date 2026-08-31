@@ -81,8 +81,8 @@ const registerVideoramaHandlers = (bot) => {
       const webappUrl = await buildVideoramaUrl(userId);
 
       const message = lang === 'es'
-        ? `🎶 *PNP Videorama*\n\nTu centro multimedia con videos, música y podcasts.\n\n📹 *Videos:* ${stats.videos}\n🎵 *Música:* ${stats.music}\n🎙️ *Podcasts:* ${stats.podcasts}\n`
-        : `🎶 *PNP Videorama*\n\nYour media center with videos, music and podcasts.\n\n📹 *Videos:* ${stats.videos}\n🎵 *Music:* ${stats.music}\n🎙️ *Podcasts:* ${stats.podcasts}\n`;
+        ? `🎶 *PNP Channels*\n\nTu centro multimedia con videos, música y podcasts.\n\n📹 *Videos:* ${stats.videos}\n🎵 *Música:* ${stats.music}\n🎙️ *Podcasts:* ${stats.podcasts}\n`
+        : `🎶 *PNP Channels*\n\nYour media center with videos, music and podcasts.\n\n📹 *Videos:* ${stats.videos}\n🎵 *Music:* ${stats.music}\n🎙️ *Podcasts:* ${stats.podcasts}\n`;
 
       await safeReplyOrEdit(ctx, message, {
         parse_mode: 'Markdown',
@@ -95,7 +95,7 @@ const registerVideoramaHandlers = (bot) => {
             Markup.button.callback(`🎙️ Podcasts`, 'videorama_podcasts'),
           ],
           [Markup.button.webApp(
-            lang === 'es' ? '🎬 Abrir Videorama' : '🎬 Open Videorama',
+            lang === 'es' ? '🎬 Abrir PNP Channels' : '🎬 Open PNP Channels',
             webappUrl
           )],
           [Markup.button.callback(lang === 'es' ? '⬅️ Menú Principal' : '⬅️ Main Menu', 'back_to_main')],
@@ -173,8 +173,8 @@ const registerVideoramaHandlers = (bot) => {
       }).join('\n\n');
 
       const message = lang === 'es'
-        ? `${emoji} *${typeName}*\n\n${mediaList}\n\n_Abre Videorama para ver más_`
-        : `${emoji} *${typeName}*\n\n${mediaList}\n\n_Open Videorama to see more_`;
+        ? `${emoji} *${typeName}*\n\n${mediaList}\n\n_Abre PNP Channels para ver más_`
+        : `${emoji} *${typeName}*\n\n${mediaList}\n\n_Open PNP Channels to see more_`;
 
       // Build URL with view and user role info
       const webappUrl = await buildVideoramaUrl(userId, { view: type });
@@ -183,7 +183,7 @@ const registerVideoramaHandlers = (bot) => {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
           [Markup.button.webApp(
-            lang === 'es' ? '🎬 Abrir Videorama' : '🎬 Open Videorama',
+            lang === 'es' ? '🎬 Abrir PNP Channels' : '🎬 Open PNP Channels',
             webappUrl
           )],
           [Markup.button.callback(lang === 'es' ? '⬅️ Volver' : '⬅️ Back', 'menu_videorama')],

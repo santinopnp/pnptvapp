@@ -89,7 +89,7 @@ const COPY = {
     perksLabel: "What's included",
     perks: [
       ["📡", "Live Streams", "Creators live 24/7. Chat while they perform."],
-      ["🎬", "Videorama VOD", "Exclusive uncensored video library for members."],
+      ["🎬", "PNP Channels", "Exclusive uncensored video library for members."],
       ["🎙️", "PNP Radio", "Curated playlists, podcasts and non-stop sets."],
       ["🎥", "Hangouts & Video Calls", "Group rooms and private calls with creators."],
       ["💬", "Chat & Social Feed", "Walls, posts, DMs. A community that gets your vibe."],
@@ -140,7 +140,7 @@ const COPY = {
     perksLabel: "Qué incluye tu acceso",
     perks: [
       ["📡", "Streams en vivo", "Creadores en directo las 24h. Chatea mientras transmiten."],
-      ["🎬", "Videorama VOD", "Catálogo exclusivo de videos sin censura para miembros."],
+      ["🎬", "PNP Channels", "Catálogo exclusivo de videos sin censura para miembros."],
       ["🎙️", "Radio PNP", "Playlists curadas, podcasts y sets non-stop."],
       ["🎥", "Hangouts & Videollamadas", "Salas grupales y llamadas privadas con creadores."],
       ["💬", "Chat & Social", "Muros, posts, DMs. Una comunidad que sí entiende tu vibe."],
