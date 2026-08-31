@@ -2743,7 +2743,12 @@ function ThreadListView({ myDbId, onThreadSelect, panelMode }: { myDbId: string;
                   onTouchStart={(e) => handleRowTouchStart(thread, e)}
                   onTouchEnd={handleRowTouchEnd}
                   onTouchMove={handleRowTouchEnd}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
+                  className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left ${thread.partnerHasPriority ? 'priority-dm-row' : ''}`}
+                  style={thread.partnerHasPriority ? {
+                    borderLeft: '3px solid transparent',
+                    borderImage: 'linear-gradient(180deg, #f5b8d0, #d4a5c0, #a8869e) 1',
+                    background: 'linear-gradient(90deg, rgba(245,184,208,0.06) 0%, transparent 30%)',
+                  } : undefined}
                 >
                   <UserAvatar
                     userId={p.id}
@@ -2756,6 +2761,19 @@ function ThreadListView({ myDbId, onThreadSelect, panelMode }: { myDbId: string;
                       <p className="text-sm font-semibold text-pnp-textPrimary truncate flex items-center gap-1">
                         {thread.pinnedAt && (
                           <svg className="w-3 h-3 text-pnp-textSecondary" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v3.586l1.707 1.707a1 1 0 01.293.707V13a1 1 0 01-1 1h-2v4a1 1 0 11-2 0v-4H6a1 1 0 01-1-1V9a1 1 0 01.293-.707L7 6.586V3a1 1 0 011-1h2z" /></svg>
+                        )}
+                        {thread.partnerHasPriority && (
+                          <span
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                            title="Priority DM — reply within 24h"
+                            style={{
+                              background: 'linear-gradient(135deg, #f5b8d0, #d4a5c0)',
+                              color: '#4a1f36',
+                              lineHeight: 1,
+                            }}
+                          >
+                            ★
+                          </span>
                         )}
                         {p.name}
                         {muted && (

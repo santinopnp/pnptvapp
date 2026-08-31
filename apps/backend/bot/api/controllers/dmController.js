@@ -165,6 +165,29 @@ const getThreads = async (req, res) => {
     const presenceList = await DmService.getPresence(partnerIds);
     const presenceMap = new Map(presenceList.map((p) => [String(p.id), p]));
 
+    // Priority-DM flags: partnerHasPriority means the PARTNER paid ME for a
+    // priority_dm slot (I'm the creator, they're the fan) — shown as a
+    // rose-gold marker on the thread row so I know to reply within 24h.
+    // Batched to one query: fetch all buyer→creator combos active in past 30d.
+    let priorityBuyerSet = new Set();
+    if (partnerIds.length > 0) {
+      try {
+        const pdQuery = await query(
+          `SELECT DISTINCT buyer_user_id FROM creator_service_bookings
+            WHERE creator_user_id = $1
+              AND service_type = 'priority_dm'
+              AND status IN ('paid','fulfilled')
+              AND created_at > NOW() - INTERVAL '30 days'
+              AND buyer_user_id = ANY($2::text[])`,
+          [String(user.id), partnerIds]
+        );
+        priorityBuyerSet = new Set(pdQuery.rows.map((r) => String(r.buyer_user_id)));
+      } catch (pdErr) {
+        // Non-fatal — table may not exist in older environments.
+        logger.warn('[dm.getThreads] priority_dm lookup failed', { error: pdErr.message });
+      }
+    }
+
     const threads = rows.map((r) => {
       const partnerIdStr = String(r.partner_id);
       const presence = presenceMap.get(partnerIdStr) || { online: false, lastSeen: null };
@@ -172,6 +195,7 @@ const getThreads = async (req, res) => {
       // "Read by other" only meaningful when the last message is mine
       const lastMessageReadByOther = isMineLast ? !!r.last_message_is_read : false;
       const unread = String(user.id) === String(r.user_a) ? r.unread_for_a : r.unread_for_b;
+      const partnerHasPriority = priorityBuyerSet.has(partnerIdStr);
       return {
         // canonical (new) field names
         partnerId: partnerIdStr,
@@ -192,6 +216,9 @@ const getThreads = async (req, res) => {
         hideReadReceipts: r.hide_read_receipts === true,
         online: !!presence.online,
         lastSeen: presence.lastSeen || null,
+        // Priority DM marker — partner paid me for a priority slot
+        // (rose-gold ring in the DM inbox; see feedback for staff-only naming).
+        partnerHasPriority,
         // legacy aliases used by older callers (Layout.tsx, etc.)
         userId: partnerIdStr,
         username: r.partner_username || '',

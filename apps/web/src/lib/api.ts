@@ -3230,6 +3230,11 @@ export interface MessageThread {
   online: boolean;
   lastSeen: string | null;
 
+  // Priority DM: partner (fan) paid me (creator) for a priority slot within
+  // the past 30 days. UI paints a rose-gold ring on the thread row so the
+  // creator knows to reply within 24h (the priority guarantee).
+  partnerHasPriority?: boolean;
+
   // legacy aliases for backwards compatibility — keep these so older code paths
   // that still read `userId` / `username` / `firstName` / `photoUrl` / `unreadCount`
   // do not break. The new server payload includes both shapes.
