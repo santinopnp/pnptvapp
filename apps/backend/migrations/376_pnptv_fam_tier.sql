@@ -13,7 +13,7 @@ BEGIN;
 -- Founding members (2026-08-31):
 --   • PADUDE69       (10edc448-…)   — exists in DB
 --   • DUKEOFDENSITY  (8706669302)   — exists in DB
---   • ladsaplatefounder             — pending signup
+--   • ladsuplatefounder             — pending signup
 
 -- ── 0. Idempotent cleanup of an earlier draft of this migration ─────────────
 -- The first pass of 376 used `is_pnp_fam` / `pnp_fam_*` naming. Rename in
@@ -103,7 +103,7 @@ ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
 
 -- ── 5. Seed pending handle for the third member ─────────────────────────────
 INSERT INTO pnptv_fam_pending_handles (handle, invited_by, invited_at)
-VALUES ('ladsaplatefounder', '8599671840', NOW())
+VALUES ('ladsuplatefounder', '8599671840', NOW())
 ON CONFLICT (handle) DO NOTHING;
 
 COMMIT;
