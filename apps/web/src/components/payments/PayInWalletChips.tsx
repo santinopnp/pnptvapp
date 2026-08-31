@@ -261,6 +261,18 @@ const _USDC_ABI = [{
   outputs: [{ name: "", type: "bool" }],
 }];
 
+// Privy's card on-ramp (Stripe / MoonPay / Meld) DEDUCTS its processing fee
+// from whatever fiat amount we pass — so if we pass the plan price directly,
+// the USDC that lands is short and the downstream on-chain buy either fails
+// the balance check or shorts the platform. Gross up by ~8% + $0.50 to safely
+// cover Stripe (~3.5% + spread), MoonPay (~4.5%), and Meld (~5%). Also honors
+// Stripe's $15 on-ramp minimum. Returns a string ready for `defaultAmount`.
+export function grossUpForOnramp(targetUsd: number): string {
+  const safe = Number.isFinite(targetUsd) && targetUsd > 0 ? targetUsd : 15;
+  const grossed = Math.ceil((safe + 0.5) / 0.92);
+  return Math.max(15, grossed).toFixed(0);
+}
+
 export interface WalletPayCardProps {
   surface: WalletCheckoutSurface;
   amountUsd: number;
@@ -486,7 +498,7 @@ export function WalletPayCard({
           asset: _USDC_BASE,
         },
         fiat: {
-          defaultAmount: Math.max(15, amountUsd).toFixed(2),
+          defaultAmount: grossUpForOnramp(amountUsd),
         },
       });
       // addFunds resolved — user closed the fund flow. Stripe settlement is
@@ -633,8 +645,8 @@ export function WalletPayCard({
               style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
             >
               {es
-                ? `💳 Pagar $${amountUsd.toFixed(2)} con tarjeta`
-                : `💳 Pay $${amountUsd.toFixed(2)} with card`}
+                ? `💳 Pagar $${grossUpForOnramp(amountUsd)} con tarjeta (comisión incl.)`
+                : `💳 Pay $${grossUpForOnramp(amountUsd)} with card (incl. fee)`}
             </button>
           )}
           {/* External wallet with insufficient USDC → user must top up inside

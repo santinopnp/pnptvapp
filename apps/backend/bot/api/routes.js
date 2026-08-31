@@ -17148,14 +17148,15 @@ app.get('/api/creator/crystal/benefits', asyncHandler(async (_req, res) => {
   return res.json({ benefits: CreatorSvc.crystalBenefitsCatalog() });
 }));
 
-// ── Whale Pigs list gated for active Crystal Creators only ─────────────────
-// The public /api/whale-pigs list returns everyone; this endpoint is only
-// callable by an active Crystal Creator — that's the load-bearing perk
-// ("direct personalized exposure with Whale Pigs") that differentiates the tier.
-app.get('/api/creator/crystal/whale-pigs', requireSessionAuth, asyncHandler(async (req, res) => {
+// ── Inner Circle — creator-facing alias for the Whale Pig list ──────────────
+// Only callable by an active Crystal Creator — that's the load-bearing perk
+// (direct personalized exposure to the VIP audience) that differentiates the
+// tier. The URL and response deliberately avoid the internal "Whale Pig"
+// label (staff-only per feedback_whale_pig_internal_only.md).
+app.get('/api/creator/crystal/inner-circle', requireSessionAuth, asyncHandler(async (req, res) => {
   const CreatorSvc = require('../../services/creatorService');
   try {
-    const users = await CreatorSvc.listWhalePigsForCrystal(String(req.session.user.id));
+    const users = await CreatorSvc.listInnerCircleForCrystal(String(req.session.user.id));
     return res.json({ users });
   } catch (err) {
     if (err.status === 403) return res.status(403).json({ error: 'not_crystal_creator' });
@@ -17166,27 +17167,14 @@ app.get('/api/creator/crystal/whale-pigs', requireSessionAuth, asyncHandler(asyn
 // ── Whale Pigs — INTERNAL surface only (not client-facing) ──────────────────
 // "Whale Pig" is an internal term shared between the PNPtv team and Crystal
 // Creators only (see feedback_whale_pig_internal_only.md). The list endpoint
-// is gated to Crystal Creators + admins — regular users get 403. The URL
-// string is fine at that gate because only insiders can reach it.
+// is gated to PNPtv STAFF ONLY (admin / superadmin). Not even Crystal Creators
+// can hit this — they get the same data via /api/creator/crystal/inner-circle
+// which never emits the string "whale pig".
 //
 // PNPtv fam ⊆ Whale Pigs. `is_pnptv_fam` is the inner-circle subset (team +
 // closest partners); a DB trigger forces fam=TRUE → whale_pig=TRUE.
-async function _requireCrystalOrAdmin(req, res, next) {
-  try {
-    const userId = req.session?.user?.id;
-    if (!userId) return res.status(401).json({ error: 'unauthenticated' });
-    const role = req.session?.user?.role;
-    if (role === 'admin' || role === 'superadmin') return next();
-    const CreatorSvc = require('../../services/creatorService');
-    const isCrystal = await CreatorSvc.isCrystalCreator(String(userId));
-    if (isCrystal) return next();
-    return res.status(403).json({ error: 'forbidden' });
-  } catch (err) {
-    return next(err);
-  }
-}
 
-app.get('/api/whale-pigs', requireSessionAuth, _requireCrystalOrAdmin, asyncHandler(async (_req, res) => {
+app.get('/api/whale-pigs', requireSessionAuth, adminGuard, asyncHandler(async (_req, res) => {
   const { rows } = await getPool().query(
     `SELECT id, username, first_name, photo_file_id AS photo_url, bio, is_pnptv_fam
        FROM users

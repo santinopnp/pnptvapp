@@ -18,7 +18,7 @@ import {
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
-import { WalletCheckoutHero } from "@/components/payments/PayInWalletChips";
+import { WalletCheckoutHero, grossUpForOnramp } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -398,15 +398,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setPayingPackageId(pkg.id);
     try {
       // Privy Stripe onramp — user pays with card/Apple Pay/Google Pay, USDC
-      // lands in their embedded wallet. defaultAmount clamps to ≥$15 to satisfy
-      // Stripe onramp minimums even for smaller packs (leftover is spendable).
+      // lands in their embedded wallet. grossUpForOnramp adds a fee buffer so
+      // the USDC that arrives is ≥ pack price (Stripe/MoonPay/Meld deduct their
+      // fee from what we pass); also enforces the $15 on-ramp minimum.
       await addFunds({
         destination: {
           address: activeWallet.address,
           chain: BASE_CAIP2,
           asset: USDC_BASE_ADDRESS,
         },
-        fiat: { defaultAmount: Math.max(15, price).toFixed(0) },
+        fiat: { defaultAmount: grossUpForOnramp(price) },
       });
       // Poll balance until USDC covers the pack (or timeout ~60s), then trigger
       // the on-chain Ru$h purchase automatically so the card user gets the
@@ -777,7 +778,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                         ? (rail === "eth"
                             ? `Ξ ${ethNeeded.toFixed(6)} ETH`
                             : `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`)
-                        : `💳 $${price.toFixed(0)} · ${es ? "Tarjeta" : "Card"}`;
+                        : `💳 $${grossUpForOnramp(price)} · ${es ? "Tarjeta" : "Card"}`;
                     return (
                       <button
                         key={pkg.id}

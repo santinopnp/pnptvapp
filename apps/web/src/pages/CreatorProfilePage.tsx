@@ -361,8 +361,10 @@ export default function CreatorProfilePage() {
   const [crystalNpLoading, setCrystalNpLoading] = useState<"gift" | "self" | null>(null);
   const [crystalNpError, setCrystalNpError] = useState<string | null>(null);
   const crystalWalletPanelRef = useRef<HTMLDivElement>(null);
-  // Whale Pigs — only loaded when the viewer is an active Crystal Creator (own profile).
-  const [whalePigs, setWhalePigs] = useState<Array<{ id: string; username: string | null; first_name: string | null; photo_url: string | null }> | null>(null);
+  // Inner Circle (VIP audience) — only loaded when the viewer is an active
+  // Crystal Creator. Backed by the internal Whale Pig list server-side but
+  // NEVER labeled "Whale Pig" in creator-facing UI (staff-only naming).
+  const [innerCircle, setInnerCircle] = useState<Array<{ id: string; username: string | null; first_name: string | null; photo_url: string | null }> | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const tipPanelRef = useRef<HTMLDivElement>(null);
@@ -717,16 +719,16 @@ export default function CreatorProfilePage() {
     navigate(`/profile/${userId}`);
   }
 
-  // Load Whale Pigs when own-profile Crystal Creator opens their profile.
+  // Load Inner Circle when own-profile Crystal Creator opens their profile.
   // Endpoint is gated to active Crystal Creators server-side.
   useEffect(() => {
     if (!isOwnProfile || !data?.creator?.crystalCreator) {
-      setWhalePigs(null);
+      setInnerCircle(null);
       return;
     }
-    fetch("/api/creator/crystal/whale-pigs", { credentials: "include" })
+    fetch("/api/creator/crystal/inner-circle", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((body) => { if (body?.users) setWhalePigs(body.users); })
+      .then((body) => { if (body?.users) setInnerCircle(body.users); })
       .catch(() => { /* non-fatal */ });
   }, [isOwnProfile, data?.creator?.crystalCreator]);
 
@@ -1207,13 +1209,14 @@ export default function CreatorProfilePage() {
                 </span>
               </div>
 
-              {/* Whale Pig Circle — VIP audience curated by Santino & Lex. Only
+              {/* Inner Circle — VIP audience curated by Santino & Lex. Only
                   visible to active Crystal Creators viewing their own profile.
-                  DM deep-link opens the platform DM thread directly. */}
-              {whalePigs && whalePigs.length > 0 && (
+                  DM deep-link opens the platform DM thread directly. Internal
+                  name is "Whale Pig" but that stays staff-only. */}
+              {innerCircle && innerCircle.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-white/5">
                   <p className="text-[11px] font-bold text-white mb-1.5">
-                    {t.lang === "es" ? "🐷 Tu Whale Pig Circle" : "🐷 Your Whale Pig Circle"}
+                    {t.lang === "es" ? "◈ Tu Inner Circle" : "◈ Your Inner Circle"}
                   </p>
                   <p className="text-[10px] leading-snug mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     {t.lang === "es"
@@ -1221,7 +1224,7 @@ export default function CreatorProfilePage() {
                       : "Our VIP audience — top spenders and personal friends of Santino & Lex. DM them directly."}
                   </p>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {whalePigs.map((wp) => (
+                    {innerCircle.map((wp) => (
                       <a
                         key={wp.id}
                         href={`/dm/${wp.id}`}

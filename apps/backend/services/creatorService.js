@@ -2565,16 +2565,16 @@ class CreatorService {
   static crystalBenefitsCatalog() {
     return [
       {
-        id: 'whale_pig_circle',
-        icon: '🐷',
-        en: { title: 'Whale Pig Circle', body: 'Direct, personalized exposure to our VIP audience — top spenders and personal friends of Santino & Lex. See who they are, DM them straight, and get invited to their private hangouts.' },
-        es: { title: 'Whale Pig Circle', body: 'Exposición directa y personalizada a nuestra audiencia VIP — los que más gastan y amigos personales de Santino y Lex. Ve quiénes son, escríbeles directo y entra a sus hangouts privados.' },
+        id: 'inner_circle',
+        icon: '◈',
+        en: { title: 'Inner Circle', body: 'Direct, personalized exposure to our VIP audience — top spenders and personal friends of Santino & Lex. See who they are, DM them straight, and get invited to their private hangouts.' },
+        es: { title: 'Inner Circle', body: 'Exposición directa y personalizada a nuestra audiencia VIP — los que más gastan y amigos personales de Santino y Lex. Ve quiénes son, escríbeles directo y entra a sus hangouts privados.' },
       },
       {
         id: 'higher_split',
         icon: '💰',
-        en: { title: '85% revenue share', body: 'You keep 85% of every subscriber payment (vs 80% standard). Zero commission on tips from Whale Pigs.' },
-        es: { title: '85% del ingreso', body: 'Te quedas con el 85% de cada pago de suscriptor (vs 80% estándar). 0% de comisión en propinas de los Whale Pigs.' },
+        en: { title: '85% revenue share', body: 'You keep 85% of every subscriber payment (vs 70% standard). Zero commission on tips from Whale Pigs.' },
+        es: { title: '85% del ingreso', body: 'Te quedas con el 85% de cada pago de suscriptor (vs 70% estándar). 0% de comisión en propinas de los Whale Pigs.' },
       },
       {
         id: 'crystal_badge',
@@ -2622,12 +2622,14 @@ class CreatorService {
   }
 
   /**
-   * Return the Whale Pigs list — only callable by an active Crystal Creator.
-   * Throws if the caller is not Crystal.
+   * Return the VIP audience for creators — same data as the internal Whale Pig
+   * list but exposed under the "Inner Circle" label because "Whale Pig" is
+   * staff-only (feedback_whale_pig_internal_only.md). Only callable by an
+   * active Crystal Creator.
    *
    * @param {string} callerUserId
    */
-  static async listWhalePigsForCrystal(callerUserId) {
+  static async listInnerCircleForCrystal(callerUserId) {
     const isCrystal = await CreatorService.isCrystalCreator(callerUserId);
     if (!isCrystal) {
       const err = new Error('not_crystal_creator');
