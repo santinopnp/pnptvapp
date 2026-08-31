@@ -505,8 +505,11 @@ async function main() {
   let targets;
 
   if (DUAL || ALL_USERS) {
-    // dual dedupes only against this batch; all-users dedupes against prior banxa batches
-    const dedupLike = DUAL ? BATCH_ID + '%'
+    // Dedup namespace = campaign, NOT batch id. Re-running with a fresh
+    // batch_id (e.g. "-v2" after a stall) must NOT re-hit users already
+    // reached under the same campaign. See incident 2026-08-28: two dual
+    // batches double-DMed 8,321 users because dedupLike = BATCH_ID + '%'.
+    const dedupLike = DUAL ? 'banxa-btc-dual-%'
       : RESEND ? BATCH_ID + '%'
       : ANNUAL ? 'banxa-btc-annual50%'
       : 'banxa-btc-%';
