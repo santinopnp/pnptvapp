@@ -12631,26 +12631,31 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
     return res.status(402).json({ success: false, error: 'Insufficient tokens balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current });
   }
   const newBalance = Number(debitResult.rows[0].balance_tokens);
-  // Create a payment record so onCallPaymentSuccess can run its full flow
+  // Create a payment record so onCallPaymentSuccess can run its full flow.
+  // The wallet debit above already committed — if ANY downstream step throws
+  // (payment insert CHECK violation, credits grant failure, etc.) we must
+  // refund the tokens BEFORE returning the error. Prior to 2026-08-31 the
+  // payment-create call sat outside the try/catch, so a CHECK-constraint
+  // violation dropped 360 Ru$h off Santino's balance with no ledger row.
   const PaymentModel = require('../../models/paymentModel');
   const paymentId = require('crypto').randomUUID();
-  await PaymentModel.create({
-    paymentId,
-    userId: memberId,
-    planId: null,
-    amount: priceUsd,
-    currency: 'USD',
-    provider: 'tokens',
-    metadata: {
-      type: 'call_package',
-      packageId: pkg.id,
-      packageSku: pkg.sku,
-      ...(startTimeUtc ? { startTimeUtc } : {}),
-      ...(endTimeUtc ? { endTimeUtc } : {}),
-      ...(clientNotes ? { clientNotes } : {}),
-    },
-  });
   try {
+    await PaymentModel.create({
+      paymentId,
+      userId: memberId,
+      planId: null,
+      amount: priceUsd,
+      currency: 'USD',
+      provider: 'tokens',
+      metadata: {
+        type: 'call_package',
+        packageId: pkg.id,
+        packageSku: pkg.sku,
+        ...(startTimeUtc ? { startTimeUtc } : {}),
+        ...(endTimeUtc ? { endTimeUtc } : {}),
+        ...(clientNotes ? { clientNotes } : {}),
+      },
+    });
     const CallCheckoutSvc = require('../../services/callCheckoutService');
     await CallCheckoutSvc.onCallPaymentSuccess(paymentId);
     const { cache } = require('../../config/redis');
@@ -12661,14 +12666,26 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
     logger.info('[wallet/pay-call] Tokens call credits granted', { memberId, packageId: pkg.id, tokenCost, newBalance });
     return res.json({ success: true, newBalance, packageId: pkg.id, priceUsd, paymentId });
   } catch (callErr) {
-    // Refund
-    await dbQuery(
-      `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1`,
-      [memberId, tokenCost]
-    ).catch(() => {});
-    // Mark payment void so it doesn't show as completed in history
+    // Refund the wallet debit — orphan debits with no ledger row are the worst
+    // possible outcome (user paid, got nothing, we can't easily reconstruct).
+    let refundedBalance = null;
+    try {
+      const refundRow = await dbQuery(
+        `UPDATE user_token_wallets SET balance_tokens = balance_tokens + $2, updated_at = NOW() WHERE user_id = $1 RETURNING balance_tokens`,
+        [memberId, tokenCost]
+      );
+      refundedBalance = Number(refundRow.rows[0]?.balance_tokens ?? NaN);
+    } catch (refundErr) {
+      logger.error('[wallet/pay-call] REFUND FAILED — manual intervention needed', {
+        memberId, pkg: pkg.id, tokenCost, origErr: callErr.message, refundErr: refundErr.message,
+      });
+    }
+    // Mark payment void so it doesn't show as completed in history (best-effort;
+    // if the payment insert itself failed, the row doesn't exist and this no-ops).
     await dbQuery(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]).catch(() => {});
-    logger.error('[wallet/pay-call] call credits failed, Tokens refunded', { memberId, pkg: pkg.id, err: callErr.message });
+    logger.error('[wallet/pay-call] call credits failed, Tokens refunded', {
+      memberId, pkg: pkg.id, tokenCost, refundedBalance, err: callErr.message,
+    });
     return res.status(500).json({ success: false, error: 'No se pudieron aplicar los créditos. Tus Tokens han sido reembolsadas.' });
   }
 }));
