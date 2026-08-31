@@ -1955,8 +1955,8 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               </p>
               <p className="text-xs" style={{ color: "#D1D1D6" }}>
                 {lang === "es"
-                  ? "Tu cuenta ahora tiene acceso Lifetime + 60 días de PRIME. Refrescando…"
-                  : "Your account now has Lifetime + 60 days of PRIME. Refreshing…"}
+                  ? "Tu cuenta ahora tiene acceso PRIME de por vida. Refrescando…"
+                  : "Your account now has lifetime PRIME access. Refreshing…"}
               </p>
             </div>
           ) : (
@@ -1968,8 +1968,8 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               >
                 <p className="text-xs leading-relaxed" style={{ color: "#D1D1D6" }}>
                   {lang === "es"
-                    ? "Canjea tu código Meru para activar tu membresía Lifetime más 60 días de PRIME como bonificación."
-                    : "Redeem your Meru code to activate Lifetime membership plus 60 days of PRIME as a bonus."}
+                    ? "Canjea tu código Meru para activar tu membresía PRIME de por vida."
+                    : "Redeem your Meru code to activate lifetime PRIME membership."}
                 </p>
               </div>
 
