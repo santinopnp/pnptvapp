@@ -6,7 +6,6 @@ import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
 import {
   submitOnboardingStep,
   completeOnboarding,
-  linkPrivyIdentity,
   type OnboardingStepKey,
 } from "@/lib/api";
 
@@ -500,34 +499,20 @@ function StepCrypto({
 }) {
   const t = useI18n();
   const es = t.lang === "es";
-  const { ready, authenticated, login, getAccessToken } = usePrivy();
+  const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { connectWallet } = useConnectWallet();
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
   const walletReady = authenticated && !!embeddedWallet;
   const [connecting, setConnecting] = useState(false);
-  const linkedRef = useRef(false);
 
-  // Privy auth completed → stop spinner + sync privy_id + wallet_address to
-  // our backend so support can look up "which pnptv user owns 0xabc". Fires
-  // once per mount; guarded by linkedRef so re-renders don't re-POST.
+  // Privy identity → pnptv user row sync now runs globally from
+  // <PrivyIdentitySync /> in App.tsx so ANY Privy entry point (this step, the
+  // wallet FAB, BuyTokensModal, PayInWalletChips) backfills privy_id +
+  // wallet_address, not just Step 7. Local effect removed.
   useEffect(() => {
-    if (!walletReady) return;
-    setConnecting(false);
-    if (linkedRef.current) return;
-    linkedRef.current = true;
-    (async () => {
-      try {
-        const token = await getAccessToken();
-        if (token) await linkPrivyIdentity(token);
-      } catch (err) {
-        // Non-fatal — user can still complete onboarding. Support lookup
-        // just won't work until the user reconnects.
-        console.warn("[onboarding] privy link failed", err);
-        linkedRef.current = false;
-      }
-    })();
-  }, [walletReady, getAccessToken]);
+    if (walletReady) setConnecting(false);
+  }, [walletReady]);
 
   // "Create my wallet" path — social login (Telegram / X) → embedded wallet auto-created
   const handleCreateWallet = useCallback(() => {

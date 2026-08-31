@@ -1719,6 +1719,19 @@ export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true;
   return res.json();
 }
 
+// Read the user's session-linked wallet address (users.wallet_address, populated
+// via /api/privy/link). Lets the wallet UI render a read-only balance view on
+// devices where Privy hasn't been authenticated locally — the pnptv session
+// cookie is cross-device, whereas Privy's useWallets() is per-browser.
+export async function getLinkedWallet(): Promise<{ ok: true; walletAddress: string | null; hasPrivyId: boolean; linkedAt: string | null }> {
+  const res = await fetch(`${API_BASE}/api/wallet/linked`, { credentials: "include" });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(error.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteAvatar(): Promise<{ success: boolean }> {
   const res = await fetch(`${API_BASE}/api/webapp/profile/avatar`, {
     method: "DELETE",

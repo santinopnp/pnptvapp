@@ -637,18 +637,34 @@ export function WalletPayCard({
         </div>
       ) : (
         <>
-          {!loading && isEmbedded && (
-            <button
-              type="button"
-              onClick={handleFund}
-              className="w-full py-3 rounded-xl text-base font-bold text-white transition active:scale-[0.98]"
-              style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
-            >
-              {es
-                ? `💳 Pagar $${grossUpForOnramp(amountUsd)} con tarjeta (comisión incl.)`
-                : `💳 Pay $${grossUpForOnramp(amountUsd)} with card (incl. fee)`}
-            </button>
-          )}
+          {!loading && isEmbedded && (() => {
+            const topupUsd = Number(grossUpForOnramp(amountUsd));
+            const leftoverUsd = Math.max(0, topupUsd - amountUsd);
+            const showsLeftover = leftoverUsd >= 0.5;
+            return (
+              <button
+                type="button"
+                onClick={handleFund}
+                className="w-full py-3 rounded-xl text-white transition active:scale-[0.98] flex flex-col items-center gap-0.5"
+                style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+              >
+                <span className="text-base font-bold">
+                  {es
+                    ? `💳 Recargar $${topupUsd} con tarjeta`
+                    : `💳 Top up $${topupUsd} with card`}
+                </span>
+                <span className="text-[11px] font-medium opacity-90">
+                  {es
+                    ? showsLeftover
+                      ? `Esta compra: $${amountUsd.toFixed(2)} · Sobra en wallet: $${leftoverUsd.toFixed(2)}`
+                      : `Esta compra: $${amountUsd.toFixed(2)} (mínimo de recarga)`
+                    : showsLeftover
+                      ? `This purchase: $${amountUsd.toFixed(2)} · Left in wallet: $${leftoverUsd.toFixed(2)}`
+                      : `This purchase: $${amountUsd.toFixed(2)} (top-up minimum)`}
+                </span>
+              </button>
+            );
+          })()}
           {/* External wallet with insufficient USDC → user must top up inside
               their own wallet app (we can't onramp into external wallets via
               Stripe). Show the address to send to + a link to connect a Privy
@@ -695,7 +711,7 @@ export function WalletPayCard({
 // on open + on drill-in return. Lazy-loaded from Layout.tsx.
 
 import { lazy as _lazy, Suspense as _Suspense } from "react";
-import { getWalletBalance as _getWalletBalance } from "@/lib/api";
+import { getWalletBalance as _getWalletBalance, getLinkedWallet as _getLinkedWallet } from "@/lib/api";
 const _LazyBuyTokensModal = _lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
 );
@@ -728,7 +744,29 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
   const activeWallet = wallets.find((w) => w.address === activeAddress) || null;
   const isActiveEmbedded = activeWallet?.walletClientType === "privy";
-  const address = activeWallet?.address || null;
+
+  // Session-linked wallet address: pulled via the pnptv session cookie so a
+  // device where Privy hasn't been authenticated locally still knows which
+  // address belongs to this user. Populated by /api/privy/link (server-side
+  // + global PrivyIdentitySync). Enables cross-device READ-ONLY wallet view
+  // (balances + address + Basescan) — signing still requires local Privy auth.
+  const [sessionWalletAddress, setSessionWalletAddress] = _useState<string | null>(null);
+  _useEffect(() => {
+    let cancelled = false;
+    _getLinkedWallet()
+      .then((r) => { if (!cancelled) setSessionWalletAddress(r.walletAddress); })
+      .catch(() => { /* non-fatal — falls back to Privy-only view */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Effective address the wallet UI renders against — prefer live Privy wallet
+  // (can sign) over session-linked address (read-only).
+  const address = activeWallet?.address || sessionWalletAddress || null;
+  // Read-only mode: session knows the address but Privy is not authed locally.
+  // Signing actions (Send / Buy Ru$h / Fund with card) require Privy auth on
+  // the CURRENT browser — we hide those and show a "Sign in to send / buy"
+  // banner instead. Balances + address + copy + Basescan all work read-only.
+  const isReadOnlyView = !activeWallet && !!sessionWalletAddress;
 
   const [usdc, setUsdc] = _useState<number | null>(null);
   const [eth, setEth] = _useState<number | null>(null);
@@ -1287,36 +1325,51 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {!authenticated || !activeWallet ? (
-            <div className="text-center py-8 space-y-4">
-              <p className="text-4xl">👛</p>
-              <p className="text-sm font-bold text-white">Get started with a wallet</p>
-              <p className="text-[11px] text-white/60 leading-relaxed max-w-xs mx-auto">
-                Create a free PNPtv Wallet or bring your own — Trust Wallet, MetaMask, Coinbase, or any WalletConnect wallet.
-              </p>
-              <div className="flex flex-col gap-2 max-w-xs mx-auto">
-                <button
-                  type="button"
-                  onClick={() => login()}
-                  className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
-                  style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
-                >
-                  ✨ Create PNPtv Wallet
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConnectExternal}
-                  className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white border border-white/15"
-                  style={{ background: "rgba(255,255,255,0.06)" }}
-                >
-                  🔗 Connect Trust / MetaMask
-                </button>
+          {(!authenticated || !activeWallet) && !sessionWalletAddress ? (() => {
+            // No local Privy session AND no session-linked wallet: truly new
+            // user. Copy is inclusive for both returning users (whose Privy
+            // session is fresh on this browser — e.g. desktop when they usually
+            // use phone) and brand-new users. Signing in with the same email /
+            // Google / Telegram / X they used elsewhere recovers the same
+            // embedded wallet — Privy links wallets to accounts, not browsers.
+            const _isEs = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("es");
+            return (
+              <div className="text-center py-8 space-y-4">
+                <p className="text-4xl">👛</p>
+                <p className="text-sm font-bold text-white">
+                  {_isEs ? "Accede a tu billetera" : "Sign in to your wallet"}
+                </p>
+                <p className="text-[11px] text-white/60 leading-relaxed max-w-xs mx-auto">
+                  {_isEs
+                    ? "Usa el mismo email, Google, Telegram o X que hayas usado antes para ver tu billetera existente en este dispositivo — o crea una nueva al instante."
+                    : "Use the same email, Google, Telegram or X you've signed in with before to see your existing wallet on this device — or create a new one instantly."}
+                </p>
+                <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                  <button
+                    type="button"
+                    onClick={() => login()}
+                    className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white"
+                    style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                  >
+                    {_isEs ? "✨ Ingresar / Crear billetera" : "✨ Sign in / Create wallet"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConnectExternal}
+                    className="min-h-[44px] px-6 rounded-xl text-sm font-bold text-white border border-white/15"
+                    style={{ background: "rgba(255,255,255,0.06)" }}
+                  >
+                    {_isEs ? "🔗 Conectar Trust / MetaMask" : "🔗 Connect Trust / MetaMask"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-white/40 leading-relaxed pt-1">
+                  {_isEs
+                    ? "Tu billetera te sigue entre dispositivos — mismo login, misma billetera."
+                    : "Your wallet follows you across devices — same login, same wallet."}
+                </p>
               </div>
-              <p className="text-[10px] text-white/40 leading-relaxed pt-1">
-                Both work everywhere on PNPtv — pay for PRIME, Ru$h, tips, and calls.
-              </p>
-            </div>
-          ) : sendOpen ? (
+            );
+          })() : sendOpen ? (
             <>
               {/* Send sub-panel — replaces the home body. Back button returns
                   to the wallet home. Success screen surfaces the tx hash link. */}
@@ -1840,55 +1893,96 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="grid grid-cols-3 gap-2">
-                {/* Fund with card — Privy's Stripe onramp lands USDC at any
-                    destination address, including external wallets. Works for
-                    both PNPtv-embedded and Trust/MetaMask. */}
-                <button
-                  type="button"
-                  onClick={handleFund}
-                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
-                  style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-                >
-                  <span className="text-lg leading-none">💳</span>
-                  <span className="text-[11px]">Fund with card</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowBuyModal(true)}
-                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
-                  style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
-                >
-                  <span className="text-lg leading-none">💎</span>
-                  <span className="text-[11px]">Buy Ru$h</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { resetSend(); setSendOpen(true); }}
-                  className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
-                  style={{ background: "linear-gradient(135deg,#7B61FF,#3B82F6)" }}
-                >
-                  <span className="text-lg leading-none">↗️</span>
-                  <span className="text-[11px]">Send</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={openInBasescan}
-                  className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
-                >
-                  <span className="text-lg leading-none">📜</span>
-                  <span className="text-[11px]">Activity</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={refresh}
-                  className="col-span-2 min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex items-center justify-center gap-2"
-                >
-                  <span className="text-lg leading-none">🔄</span>
-                  <span className="text-[11px]">Refresh balances</span>
-                </button>
-              </div>
+              {/* Actions — signing actions (Fund/Buy/Send) require Privy auth
+                  on THIS browser. In read-only mode (session knows wallet
+                  address but Privy isn't authed locally) we replace the
+                  action grid with a sign-in prompt. Activity + Refresh work
+                  read-only so they stay visible. */}
+              {isReadOnlyView ? (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.08] p-3 space-y-2">
+                    <p className="text-sm font-bold text-amber-100">Sign in on this device</p>
+                    <p className="text-[11px] text-white/70 leading-snug">
+                      Your wallet is here — balances above are live. To send crypto or buy Ru$h from this browser, sign in with the same email / Google / Telegram / X you use elsewhere.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => login()}
+                      className="w-full min-h-[44px] rounded-lg text-sm font-bold text-white transition active:scale-[0.98]"
+                      style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+                    >
+                      ✨ Sign in to unlock signing
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={openInBasescan}
+                      className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                    >
+                      <span className="text-lg leading-none">📜</span>
+                      <span className="text-[11px]">Activity</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={refresh}
+                      className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                    >
+                      <span className="text-lg leading-none">🔄</span>
+                      <span className="text-[11px]">Refresh</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Fund with card — Privy's Stripe onramp lands USDC at any
+                      destination address, including external wallets. Works for
+                      both PNPtv-embedded and Trust/MetaMask. */}
+                  <button
+                    type="button"
+                    onClick={handleFund}
+                    className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                    style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                  >
+                    <span className="text-lg leading-none">💳</span>
+                    <span className="text-[11px]">Fund with card</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowBuyModal(true)}
+                    className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                    style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}
+                  >
+                    <span className="text-lg leading-none">💎</span>
+                    <span className="text-[11px]">Buy Ru$h</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { resetSend(); setSendOpen(true); }}
+                    className="min-h-[52px] rounded-xl font-bold text-white flex flex-col items-center justify-center gap-0.5 active:scale-[0.98] transition"
+                    style={{ background: "linear-gradient(135deg,#7B61FF,#3B82F6)" }}
+                  >
+                    <span className="text-lg leading-none">↗️</span>
+                    <span className="text-[11px]">Send</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openInBasescan}
+                    className="min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex flex-col items-center justify-center gap-0.5"
+                  >
+                    <span className="text-lg leading-none">📜</span>
+                    <span className="text-[11px]">Activity</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={refresh}
+                    className="col-span-2 min-h-[52px] rounded-xl font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.10] transition flex items-center justify-center gap-2"
+                  >
+                    <span className="text-lg leading-none">🔄</span>
+                    <span className="text-[11px]">Refresh balances</span>
+                  </button>
+                </div>
+              )}
 
               {/* Note */}
               <p className="text-[10px] text-white/40 leading-relaxed text-center pt-1">

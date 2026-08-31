@@ -17445,6 +17445,125 @@ app.get('/api/creators/:id/services', softAuth, asyncHandler(async (req, res) =>
   return res.json({ services, viewerAudience: clientMap[audience] || 'public' });
 }));
 
+// ── Book a Crystal Service — returns wallet USDC intent or NP invoice URL ───
+// Body: { provider: 'wallet'|'nowpayments', buyerNote?: string }
+// Wallet flow: returns { intentId, receivingAddress, amountUsdc, expiresAt }
+// NP flow:     returns { nowpaymentsInvoiceId, invoiceUrl }
+const crystalBookingLimiter = require('express-rate-limit')({
+  windowMs: 3600_000, max: 10,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  message: { error: 'Too many booking requests. Please wait before retrying.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+app.post('/api/creators/:id/services/:serviceId/book',
+  requireSessionAuth, crystalBookingLimiter,
+  asyncHandler(async (req, res) => {
+    const crystalSvc = require('../../services/crystalServiceService');
+    const buyerId = String(req.session.user.id);
+    const serviceId = String(req.params.serviceId);
+    const creatorIdParam = String(req.params.id);
+    const { provider, buyerNote = null } = req.body || {};
+    if (!['wallet', 'nowpayments'].includes(provider)) {
+      return res.status(400).json({ error: 'invalid_provider' });
+    }
+
+    const audience = await crystalSvc.getViewerAudience(buyerId);
+    const gate = await crystalSvc.loadServiceForBooking(serviceId, audience);
+    if (gate.gate === 'not_found') return res.status(404).json({ error: 'service_not_found' });
+    if (gate.gate === 'inactive') return res.status(410).json({ error: 'service_inactive' });
+    if (gate.gate === 'creator_not_crystal') return res.status(409).json({ error: 'creator_no_longer_crystal' });
+    if (gate.gate === 'audience_too_low') return res.status(403).json({ error: 'audience_too_low' });
+
+    const svc = gate.service;
+    // Cross-check URL creator id matches the service's creator (defensive)
+    if (String(svc.creator_user_id) !== creatorIdParam) {
+      return res.status(400).json({ error: 'service_creator_mismatch' });
+    }
+    if (String(buyerId) === String(svc.creator_user_id)) {
+      return res.status(400).json({ error: 'cannot_book_own_service' });
+    }
+
+    const usdAmount = gate.price_cents / 100;
+    const webappUrl = (process.env.WEBAPP_URL || 'https://pnptv.app').replace(/\/$/, '');
+
+    // ── Wallet (USDC on Base) ────────────────────────────────────────────────
+    if (provider === 'wallet') {
+      const walletCheckoutService = require('../../services/walletCheckoutService');
+      try {
+        const result = await walletCheckoutService.initiateUsdcPurchase({
+          userId: buyerId,
+          surface: 'crystal_service',
+          amountUsd: usdAmount,
+          entitlementSpec: {
+            serviceId: Number(svc.id),
+            creatorUserId: String(svc.creator_user_id),
+            serviceType: svc.service_type,
+            buyerNote,
+            fulfillmentDays: svc.fulfillment_days,
+          },
+          metadata: { type: 'crystal_service', serviceType: svc.service_type, priceCents: gate.price_cents },
+        });
+        logger.info('[crystal-service] wallet intent created', {
+          buyerId, creatorId: svc.creator_user_id, serviceId: svc.id, intentId: result.intentId,
+        });
+        return res.json({ provider: 'wallet', ...result });
+      } catch (err) {
+        logger.error('[crystal-service] wallet intent failed', { buyerId, serviceId, error: err.message });
+        return res.status(502).json({ error: 'checkout_unavailable', detail: err.message });
+      }
+    }
+
+    // ── NowPayments (hosted invoice) ─────────────────────────────────────────
+    if (!NOWPAYMENTS_API_KEY) return res.status(503).json({ error: 'nowpayments_not_configured' });
+    const orderId = `pnptv-crystal-svc-${svc.id}-${Date.now()}`;
+    try {
+      const paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, {
+        price_amount: usdAmount,
+        price_currency: 'usd',
+        order_id: orderId,
+        order_description: `Crystal service: ${svc.service_type}`,
+        ipn_callback_url: `${webappUrl}/api/webhooks/nowpayments`,
+        success_url: `${webappUrl}/c/${svc.username || svc.creator_user_id}?service_booked=1`,
+        cancel_url: `${webappUrl}/c/${svc.username || svc.creator_user_id}`,
+      }, {
+        headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+        timeout: 10000,
+      });
+      const npInvoiceId = paymentResp.data?.id;
+      if (!npInvoiceId) throw new Error('no invoice id from NP');
+      const invoiceUrl = paymentResp.data?.invoice_url || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+
+      await query(
+        `INSERT INTO dash_subscription_orders
+           (user_id, plan_id, email, usd_amount, btcpay_invoice_id, creator_id, status, metadata)
+         VALUES ($1, 'crystal_service', NULL, $2, $3, $4, 'pending', $5)
+         ON CONFLICT (btcpay_invoice_id) DO NOTHING`,
+        [
+          buyerId, usdAmount, orderId, String(svc.creator_user_id),
+          JSON.stringify({
+            provider: 'nowpayments',
+            flow: 'crystal_service',
+            invoiceUrl,
+            nowpaymentsInvoiceId: String(npInvoiceId),
+            serviceId: Number(svc.id),
+            serviceType: svc.service_type,
+            fulfillmentDays: svc.fulfillment_days,
+            buyerNote,
+            targetCreatorId: String(svc.creator_user_id),
+            priceCents: gate.price_cents,
+          }),
+        ]
+      );
+
+      logger.info('[crystal-service] NP invoice created', { buyerId, serviceId: svc.id, orderId, usdAmount });
+      return res.json({ provider: 'nowpayments', nowpaymentsInvoiceId: String(npInvoiceId), invoiceUrl });
+    } catch (err) {
+      logger.error('[crystal-service] NP invoice failed', { buyerId, serviceId, error: err.message });
+      return res.status(502).json({ error: 'checkout_unavailable' });
+    }
+  })
+);
+
 // ── Channel video upload + AI assist + publish (universal — replaces the
 //    admin-only /admin/prime-videos flow for non-admin creators) ─────────────
 {

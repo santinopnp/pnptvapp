@@ -155,9 +155,81 @@ async function getShowcase(viewerAudience = 'public') {
   return enriched;
 }
 
+/**
+ * Look up a single service + verify the viewer's audience is high enough to
+ * book it. Called by the booking endpoint before initiating a checkout.
+ *
+ * @returns {Promise<{service:object, price_cents:number, gate:'ok'|'audience_too_low'|'not_found'|'creator_not_crystal'|'inactive'}>}
+ */
+async function loadServiceForBooking(serviceId, viewerAudience) {
+  const { rows } = await getPool().query(
+    `SELECT s.*, u.crystal_creator_active_until, u.username, u.first_name
+       FROM creator_services s
+       JOIN users u ON u.id = s.creator_user_id
+      WHERE s.id = $1 LIMIT 1`,
+    [String(serviceId)]
+  );
+  if (!rows[0]) return { gate: 'not_found' };
+  const s = rows[0];
+  if (!s.is_active) return { gate: 'inactive' };
+  const u = s.crystal_creator_active_until;
+  const isCrystalActive = u && (String(u) === 'infinity' || new Date(u) > new Date());
+  if (!isCrystalActive) return { gate: 'creator_not_crystal' };
+  if (rank(viewerAudience) < rank(s.min_audience)) return { gate: 'audience_too_low' };
+  return {
+    gate: 'ok',
+    service: s,
+    price_cents: Number(s.price_cents),
+  };
+}
+
+/**
+ * Record a booking row (idempotent by payment_ref) once a payment is
+ * confirmed. Called by walletCheckoutService._fulfillCrystalService.
+ *
+ * For custom_content, sets expires_at = NOW() + fulfillment_days so the
+ * cron can flag overdue deliveries.
+ */
+async function recordBooking({
+  serviceId, creatorUserId, buyerUserId, serviceType, priceCents,
+  paymentProvider, paymentRef, buyerNote = null, fulfillmentDays = null,
+}) {
+  const expiresAt = fulfillmentDays
+    ? new Date(Date.now() + fulfillmentDays * 24 * 60 * 60 * 1000).toISOString()
+    : null;
+  const { rows } = await getPool().query(
+    `INSERT INTO creator_service_bookings
+       (service_id, creator_user_id, buyer_user_id, service_type, price_paid_cents,
+        payment_provider, payment_ref, status, buyer_note, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'paid', $8, $9)
+     ON CONFLICT (payment_ref) DO NOTHING
+     RETURNING id, status, created_at`,
+    [
+      Number(serviceId), String(creatorUserId), String(buyerUserId), serviceType,
+      priceCents, paymentProvider, paymentRef,
+      buyerNote ? String(buyerNote).slice(0, 2000) : null,
+      expiresAt,
+    ]
+  );
+  if (rows[0]) {
+    logger.info('[crystal-service] booking recorded', {
+      bookingId: rows[0].id, serviceId, creatorUserId, buyerUserId, serviceType, priceCents,
+    });
+    return { bookingId: rows[0].id, alreadyApplied: false };
+  }
+  // ON CONFLICT hit — retried webhook / same intent; find the existing row.
+  const { rows: existing } = await getPool().query(
+    `SELECT id FROM creator_service_bookings WHERE payment_ref = $1 LIMIT 1`,
+    [paymentRef]
+  );
+  return { bookingId: existing[0]?.id || null, alreadyApplied: true };
+}
+
 module.exports = {
   getViewerAudience,
   listServicesForCreator,
   getShowcase,
+  loadServiceForBooking,
+  recordBooking,
   AUDIENCE_RANK,
 };

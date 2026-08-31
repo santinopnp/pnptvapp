@@ -35,8 +35,9 @@ const TOKENS_PER_USD = 6;  // See memory: feedback_token_rate.md
 const VALID_SURFACES = new Set([
   'donation', 'membership', 'prime', 'creator_sub', 'call', 'rush', 'channel', 'hangout',
   'tip',          // creator tips (in-call, in-stream, in-hangout) — credits creator earnings, no entitlement
-  'crystal_self', // Crystal Creator pass — invited creator self-purchase ($100/mo)
-  'crystal_gift', // Crystal Creator pass — fan gifts to a creator ($150/mo)
+  'crystal_self',    // Crystal Creator pass — invited creator self-purchase ($100/30d)
+  'crystal_gift',    // Crystal Creator pass — fan gifts to a creator ($150/30d)
+  'crystal_service', // Crystal Creator premium service booking (private call / custom content / etc.)
 ]);
 
 // ── Ru$h rail ──────────────────────────────────────────────────────────────
@@ -624,7 +625,100 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   if (surface === 'crystal_gift') {
     return _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: true });
   }
+  if (surface === 'crystal_service') {
+    return _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  }
   return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
+}
+
+/**
+ * Fulfill a Crystal Service booking (private call, custom content, priority
+ * DM, private main stage, BTS subscription). Server-side re-loads the
+ * service row and re-verifies audience gating before recording the booking
+ * so a client can't spoof serviceId/creator/price.
+ *
+ * entitlementSpec: { serviceId, creatorUserId, serviceType, buyerNote?, fulfillmentDays? }
+ */
+async function _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd }) {
+  const { serviceId, creatorUserId, buyerNote = null } = entitlementSpec || {};
+  if (!serviceId || !creatorUserId) {
+    throw new Error(`_fulfillCrystalService: serviceId + creatorUserId required (intentId=${intentId})`);
+  }
+
+  const CrystalSvc = require('./crystalServiceService');
+  // Re-verify — spec was written when intent was created, but audience may
+  // have changed OR service may have been deactivated in the interim.
+  const audience = await CrystalSvc.getViewerAudience(String(userId));
+  const gate = await CrystalSvc.loadServiceForBooking(String(serviceId), audience);
+  if (gate.gate !== 'ok') {
+    throw new Error(`_fulfillCrystalService: gate=${gate.gate} for serviceId=${serviceId}, userId=${userId}`);
+  }
+  if (String(gate.service.creator_user_id) !== String(creatorUserId)) {
+    throw new Error(`_fulfillCrystalService: creator mismatch (intentId=${intentId})`);
+  }
+
+  // Snap price from the DB row (never trust the intent amount for accounting)
+  const priceCents = Number(gate.price_cents);
+  const paymentRef = `checkout_intent:${intentId}`;
+
+  const { bookingId, alreadyApplied } = await CrystalSvc.recordBooking({
+    serviceId: Number(serviceId),
+    creatorUserId: String(creatorUserId),
+    buyerUserId: String(userId),
+    serviceType: gate.service.service_type,
+    priceCents,
+    paymentProvider: provider,
+    paymentRef,
+    buyerNote,
+    fulfillmentDays: gate.service.fulfillment_days,
+  });
+
+  if (alreadyApplied) {
+    logger.info('[walletCheckout] _fulfillCrystalService: idempotent — booking already existed', {
+      bookingId, intentId, serviceId,
+    });
+    return { bookingId, alreadyApplied: true };
+  }
+
+  // Fire-and-forget notifications: creator DM + Slack ops ping.
+  setImmediate(async () => {
+    try {
+      const { rows: buyerRows } = await query(
+        `SELECT username, first_name FROM users WHERE id = $1`, [String(userId)]
+      );
+      const buyer = buyerRows[0] || {};
+      const buyerHandle = buyer.username ? `@${buyer.username}` : (buyer.first_name || String(userId).slice(0, 8));
+      const dmText = `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${(priceCents / 100).toFixed(0)} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\nManage: https://pnptv.app/creator/services`;
+
+      if (/^\d+$/.test(String(creatorUserId))) {
+        let bot = null;
+        try { bot = require('../bot/core/bot'); } catch { /* no bot */ }
+        if (bot?.telegram) await bot.telegram.sendMessage(creatorUserId, dmText).catch(() => {});
+      }
+
+      try {
+        const slackOps = require('./slackOpsService');
+        slackOps.notifyPaymentSuccess({
+          orderId: paymentRef,
+          userId: String(userId),
+          username: buyerHandle,
+          amount: (priceCents / 100).toFixed(0),
+          currency: 'USD',
+          plan: `Crystal service: ${gate.service.service_type}`,
+          provider: `wallet_usdc → @${gate.service.username || creatorUserId}`,
+        }).catch(() => {});
+      } catch { /* non-fatal */ }
+    } catch (err) {
+      logger.warn('[walletCheckout] _fulfillCrystalService notify hook failed', {
+        bookingId, error: err.message,
+      });
+    }
+  });
+
+  logger.info('[walletCheckout] _fulfillCrystalService: booking fulfilled', {
+    bookingId, intentId, serviceId, serviceType: gate.service.service_type, priceCents,
+  });
+  return { bookingId, alreadyApplied: false };
 }
 
 /**

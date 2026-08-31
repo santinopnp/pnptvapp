@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
-import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
+import { linkPrivyIdentity } from "@/lib/api";
 import * as Sentry from "@sentry/react";
 import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
@@ -305,6 +306,45 @@ function PrivyReadinessBreadcrumb() {
   return null;
 }
 
+// Fires linkPrivyIdentity() once per browser session when Privy authenticates
+// and an embedded wallet exists. Backfills users.privy_id + users.wallet_address
+// on the pnptv row so support/gas-topup/downstream lookups can find the wallet.
+// Runs GLOBALLY (not just in Onboarding step 7) so pre-Privy users who
+// authenticate via the wallet FAB, BuyTokensModal, or any Privy entry point
+// still get their identity persisted server-side. Guarded by sessionStorage so
+// re-renders and route changes don't re-POST.
+function PrivyIdentitySync() {
+  const { authenticated, getAccessToken } = usePrivy();
+  const { wallets } = useWallets();
+  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  useEffect(() => {
+    if (!authenticated || !embeddedWallet) return;
+    const flag = "__pnptv_privy_linked";
+    try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* private mode — retry every mount */ }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        await linkPrivyIdentity(token);
+        try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
+      } catch (err) {
+        // Non-fatal — user still has a working Privy session client-side. Log
+        // to Sentry so we can measure how often the backend link is failing
+        // (missing bug pre-fix). Cleared session flag lets the next mount retry.
+        Sentry.addBreadcrumb({
+          category: "privy",
+          level: "warning",
+          message: "linkPrivyIdentity failed",
+          data: { error: err instanceof Error ? err.message : String(err) },
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authenticated, embeddedWallet?.address, getAccessToken]);
+  return null;
+}
+
 function AppOverlays() {
   const { isAuthenticated } = useAuth();
   const { suspendedMsg, incomingCall, dismissIncomingCall } = useGlobalSocketEvents();
@@ -426,6 +466,7 @@ export default function App() {
                     }}
                   >
                     <PrivyReadinessBreadcrumb />
+                    <PrivyIdentitySync />
                     <RouterProvider router={router} />
                     <AppOverlays />
                   </PrivyProvider>

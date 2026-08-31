@@ -19,8 +19,8 @@ export interface CrystalRowCreator {
  * Pinned "Crystal Creators" row — sits above Discover and inside the fam
  * home strip. Shows all currently active Crystal Creators (any user with a
  * live crystal pass), with a service count preview keyed to the viewer's
- * audience tier ("2 of 5 unlocked" tells a whale pig they have more to
- * unlock as fam).
+ * audience tier ("2 of 5 unlocked" tells an inner-circle viewer they
+ * have more to unlock as fam).
  *
  * Doesn't render if there are no active Crystal Creators. Fires two CRM
  * events (row_view once per mount, row_click per card tap) via the

@@ -503,18 +503,77 @@ class CreatorPayoutService {
     // Lazy-require to avoid circular dependency issues at module load time
     const { query: dbQuery } = require('../config/postgres');
 
-    // 2026-07-31: Dash/BTCPay retired. This renewal path hardcodes Dash — every
-    // renewal since Phase 1 has been generating stuck pending payments that
-    // never settle. Short-circuit: disable auto_renew, notify subscriber to
-    // re-subscribe manually via the working NowPayments/USDC flow, and stop
-    // creating orphan payments. Full rewrite (route to NowPayments) is deferred
-    // Phase 3 — needs staging test since paymentSettlementService is shared.
+    // Ru$h auto-renewal (2026-08-31): if the subscriber has enough Ru$h to cover
+    // the next month, debit + re-run subscribeToCreator to extend expires_at.
+    // Card renewal is still deferred (needs stored PM token flow), but every
+    // active user has a Ru$h balance path — no reason to force a manual click
+    // each month when the balance is right there. If Ru$h are short, fall
+    // through to the manual-resubscribe notification below.
+    const tokenCostRush = Math.max(1, Math.round(priceUsd * 6));
+    try {
+      const tokenLedger = require('./tokenLedgerService');
+      const { balance_tokens: rushBal } = await tokenLedger.getBalance(String(subscriber_id));
+      if (rushBal >= tokenCostRush) {
+        const renewalPaymentId = `tokens:csub:${subscriber_id}:${creator_id}:renew-${Date.now()}`;
+        await tokenLedger.debit({
+          userId: String(subscriber_id),
+          amount: tokenCostRush,
+          reason: 'membership_purchase',
+          sourceType: 'creator_subscription_renewal',
+          sourceId: renewalPaymentId,
+          actorId: 'system',
+          metadata: { creatorId: String(creator_id), priceUsd, subscriptionId: subscription_id },
+        });
+        try {
+          const CreatorService = require('./creatorService');
+          await CreatorService.subscribeToCreator(String(subscriber_id), String(creator_id), renewalPaymentId);
+        } catch (subErr) {
+          // Refund Ru$h so subscriber isn't charged for a failed renewal
+          await tokenLedger.credit({
+            userId: String(subscriber_id),
+            balanceDelta: tokenCostRush,
+            reason: 'refund_credit',
+            sourceType: 'creator_subscription_renewal',
+            sourceId: renewalPaymentId,
+            actorId: 'system',
+            metadata: { creatorId: String(creator_id), reason: 'subscribeToCreator_failed_on_renewal', origErr: subErr.message },
+          }).catch(() => {});
+          throw subErr;
+        }
+        logger.info('[CreatorPayoutService] Ru$h renewal succeeded', {
+          subscriptionId: subscription_id, subscriberId: subscriber_id, creatorId: creator_id, tokenCost: tokenCostRush,
+        });
+        // Notify subscriber (positive confirmation)
+        await NotificationEmitter.emit({
+          type: 'subscription_renewed',
+          category: 'commerce',
+          priority: 'normal',
+          targetUserId: String(subscriber_id),
+          entityType: 'creator_subscription',
+          entityId: String(subscription_id),
+          message: `Your subscription to ${creatorName} renewed for another month ($${priceUsd.toFixed(2)}).`,
+          metadata: { creatorId: String(creator_id), creatorName, priceUsd, paidWith: 'rush' },
+        }).catch(() => {});
+        return { renewed: true };
+      }
+      logger.info('[CreatorPayoutService] Ru$h renewal skipped — insufficient balance, falling through to manual notice', {
+        subscriptionId: subscription_id, subscriberId: subscriber_id, tokenCostRush, rushBal,
+      });
+    } catch (rushErr) {
+      logger.warn('[CreatorPayoutService] Ru$h renewal attempt failed — falling through to manual notice', {
+        subscriptionId: subscription_id, subscriberId: subscriber_id, err: rushErr.message,
+      });
+    }
+
+    // Fallback (Dash retired, card auto-charge deferred, Ru$h insufficient):
+    // disable auto_renew and prompt subscriber to re-subscribe manually via
+    // any working rail (card, on-chain USDC, or NowPayments crypto).
     try {
       await dbQuery(
         'UPDATE creator_subscriptions SET auto_renew=FALSE, updated_at=NOW() WHERE id=$1',
         [subscription_id]
       );
-      logger.warn('[CreatorPayoutService] auto-renew disabled — Dash retired, no NP renewal path yet', {
+      logger.warn('[CreatorPayoutService] auto-renew disabled — Ru$h insufficient and no card-on-file path', {
         subscriptionId: subscription_id, subscriberId: subscriber_id, creatorId: creator_id,
       });
       await NotificationEmitter.emit({
@@ -524,15 +583,153 @@ class CreatorPayoutService {
         targetUserId: String(subscriber_id),
         entityType: 'creator_subscription',
         entityId: String(subscription_id),
-        message: `Your subscription to ${creatorName} won't auto-renew. Re-subscribe from their profile to keep access.`,
-        metadata: { creatorId: String(creator_id), creatorName, priceUsd, reason: 'dash_retired_no_renewal_path' },
+        message: `Your subscription to ${creatorName} won't auto-renew. Top up Ru$h or re-subscribe from their profile to keep access.`,
+        metadata: { creatorId: String(creator_id), creatorName, priceUsd, reason: 'insufficient_rush_no_card_path' },
       }).catch(() => {});
     } catch (guardErr) {
-      logger.warn('[CreatorPayoutService] failed to disable auto_renew during Dash short-circuit', {
+      logger.warn('[CreatorPayoutService] failed to disable auto_renew during fallback', {
         subscriptionId: subscription_id, error: guardErr.message,
       });
     }
     return { renewed: false };
+  }
+
+  /**
+   * Refund held creator subscriptions where the creator never met the 4-min
+   * content-compliance threshold. Prevents subscriber payments from sitting
+   * indefinitely in limbo (subscription active but no access, no earnings
+   * accrued to creator, no refund path).
+   *
+   * Rules:
+   *   - Sub must be status='active', compliance_hold=true
+   *   - Payment must be >= HELD_REFUND_AFTER_DAYS old (default 30) — well past
+   *     the 7-day creator compliance deadline plus grace
+   *   - Only refunds token payments (payment_id starts with 'tokens:csub:');
+   *     card/crypto refunds need manual review because they hit external rails
+   *   - Refund routes through tokenLedger.credit for full audit trail
+   *   - Voids the pending creator_earnings row
+   *   - Cancels the subscription and notifies subscriber
+   */
+  static async runHeldSubscriptionRefunds() {
+    const HELD_REFUND_AFTER_DAYS = Number(process.env.CREATOR_HELD_REFUND_AFTER_DAYS || 30);
+    logger.info('CreatorPayoutService: starting held-sub refund sweep', { HELD_REFUND_AFTER_DAYS });
+
+    let subs;
+    try {
+      const result = await query(
+        `SELECT cs.id AS subscription_id, cs.subscriber_id, cs.creator_id, cs.price_usd,
+                cs.payment_id, cs.created_at,
+                cr.username AS creator_username, cr.first_name AS creator_first_name
+         FROM creator_subscriptions cs
+         JOIN users cr ON cr.id = cs.creator_id
+         WHERE cs.status = 'active'
+           AND cs.compliance_hold = true
+           AND cs.created_at < NOW() - ($1 || ' days')::interval
+           AND cs.payment_id LIKE 'tokens:csub:%'
+         ORDER BY cs.created_at ASC
+         LIMIT 100`,
+        [String(HELD_REFUND_AFTER_DAYS)]
+      );
+      subs = result.rows;
+    } catch (err) {
+      logger.error('CreatorPayoutService: failed to fetch held-refund batch', { error: err.message });
+      return { success: false, error: err.message };
+    }
+
+    if (subs.length === 0) {
+      logger.info('CreatorPayoutService: no held subs eligible for refund');
+      return { success: true, refunded: 0, failed: 0 };
+    }
+
+    const tokenLedger = require('./tokenLedgerService');
+    let refunded = 0;
+    let failed = 0;
+
+    for (const sub of subs) {
+      try {
+        // Look up the original debit via source_id = payment_id. Refund exactly
+        // what was spent — balance + gifted separately so the creator-guard
+        // invariant isn't violated (gifted must stay gifted on refund).
+        const { rows: debitRows } = await query(
+          `SELECT delta_balance, delta_gifted FROM token_ledger
+           WHERE source_type IN ('creator_subscription','creator_sub_onboarding')
+             AND source_id = $1 AND user_id = $2 AND reason = 'membership_purchase'
+           LIMIT 1`,
+          [sub.payment_id, String(sub.subscriber_id)]
+        );
+        if (!debitRows.length) {
+          logger.warn('[held-refund] no ledger debit found — skipping refund but voiding sub', {
+            subscriptionId: sub.subscription_id, paymentId: sub.payment_id,
+          });
+        } else {
+          const spentBalance = Math.abs(Number(debitRows[0].delta_balance));
+          const spentGifted = Math.abs(Number(debitRows[0].delta_gifted));
+          if (spentBalance > 0 || spentGifted > 0) {
+            await tokenLedger.credit({
+              userId: String(sub.subscriber_id),
+              balanceDelta: spentBalance,
+              giftedDelta: spentGifted,
+              reason: 'refund_credit',
+              sourceType: 'creator_subscription',
+              sourceId: sub.payment_id,
+              actorId: 'system',
+              metadata: {
+                creatorId: String(sub.creator_id),
+                reason: 'creator_never_reached_compliance',
+                subscriptionId: sub.subscription_id,
+              },
+            });
+          }
+        }
+
+        // Void the pending earnings row + cancel the subscription
+        await query(
+          `UPDATE creator_earnings SET status = 'void'
+           WHERE source_payment_id = $1 AND creator_id = $2 AND status = 'pending'`,
+          [sub.payment_id, String(sub.creator_id)]
+        );
+        await query(
+          `UPDATE creator_subscriptions
+           SET status = 'cancelled', cancelled_at = NOW(), auto_renew = FALSE, updated_at = NOW()
+           WHERE id = $1`,
+          [sub.subscription_id]
+        );
+        await query(
+          `UPDATE user_entitlements SET expires_at = NOW(), updated_at = NOW()
+           WHERE user_id = $1 AND add_on_id = 'creator-subscription' AND creator_id = $2`,
+          [String(sub.subscriber_id), String(sub.creator_id)]
+        );
+        try {
+          const EAS = require('./entitlementAccessService');
+          await EAS.invalidateCache(String(sub.subscriber_id));
+        } catch (_) { /* non-fatal */ }
+
+        // Notify subscriber
+        const creatorName = sub.creator_username || sub.creator_first_name || String(sub.creator_id);
+        await NotificationEmitter.emit({
+          type: 'creator_subscription_refunded',
+          category: 'commerce',
+          priority: 'high',
+          targetUserId: String(sub.subscriber_id),
+          entityType: 'creator_subscription',
+          entityId: String(sub.subscription_id),
+          message: `Your subscription to ${creatorName} was refunded — they didn't reach the content minimum. Your Ru$h are back in your wallet.`,
+          metadata: { creatorId: String(sub.creator_id), creatorName, priceUsd: parseFloat(sub.price_usd) },
+        }).catch(() => {});
+
+        refunded++;
+      } catch (err) {
+        failed++;
+        logger.error('CreatorPayoutService: held-sub refund failed', {
+          subscriptionId: sub.subscription_id, subscriberId: sub.subscriber_id, error: err.message,
+        });
+      }
+    }
+
+    logger.info('CreatorPayoutService: held-sub refund sweep complete', {
+      candidates: subs.length, refunded, failed,
+    });
+    return { success: true, refunded, failed };
   }
 
   /**

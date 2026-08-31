@@ -120,10 +120,18 @@ class ContentComplianceService {
         const amountCreator = Math.round(priceUsd * CREATOR_REVENUE_RATE * 100) / 100;
         const amountPlatform = Math.round(priceUsd * PLATFORM_COMMISSION_RATE * 100) / 100;
 
+        // Promote the pending row inserted by CreatorService.subscribeToCreator
+        // (post-2026-08-31 all held subs have a pending earnings row so the
+        // payment is never lost). Falls back to insert for legacy subs that
+        // predate that fix and don't have a pending row.
         await query(
           `INSERT INTO creator_earnings (creator_id, subscription_id, amount_gross, amount_creator, amount_platform, status, available_at, source_payment_id, period_month)
            VALUES ($1, $2, $3, $4, $5, 'holding', NOW() + ($6 || ' hours')::interval, $7, date_trunc('month', CURRENT_DATE)::date)
-           ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING`,
+           ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL
+           DO UPDATE SET
+             status = 'holding',
+             available_at = NOW() + ($6 || ' hours')::interval
+           WHERE creator_earnings.status = 'pending'`,
           [creatorId, sub.id, priceUsd, amountCreator, amountPlatform, String(EARNINGS_HOLD_HOURS), sub.payment_id || null]
         );
 
