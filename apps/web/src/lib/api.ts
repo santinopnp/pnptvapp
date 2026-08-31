@@ -1562,6 +1562,30 @@ export async function verifyWalletCheckoutTx(intentId: number, txHash: string): 
   return res.json();
 }
 
+// Seed a small amount of Base ETH into the caller's embedded wallet so it can
+// pay its own gas for the next USDC/ETH transfer. Best-effort — resolves even
+// on 503 (treasury unavailable) so the caller can proceed with the tx attempt.
+// Only call from the embedded-wallet branch; external wallets bring their own ETH.
+export async function requestGasTopup(address?: string): Promise<{
+  ok: boolean; skipped?: boolean; reason?: string; txHash?: string; weiSent?: string; balanceWei?: string;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/wallet/gas-topup`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: address || undefined }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      return { ok: false, reason: err.error || `topup_${res.status}` };
+    }
+    return res.json();
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : "topup_failed" };
+  }
+}
+
 export interface MainStageCammer {
   userId: string;
   slug: string;

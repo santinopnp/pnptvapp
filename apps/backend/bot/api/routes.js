@@ -15817,6 +15817,78 @@ app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAut
   return res.json(result);
 }));
 
+// POST /api/wallet/gas-topup — seed a few cents of Base ETH into the caller's
+// embedded wallet so it can pay its own gas for the imminent USDC/ETH transfer.
+// No-op if the wallet already has ≥ threshold ETH, or if the user hit their
+// daily cap, or if the treasury daily cap is exhausted. Returns 503 only if
+// the treasury has no funds — the frontend swallows that and falls through to
+// the existing "user pays own gas" flow so we degrade gracefully.
+app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
+  const gasTopupService = require('../../services/gasTopupService');
+  const { query: dbQuery } = require('../../config/postgres');
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ ok: false, error: 'unauthenticated' });
+
+  // Address can come from either the DB (populated via /api/privy/link) or the
+  // request body (activeWallet.address on the client). Client-supplied is
+  // needed because some users bypass /api/privy/link and their users.wallet_address
+  // remains NULL. Rate-limit is per-user-id, so the attack surface is bounded
+  // ($0.60/day per attacker max), and the DB cross-check below ensures we
+  // don't fund a different address than the one already linked.
+  const bodyAddress = String(req.body?.address || '').trim().toLowerCase();
+  if (bodyAddress && !/^0x[a-f0-9]{40}$/.test(bodyAddress)) {
+    return res.status(400).json({ ok: false, error: 'invalid_address' });
+  }
+
+  const { rows } = await dbQuery(
+    `SELECT wallet_address FROM users WHERE id = $1 LIMIT 1`,
+    [String(userId)]
+  );
+  const linkedAddress = rows[0]?.wallet_address ? String(rows[0].wallet_address).toLowerCase() : null;
+
+  let address;
+  if (linkedAddress && bodyAddress && linkedAddress !== bodyAddress) {
+    // User already linked address A but is asking us to fund address B. Refuse
+    // — this is either a client bug or an attempt to farm dust to a foreign
+    // address. Trust the linked value.
+    return res.status(400).json({ ok: false, error: 'address_mismatch', linked: linkedAddress });
+  }
+  address = linkedAddress || bodyAddress || null;
+  if (!address) return res.status(400).json({ ok: false, error: 'no_wallet_address' });
+
+  // Opportunistic backfill: if user has no linked wallet_address in DB but sent
+  // one, record it so future flows (checkout, browse-by-wallet, etc.) can
+  // rely on the DB as source of truth.
+  if (!linkedAddress && bodyAddress) {
+    try {
+      await dbQuery(
+        `UPDATE users SET wallet_address = $1, wallet_linked_at = COALESCE(wallet_linked_at, NOW()) WHERE id = $2 AND wallet_address IS NULL`,
+        [bodyAddress, String(userId)]
+      );
+    } catch (err) {
+      // Unique index collision (some other user already claims this address) → ignore, still fund.
+      logger.warn('[wallet/gas-topup] backfill wallet_address skipped', { userId, address: bodyAddress, err: err.message });
+    }
+  }
+
+  try {
+    const result = await gasTopupService.topupIfNeeded({ userId, address });
+    return res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    return res.status(status).json({ ok: false, error: err.message || 'gas_topup_failed' });
+  }
+}));
+
+// GET /api/wallet/gas-topup/status — admin/debug snapshot: treasury address,
+// balance, last-24h stats. Auth-required to avoid leaking treasury address to
+// unauthenticated callers (still not sensitive, but no reason to broadcast).
+app.get('/api/wallet/gas-topup/status', requireSessionAuth, asyncHandler(async (_req, res) => {
+  const gasTopupService = require('../../services/gasTopupService');
+  const status = await gasTopupService.getStatus();
+  return res.json(status);
+}));
+
 // GET /api/wallet/eth-price — spot ETH/USD used to compute expected_amount_native
 // for ETH-rail intents. 60s Redis-cached, Coinbase spot (no API key needed).
 app.get('/api/wallet/eth-price', asyncHandler(async (_req, res) => {

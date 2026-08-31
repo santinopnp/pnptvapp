@@ -19,6 +19,7 @@ import {
   createCryptoPaymentIntent,
   recordCryptoTx,
   getCryptoPaymentStatus,
+  requestGasTopup,
   reportWalletClientError,
   type SubscriptionPlan,
 } from "@/lib/api";
@@ -139,6 +140,11 @@ export default function Donate() {
       const provider = await embeddedWallet.getEthereumProvider();
       const walletAddr = embeddedWallet.address as `0x${string}`;
       const client = createWalletClient({ account: walletAddr, chain: base, transport: custom(provider as any) });
+
+      // Seed ~$0.20 Base ETH into the embedded wallet if it's empty, so the
+      // sendTransaction below has gas to spend. Best-effort — we still try the
+      // tx if the topup skipped (already funded / capped) or errored.
+      await requestGasTopup(walletAddr);
 
       let hash: string;
       if (token === "USDC") {

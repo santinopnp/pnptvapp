@@ -214,6 +214,7 @@ import {
   getWalletEthMainnetBalance,
   getWalletUsdcMainnetBalance,
   getCctpAttestation,
+  requestGasTopup,
   reportWalletClientError,
   type WalletCheckoutSurface,
 } from "@/lib/api";
@@ -411,10 +412,12 @@ export function WalletPayCard({
 
       let txHash: `0x${string}`;
       if (isEmbedded) {
-        // Privy smart_wallet_config.enabled=false for this app — embedded
-        // wallets are pure EOAs, so sponsor:true is a no-op / error. User
-        // pays their own gas out of Base ETH. handleFund is responsible for
-        // seeding ETH dust alongside USDC (see co-fund flow below).
+        // Privy embedded wallets are pure EOAs — the wallet itself has to pay
+        // gas out of its own ETH. requestGasTopup seeds ~$0.20 in Base ETH
+        // from a platform treasury when the wallet is empty; best-effort so
+        // we proceed with the tx attempt either way (a 503 falls back to the
+        // pre-existing "insufficient funds for gas" error, no regression).
+        await requestGasTopup(activeWallet.address);
         const res = await privySendTransaction(
           { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -1135,9 +1138,9 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           args: [to as `0x${string}`, parseUnits(amtNum.toFixed(6), 6)],
         });
         if (isActiveEmbedded) {
-          // sponsor:false — Alchemy Gas Manager policy only whitelists CCTP
-          // receive on Base, not arbitrary sends. Base gas is ~$0.001; user
-          // pays from their own ETH.
+          // Base EOA — needs its own ETH for gas. requestGasTopup seeds ~$0.20
+          // when the wallet is empty; best-effort.
+          await requestGasTopup(activeWallet.address);
           const res = await privySendTransaction(
             { chainId: 8453, to: _USDC_BASE, data, value: "0" },
             { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -1157,6 +1160,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
         // Native ETH transfer on Base
         const valueWei = parseEther(amtNum.toFixed(18));
         if (isActiveEmbedded) {
+          await requestGasTopup(activeWallet.address);
           const res = await privySendTransaction(
             { chainId: 8453, to: to as `0x${string}`, value: valueWei.toString() },
             { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }

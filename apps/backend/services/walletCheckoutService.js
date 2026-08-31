@@ -120,6 +120,10 @@ async function initiateRushPurchase(opts) {
     await client.query('COMMIT');
 
     _invalidateCaches(userId).catch(() => {});
+    _notifyPurchaseSuccess({
+      userId, surface, amountUsd, provider: 'wallet_rush', intentId,
+      entitlementSpec, isLifetime: entitlementSpec?.is_lifetime === true,
+    });
     logger.info('[walletCheckout] Ru$h purchase completed', {
       userId, surface, intentId, tokenCost, entitlementId,
     });
@@ -383,6 +387,12 @@ async function verifyAndFulfillEth(opts) {
 
     await client.query('COMMIT');
     _invalidateCaches(intent.user_id).catch(() => {});
+    _notifyPurchaseSuccess({
+      userId: intent.user_id, surface: intent.surface,
+      amountUsd: Number(intent.amount_usd), provider: 'wallet_usdc',
+      intentId: intent.id, txHash, chain: 'base',
+      entitlementSpec, isLifetime: entitlementSpec?.is_lifetime === true,
+    });
 
     logger.info('[walletCheckout] ETH purchase fulfilled', {
       intentId: intent.id, userId: intent.user_id, surface: intent.surface,
@@ -535,6 +545,12 @@ async function verifyAndFulfillUsdc(opts) {
 
     await client.query('COMMIT');
     _invalidateCaches(intent.user_id).catch(() => {});
+    _notifyPurchaseSuccess({
+      userId: intent.user_id, surface: intent.surface,
+      amountUsd: Number(intent.amount_usd), provider: 'wallet_usdc',
+      intentId: intent.id, txHash, chain: 'base',
+      entitlementSpec, isLifetime: entitlementSpec?.is_lifetime === true,
+    });
 
     logger.info('[walletCheckout] USDC purchase fulfilled', {
       intentId: intent.id, userId: intent.user_id, surface: intent.surface,
@@ -760,6 +776,24 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
 
   if (!add_on_id) throw new Error(`_fulfillEntitlement: add_on_id required (surface=${surface})`);
 
+  // Guard: if a lifetime row already exists for (user, add_on, creator), the DB
+  // trigger `protect_lifetime_entitlements` will block the ON CONFLICT UPDATE
+  // below and 500 the verify-tx after USDC already moved. Detect early and
+  // no-op — the user already has the benefit forever.
+  const existing = await client.query(
+    `SELECT id, is_lifetime FROM user_entitlements
+      WHERE user_id = $1 AND add_on_id = $2
+        AND creator_id IS NOT DISTINCT FROM $3
+      LIMIT 1`,
+    [String(userId), add_on_id, creator_id]
+  );
+  if (existing.rows[0]?.is_lifetime === true) {
+    logger.warn('walletCheckout._fulfillEntitlement: skipping — user already has lifetime', {
+      userId: String(userId), add_on_id, creator_id, intentId, surface, existingId: existing.rows[0].id,
+    });
+    return { entitlementId: Number(existing.rows[0].id), rushCredited: 0, giftedCredited: 0, alreadyLifetime: true };
+  }
+
   // Whitelist duration_days to a bounded integer to prevent SQL-injection into
   // the INTERVAL expression via objects that override valueOf. Bounds: 1–3650.
   const rawDays = Number(duration_days);
@@ -822,6 +856,107 @@ async function _invalidateCaches(userId) {
     cache.del(`entitlements:${uid}`).catch(() => {}),
     cache.del(`user:tier:${uid}`).catch(() => {}),
   ]);
+}
+
+/**
+ * Post-sale notifications for wallet-checkout grants. Matches parity with the
+ * legacy providers (NowPayments/Banxa) which fire the same two channels
+ * from paymentSettlementService. Fire-and-forget — never rejects. Never call
+ * this before the grant is committed; callers must invoke after their COMMIT.
+ *
+ * @param {object} opts
+ * @param {string} opts.userId
+ * @param {string} opts.surface        'membership'|'prime'|'creator_sub'|'channel'|'hangout'|'rush'|'call'|'tip'
+ * @param {number} opts.amountUsd
+ * @param {string} opts.provider       'wallet_usdc'|'wallet_rush'
+ * @param {number} opts.intentId
+ * @param {string} [opts.txHash]       On-chain hash (usdc/eth path only)
+ * @param {string} [opts.chain]        'base' (default)
+ * @param {object} [opts.entitlementSpec]  For resolving plan name (add_on_id, tokens count, etc.)
+ * @param {boolean} [opts.isLifetime]
+ * @param {string} [opts.expiresAt]    ISO string when set, else null
+ */
+function _notifyPurchaseSuccess(opts) {
+  // Deliberately non-blocking. Wrapped in setImmediate so a slow SMTP or
+  // Slack API call can't extend the parent request latency.
+  setImmediate(async () => {
+    try {
+      const {
+        userId, surface, amountUsd, provider, intentId,
+        txHash = null, chain = 'base', entitlementSpec = {},
+        isLifetime = false, expiresAt = null,
+      } = opts || {};
+
+      // Skip zero-value or unrecognised surfaces.
+      if (!Number.isFinite(amountUsd) || amountUsd <= 0) return;
+      if (surface === 'tip') return;  // tips get their own creator push already
+      if (surface === 'donation') return;  // no receipt for donations
+
+      const planName = await _resolvePlanNameForNotify(surface, entitlementSpec);
+
+      // Email receipt (best-effort, silent on failure).
+      try {
+        const PaymentNotificationService = require('./paymentNotificationService');
+        await PaymentNotificationService.deliverPurchaseConfirmation(String(userId), {
+          planId: entitlementSpec?.add_on_id || surface,
+          planName,
+          amount: amountUsd,
+          transactionId: txHash || `wallet-intent:${intentId}`,
+          provider: provider === 'wallet_rush' ? 'wallet_rush' : 'wallet_usdc',
+          expiryDate: expiresAt,
+          isLifetime: isLifetime === true,
+        });
+      } catch (emailErr) {
+        logger.warn('[walletCheckout] email receipt failed (non-critical)', {
+          userId, intentId, err: emailErr.message,
+        });
+      }
+
+      // Slack ops ping — matches legacy provider format.
+      try {
+        const slackOps = require('./slackOpsService');
+        await slackOps.notifyPaymentSuccess({
+          orderId: `intent:${intentId}`,
+          userId,
+          amount: amountUsd,
+          currency: 'USD',
+          plan: planName,
+          txId: txHash || `intent:${intentId}`,
+          provider: provider === 'wallet_rush' ? 'Wallet (Ru$h)' : `Wallet USDC (${chain})`,
+        });
+      } catch (slackErr) {
+        logger.warn('[walletCheckout] slack ops ping failed (non-critical)', {
+          userId, intentId, err: slackErr.message,
+        });
+      }
+    } catch (fatal) {
+      logger.error('[walletCheckout] _notifyPurchaseSuccess unexpected', {
+        err: fatal.message,
+      });
+    }
+  });
+}
+
+async function _resolvePlanNameForNotify(surface, entitlementSpec) {
+  // Ru$h → describe the token grant, no add_on to look up.
+  if (surface === 'rush') {
+    const tokens = Number(entitlementSpec?.tokens) || 0;
+    const gifted = Number(entitlementSpec?.giftedTokens) || 0;
+    const total = tokens + gifted;
+    return total > 0 ? `${total.toLocaleString()} Ru$h` : 'Ru$h Package';
+  }
+  if (surface === 'call') return 'Private Call Booking';
+  const addOnId = entitlementSpec?.add_on_id;
+  if (!addOnId) return surface || 'Purchase';
+  try {
+    const { rows } = await query(
+      `SELECT name FROM add_ons WHERE id = $1 LIMIT 1`,
+      [addOnId]
+    );
+    return rows[0]?.name || addOnId;
+  } catch {
+    return addOnId;
+  }
 }
 
 // ── Wallet-required middleware ────────────────────────────────────────────
