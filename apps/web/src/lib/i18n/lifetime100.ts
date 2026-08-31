@@ -4,7 +4,7 @@ export const strings = {
     pageTitle: "Founder Lifetime Prime — PNPtv!",
 
     // ── Hero ───────────────────────────────────────────────────────────────────
-    heroTitle: "Lifetime Member + 2 Months PRIME",
+    heroTitle: "Lifetime PRIME Member",
     heroSubtitle: "Pay once. Yours forever.",
 
     // ── Pricing card ──────────────────────────────────────────────────────────
@@ -45,8 +45,8 @@ export const strings = {
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
-      "Pay once — full access forever, no renewals ever.",
-      "2 months PRIME included — all exclusive content unlocked from day one.",
+      "Pay once — full PRIME access forever, no renewals ever.",
+      "Every exclusive drop unlocked for life — from day one, no expirations.",
       "Everything: Live, Hangouts, Feed, DMs, Nearby, and more.",
       "Private sessions with creators + founding member status.",
       "Priority support, always.",
@@ -170,7 +170,7 @@ export const strings = {
     pageTitle: "Fundador Lifetime Prime — PNPtv!",
 
     // ── Hero ───────────────────────────────────────────────────────────────────
-    heroTitle: "Miembro de por vida + 2 Meses PRIME",
+    heroTitle: "Miembro PRIME de por vida",
     heroSubtitle: "Paga una vez. Tuyo para siempre.",
 
     // ── Pricing card ──────────────────────────────────────────────────────────
@@ -211,8 +211,8 @@ export const strings = {
 
     // ── Benefits list ─────────────────────────────────────────────────────────
     benefits: [
-      "Paga una vez — acceso completo para siempre, sin renovaciones.",
-      "2 meses PRIME incluidos — todo el contenido exclusivo desbloqueado desde el primer día.",
+      "Paga una vez — acceso PRIME completo para siempre, sin renovaciones.",
+      "Cada estreno exclusivo desbloqueado de por vida — desde el primer día, sin expiraciones.",
       "Todo: Live, Hangouts, Feed, DMs, Nearby y más.",
       "Sesiones privadas con creadores + estatus de miembro fundador.",
       "Soporte prioritario, siempre.",

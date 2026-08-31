@@ -228,7 +228,7 @@ export default function ManualActivations() {
       <div className="mb-4">
         <h1 className="text-xl sm:text-2xl font-bold">Manual Activations</h1>
         <p className="text-sm text-pnp-textSecondary mt-1">
-          Grant lifetime access to buyers who paid via a hosted payment link. Both providers grant the same bundle: <strong>pnp-member lifetime + 60 days PRIME + founder badge + welcome email</strong>.
+          Grant lifetime access to buyers who paid via a hosted payment link. Both providers grant the same bundle: <strong>lifetime PRIME + pnp-member lifetime + founder badge + welcome email</strong>.
         </p>
       </div>
 

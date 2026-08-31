@@ -6031,24 +6031,22 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
   const userId = record.user_id;
   if (!userId) return res.status(500).json({ success: false, error: 'No user linked to this activation record' });
 
-  // Grant pnp-member (lifetime) + prime (60-day bonus)
+  // Grant lifetime pnp-member + lifetime PRIME (routes through plan_add_ons)
   const EntitlementModel = require('../../models/entitlementModel');
   const EntitlementAccessService = require('../../services/entitlementAccessService');
-  const primeExpiry = new Date();
-  primeExpiry.setDate(primeExpiry.getDate() + 60);
 
   await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
     isLifetime: true, source: 'nequi_negocios', actorId: actor?.id || 'admin',
     reason: 'Nequi Negocios admin activation',
   });
   await EntitlementModel.grantEntitlement(userId, 'prime', {
-    isLifetime: false, durationDays: 60, source: 'nequi_negocios', actorId: actor?.id || 'admin',
-    reason: 'Nequi Negocios — 2 month PRIME bonus',
+    isLifetime: true, source: 'nequi_negocios', actorId: actor?.id || 'admin',
+    reason: 'Nequi Negocios (lifetime100) — lifetime PRIME',
   });
   await EntitlementAccessService.recomputeUserTier(userId);
   await EntitlementAccessService.invalidateCache(userId);
 
-  // Sync users table (best-plan-wins, same as Meru flow)
+  // Sync users table (lifetime — no plan_expiry)
   const UserModel = require('../../models/userModel');
   await UserModel.updateSubscription(userId, { status: 'active', planId: 'lifetime100', expiry: null });
   try {
@@ -6057,12 +6055,8 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
       await txClient.query('BEGIN');
       await txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
       await txClient.query(
-        `UPDATE users SET plan_expiry = CASE
-           WHEN plan_expiry IS NULL THEN NULL
-           WHEN plan_expiry > $2::timestamptz THEN plan_expiry
-           ELSE $2::timestamptz
-         END, updated_at = NOW() WHERE id = $1`,
-        [userId, primeExpiry.toISOString()]
+        `UPDATE users SET plan_expiry = NULL, updated_at = NOW() WHERE id = $1`,
+        [userId]
       );
       await txClient.query('COMMIT');
     } catch (txErr) {
@@ -6089,7 +6083,7 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
     const PaymentHistoryService = require('../../services/paymentHistoryService');
     await PaymentHistoryService.recordPayment({
       userId, paymentMethod: 'nequi_negocios', amount: 100, currency: 'COP',
-      planId: 'lifetime100', planName: 'Lifetime Member + 2 Months PRIME',
+      planId: 'lifetime100', planName: 'Lifetime PRIME Member',
       product: 'lifetime100', paymentReference: record.wompi_reference || `nequi-${id}`,
       metadata: {
         wompi_transaction_id: record.wompi_transaction_id,
@@ -6132,7 +6126,7 @@ app.post('/api/webapp/admin/nequinegocios/:id/activate', requireSessionAuth, adm
 // ── MercadoPago (mpago.li hosted links) ──────────────────────────────────────
 //
 // Two entry surfaces:
-//   /lifetime100 → planId = 'lifetime100' (fundraiser, $100 = lifetime member + 60d PRIME bonus)
+//   /lifetime100 → planId = 'lifetime100' (fundraiser, $100 = lifetime PRIME member)
 //   /subscribe   → planId ∈ {member_monthly, prime-week-pass-7d, monthly-pass,
 //                            prime-diamond-pass-365d, lifetime-pass}
 //
@@ -6163,7 +6157,7 @@ const MERCADOPAGO_PLAN_LINKS = {
 };
 
 const MERCADOPAGO_PLAN_LABELS_ES = {
-  'lifetime100':             'Miembro de por vida + 2 Meses PRIME',
+  'lifetime100':             'Miembro PRIME de por vida',
   'member_monthly':          'Membresía Básica (mensual)',
   'prime-week-pass-7d':      'PRIME · Pase Semanal',
   'monthly-pass':            'PRIME · Pase Mensual',
@@ -6416,19 +6410,14 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
   let grantedMessage = 'access granted';
 
   if (planId === 'lifetime100') {
-    // Legacy /lifetime100 fundraiser grant: lifetime pnp-member + 60d PRIME bonus.
-    // The DB row for the `lifetime100` plan is 60-day PRIME only, which is why we
-    // hand-roll this rather than routing through grantEntitlementsForPlan.
-    const primeExpiry = new Date();
-    primeExpiry.setDate(primeExpiry.getDate() + 60);
-
+    // /lifetime100 fundraiser grant: lifetime pnp-member + lifetime PRIME.
     await EntitlementModel.grantEntitlement(userId, 'pnp-member', {
       isLifetime: true, source: 'mercadopago', actorId: actor?.id || 'admin',
       reason: 'MercadoPago admin activation (lifetime100)',
     });
     await EntitlementModel.grantEntitlement(userId, 'prime', {
-      isLifetime: false, durationDays: 60, source: 'mercadopago', actorId: actor?.id || 'admin',
-      reason: 'MercadoPago (lifetime100) — 2 month PRIME bonus',
+      isLifetime: true, source: 'mercadopago', actorId: actor?.id || 'admin',
+      reason: 'MercadoPago (lifetime100) — lifetime PRIME',
     });
     await EntitlementAccessService.recomputeUserTier(userId);
     await EntitlementAccessService.invalidateCache(userId);
@@ -6441,12 +6430,8 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
         await txClient.query('BEGIN');
         await txClient.query("SET LOCAL pnptv.superadmin_bypass = 'true'");
         await txClient.query(
-          `UPDATE users SET plan_expiry = CASE
-             WHEN plan_expiry IS NULL THEN NULL
-             WHEN plan_expiry > $2::timestamptz THEN plan_expiry
-             ELSE $2::timestamptz
-           END, updated_at = NOW() WHERE id = $1`,
-          [userId, primeExpiry.toISOString()]
+          `UPDATE users SET plan_expiry = NULL, updated_at = NOW() WHERE id = $1`,
+          [userId]
         );
         await txClient.query('COMMIT');
       } catch (txErr) {
@@ -6461,8 +6446,8 @@ app.post('/api/webapp/admin/mercadopago/:id/activate', requireSessionAuth, admin
       await gamificationService.awardBadge(userId, 'founder', null, 'MercadoPago founding member');
     } catch { /* non-critical */ }
 
-    planNameEs = 'Miembro de por vida + 2 Meses PRIME';
-    grantedMessage = 'Lifetime + 2 months PRIME granted';
+    planNameEs = 'Miembro PRIME de por vida';
+    grantedMessage = 'Lifetime PRIME granted';
   } else {
     // Real /subscribe plan — route through canonical helper so plan_add_ons
     // rules decide exactly what's granted and for how long.
