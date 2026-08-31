@@ -55,6 +55,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { BadgeRow } from "@/components/badges/UserBadges";
+import { CrystalServicesPanel } from "@/components/crystal/CrystalServicesPanel";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
@@ -1090,6 +1091,10 @@ export default function CreatorProfilePage() {
           {creator.bio && (
             <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
           )}
+
+          {/* Crystal Creator direct-services panel — renders nothing when the
+              creator has no services (i.e., non-Crystal). Audience-gated. */}
+          <CrystalServicesPanel creatorId={creator.id} creatorUsername={creator.username || null} />
 
           {/* Crystal Creator CTA block — three mutually exclusive branches:
               1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator"

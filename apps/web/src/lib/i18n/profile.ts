@@ -127,6 +127,42 @@ const strings = {
       dismiss: "Not now",
     },
 
+    // ── Crystal Creators row + services panel ────────────────────────────────
+    crystalRow: {
+      title: "Crystal Creators",
+      subtitle: "Premium tier — direct services, custom drops, private sessions.",
+      servicesCount: "{count} services",
+      unlockedOf: "{unlocked} of {total} unlocked",
+      viewProfile: "Open profile",
+      empty: "No Crystal Creators live right now — check back soon.",
+    },
+    crystalServices: {
+      panelTitle: "Direct services",
+      panelSubtitle: "Book something one-on-one. Prices set by the creator.",
+      types: {
+        private_call: "Private call",
+        custom_content: "Custom content",
+        priority_dm: "Priority DMs",
+        private_main_stage: "Private Main Stage",
+        bts_subscription: "Behind-the-scenes",
+      },
+      duration_min: "{n} min",
+      duration_hr: "{n} hr",
+      fulfillment: "Delivered in {days} days",
+      perMonth: "/month",
+      book: "Book",
+      lockedForPublic: "Sign in for Crystal-tier access",
+      lockedForCrystal: "Whale Pigs only",
+      lockedForWhalePig: "PNP Fam only",
+      lockedForFam: "PNP Fam only",
+      audienceLabel: {
+        public: "Public",
+        crystal: "Crystal insiders",
+        whale_pig: "Whale Pigs",
+        fam: "PNP Fam",
+      },
+    },
+
     // ── Unified badge system (icon + tooltip) ─────────────────────────────────
     badges: {
       sinceLabel: "Since {date}",
@@ -694,6 +730,42 @@ const strings = {
       giftCrystal: "Regalar Crystal",
       giftCrystalTo: "Regalar Crystal a {name}",
       dismiss: "Ahora no",
+    },
+
+    // ── Crystal Creators row + services panel ────────────────────────────────
+    crystalRow: {
+      title: "Crystal Creators",
+      subtitle: "Tier premium — servicios directos, drops a la medida, sesiones privadas.",
+      servicesCount: "{count} servicios",
+      unlockedOf: "{unlocked} de {total} desbloqueados",
+      viewProfile: "Abrir perfil",
+      empty: "Ningún Crystal Creator disponible ahora — vuelve pronto.",
+    },
+    crystalServices: {
+      panelTitle: "Servicios directos",
+      panelSubtitle: "Reserva algo uno a uno. Precios fijados por el creador.",
+      types: {
+        private_call: "Llamada privada",
+        custom_content: "Contenido a la medida",
+        priority_dm: "DMs prioritarios",
+        private_main_stage: "Main Stage privado",
+        bts_subscription: "Detrás de cámaras",
+      },
+      duration_min: "{n} min",
+      duration_hr: "{n} h",
+      fulfillment: "Entrega en {days} días",
+      perMonth: "/mes",
+      book: "Reservar",
+      lockedForPublic: "Inicia sesión para acceso Crystal",
+      lockedForCrystal: "Solo Whale Pigs",
+      lockedForWhalePig: "Solo PNP Fam",
+      lockedForFam: "Solo PNP Fam",
+      audienceLabel: {
+        public: "Público",
+        crystal: "Insiders Crystal",
+        whale_pig: "Whale Pigs",
+        fam: "PNP Fam",
+      },
     },
 
     // ── Unified badge system (icon + tooltip) ─────────────────────────────────

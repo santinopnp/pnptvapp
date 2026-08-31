@@ -12050,6 +12050,29 @@ app.get('/api/wallet/packages', requireSessionAuth, (req, res) => {
   res.json({ success: true, packages: DashTokenService.TOKEN_PACKAGES });
 });
 
+// GET /api/wallet/linked — session-scoped linked-wallet lookup. Returns the
+// user's linked embedded-wallet address (populated via /api/privy/link) so the
+// frontend can render a READ-ONLY wallet view on devices where Privy hasn't
+// been authenticated locally yet (Privy state is per-browser localStorage;
+// signing on desktop when phone already has the wallet). Signing actions still
+// require Privy auth on the current device — this only exposes the address so
+// balances + address + Basescan link can render cross-device.
+app.get('/api/wallet/linked', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const userId = String(user.telegram_id || user.id);
+  const { rows } = await getPool().query(
+    `SELECT wallet_address, privy_id, wallet_linked_at FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  const row = rows[0] || {};
+  res.json({
+    ok: true,
+    walletAddress: row.wallet_address ? String(row.wallet_address) : null,
+    hasPrivyId: !!row.privy_id,
+    linkedAt: row.wallet_linked_at || null,
+  });
+}));
+
 // GET /api/wallet/history — purchase history
 app.get('/api/wallet/history', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
@@ -17394,6 +17417,29 @@ app.get('/api/admin/pnp-fam/members/:id', requireSessionAuth, adminGuard, asyncH
   const profile = await crm.getMemberProfile(String(req.params.id));
   if (!profile) return res.status(404).json({ error: 'not_found' });
   return res.json({ profile });
+}));
+
+// ── Crystal Creator showcase (pinned "Crystal Creators" row) ────────────────
+// Public, softAuth so we can compute viewer audience and pre-mark unlocked
+// service counts. Non-authenticated viewers see all Crystal Creators + 0
+// unlocked services (the profile page will show them locked teasers).
+app.get('/api/crystal-creators', softAuth, asyncHandler(async (req, res) => {
+  const crystalSvc = require('../../services/crystalServiceService');
+  const viewerId = req.session?.user?.id;
+  const audience = await crystalSvc.getViewerAudience(viewerId);
+  const creators = await crystalSvc.getShowcase(audience);
+  return res.json({ creators, viewerAudience: audience });
+}));
+
+// ── Services offered by a single creator (audience-filtered) ────────────────
+// Non-Crystal creators return an empty list. Lower-tier viewers see the full
+// service list with `canBook:false` on gated rows (locked teaser pattern).
+app.get('/api/creators/:id/services', softAuth, asyncHandler(async (req, res) => {
+  const crystalSvc = require('../../services/crystalServiceService');
+  const viewerId = req.session?.user?.id;
+  const audience = await crystalSvc.getViewerAudience(viewerId);
+  const services = await crystalSvc.listServicesForCreator(String(req.params.id), audience);
+  return res.json({ services, viewerAudience: audience });
 }));
 
 // ── Channel video upload + AI assist + publish (universal — replaces the
