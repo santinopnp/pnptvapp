@@ -100,7 +100,7 @@ async function initiateRushPurchase(opts) {
     // fulfills an entitlement (never a Ru$h credit) by construction of the
     // guard above.
     const { entitlementId } = await _fulfillEntitlement(client, {
-      userId, entitlementSpec, surface, provider: 'wallet_rush', intentId,
+      userId, entitlementSpec, surface, provider: 'wallet_rush', intentId, amountUsd,
     });
 
     // Mark intent fulfilled.
@@ -304,18 +304,23 @@ async function verifyAndFulfillEth(opts) {
 
     // Match by tx_hash or by (expected_amount_native, address, sender). ETH
     // discriminator is token='ETH'. Fallback address match uses users.wallet_address.
+    // Rescue window: an EXPIRED intent still matches via tx_hash for 24h after
+    // creation — covers the case where the Alchemy webhook fires after the
+    // 20-min expiry (slow network, RPC lag, or a user who paid gas late).
     const amountEthReceived = Number(amountWeiReceived) / 1e18;
     const { rows: intentRows } = await client.query(
       `SELECT id, user_id, amount_usd, expected_amount_native, entitlement_spec,
-              surface, receiving_address, metadata
+              surface, receiving_address, metadata, status
          FROM checkout_intents
         WHERE provider = 'wallet_usdc'
           AND token = 'ETH'
-          AND status = 'pending'
+          AND status IN ('pending', 'expired')
+          AND created_at > NOW() - INTERVAL '24 hours'
           AND (
             lower(tx_hash) = lower($1)
             OR (
-              tx_hash IS NULL
+              status = 'pending'
+              AND tx_hash IS NULL
               AND expires_at > NOW()
               AND user_id::text = (
                 SELECT id::text FROM users
@@ -466,15 +471,19 @@ async function verifyAndFulfillUsdc(opts) {
     // Match by amount + address if tx_hash wasn't pre-recorded by the frontend.
     // (Frontend records tx_hash immediately after Privy sendTransaction, but
     // there's a race window where the webhook fires first.)
+    // Rescue window: an EXPIRED intent still matches via tx_hash for 24h after
+    // creation — covers late-arriving webhooks after the 20-min intent expiry.
     const { rows: intentRows } = await client.query(
-      `SELECT id, user_id, amount_usd, entitlement_spec, surface, receiving_address
+      `SELECT id, user_id, amount_usd, entitlement_spec, surface, receiving_address, status
          FROM checkout_intents
         WHERE provider = 'wallet_usdc'
-          AND status = 'pending'
+          AND status IN ('pending', 'expired')
+          AND created_at > NOW() - INTERVAL '24 hours'
           AND (
             lower(tx_hash) = lower($1)
             OR (
-              tx_hash IS NULL
+              status = 'pending'
+              AND tx_hash IS NULL
               AND expected_amount_usdc = $2
               AND expires_at > NOW()
               -- Fallback match must be bound to the SENDER's wallet or two
@@ -593,7 +602,7 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   if (surface === 'call') {
     return _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd });
   }
-  return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId });
+  return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
 }
 
 /**
@@ -768,7 +777,7 @@ async function _fulfillRush(client, { userId, entitlementSpec, provider, intentI
   };
 }
 
-async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId }) {
+async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd }) {
   const {
     add_on_id, duration_days, is_lifetime = false,
     creator_id = null, scope_id = null, auto_renew = true,
@@ -802,6 +811,11 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
 
   // Parameterize the INTERVAL through explicit multiplication so no string
   // interpolation reaches Postgres text ($N is bound, safe from injection).
+  // Extension math on ON CONFLICT: `GREATEST(current, NOW()) + interval` — so a
+  // second payment while the sub is still active stacks a fresh 30-day window
+  // on top of the remaining time. The old MAX(current, NOW()+30d) silently
+  // dropped the top-up when current already extended past NOW() (bit us with
+  // intent 269 on 2026-08-31 — user paid twice, got 30d + 27s).
   const { rows } = await client.query(
     `INSERT INTO user_entitlements
        (user_id, add_on_id, is_lifetime, expires_at, creator_id, source_plan_id, source_payment_id, auto_renew, grant_source)
@@ -811,10 +825,14 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
        $4, $5, $6, $7, $8
      )
      ON CONFLICT (user_id, add_on_id, creator_id) DO UPDATE
-       SET expires_at   = GREATEST(user_entitlements.expires_at, EXCLUDED.expires_at),
-           auto_renew   = EXCLUDED.auto_renew,
-           grant_source = EXCLUDED.grant_source,
-           updated_at   = NOW()
+       SET expires_at        = CASE WHEN $9::boolean THEN NULL
+                                    ELSE GREATEST(user_entitlements.expires_at, NOW()) + ($10::int * INTERVAL '1 day')
+                               END,
+           is_lifetime       = user_entitlements.is_lifetime OR EXCLUDED.is_lifetime,
+           auto_renew        = EXCLUDED.auto_renew,
+           source_payment_id = EXCLUDED.source_payment_id,
+           grant_source      = EXCLUDED.grant_source,
+           updated_at        = NOW()
      RETURNING id`,
     [
       String(userId),
@@ -829,6 +847,41 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
       safeDays,
     ]
   );
+
+  // Creator revenue split — every wallet_usdc purchase of a creator_sub (or any
+  // entitlement scoped to a specific creator) must credit creator_earnings at
+  // the canonical rate. Legacy paymentService.js has the same insert for
+  // NowPayments/Meru/BTCPay paths; the new wallet rail was missing it and
+  // silently dropped ~3 payments to DUKEOFDENSITY on 2026-08-31 before we
+  // caught it. Held for EARNINGS_HOLD_HOURS to cover chargeback window.
+  if (creator_id && surface === 'creator_sub' && Number(amountUsd) > 0) {
+    try {
+      const {
+        CREATOR_REVENUE_RATE, EARNINGS_HOLD_HOURS,
+      } = require('../config/monetizationConfig');
+      const gross = Number(amountUsd);
+      const amountCreator = Math.round(gross * CREATOR_REVENUE_RATE * 100) / 100;
+      const amountPlatform = Math.round((gross - amountCreator) * 100) / 100;
+      // The unique index `creator_earnings_source_payment_creator_unique` is
+      // partial (WHERE source_payment_id IS NOT NULL) — Postgres needs the
+      // constraint referenced by name in ON CONFLICT for partial indexes.
+      await client.query(
+        `INSERT INTO creator_earnings
+           (creator_id, amount_gross, amount_creator, amount_platform, status,
+            available_at, source_payment_id, period_month)
+         VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval, $6,
+                 date_trunc('month', CURRENT_DATE))
+         ON CONFLICT ON CONSTRAINT creator_earnings_source_payment_creator_unique
+           DO NOTHING`,
+        [String(creator_id), gross, amountCreator, amountPlatform,
+         String(EARNINGS_HOLD_HOURS), `checkout_intent:${intentId}`]
+      );
+    } catch (e) {
+      logger.warn('[walletCheckout] creator_earnings insert failed', {
+        creator_id, intentId, amountUsd, err: e.message,
+      });
+    }
+  }
 
   return { entitlementId: Number(rows[0].id), rushCredited: 0, giftedCredited: 0 };
 }

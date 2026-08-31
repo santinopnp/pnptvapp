@@ -91,41 +91,47 @@ async function notificationsProcessor(job) {
     case 'slack':
     case 'slack_ops': {
       const svc = _safeRequire('../slackOpsService');
-      if (!svc || typeof svc[fn] !== 'function') {
+      // Prefer _direct_${fn} — the exported `${fn}` is a queued wrapper that
+      // re-enqueues, which caused a ~463k-job runaway loop on 2026-08-31.
+      const direct = svc && (svc[`_direct_${fn}`] || svc[fn]);
+      if (typeof direct !== 'function') {
         logger.warn(`[BullMQ] notificationsProcessor: slackOpsService.${fn} not found`);
         return;
       }
-      await svc[fn](...(args || []));
+      await direct(...(args || []));
       return;
     }
 
     case 'slack_creator': {
       const svc = _safeRequire('../slackCreatorNotifyService');
-      if (!svc || typeof svc[fn] !== 'function') {
+      const direct = svc && (svc[`_direct_${fn}`] || svc[fn]);
+      if (typeof direct !== 'function') {
         logger.warn(`[BullMQ] notificationsProcessor: slackCreatorNotifyService.${fn} not found`);
         return;
       }
-      await svc[fn](...(args || []));
+      await direct(...(args || []));
       return;
     }
 
     case 'slack_live': {
       const svc = _safeRequire('../slackLiveService');
-      if (!svc || typeof svc[fn] !== 'function') {
+      const direct = svc && (svc[`_direct_${fn}`] || svc[fn]);
+      if (typeof direct !== 'function') {
         logger.warn(`[BullMQ] notificationsProcessor: slackLiveService.${fn} not found`);
         return;
       }
-      await svc[fn](...(args || []));
+      await direct(...(args || []));
       return;
     }
 
     case 'slack_support': {
       const svc = _safeRequire('../slackSupportService');
-      if (!svc || typeof svc[fn] !== 'function') {
+      const direct = svc && (svc[`_direct_${fn}`] || svc[fn]);
+      if (typeof direct !== 'function') {
         logger.warn(`[BullMQ] notificationsProcessor: slackSupportService.${fn} not found`);
         return;
       }
-      await svc[fn](...(args || []));
+      await direct(...(args || []));
       return;
     }
 

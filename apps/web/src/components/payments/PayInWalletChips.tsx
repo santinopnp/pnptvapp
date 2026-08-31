@@ -302,6 +302,7 @@ export function WalletPayCard({
   const [paying, setPaying] = _useState(false);
   const [error, setError] = _useState<string | null>(null);
   const [success, setSuccess] = _useState(false);
+  const [lastTxHash, setLastTxHash] = _useState<string | null>(null);
   // True from when addFunds resolves until either (a) balance covers the price
   // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
@@ -438,6 +439,7 @@ export function WalletPayCard({
 
       const verified = await verifyWalletCheckoutTx(intent.intentId, txHash);
       if (!verified.ok) throw new Error(verified.reason || "verify_failed");
+      setLastTxHash(txHash);
       setSuccess(true);
       setUsdc((prev) => (prev == null ? prev : Math.max(0, prev - amountUsd)));
       onSuccess?.({
@@ -448,9 +450,12 @@ export function WalletPayCard({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isUserCancel = /User rejected|user denied|cancel/i.test(msg);
+      const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       const friendly = isUserCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
-        : msg;
+        : isChain
+          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          : msg;
       setError(friendly);
       if (!isUserCancel) {
         reportWalletClientError("sendTransaction", err, {
@@ -555,8 +560,31 @@ export function WalletPayCard({
         </div>
       )}
       {success && (
-        <div className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1.5">
-          {es ? "¡Pago confirmado!" : "Payment confirmed!"}
+        <div className="rounded-xl px-3 py-3 bg-emerald-500/10 border border-emerald-500/30 space-y-2">
+          <div className="flex items-center gap-2 text-emerald-200 font-semibold text-sm">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <span>{es ? "¡Pago confirmado!" : "Payment confirmed!"}</span>
+          </div>
+          {lastTxHash && (
+            <a
+              href={`https://basescan.org/tx/${lastTxHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-[11px] text-emerald-300/80 hover:text-emerald-200 underline underline-offset-2 font-mono truncate"
+            >
+              {lastTxHash.slice(0, 10)}…{lastTxHash.slice(-8)} ↗
+            </a>
+          )}
+          {(surface === 'prime' || surface === 'membership' || surface === 'creator_sub') && (
+            <a
+              href="/settings/account"
+              className="inline-block text-[12px] font-semibold text-emerald-200 hover:text-emerald-100 underline underline-offset-2"
+            >
+              {es ? "Administrar suscripción →" : "Manage subscription →"}
+            </a>
+          )}
         </div>
       )}
 

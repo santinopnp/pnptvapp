@@ -995,6 +995,8 @@ module.exports = {
   _direct_notifyUnhandledError: notifyUnhandledError,
   _direct_notifyCreatorApplication: notifyCreatorApplication,
   _direct_notifyNpJwt403: notifyNpJwt403,
+  _direct_notifyNequiPendingActivation: notifyNequiPendingActivation,
+  _direct_notifyMercadoPagoPendingActivation: notifyMercadoPagoPendingActivation,
   _direct_notifyRushConversion: notifyRushConversion,
   _direct_notifyNewBooking: notifyNewBooking,
   _direct_notifyCallReminder: notifyCallReminder,
