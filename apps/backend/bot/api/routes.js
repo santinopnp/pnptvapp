@@ -17428,7 +17428,9 @@ app.get('/api/crystal-creators', softAuth, asyncHandler(async (req, res) => {
   const viewerId = req.session?.user?.id;
   const audience = await crystalSvc.getViewerAudience(viewerId);
   const creators = await crystalSvc.getShowcase(audience);
-  return res.json({ creators, viewerAudience: audience });
+  // Client-facing audience label — never leak the internal "whale_pig" string.
+  const clientMap = { public: 'public', crystal: 'crystal', whale_pig: 'inner_circle', fam: 'fam' };
+  return res.json({ creators, viewerAudience: clientMap[audience] || 'public' });
 }));
 
 // ── Services offered by a single creator (audience-filtered) ────────────────
@@ -17439,7 +17441,8 @@ app.get('/api/creators/:id/services', softAuth, asyncHandler(async (req, res) =>
   const viewerId = req.session?.user?.id;
   const audience = await crystalSvc.getViewerAudience(viewerId);
   const services = await crystalSvc.listServicesForCreator(String(req.params.id), audience);
-  return res.json({ services, viewerAudience: audience });
+  const clientMap = { public: 'public', crystal: 'crystal', whale_pig: 'inner_circle', fam: 'fam' };
+  return res.json({ services, viewerAudience: clientMap[audience] || 'public' });
 }));
 
 // ── Channel video upload + AI assist + publish (universal — replaces the

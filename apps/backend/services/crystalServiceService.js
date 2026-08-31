@@ -21,10 +21,20 @@
 const { getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
 
+// Internal (DB) audience keys stay 'whale_pig' — that column has data seeded
+// with that value. Client-facing responses translate 'whale_pig' → 'inner_circle'
+// so the internal Whale Pig label never leaks (see feedback_whale_pig_internal_only.md).
 const AUDIENCE_RANK = Object.freeze({ public: 0, crystal: 1, whale_pig: 2, fam: 3 });
+const AUDIENCE_TO_CLIENT = Object.freeze({
+  public: 'public', crystal: 'crystal', whale_pig: 'inner_circle', fam: 'fam',
+});
 
 function rank(a) {
   return AUDIENCE_RANK[a] ?? 0;
+}
+
+function clientAudience(a) {
+  return AUDIENCE_TO_CLIENT[a] || 'public';
 }
 
 /**
@@ -80,7 +90,7 @@ async function listServicesForCreator(creatorId, viewerAudience = 'public') {
       fulfillmentDays: r.fulfillment_days,
       descriptionEn: r.description_en,
       descriptionEs: r.description_es,
-      minAudience: r.min_audience,
+      minAudience: clientAudience(r.min_audience),
       // Viewer can BOOK only if their audience rank meets or exceeds the
       // service's minimum. Lower-audience viewers still SEE the service
       // (as a locked teaser) but can't purchase — the lock label tells

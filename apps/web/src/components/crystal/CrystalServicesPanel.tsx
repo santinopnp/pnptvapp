@@ -3,7 +3,7 @@ import { Phone, Camera, MessageSquareHeart, Radio, Layers, Lock } from "lucide-r
 import { useI18n } from "@/lib/i18n";
 
 type ServiceType = "private_call" | "custom_content" | "priority_dm" | "private_main_stage" | "bts_subscription";
-type Audience = "public" | "crystal" | "whale_pig" | "fam";
+type Audience = "public" | "crystal" | "inner_circle" | "fam";
 
 interface Service {
   id: number;
@@ -96,7 +96,7 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
     if (viewerAudience === "public") return t.profile.crystalServices.lockedForPublic;
     switch (min) {
       case "crystal":   return t.profile.crystalServices.lockedForCrystal;
-      case "whale_pig": return t.profile.crystalServices.lockedForWhalePig;
+      case "inner_circle": return t.profile.crystalServices.lockedForInnerCircle;
       case "fam":       return t.profile.crystalServices.lockedForFam;
       default:          return "";
     }
