@@ -444,6 +444,17 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'crystal-services-overdue': {
+      try {
+        const CrystalSvc = require('../crystalServiceService');
+        const r = await CrystalSvc.sweepOverdueCustomContent();
+        if (r.overdue || r.alerted) logger.info('Crystal services overdue sweep', r);
+      } catch (err) {
+        logger.error('Crystal services overdue cron error', { error: err.message });
+      }
+      return;
+    }
+
     case 'video-leak-detector': {
       const { cache } = require('../../config/redis');
       const BusinessNotificationService = _safeRequire('../businessNotificationService');

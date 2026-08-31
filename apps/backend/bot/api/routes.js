@@ -17484,6 +17484,33 @@ app.get('/api/creators/:id/services', softAuth, asyncHandler(async (req, res) =>
   return res.json({ services, viewerAudience: clientMap[audience] || 'public' });
 }));
 
+// ── Creator dashboard: list my Crystal Service bookings ────────────────────
+// Filterable by status; defaults to all non-final statuses (paid + pending)
+// so the creator sees the work they still owe.
+app.get('/api/creator/services/bookings', requireSessionAuth, asyncHandler(async (req, res) => {
+  const crystalSvc = require('../../services/crystalServiceService');
+  const creatorId = String(req.session.user.id);
+  const status = req.query.status
+    ? String(req.query.status).split(',').map((s) => s.trim()).filter(Boolean)
+    : ['paid', 'pending'];
+  const bookings = await crystalSvc.listBookingsForCreator(creatorId, { status, limit: 200 });
+  return res.json({ bookings });
+}));
+
+// ── Creator dashboard: mark a booking fulfilled or cancelled ───────────────
+// Body: { newStatus: 'fulfilled'|'cancelled', fulfillmentNote?: string }
+// Cancel triggers a Slack ops ping + buyer DM (refund is manual for now).
+app.post('/api/creator/services/bookings/:bookingId/status', requireSessionAuth, asyncHandler(async (req, res) => {
+  const crystalSvc = require('../../services/crystalServiceService');
+  const creatorId = String(req.session.user.id);
+  const { newStatus, fulfillmentNote = null } = req.body || {};
+  const result = await crystalSvc.updateBookingStatus(
+    String(req.params.bookingId), creatorId, String(newStatus), { fulfillmentNote }
+  );
+  if (!result.ok) return res.status(400).json({ error: result.reason });
+  return res.json(result);
+}));
+
 // ── Book a Crystal Service — returns wallet USDC intent or NP invoice URL ───
 // Body: { provider: 'wallet'|'nowpayments', buyerNote?: string }
 // Wallet flow: returns { intentId, receivingAddress, amountUsdc, expiresAt }

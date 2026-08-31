@@ -268,6 +268,14 @@ async function initializeQueues() {
     jobId: 'cron-crystal-renewal-reminder',
   });
 
+  // Crystal Services overdue-delivery sweep — daily at 14:00 UTC. Alerts
+  // creators + Slack when a custom_content booking is past its expires_at.
+  await cronQueue.add('crystal-services-overdue', {}, {
+    repeat: { pattern: '0 14 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-crystal-services-overdue',
+  });
+
   // Creator eligibility batch — daily at 03:10 UTC
   await cronQueue.add('creator-eligibility', {}, {
     repeat: { pattern: '10 3 * * *', tz: 'UTC' },

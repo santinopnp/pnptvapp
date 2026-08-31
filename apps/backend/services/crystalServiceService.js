@@ -225,11 +225,253 @@ async function recordBooking({
   return { bookingId: existing[0]?.id || null, alreadyApplied: true };
 }
 
+/**
+ * List bookings for a creator's own dashboard. Includes buyer display fields
+ * so the creator can identify the fan (username + avatar) without a second
+ * lookup. Filterable by status; caller can also cap the result.
+ *
+ * @param {string} creatorUserId
+ * @param {object} opts  — { status?: string|string[], limit?: number }
+ */
+async function listBookingsForCreator(creatorUserId, { status = null, limit = 100 } = {}) {
+  const statusFilter = Array.isArray(status) ? status : (status ? [status] : null);
+  const params = [String(creatorUserId)];
+  let where = `b.creator_user_id = $1`;
+  if (statusFilter?.length) {
+    params.push(statusFilter);
+    where += ` AND b.status = ANY($${params.length}::text[])`;
+  }
+  const { rows } = await getPool().query(
+    `SELECT b.id, b.service_id, b.service_type, b.price_paid_cents, b.status,
+            b.buyer_note, b.payment_provider, b.payment_ref,
+            b.created_at, b.fulfilled_at, b.expires_at,
+            u.id AS buyer_id, u.username AS buyer_username,
+            u.first_name AS buyer_first_name, u.photo_file_id AS buyer_photo_url,
+            u.is_pnptv_fam, u.is_whale_pig
+       FROM creator_service_bookings b
+       JOIN users u ON u.id = b.buyer_user_id
+      WHERE ${where}
+      ORDER BY b.created_at DESC
+      LIMIT ${Math.min(500, Math.max(1, Number(limit) || 100))}`,
+    params
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    serviceId: Number(r.service_id),
+    serviceType: r.service_type,
+    priceCents: Number(r.price_paid_cents),
+    status: r.status,
+    buyerNote: r.buyer_note,
+    paymentProvider: r.payment_provider,
+    paymentRef: r.payment_ref,
+    createdAt: r.created_at,
+    fulfilledAt: r.fulfilled_at,
+    expiresAt: r.expires_at,
+    buyer: {
+      id: String(r.buyer_id),
+      username: r.buyer_username || null,
+      firstName: r.buyer_first_name || null,
+      photoUrl: r.buyer_photo_url || null,
+      // Client-safe: only expose pnptvFam publicly; Whale Pig stays staff-only,
+      // but creator can see the "inner circle" hint via combined flag.
+      isPnptvFam: !!r.is_pnptv_fam,
+      isInnerCircle: !!r.is_whale_pig,  // labeled Inner Circle in UI
+    },
+  }));
+}
+
+/**
+ * Mark a booking fulfilled or cancelled by the CREATOR who owns it.
+ * Fulfilled = work delivered; cancelled = creator can't deliver, triggers
+ * a refund workflow (Slack ping — refund itself is manual for now).
+ *
+ * Enforces creator ownership at the query level (WHERE creator_user_id = $2)
+ * so a hostile creator can't touch someone else's booking.
+ *
+ * @returns {Promise<{ok:boolean, newStatus?:string, reason?:string}>}
+ */
+async function updateBookingStatus(bookingId, creatorUserId, newStatus, { fulfillmentNote = null } = {}) {
+  if (!['fulfilled', 'cancelled'].includes(newStatus)) {
+    return { ok: false, reason: 'invalid_status' };
+  }
+  const setClause = newStatus === 'fulfilled'
+    ? `status = 'fulfilled', fulfilled_at = NOW(), updated_at = NOW()`
+    : `status = 'cancelled', updated_at = NOW()`;
+  const metaMerge = fulfillmentNote
+    ? `, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('fulfillmentNote', $3::text)`
+    : '';
+  const params = fulfillmentNote
+    ? [String(bookingId), String(creatorUserId), String(fulfillmentNote).slice(0, 2000)]
+    : [String(bookingId), String(creatorUserId)];
+  const { rows } = await getPool().query(
+    `UPDATE creator_service_bookings
+        SET ${setClause}${metaMerge}
+      WHERE id = $1
+        AND creator_user_id = $2
+        AND status IN ('paid','pending')
+    RETURNING id, status, buyer_user_id, service_type, price_paid_cents`,
+    params
+  );
+  if (!rows.length) return { ok: false, reason: 'not_found_or_wrong_state' };
+  logger.info('[crystal-service] booking status updated', {
+    bookingId, creatorUserId, newStatus,
+  });
+
+  // Fire-and-forget: DM the buyer with status change.
+  setImmediate(async () => {
+    try {
+      const b = rows[0];
+      if (!/^\d+$/.test(String(b.buyer_user_id))) return;
+      let bot = null;
+      try { bot = require('../bot/core/bot'); } catch { return; }
+      if (!bot?.telegram) return;
+      const usd = (Number(b.price_paid_cents) / 100).toFixed(0);
+      const msg = newStatus === 'fulfilled'
+        ? `💎 Your ${b.service_type.replace(/_/g, ' ')} was marked delivered by the creator. Any issue? Reply to this DM.`
+        : `Your ${b.service_type.replace(/_/g, ' ')} ($${usd}) was cancelled by the creator. Refund is being processed — you'll hear from support shortly.`;
+      await bot.telegram.sendMessage(b.buyer_user_id, msg).catch(() => {});
+    } catch { /* non-fatal */ }
+  });
+
+  // If cancelled, ping ops-slack so support can process the refund.
+  if (newStatus === 'cancelled') {
+    setImmediate(async () => {
+      try {
+        const slackOps = require('./slackOpsService');
+        await slackOps.notifyPaymentSuccess({
+          orderId: `booking:${bookingId}`,
+          userId: String(rows[0].buyer_user_id),
+          username: '',
+          amount: (Number(rows[0].price_paid_cents) / 100).toFixed(0),
+          currency: 'USD',
+          plan: `⚠ REFUND NEEDED: crystal_service ${rows[0].service_type} cancelled by creator ${creatorUserId}`,
+          provider: 'refund_queue',
+        }).catch(() => {});
+      } catch { /* non-fatal */ }
+    });
+  }
+
+  return { ok: true, newStatus };
+}
+
+/**
+ * Boolean helper — does buyer have an active priority_dm booking with this
+ * creator? Called from the DM UI so priority senders get a rose-gold marker.
+ *
+ * "Active" = status='paid' or 'fulfilled', within the past 30 days
+ * (priority_dm is a monthly service).
+ */
+async function hasActivePriorityDm(buyerUserId, creatorUserId) {
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM creator_service_bookings
+      WHERE buyer_user_id = $1
+        AND creator_user_id = $2
+        AND service_type = 'priority_dm'
+        AND status IN ('paid','fulfilled')
+        AND created_at > NOW() - INTERVAL '30 days'
+      LIMIT 1`,
+    [String(buyerUserId), String(creatorUserId)]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Boolean helper — does buyer have an active bts_subscription with this
+ * creator? Called from channel-access gates so BTS drops are visible only
+ * to paying subscribers. Same 30-day rolling window as priority_dm.
+ */
+async function hasActiveBtsSubscription(buyerUserId, creatorUserId) {
+  const { rows } = await getPool().query(
+    `SELECT 1 FROM creator_service_bookings
+      WHERE buyer_user_id = $1
+        AND creator_user_id = $2
+        AND service_type = 'bts_subscription'
+        AND status IN ('paid','fulfilled')
+        AND created_at > NOW() - INTERVAL '30 days'
+      LIMIT 1`,
+    [String(buyerUserId), String(creatorUserId)]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Cron sweep — flags custom_content bookings that are past their delivery
+ * deadline. Sends a DM to the creator + Slack ops ping so support can
+ * intervene. Runs once per day.
+ *
+ * @returns {Promise<{overdue:number, alerted:number}>}
+ */
+async function sweepOverdueCustomContent() {
+  const { rows: overdue } = await getPool().query(
+    `SELECT b.id, b.creator_user_id, b.buyer_user_id, b.expires_at,
+            b.price_paid_cents,
+            u.username AS creator_username
+       FROM creator_service_bookings b
+       JOIN users u ON u.id = b.creator_user_id
+      WHERE b.service_type = 'custom_content'
+        AND b.status = 'paid'
+        AND b.expires_at IS NOT NULL
+        AND b.expires_at <= NOW()
+        AND (b.metadata->>'overdue_alerted') IS NULL
+      LIMIT 100`
+  );
+  let alerted = 0;
+  if (!overdue.length) return { overdue: 0, alerted: 0 };
+
+  let bot = null;
+  try { bot = require('../bot/core/bot'); } catch { /* no bot */ }
+  const slackOps = (() => { try { return require('./slackOpsService'); } catch { return null; } })();
+
+  for (const row of overdue) {
+    try {
+      // Creator DM (best-effort, TG-signed-up only)
+      if (bot?.telegram && /^\d+$/.test(String(row.creator_user_id))) {
+        const daysLate = Math.round((Date.now() - new Date(row.expires_at)) / (24 * 60 * 60 * 1000));
+        await bot.telegram.sendMessage(
+          row.creator_user_id,
+          `⚠️ Your custom_content booking is ${daysLate}d overdue. Deliver ASAP or the fan gets refunded.\n\nManage: https://pnptv.app/creators/services`
+        ).catch(() => {});
+      }
+      if (slackOps) {
+        slackOps.notifyPaymentSuccess({
+          orderId: `booking:${row.id}`,
+          userId: String(row.creator_user_id),
+          username: row.creator_username ? `@${row.creator_username}` : '',
+          amount: (Number(row.price_paid_cents) / 100).toFixed(0),
+          currency: 'USD',
+          plan: `⏰ OVERDUE custom_content — creator hasn't delivered`,
+          provider: 'ops_alert',
+        }).catch(() => {});
+      }
+      // Stamp so we don't re-alert every day
+      await getPool().query(
+        `UPDATE creator_service_bookings
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('overdue_alerted', NOW()::text),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [row.id]
+      );
+      alerted++;
+    } catch (err) {
+      logger.warn('[crystal-service] sweepOverdueCustomContent: alert failed', {
+        bookingId: row.id, error: err.message,
+      });
+    }
+  }
+  logger.info('[crystal-service] sweepOverdueCustomContent', { overdue: overdue.length, alerted });
+  return { overdue: overdue.length, alerted };
+}
+
 module.exports = {
   getViewerAudience,
   listServicesForCreator,
   getShowcase,
   loadServiceForBooking,
   recordBooking,
+  listBookingsForCreator,
+  updateBookingStatus,
+  hasActivePriorityDm,
+  hasActiveBtsSubscription,
+  sweepOverdueCustomContent,
   AUDIENCE_RANK,
 };

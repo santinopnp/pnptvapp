@@ -693,7 +693,7 @@ async function _fulfillCrystalService(client, { userId, entitlementSpec, provide
       );
       const buyer = buyerRows[0] || {};
       const buyerHandle = buyer.username ? `@${buyer.username}` : (buyer.first_name || String(userId).slice(0, 8));
-      const dmText = `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${(priceCents / 100).toFixed(0)} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\nManage: https://pnptv.app/creator/services`;
+      const dmText = `💎 New booking — ${gate.service.service_type.replace(/_/g, ' ')} — $${(priceCents / 100).toFixed(0)} paid.\nFrom: ${buyerHandle}${buyerNote ? `\nNote: ${String(buyerNote).slice(0, 300)}` : ''}\n\nManage: https://pnptv.app/creators/services`;
 
       if (/^\d+$/.test(String(creatorUserId))) {
         let bot = null;
