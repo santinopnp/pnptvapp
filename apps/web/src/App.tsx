@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
-import { PrivyProvider } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
+import * as Sentry from "@sentry/react";
 import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
 import { NotificationProvider } from "@/hooks/useNotifications";
@@ -287,6 +288,23 @@ function useGlobalSocketEvents() {
   return { suspendedMsg, incomingCall, dismissIncomingCall };
 }
 
+// Watches usePrivy().ready and reports a breadcrumb + Sentry warning if the
+// SDK doesn't initialize within 5s — the fingerprint for a bad VITE_PRIVY_APP_ID,
+// a Privy dashboard misconfig, or CORS/CSP blocking privy.io. Renders nothing.
+function PrivyReadinessBreadcrumb() {
+  const { ready } = usePrivy();
+  useEffect(() => {
+    if (ready) return;
+    const t = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.warn("[Privy] SDK not ready after 5s — check VITE_PRIVY_APP_ID + dashboard config");
+      Sentry.captureMessage("Privy SDK not ready after 5s", { level: "warning" });
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [ready]);
+  return null;
+}
+
 function AppOverlays() {
   const { isAuthenticated } = useAuth();
   const { suspendedMsg, incomingCall, dismissIncomingCall } = useGlobalSocketEvents();
@@ -402,11 +420,12 @@ export default function App() {
                       // out of Ethereum → Base without needing to export the key
                       // or install MetaMask. The wallet UI still defaults to Base.
                       supportedChains: [base, mainnet],
-                      loginMethods: ["telegram", "twitter", "wallet"],
+                      loginMethods: ["email", "google", "telegram", "twitter", "wallet"],
                       embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
                       appearance: { theme: "dark", accentColor: "#D4007A" },
                     }}
                   >
+                    <PrivyReadinessBreadcrumb />
                     <RouterProvider router={router} />
                     <AppOverlays />
                   </PrivyProvider>

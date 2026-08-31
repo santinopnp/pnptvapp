@@ -78,6 +78,13 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const [customUsd, setCustomUsd] = useState<string>("");
   const [payingCustom, setPayingCustom] = useState(false);
 
+  // NowPayments alternate-coin option — for users who want to pay in USDC (any
+  // chain), BTC, or ETH outside our Base wallet flow. Must live before the
+  // `if (!isOpen) return null` early return — hook order must be identical on
+  // every render or React #310 fires when the modal opens/closes.
+  const [npCoin, setNpCoin] = useState<'usdcerc20' | 'btc' | 'eth'>('usdcerc20');
+  const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
+
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
   // advertise — collapsed by default.
@@ -247,9 +254,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       setError(isCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
-        : msg);
+        : isChain
+          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          : msg);
       if (!isCancel) {
         reportWalletClientError("buyTokensWalletPay", err, {
           surface: "rush", rail, packageId: pkg.id, tokens: Number(pkg.tokens),
@@ -273,9 +283,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isCancel = /User rejected|user denied|cancel/i.test(msg);
+      const isChain = /wrong network|unrecognized chain|chain mismatch|switch chain|network mismatch/i.test(msg);
       setError(isCancel
         ? (es ? "Cancelaste la transacción." : "You cancelled the transaction.")
-        : msg);
+        : isChain
+          ? (es ? "Cambia la red de tu billetera a Base y vuelve a intentar." : "Switch your wallet network to Base and try again.")
+          : msg);
       if (!isCancel) {
         reportWalletClientError("buyTokensCustomPay", err, {
           surface: "rush", rail, amountUsd: usd,
@@ -285,13 +298,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     } finally { setPayingCustom(false); }
   };
 
-  // NowPayments alternate-coin option — for users who want to pay in USDC (any
-  // chain), BTC, or ETH outside our Base wallet flow. Restricted to those three
-  // per product policy (2026-08-19); NP full picker (LTC/DOGE/XMR/etc.) is only
-  // exposed on /subscribe, not for Ru$h top-ups. Popup-based per NP iframe rules.
-  type NpCoin = 'usdcerc20' | 'btc' | 'eth';
-  const [npCoin, setNpCoin] = useState<NpCoin>('usdcerc20');
-  const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
+  // NowPayments alternate-coin handler — state moved above the `if (!isOpen)`
+  // early return (see hook-order note there). Restricted to USDC/BTC/ETH per
+  // product policy (2026-08-19); NP full picker is only on /subscribe.
+  // Popup-based per NP iframe rules.
   const handlePayWithNowPayments = async (pkg: TokenPackage) => {
     setError(null);
     setNpFallbackPackageId(pkg.id);
@@ -553,6 +563,16 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   Ξ ETH
                 </button>
               </div>
+            </div>
+          ) : authenticated && !activeWallet ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4 flex items-center gap-3">
+              <svg className="w-4 h-4 animate-spin text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <p className="text-xs text-white/70">
+                {es ? "Preparando tu billetera…" : "Setting up your wallet…"}
+              </p>
             </div>
           ) : (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-center">
