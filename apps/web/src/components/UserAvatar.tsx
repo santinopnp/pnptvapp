@@ -132,7 +132,7 @@ export function UserAvatar({
 
   const inner = crystalCreator ? (
     <span
-      className={`crystal-ring ${className}`}
+      className={`creator-crystal-ring ${className}`}
       style={{
         width: px + RING_PAD * 2,
         height: px + RING_PAD * 2,

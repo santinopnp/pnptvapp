@@ -1768,6 +1768,15 @@ const getPublicProfile = async (req, res) => {
         exclusiveVideoCount: result.exclusiveVideoCount,
         exclusivePhotoCount: result.exclusivePhotoCount,
         profileColor: profile.profile_color || null,
+        colombiaBadge: !!profile.colombia_badge,
+        pnptvFam: !!profile.is_pnptv_fam,
+        pnptvFamSince: profile.pnptv_fam_since
+          ? new Date(profile.pnptv_fam_since).toISOString()
+          : null,
+        crystalCreator: !!(profile.crystal_creator_active_until
+          && (String(profile.crystal_creator_active_until) === 'infinity'
+              || new Date(profile.crystal_creator_active_until) > new Date())),
+        partnerBadgeColor: profile.partner_badge_color || null,
         performerData: pd ? {
           id: pd.id,
           isAvailable: pd.is_available,

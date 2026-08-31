@@ -48,11 +48,9 @@ export interface CreatorCardProps {
 
 function CrystalPill() {
   return (
-    <span
-      className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
-      style={{ color: "#1a1a2e" }}
-    >
-      Crystal 💎
+    <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
+      <span aria-hidden className="text-[11px] leading-none">❖</span>
+      Crystal
     </span>
   );
 }

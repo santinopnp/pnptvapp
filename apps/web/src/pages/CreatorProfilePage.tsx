@@ -832,8 +832,8 @@ export default function CreatorProfilePage() {
               the creator is an active Crystal Creator. */}
           {creatorIsCrystal && (
             <div
-              className="crystal-header absolute top-0 left-0 right-0 pointer-events-none z-[1]"
-              style={{ opacity: 0.4, height: 140 }}
+              className="creator-crystal-header absolute top-0 left-0 right-0 pointer-events-none z-[1]"
+              style={{ opacity: 0.55, height: 140 }}
               aria-hidden="true"
             />
           )}
@@ -1022,11 +1022,9 @@ export default function CreatorProfilePage() {
                   </span>
                 )}
                 {creatorIsCrystal && (
-                  <span
-                    className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
-                    style={{ color: "#1a1a2e" }}
-                  >
-                    Crystal 💎
+                  <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
+                    <span aria-hidden className="text-[11px] leading-none">❖</span>
+                    Crystal
                   </span>
                 )}
               </div>
@@ -1196,11 +1194,9 @@ export default function CreatorProfilePage() {
               style={{ borderColor: "rgba(184,245,255,0.3)", background: "rgba(184,245,255,0.05)" }}
             >
               <div className="flex items-center gap-2">
-                <span
-                  className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
-                  style={{ color: "#1a1a2e" }}
-                >
-                  Crystal Creator 💎
+                <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
+                  <span aria-hidden className="text-[11px] leading-none">❖</span>
+                  Crystal Creator
                 </span>
                 <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {crystalActiveUntil === null || crystalActiveUntil === "infinity"

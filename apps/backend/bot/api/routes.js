@@ -17163,17 +17163,35 @@ app.get('/api/creator/crystal/whale-pigs', requireSessionAuth, asyncHandler(asyn
   }
 }));
 
-// ── Whale Pigs — public list + admin toggle ─────────────────────────────────
-// Whale Pigs are a curated VIP audience: top spenders + personal friends of
-// Santino & Lex. They see Crystal Creators first, unlock a private group, and
-// carry a 0% commission on tips they send to Crystal Creators. The set is
-// small and hand-picked — no auto-promotion.
-app.get('/api/whale-pigs', softAuth, asyncHandler(async (_req, res) => {
+// ── Whale Pigs — INTERNAL surface only (not client-facing) ──────────────────
+// "Whale Pig" is an internal term shared between the PNPtv team and Crystal
+// Creators only (see feedback_whale_pig_internal_only.md). The list endpoint
+// is gated to Crystal Creators + admins — regular users get 403. The URL
+// string is fine at that gate because only insiders can reach it.
+//
+// PNPtv fam ⊆ Whale Pigs. `is_pnptv_fam` is the inner-circle subset (team +
+// closest partners); a DB trigger forces fam=TRUE → whale_pig=TRUE.
+async function _requireCrystalOrAdmin(req, res, next) {
+  try {
+    const userId = req.session?.user?.id;
+    if (!userId) return res.status(401).json({ error: 'unauthenticated' });
+    const role = req.session?.user?.role;
+    if (role === 'admin' || role === 'superadmin') return next();
+    const CreatorSvc = require('../../services/creatorService');
+    const isCrystal = await CreatorSvc.isCrystalCreator(String(userId));
+    if (isCrystal) return next();
+    return res.status(403).json({ error: 'forbidden' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+app.get('/api/whale-pigs', requireSessionAuth, _requireCrystalOrAdmin, asyncHandler(async (_req, res) => {
   const { rows } = await getPool().query(
-    `SELECT id, username, first_name, photo_file_id AS photo_url, bio
+    `SELECT id, username, first_name, photo_file_id AS photo_url, bio, is_pnptv_fam
        FROM users
       WHERE is_whale_pig = TRUE
-      ORDER BY LOWER(COALESCE(username, first_name, id))`
+      ORDER BY is_pnptv_fam DESC, LOWER(COALESCE(username, first_name, id))`
   );
   return res.json({
     users: rows.map(r => ({
@@ -17182,6 +17200,7 @@ app.get('/api/whale-pigs', softAuth, asyncHandler(async (_req, res) => {
       first_name: r.first_name || null,
       photo_url: r.photo_url || null,
       bio: r.bio || null,
+      is_pnptv_fam: !!r.is_pnptv_fam,
     })),
   });
 }));
@@ -17189,18 +17208,48 @@ app.get('/api/whale-pigs', softAuth, asyncHandler(async (_req, res) => {
 app.post('/api/admin/users/:id/whale-pig', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
   const targetId = String(req.params.id);
   const isWhalePig = req.body?.isWhalePig === true;
+  const isPnptvFam = req.body?.isPnptvFam === true;
+  const pnpFamService = require('../../services/pnpFamService');
+
+  // Promotion → delegate to the service so lifetime PRIME + pnp-member
+  // entitlements are granted atomically. The DB trigger then coerces
+  // is_whale_pig=TRUE, keeping flags coherent.
+  if (isPnptvFam) {
+    const famRow = await pnpFamService.markPnptvFam(targetId);
+    if (!famRow) return res.status(404).json({ error: 'user_not_found' });
+    logger.info('[whale-pig] admin toggle (fam)', {
+      adminId: req.session?.user?.id, targetId,
+      is_whale_pig: famRow.is_whale_pig, is_pnptv_fam: famRow.is_pnptv_fam,
+    });
+    return res.json({ ok: true, is_whale_pig: famRow.is_whale_pig, is_pnptv_fam: famRow.is_pnptv_fam });
+  }
+
+  // Whale-pig toggle without promoting to fam. Do NOT revoke lifetime
+  // entitlements — access is permanent by design.
   const { rows } = await getPool().query(
     `UPDATE users
-        SET is_whale_pig = $2, updated_at = NOW()
+        SET is_whale_pig = $2,
+            is_pnptv_fam = FALSE,
+            updated_at   = NOW()
       WHERE id = $1
-    RETURNING is_whale_pig`,
+    RETURNING is_whale_pig, is_pnptv_fam`,
     [targetId, isWhalePig]
   );
   if (!rows.length) return res.status(404).json({ error: 'user_not_found' });
-  logger.info('[whale-pig] toggle', {
-    adminId: req.session?.user?.id, targetId, is_whale_pig: rows[0].is_whale_pig,
+  logger.info('[whale-pig] admin toggle', {
+    adminId: req.session?.user?.id, targetId,
+    is_whale_pig: rows[0].is_whale_pig, is_pnptv_fam: rows[0].is_pnptv_fam,
   });
-  return res.json({ ok: true, is_whale_pig: rows[0].is_whale_pig });
+  return res.json({ ok: true, is_whale_pig: rows[0].is_whale_pig, is_pnptv_fam: rows[0].is_pnptv_fam });
+}));
+
+// ── Public PNPtv fam list ───────────────────────────────────────────────────
+// "Whale Pig" is INTERNAL-only; this endpoint MUST NOT mention it. Returns
+// only fam members (a subset of Whale Pigs). Safe for anonymous consumption.
+app.get('/api/pnp-fam', softAuth, asyncHandler(async (_req, res) => {
+  const pnpFamService = require('../../services/pnpFamService');
+  const users = await pnpFamService.listPnptvFam();
+  return res.json({ users });
 }));
 
 // ── Channel video upload + AI assist + publish (universal — replaces the
@@ -19845,7 +19894,11 @@ app.get('/api/public/creator/:username',
               amazon_wishlist_url,
               crystal_creator_active_until,
               crystal_creator_invited_at,
-              is_whale_pig
+              is_whale_pig,
+              is_pnptv_fam,
+              pnptv_fam_since,
+              colombia_badge,
+              partner_badge_color
        FROM users
        WHERE LOWER(username) = LOWER($1) AND creator_status = 'active'
        LIMIT 1`,
@@ -20293,7 +20346,15 @@ app.get('/api/public/creator/:username',
           return isNaN(d.getTime()) ? null : d.toISOString();
         })(),
         crystalInvited: !!creator.crystal_creator_invited_at,
-        isWhalePig: !!creator.is_whale_pig,
+        // NOTE: is_whale_pig intentionally NOT exposed here — "Whale Pig" is
+        // an internal term (see feedback_whale_pig_internal_only.md). The
+        // public-facing fam badge is `pnptvFam`, which the frontend renders.
+        pnptvFam: !!creator.is_pnptv_fam,
+        pnptvFamSince: creator.pnptv_fam_since
+          ? new Date(creator.pnptv_fam_since).toISOString()
+          : null,
+        colombiaBadge: !!creator.colombia_badge,
+        partnerBadgeColor: creator.partner_badge_color || null,
       },
       isSubscribed,
       viewerSubscription,

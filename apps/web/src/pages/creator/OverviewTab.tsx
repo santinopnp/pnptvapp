@@ -209,11 +209,9 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
           <div className="p-4">
             {crystalActive ? (
               <div className="flex items-center gap-2">
-                <span
-                  className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0"
-                  style={{ color: "#1a1a2e" }}
-                >
-                  Crystal Creator 💎
+                <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
+                  <span aria-hidden className="text-[11px] leading-none">❖</span>
+                  Crystal Creator
                 </span>
                 <span className="text-[10px] font-semibold" style={{ color: "#5ED1C4" }}>Active</span>
                 <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>

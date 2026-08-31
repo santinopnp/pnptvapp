@@ -285,6 +285,14 @@ function provisionAllServices(user) {
 
     // 2. Default follows (idempotent)
     enforceDefaultFollows(userId).catch(() => {});
+
+    // 3. PNPtv fam pending-handle claim (idempotent — no-op if not on list)
+    try {
+      const pnpFamService = require('../../../services/pnpFamService');
+      await pnpFamService.resolvePendingHandleOnSignup(userId, user.username);
+    } catch (err) {
+      logger.warn(`[Provision] pnp-fam resolve failed for user ${userId}: ${err.message}`);
+    }
   });
 }
 
@@ -2305,7 +2313,8 @@ const getProfile = async (req, res) => {
               u.hide_from_regions,
               u.creator_status, u.creator_type, u.creator_price_usd,
               u.creator_verified, u.creator_featured, u.creator_subscriber_count,
-              u.colombia_badge,
+              u.colombia_badge, u.is_pnptv_fam, u.pnptv_fam_since,
+              u.crystal_creator_active_until, u.partner_badge_color,
               perf.id as perf_id, perf.is_available as perf_is_available,
               perf.base_price as perf_base_price, perf.total_calls as perf_total_calls,
               perf.total_rating as perf_total_rating, perf.rating_count as perf_rating_count,
@@ -2381,6 +2390,10 @@ const getProfile = async (req, res) => {
         creatorSubscriberCount: p.creator_subscriber_count || 0,
         hasTelegram: !!p.telegram,
         colombiaBadge: p.colombia_badge || false,
+        pnptvFam: !!p.is_pnptv_fam,
+        pnptvFamSince: p.pnptv_fam_since ? new Date(p.pnptv_fam_since).toISOString() : null,
+        crystalCreator: !!(p.crystal_creator_active_until && new Date(p.crystal_creator_active_until) > new Date()),
+        partnerBadgeColor: p.partner_badge_color || null,
         profileColor: p.profile_color || null,
         gamificationBadges,
         performerData,

@@ -1228,11 +1228,9 @@ export default function CreatorSubscriptions() {
           ? "lifetime"
           : new Date(until).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
         return (
-          <span
-            className="crystal-header inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide"
-            style={{ color: "#1a1a2e" }}
-          >
-            💎 {label}
+          <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide">
+            <span aria-hidden className="text-[11px] leading-none">❖</span>
+            {label}
           </span>
         );
       },
