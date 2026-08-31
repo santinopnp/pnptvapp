@@ -60,6 +60,31 @@ const strings = {
     availableForCalls: "Available for calls",
     currentlyUnavailable: "Currently unavailable",
 
+    // ── Unified badge system (icon + tooltip) ─────────────────────────────────
+    badges: {
+      sinceLabel: "Since {date}",
+      pnptv_fam: {
+        name: "PNP Fam",
+        reason: "Inner circle — friends who helped build PNPtv and have a lifetime spot in the family.",
+      },
+      crystal: {
+        name: "Crystal Creator",
+        reason: "Premium invite-only creator tier — top-shelf content and support.",
+      },
+      verified: {
+        name: "Verified Creator",
+        reason: "Identity verified by PNPtv.",
+      },
+      colombia: {
+        name: "Socio Colombia",
+        reason: "Verified member from Colombia — supports the local community.",
+      },
+      partner: {
+        name: "PNP Partners Network",
+        reason: "Member of a PNP Partners network — invited through a partner referral link.",
+      },
+    },
+
     // ── Tabs ──────────────────────────────────────────────────────────────────
     tabPosts: "Posts",
     tabLikes: "Likes",
@@ -536,6 +561,31 @@ const strings = {
     verifiedCreator: "Creador verificado",
     availableForCalls: "Disponible para llamadas",
     currentlyUnavailable: "No disponible ahora",
+
+    // ── Unified badge system (icon + tooltip) ─────────────────────────────────
+    badges: {
+      sinceLabel: "Desde {date}",
+      pnptv_fam: {
+        name: "PNP Fam",
+        reason: "Círculo íntimo — amigos que ayudaron a crear PNPtv y tienen un lugar de por vida en la familia.",
+      },
+      crystal: {
+        name: "Creador Crystal",
+        reason: "Nivel premium de creadores solo por invitación — contenido y apoyo de máxima calidad.",
+      },
+      verified: {
+        name: "Creador Verificado",
+        reason: "Identidad verificada por PNPtv.",
+      },
+      colombia: {
+        name: "Socio Colombia",
+        reason: "Miembro verificado de Colombia — apoya a la comunidad local.",
+      },
+      partner: {
+        name: "Red de Partners PNP",
+        reason: "Miembro de una red de Partners PNP — invitado por un enlace de referido.",
+      },
+    },
 
     // ── Tabs ──────────────────────────────────────────────────────────────────
     tabPosts: "Publicaciones",

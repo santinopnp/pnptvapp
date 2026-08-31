@@ -14,6 +14,7 @@ import React, { useState } from "react";
 import clsx from "clsx";
 import { BookCallModal } from "./BookCallModal";
 import { isCreatorPayLocked } from "@/lib/api";
+import { BadgeRow } from "@/components/badges/UserBadges";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,12 @@ export interface CreatorCardCreator {
   bio?: string | null;
   /** True when this creator has an active Crystal Creator pass. */
   crystalCreator?: boolean;
+  /** True for PNP Fam members (inner circle). */
+  pnptvFam?: boolean;
+  pnptvFamSince?: string | null;
+  creatorVerified?: boolean;
+  colombiaBadge?: boolean;
+  partnerBadgeColor?: string | null;
 }
 
 export interface CreatorCardProps {
@@ -45,15 +52,6 @@ export interface CreatorCardProps {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function CrystalPill() {
-  return (
-    <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
-      <span aria-hidden className="text-[11px] leading-none">❖</span>
-      Crystal
-    </span>
-  );
-}
 
 function AvatarFallback({ username }: { username: string }) {
   const initials = username.slice(0, 2).toUpperCase();
@@ -142,7 +140,7 @@ export function CreatorCard({
 
         {/* Info section */}
         <div className="flex flex-col gap-2 p-3">
-          {/* Name + Crystal badge row */}
+          {/* Name row */}
           <div className="flex items-center gap-2 min-w-0">
             <span
               className="text-sm font-semibold truncate"
@@ -150,8 +148,19 @@ export function CreatorCard({
             >
               @{creator.username}
             </span>
-            {isCrystal && <CrystalPill />}
           </div>
+          {/* Prominent unified badge row — icon-only w/ hover tooltip */}
+          <BadgeRow
+            size="sm"
+            source={{
+              pnptvFam: creator.pnptvFam,
+              pnptvFamSince: creator.pnptvFamSince ?? null,
+              crystalCreator: isCrystal,
+              creatorVerified: creator.creatorVerified,
+              colombiaBadge: creator.colombiaBadge,
+              partnerBadgeColor: creator.partnerBadgeColor ?? null,
+            }}
+          />
 
           {/* Bio */}
           {creator.bio && (

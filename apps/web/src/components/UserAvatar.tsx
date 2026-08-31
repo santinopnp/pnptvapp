@@ -16,6 +16,8 @@ interface Props {
   partnerBadgeColor?: string | null;
   /** When true, renders an animated conic-gradient Crystal Creator ring around the avatar. Crystal ring takes precedence over partnerBadgeColor. */
   crystalCreator?: boolean;
+  /** When true, renders a rose-gold PNP Fam ring. Takes precedence over the Crystal ring (fam is the inner circle). */
+  pnptvFam?: boolean;
 }
 
 const SIZE_PX: Record<AvatarSize, number> = {
@@ -49,6 +51,7 @@ export function UserAvatar({
   onClick,
   partnerBadgeColor = null,
   crystalCreator = false,
+  pnptvFam = false,
 }: Props) {
   const id = userId != null ? String(userId) : "";
   const online = usePresence(showOnline ? id : null);
@@ -80,18 +83,19 @@ export function UserAvatar({
     />
   ) : null;
 
-  // 3 px of crystal ring padding so the ring is visible around the avatar circle.
-  // The ring element itself is a sibling layer behind; the online dot (z-10)
-  // lives inside the avatar span and sits naturally above the ring.
+  // 3 px of ring padding (Crystal or PNP Fam). The ring element itself is a
+  // sibling layer behind; the online dot (z-10) lives inside the avatar span
+  // and sits naturally above the ring.
   const RING_PAD = 3;
+  const hasRing = pnptvFam || crystalCreator;
 
   const avatarSpan = (
     <span
-      className={`relative inline-block flex-shrink-0 ${crystalCreator ? "" : className}`}
+      className={`relative inline-block flex-shrink-0 ${hasRing ? "" : className}`}
       style={{
         width: px,
         height: px,
-        ...(!crystalCreator && partnerBadgeColor
+        ...(!hasRing && partnerBadgeColor
           ? {
               boxShadow: `0 0 0 2px ${partnerBadgeColor}, 0 0 0 4px rgba(0,0,0,0.6)`,
               borderRadius: "50%",
@@ -130,9 +134,16 @@ export function UserAvatar({
     </span>
   );
 
-  const inner = crystalCreator ? (
+  // PNP Fam ring takes precedence over Crystal (fam = inner circle).
+  const ringClass = pnptvFam
+    ? "pnptv-fam-ring"
+    : crystalCreator
+      ? "creator-crystal-ring"
+      : null;
+
+  const inner = ringClass ? (
     <span
-      className={`creator-crystal-ring ${className}`}
+      className={`${ringClass} ${className}`}
       style={{
         width: px + RING_PAD * 2,
         height: px + RING_PAD * 2,

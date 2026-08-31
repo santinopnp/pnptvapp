@@ -1154,6 +1154,13 @@ export interface UserProfile {
   // Partner group badge color — hex color from the partner group this user was
   // attributed to (e.g. "#a855f7"). Null when not attributed.
   partner_badge_color?: string | null;
+  // PNP Fam — inner-circle leadership subset (rose-gold badge). Public flag.
+  pnptvFam?: boolean;
+  pnptvFamSince?: string | null;
+  // Crystal Creator — active premium creator pass.
+  crystalCreator?: boolean;
+  // Camel-case mirror of partner_badge_color (backend now returns both).
+  partnerBadgeColor?: string | null;
 }
 
 /** Sidecar metadata stored on social_posts.metadata for channel-promo rows. */

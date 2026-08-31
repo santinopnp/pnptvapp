@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { formatBio } from "@/lib/feedI18n";
+import { BadgeRow } from "@/components/badges/UserBadges";
 import { useTutorial, resetAllTutorials } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { useParams, useNavigate, useSearchParams, Navigate } from "react-router-dom";
@@ -1265,6 +1266,21 @@ export default function Profile() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-white truncate">{displayName}</h1>
+            </div>
+            {/* Prominent unified badge row — icon-only w/ hover tooltip */}
+            <BadgeRow
+              size="md"
+              className="mt-1.5"
+              source={{
+                pnptvFam: profile.pnptvFam,
+                pnptvFamSince: profile.pnptvFamSince ?? null,
+                crystalCreator: profile.crystalCreator,
+                creatorVerified: profile.creatorVerified,
+                colombiaBadge: profile.colombiaBadge,
+                partnerBadgeColor: profile.partnerBadgeColor ?? profile.partner_badge_color ?? null,
+              }}
+            />
+            <div className="flex items-center gap-2 flex-wrap mt-1.5">
               {userLabel !== 'FREE' && (
                 <span
                   className={`inline-flex items-center text-xs font-bold px-2 py-0.5 rounded-full border ${getLabelColor(userLabel)}`}
@@ -1327,24 +1343,7 @@ export default function Profile() {
                   )}
                 </>
               )}
-              {profile.creatorVerified && (
-                <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill={accentColor} aria-label={p.verifiedCreator}>
-                  <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              )}
-              {profile.colombiaBadge && (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full"
-                  style={{
-                    background: "linear-gradient(135deg, rgba(252,209,22,0.20) 0%, rgba(206,17,38,0.15) 100%)",
-                    color: "#FFD700",
-                    border: "1px solid rgba(252,209,22,0.35)",
-                  }}
-                >
-                  <span aria-hidden="true">🇨🇴</span>
-                  Socio Colombia
-                </span>
-              )}
+              {/* creatorVerified and colombiaBadge now render as icons in BadgeRow above */}
               {isFounder && (
                 <span
                   className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full"
@@ -1402,19 +1401,7 @@ export default function Profile() {
                 @{dpnsHandle}
               </span>
             )}
-            {profile.partner_badge_color && (
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold mt-1"
-                style={{
-                  background: profile.partner_badge_color + "22",
-                  border: `1px solid ${profile.partner_badge_color}55`,
-                  color: profile.partner_badge_color,
-                }}
-              >
-                <span aria-hidden="true">●</span>
-                PNP Partners Network
-              </span>
-            )}
+            {/* partner_badge_color now renders as an icon in BadgeRow above */}
             {!isOwnProfile && profileDistanceKm != null && (
               <NearbyBadge distanceKm={profileDistanceKm} variant="detailed" />
             )}

@@ -17,7 +17,6 @@ import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom"
 import { Helmet } from "react-helmet-async";
 import {
   ChevronLeft,
-  CheckCircle2,
   MoreVertical,
   MessageCircle,
   Flag,
@@ -55,6 +54,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
+import { BadgeRow } from "@/components/badges/UserBadges";
 import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
@@ -797,6 +797,7 @@ export default function CreatorProfilePage() {
   // Crystal Creator fields come from /api/public/creator/:username (routes.js
   // adds them from users.crystal_creator_active_until + crystal_creator_invited_at).
   const creatorIsCrystal = creator.crystalCreator === true;
+  const creatorIsFam = (creator as { pnptvFam?: boolean }).pnptvFam === true;
   const crystalActiveUntil = creator.crystalActiveUntil ?? null;
   const crystalInvited = creator.crystalInvited === true;
 
@@ -973,7 +974,7 @@ export default function CreatorProfilePage() {
               the static accent border — we suppress the wrapper boxShadow
               so both don't stack visually. */}
           <div className="absolute left-4" style={{ bottom: -34 }}>
-            {creatorIsCrystal ? (
+            {creatorIsFam || creatorIsCrystal ? (
               <UserAvatar
                 userId={creator.id}
                 photoUrl={creator.photo_url}
@@ -981,7 +982,8 @@ export default function CreatorProfilePage() {
                 size="xl"
                 showOnline={false}
                 linkToProfile={false}
-                crystalCreator
+                pnptvFam={creatorIsFam}
+                crystalCreator={creatorIsCrystal}
               />
             ) : (
               <div
@@ -1012,25 +1014,23 @@ export default function CreatorProfilePage() {
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[18px] font-bold text-white truncate">{displayName}</span>
-                {creator.creator_verified && (
-                  <span
-                    className="inline-flex items-center justify-center rounded-full w-5 h-5 shrink-0"
-                    style={{ background: "var(--pnp-accent, #D4007A)" }}
-                    aria-label="Verified"
-                  >
-                    <CheckCircle2 size={12} className="text-white" strokeWidth={3} />
-                  </span>
-                )}
-                {creatorIsCrystal && (
-                  <span className="creator-crystal-badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide shrink-0">
-                    <span aria-hidden className="text-[11px] leading-none">❖</span>
-                    Crystal
-                  </span>
-                )}
               </div>
               <div className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                 @{creator.username}
               </div>
+              {/* Prominent unified badge row — icon-only w/ hover tooltip */}
+              <BadgeRow
+                size="md"
+                className="mt-2"
+                source={{
+                  pnptvFam: creatorIsFam,
+                  pnptvFamSince: (creator as { pnptvFamSince?: string | null }).pnptvFamSince ?? null,
+                  crystalCreator: creatorIsCrystal,
+                  creatorVerified: creator.creator_verified,
+                  colombiaBadge: (creator as { colombiaBadge?: boolean }).colombiaBadge,
+                  partnerBadgeColor: (creator as { partnerBadgeColor?: string | null }).partnerBadgeColor ?? null,
+                }}
+              />
             </div>
             <div className="flex flex-col items-end gap-1 shrink-0">
               <button

@@ -12,7 +12,7 @@
  *     mention it in the response.
  */
 
-const { getPool } = require('../db');
+const { getPool } = require('../config/postgres');
 const logger = require('../utils/logger');
 
 const PNPTV_FAM_GRANT_SOURCE = 'pnptv_fam_grant';

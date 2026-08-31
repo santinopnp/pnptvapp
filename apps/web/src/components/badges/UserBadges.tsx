@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Crown, Gem, BadgeCheck, Handshake } from "lucide-react";
-import { useTranslation } from "@/lib/useTranslation";
+import { useI18n } from "@/lib/i18n";
 
 export type BadgeKey = "pnptv_fam" | "crystal" | "verified" | "colombia" | "partner";
 
@@ -18,16 +18,19 @@ type Size = "sm" | "md" | "lg";
 const SIZE_PX: Record<Size, number> = { sm: 20, md: 26, lg: 34 };
 const ICON_PX: Record<Size, number> = { sm: 12, md: 16, lg: 20 };
 
-/**
- * Build the ordered list of badges to show. Order is priority-descending
- * so the fam / most-exclusive badge sits leftmost when the row is rendered.
- */
-export function buildBadges(source: BadgeSource): Array<{
+interface BuiltBadge {
   key: BadgeKey;
   color?: string | null;
   since?: string | null;
-}> {
-  const out: Array<{ key: BadgeKey; color?: string | null; since?: string | null }> = [];
+}
+
+/**
+ * Priority-descending list of badges to render. Most exclusive first
+ * (fam → crystal → verified → colombia → partner) so the leftmost slot in
+ * the row is the most distinctive.
+ */
+export function buildBadges(source: BadgeSource): BuiltBadge[] {
+  const out: BuiltBadge[] = [];
   if (source.pnptvFam) out.push({ key: "pnptv_fam", since: source.pnptvFamSince ?? null });
   if (source.crystalCreator) out.push({ key: "crystal" });
   if (source.creatorVerified) out.push({ key: "verified" });
@@ -37,25 +40,26 @@ export function buildBadges(source: BadgeSource): Array<{
 }
 
 interface BadgeIconProps {
-  badge: { key: BadgeKey; color?: string | null; since?: string | null };
+  badge: BuiltBadge;
   size?: Size;
 }
 
 /**
- * Single icon-only badge with a hover/focus tooltip that shows the badge's
- * public name + the reason it was granted. No text label — the icon carries
- * the identity. Distinct visual palette per badge key.
+ * Single icon-only badge with a hover/focus tooltip showing its public name
+ * and the reason it was granted. No text label — the icon carries the
+ * identity. Each badge key has a distinct palette.
  */
 function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
-  const { t } = useTranslation("profile");
+  const t = useI18n();
   const [open, setOpen] = useState(false);
   const px = SIZE_PX[size];
   const icon = ICON_PX[size];
 
-  const name = t(`badges.${badge.key}.name`);
-  const reason = t(`badges.${badge.key}.reason`);
+  const strings = t.profile.badges[badge.key];
+  const name = strings.name;
+  const reason = strings.reason;
   const sinceLine = badge.since
-    ? t("badges.sinceLabel", { date: new Date(badge.since).toLocaleDateString() })
+    ? t.profile.badges.sinceLabel.replace("{date}", new Date(badge.since).toLocaleDateString())
     : "";
 
   const chrome = useMemo(() => {
@@ -67,7 +71,6 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#2a0f08",
           IconEl: Crown,
           shadow: "0 2px 10px rgba(180,110,80,0.45)",
-          ariaLabel: name,
         };
       case "crystal":
         return {
@@ -76,7 +79,6 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#f5f0ff",
           IconEl: Gem,
           shadow: "0 2px 10px rgba(60,26,77,0.45)",
-          ariaLabel: name,
         };
       case "verified":
         return {
@@ -85,7 +87,6 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#052925",
           IconEl: BadgeCheck,
           shadow: "0 2px 10px rgba(42,157,146,0.4)",
-          ariaLabel: name,
         };
       case "colombia":
         return {
@@ -94,7 +95,6 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#ffffff",
           IconEl: null,
           shadow: "0 2px 10px rgba(0,0,0,0.35)",
-          ariaLabel: name,
           emoji: "🇨🇴",
         };
       case "partner":
@@ -104,12 +104,12 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           color: "#ffffff",
           IconEl: Handshake,
           shadow: `0 2px 10px ${badge.color ? badge.color + "80" : "rgba(139,92,246,0.45)"}`,
-          ariaLabel: name,
         };
     }
-  }, [badge.key, badge.color, name]);
+  }, [badge.key, badge.color]);
 
   const IconEl = chrome.IconEl;
+  const emoji = "emoji" in chrome ? chrome.emoji : undefined;
 
   return (
     <span className="relative inline-flex items-center justify-center">
@@ -123,7 +123,7 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        aria-label={chrome.ariaLabel}
+        aria-label={name}
         aria-describedby={open ? `badge-tip-${badge.key}` : undefined}
         className="rounded-full flex items-center justify-center transition-transform hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         style={{
@@ -135,8 +135,8 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
           boxShadow: chrome.shadow,
         }}
       >
-        {"emoji" in chrome && chrome.emoji ? (
-          <span style={{ fontSize: icon, lineHeight: 1 }}>{chrome.emoji}</span>
+        {emoji ? (
+          <span style={{ fontSize: icon, lineHeight: 1 }}>{emoji}</span>
         ) : IconEl ? (
           <IconEl size={icon} strokeWidth={2.4} />
         ) : null}
@@ -145,7 +145,7 @@ function BadgeIcon({ badge, size = "md" }: BadgeIconProps) {
         <span
           role="tooltip"
           id={`badge-tip-${badge.key}`}
-          className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 pointer-events-none whitespace-nowrap max-w-[220px] rounded-lg px-2.5 py-1.5 text-[11px] leading-snug bg-black/90 text-white shadow-xl border border-white/10"
+          className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 pointer-events-none w-max max-w-[220px] rounded-lg px-2.5 py-1.5 text-[11px] leading-snug bg-black/90 text-white shadow-xl border border-white/10"
         >
           <span className="font-semibold block">{name}</span>
           <span className="block opacity-90 whitespace-normal">{reason}</span>
@@ -165,15 +165,15 @@ interface BadgeRowProps {
 }
 
 /**
- * Prominent horizontal row of a user's badges — designed to sit directly
- * under the displayName on profile headers and creator cards. Renders
- * nothing when the user has no badges.
+ * Prominent horizontal row of a user's badges — sits directly under the
+ * displayName on profile headers and creator cards. Renders nothing when
+ * the user has no badges.
  */
 export function BadgeRow({ source, size = "md", className = "" }: BadgeRowProps) {
   const badges = buildBadges(source);
   if (!badges.length) return null;
   return (
-    <div className={`flex items-center gap-1.5 ${className}`}>
+    <div className={`flex items-center gap-1.5 flex-wrap ${className}`}>
       {badges.map((b) => (
         <BadgeIcon key={b.key} badge={b} size={size} />
       ))}
