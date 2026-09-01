@@ -17636,24 +17636,11 @@ app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (r
 
   if (!row) return res.json({ show: false, reason: 'no_pick' });
 
-  // Album photos for the carousel — social_posts images sorted by likes,
-  // filtered to non-exclusive so a paid-tier photo never lands in a public
-  // interstitial or X/Telegram promo.
-  const albumRes = await pool.query(
-    `SELECT COALESCE(media_url, (media_urls->>0)) AS url
-       FROM social_posts
-      WHERE user_id = $1
-        AND is_deleted = FALSE
-        AND COALESCE(is_exclusive, FALSE) = FALSE
-        AND (media_type = 'image'
-             OR (media_urls IS NOT NULL AND jsonb_array_length(media_urls) > 0))
-      ORDER BY likes_count DESC NULLS LAST, created_at DESC
-      LIMIT 6`,
-    [String(row.creator_id)]
-  );
-  const albumPhotos = albumRes.rows
-    .map((r) => r.url)
-    .filter((u) => typeof u === 'string' && u.length > 0);
+  // Album photos for the carousel — same source order as the daily promo
+  // (shared helper so both surfaces stay in sync). Filters exclusive/paid
+  // media so nothing gated ever lands in a public interstitial.
+  const promoSvc = require('../../services/featuredCreatorPromoService');
+  const albumPhotos = await promoSvc.pickAlbumPhotos(row.creator_id, 6);
 
   return res.json({
     show: true,

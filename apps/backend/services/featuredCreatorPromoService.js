@@ -88,7 +88,10 @@ async function resolveTodaysFeatured(today) {
  */
 async function pickAlbumPhotos(userId, max = 6) {
   const pool = getPool();
-  const { rows } = await pool.query(
+  const uid = String(userId);
+
+  // Source 1 — top non-exclusive social_posts (over-fetch to leave room for dedup).
+  const s1 = await pool.query(
     `SELECT COALESCE(media_url, (media_urls->>0)) AS url
        FROM social_posts
       WHERE user_id = $1
@@ -98,16 +101,52 @@ async function pickAlbumPhotos(userId, max = 6) {
              OR (media_urls IS NOT NULL AND jsonb_array_length(media_urls) > 0))
       ORDER BY likes_count DESC NULLS LAST, created_at DESC
       LIMIT $2`,
-    [String(userId), max * 3]  // over-fetch so dedup below still yields close to max
+    [uid, max * 3]
   );
+
+  // Source 2 — non-premium creator_media (creator-curated album).
+  const s2 = await pool.query(
+    `SELECT COALESCE(thumb_url, url) AS url
+       FROM creator_media
+      WHERE creator_id = $1 AND is_premium = FALSE
+      ORDER BY sort_order ASC, created_at DESC
+      LIMIT $2`,
+    [uid, max]
+  );
+
+  // Source 3 — published channel_videos thumbnails from their channels.
+  const s3 = await pool.query(
+    `SELECT v.thumbnail_url AS url
+       FROM channel_videos v
+       JOIN creator_channels c ON c.id = v.channel_id
+      WHERE c.creator_id = $1
+        AND v.status = 'published'
+        AND v.thumbnail_url IS NOT NULL
+      ORDER BY v.created_at DESC
+      LIMIT $2`,
+    [uid, max]
+  );
+
+  // Source 4 — creator's own cover + profile photo as final backstop so we
+  // never return an empty album (Lex-day fallback).
+  const s4 = await pool.query(
+    `SELECT cover_url, photo_file_id FROM users WHERE id = $1 LIMIT 1`,
+    [uid]
+  );
+  const backstop = [];
+  if (s4.rows[0]?.cover_url) backstop.push({ url: s4.rows[0].cover_url });
+  if (s4.rows[0]?.photo_file_id) backstop.push({ url: `/api/profile-photo/${encodeURIComponent(uid)}` });
+
   const seen = new Set();
   const out = [];
-  for (const r of rows) {
-    if (!r.url || typeof r.url !== 'string') continue;
-    if (seen.has(r.url)) continue;
-    seen.add(r.url);
-    out.push(r.url);
-    if (out.length >= max) break;
+  for (const src of [s1.rows, s2.rows, s3.rows, backstop]) {
+    for (const r of src) {
+      if (!r.url || typeof r.url !== 'string') continue;
+      if (seen.has(r.url)) continue;
+      seen.add(r.url);
+      out.push(r.url);
+      if (out.length >= max) return out;
+    }
   }
   return out;
 }
