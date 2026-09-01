@@ -13,7 +13,7 @@
 import React, { useState } from "react";
 import clsx from "clsx";
 import { BookCallModal } from "./BookCallModal";
-import { isCreatorPayLocked } from "@/lib/api";
+import { CRYSTAL_UI_ENABLED, isCreatorPayLocked } from "@/lib/api";
 import { BadgeRow } from "@/components/badges/UserBadges";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ export function CreatorCard({
   className,
   crystalCreator,
 }: CreatorCardProps) {
-  const isCrystal = crystalCreator ?? creator.crystalCreator ?? false;
+  const isCrystal = CRYSTAL_UI_ENABLED ? (crystalCreator ?? creator.crystalCreator ?? false) : false;
   const [modalOpen, setModalOpen] = useState(false);
 
   return (

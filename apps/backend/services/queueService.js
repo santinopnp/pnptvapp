@@ -235,6 +235,14 @@ async function initializeQueues() {
     jobId: 'cron-video-log-cleanup',
   });
 
+  // Featured Model of the Day promo (X + Telegram) — daily at 15:00 UTC
+  // (10am ET / 12pm Bogota, peak-lunch engagement window).
+  await cronQueue.add('featured-creator-promo', {}, {
+    repeat: { pattern: '0 15 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-featured-creator-promo',
+  });
+
   // BTCPay webhook probe — daily at 06:30 UTC
   await cronQueue.add('btcpay-webhook-probe', {}, {
     repeat: { pattern: '30 6 * * *', tz: 'UTC' },

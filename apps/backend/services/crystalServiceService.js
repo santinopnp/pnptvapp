@@ -462,6 +462,121 @@ async function sweepOverdueCustomContent() {
   return { overdue: overdue.length, alerted };
 }
 
+/**
+ * Whether a creator has opted in to offering the free 15-min intro call.
+ * True when an active creator_services row with service_type='intro_call'
+ * exists for the creator.
+ */
+async function creatorOffersIntroCall(creatorUserId) {
+  const { rows } = await getPool().query(
+    `SELECT id FROM creator_services
+      WHERE creator_user_id = $1 AND service_type = 'intro_call' AND is_active = TRUE
+      LIMIT 1`,
+    [String(creatorUserId)]
+  );
+  return { offers: rows.length > 0, serviceId: rows[0]?.id || null };
+}
+
+/**
+ * Whether a buyer is eligible for a free intro call — one lifetime, platform-wide.
+ * Returns { eligible: bool, reason?: string }.
+ */
+async function isIntroCallEligible(buyerUserId) {
+  const { rows } = await getPool().query(
+    `SELECT intro_call_used_at FROM users WHERE id = $1 LIMIT 1`,
+    [String(buyerUserId)]
+  );
+  if (!rows[0]) return { eligible: false, reason: 'unknown_user' };
+  if (rows[0].intro_call_used_at) return { eligible: false, reason: 'already_used' };
+  return { eligible: true };
+}
+
+/**
+ * Create a free-intro-call booking. Enforces: creator offers it, buyer is
+ * eligible (never used one), buyer ≠ creator. Marks buyer's intro_call_used_at
+ * inside the same transaction so a double-tap can't create two.
+ *
+ * Returns { bookingId, livekitRoomName } on success. Throws on ineligibility
+ * with a code the caller maps to a 400/409.
+ */
+async function createIntroCallBooking(creatorUserId, buyerUserId) {
+  if (String(creatorUserId) === String(buyerUserId)) {
+    const err = new Error('cannot_book_self');
+    err.code = 'cannot_book_self';
+    throw err;
+  }
+  const offers = await creatorOffersIntroCall(creatorUserId);
+  if (!offers.offers) {
+    const err = new Error('creator_not_opted_in');
+    err.code = 'creator_not_opted_in';
+    throw err;
+  }
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const gate = await client.query(
+      `SELECT intro_call_used_at FROM users WHERE id = $1 FOR UPDATE`,
+      [String(buyerUserId)]
+    );
+    if (!gate.rows[0]) {
+      await client.query('ROLLBACK');
+      const err = new Error('unknown_user'); err.code = 'unknown_user'; throw err;
+    }
+    if (gate.rows[0].intro_call_used_at) {
+      await client.query('ROLLBACK');
+      const err = new Error('already_used'); err.code = 'already_used'; throw err;
+    }
+    const paymentRef = `intro-call-${creatorUserId}-${buyerUserId}-${Date.now()}`;
+    const booking = await client.query(
+      `INSERT INTO creator_service_bookings
+         (service_id, creator_user_id, buyer_user_id, service_type, price_paid_cents,
+          payment_provider, payment_ref, status)
+       VALUES ($1, $2, $3, 'intro_call', 0, 'free', $4, 'paid')
+       RETURNING id`,
+      [Number(offers.serviceId), String(creatorUserId), String(buyerUserId), paymentRef]
+    );
+    const bookingId = booking.rows[0].id;
+    await client.query(
+      `UPDATE users SET intro_call_used_at = NOW() WHERE id = $1`,
+      [String(buyerUserId)]
+    );
+    await client.query('COMMIT');
+    logger.info('[intro-call] booking created', { bookingId, creatorUserId, buyerUserId });
+
+    // Fire-and-forget notifications — do not block the response.
+    (async () => {
+      try {
+        const bot = require('../bot/core/bot');
+        const { rows: cr } = await getPool().query(
+          `SELECT telegram_id, first_name, username FROM users WHERE id = $1`,
+          [String(creatorUserId)]
+        );
+        const { rows: br } = await getPool().query(
+          `SELECT first_name, username FROM users WHERE id = $1`,
+          [String(buyerUserId)]
+        );
+        const buyerName = br[0]?.first_name || br[0]?.username || 'A fan';
+        if (cr[0]?.telegram_id && bot?.telegram) {
+          await bot.telegram.sendMessage(
+            cr[0].telegram_id,
+            `🎁 ${buyerName} just booked their free 15-min intro call with you. Open the app to join when you're ready.`
+          ).catch(() => {});
+        }
+      } catch (_) { /* notification best-effort */ }
+    })();
+
+    return {
+      bookingId,
+      livekitRoomName: `intro-call-${bookingId}`,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getViewerAudience,
   listServicesForCreator,
@@ -473,5 +588,8 @@ module.exports = {
   hasActivePriorityDm,
   hasActiveBtsSubscription,
   sweepOverdueCustomContent,
+  creatorOffersIntroCall,
+  isIntroCallEligible,
+  createIntroCallBooking,
   AUDIENCE_RANK,
 };

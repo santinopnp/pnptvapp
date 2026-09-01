@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Crown, Gem, BadgeCheck, Handshake } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { CRYSTAL_UI_ENABLED } from "@/lib/api";
 
 export type BadgeKey = "pnptv_fam" | "crystal" | "verified" | "colombia" | "partner";
 
@@ -32,7 +33,7 @@ interface BuiltBadge {
 export function buildBadges(source: BadgeSource): BuiltBadge[] {
   const out: BuiltBadge[] = [];
   if (source.pnptvFam) out.push({ key: "pnptv_fam", since: source.pnptvFamSince ?? null });
-  if (source.crystalCreator) out.push({ key: "crystal" });
+  if (CRYSTAL_UI_ENABLED && source.crystalCreator) out.push({ key: "crystal" });
   if (source.creatorVerified) out.push({ key: "verified" });
   if (source.colombiaBadge) out.push({ key: "colombia" });
   if (source.partnerBadgeColor) out.push({ key: "partner", color: source.partnerBadgeColor });

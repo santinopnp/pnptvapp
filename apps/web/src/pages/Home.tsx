@@ -13,7 +13,7 @@ import { useI18n } from "@/lib/i18n";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 import { PnpFamHomeStrip } from "@/components/badges/PnpFamHomeStrip";
 import { CrystalCreatorsRow } from "@/components/crystal/CrystalCreatorsRow";
-import { getCryptoGuideStatus } from "@/lib/api";
+import { CRYSTAL_UI_ENABLED, getCryptoGuideStatus } from "@/lib/api";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
 
@@ -436,7 +436,7 @@ export default function Home() {
 
       {/* Crystal Creators pinned row — sits above the feed for everyone.
           Renders nothing when no active Crystal Creators exist. */}
-      {viewMode === "feed" && <CrystalCreatorsRow />}
+      {CRYSTAL_UI_ENABLED && viewMode === "feed" && <CrystalCreatorsRow />}
 
       {/* PNP Fam home strip — shortcuts + feed toggle + Crystal Creator upsell.
           Renders nothing for non-fam users. */}

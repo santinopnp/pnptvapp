@@ -533,6 +533,14 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'featured-creator-promo': {
+      const svc = _safeRequire('../featuredCreatorPromoService');
+      if (!svc) { logger.warn('[BullMQ] featured-creator-promo: service not found'); return; }
+      const summary = await svc.runDailyPromo();
+      logger.info('Featured creator promo run completed', summary);
+      return;
+    }
+
     case 'btcpay-webhook-probe': {
       // BTCPay/Dash retired 2026-07-31. Worker kept so existing BullMQ jobs drain cleanly.
       logger.info('[BullMQ] btcpay-webhook-probe: BTCPay retired — no-op');

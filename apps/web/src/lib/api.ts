@@ -1,5 +1,141 @@
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
+// Feature flag: hides all Crystal Creator promotion/discovery UI (services
+// panel on profile, gift/self CTAs, Crystal row on Home, PNP Fam upsell,
+// badges, avatar ring). Backend + admin + existing bookings stay live so
+// this can be flipped back on without a migration.
+export const CRYSTAL_UI_ENABLED = false;
+
+// Feature flag: enables the full-screen Featured Model of the Day
+// interstitial fired on the first authenticated pageview per user per day.
+// Off = component skips the fetch and never renders.
+export const FEATURED_MODEL_ENABLED = true;
+
+// Featured Model of the Day API types + helpers.
+export interface FeaturedCreatorToday {
+  creatorId: string;
+  username: string;
+  firstName: string | null;
+  photoUrl: string | null;
+  coverPhotoUrl: string | null;
+  pitchEn: string | null;
+  pitchEs: string | null;
+  mediaUrl: string | null;
+  ctaIntroCall: boolean;
+  albumPhotos: string[];
+}
+export interface FeaturedCreatorTodayResponse {
+  show: boolean;
+  reason?: string;
+  featured?: FeaturedCreatorToday;
+}
+export async function getFeaturedCreatorToday(): Promise<FeaturedCreatorTodayResponse> {
+  const res = await fetch(`${API_BASE}/api/featured-creator/today`, { credentials: 'include' });
+  if (!res.ok) return { show: false, reason: `http_${res.status}` };
+  return res.json();
+}
+export async function ackFeaturedCreator(): Promise<void> {
+  await fetch(`${API_BASE}/api/featured-creator/ack`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+}
+
+// Admin helpers.
+export interface FeaturedCreatorAdminPick {
+  date: string;
+  creator_id: string;
+  pitch_en: string;
+  pitch_es: string;
+  media_url: string | null;
+  cta_intro_call: boolean;
+  username: string | null;
+  first_name: string | null;
+  photo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export async function adminListFeaturedCreators(): Promise<{ picks: FeaturedCreatorAdminPick[] }> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  return res.json();
+}
+export async function adminUpsertFeaturedCreator(date: string, body: {
+  creatorId: string; pitchEn: string; pitchEs: string; mediaUrl?: string | null; ctaIntroCall?: boolean;
+}): Promise<{ pick: FeaturedCreatorAdminPick }> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators/${date}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json?.error || `http_${res.status}`);
+  }
+  return res.json();
+}
+export async function adminDeleteFeaturedCreator(date: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators/${date}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+}
+
+// ── Free 15-min intro call ─────────────────────────────────────────────────
+// Feature flag: kill-switch for the confirm sheet + interstitial's secondary
+// CTA. Backend endpoints stay live independently.
+export const INTRO_CALL_ENABLED = true;
+
+export interface IntroCallStatus {
+  creatorOffers: boolean;
+  viewerEligible: boolean;
+  reason: string | null;
+  isSelf: boolean;
+}
+export async function getIntroCallStatus(creatorId: string): Promise<IntroCallStatus> {
+  const res = await fetch(`${API_BASE}/api/creator/${encodeURIComponent(creatorId)}/intro-call-status`, {
+    credentials: 'include',
+  });
+  if (!res.ok) return { creatorOffers: false, viewerEligible: false, reason: `http_${res.status}`, isSelf: false };
+  return res.json();
+}
+export async function bookIntroCall(creatorId: string): Promise<{ ok: true; bookingId: number; livekitRoomName: string } | { ok: false; error: string }> {
+  const res = await fetch(`${API_BASE}/api/creator/${encodeURIComponent(creatorId)}/book-intro-call`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `http_${res.status}` };
+  return json;
+}
+
+// Admin helpers.
+export interface IntroCallOptInRow {
+  user_id: string;
+  is_active: boolean;
+  updated_at: string;
+  username: string | null;
+  first_name: string | null;
+  photo_url: string | null;
+  is_pnptv_fam: boolean;
+}
+export async function adminListIntroCallOptIn(): Promise<{ optedIn: IntroCallOptInRow[] }> {
+  const res = await fetch(`${API_BASE}/api/admin/intro-call-opt-in`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  return res.json();
+}
+export async function adminSetIntroCallOptIn(userId: string, enabled: boolean): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/intro-call-opt-in/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+}
+
 export const NP_COINS = [
   { code: "btc",        label: "BTC",        icon: "₿", color: "#f7931a" },
   { code: "usdttrc20",  label: "USDT-TRX",   icon: "₮", color: "#26a17b" },

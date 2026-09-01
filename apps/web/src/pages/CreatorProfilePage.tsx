@@ -46,6 +46,10 @@ import {
   getWalletBalance,
   checkoutCrystalGift,
   checkoutCrystalSelf,
+  CRYSTAL_UI_ENABLED,
+  INTRO_CALL_ENABLED,
+  bookIntroCall,
+  getIntroCallStatus,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
@@ -460,15 +464,22 @@ export default function CreatorProfilePage() {
     [callCredits]
   );
 
-  // D2: deep-link from MyAccess → auto-open Book Call modal at the credit's duration
+  // D2: deep-link from MyAccess → auto-open Book Call modal at the credit's duration.
+  // Special case: duration=15 opens the free intro-call confirm sheet instead
+  // (fired by the Featured Model of the Day interstitial's secondary CTA).
+  const [showIntroCall, setShowIntroCall] = useState(false);
   const bookActionHandled = useRef(false);
   useEffect(() => {
     if (bookActionHandled.current) return;
     if (!data?.creator?.id || !isAuthenticated) return;
     if (searchParams.get("action") !== "book") return;
     const durParam = Number(searchParams.get("duration"));
-    const dur: 30 | 60 = durParam === 60 ? 60 : 30;
     bookActionHandled.current = true;
+    if (durParam === 15) {
+      setShowIntroCall(true);
+      return;
+    }
+    const dur: 30 | 60 = durParam === 60 ? 60 : 30;
     setBookCallDuration(dur);
     setShowBookCall(true);
   }, [data?.creator?.id, isAuthenticated, searchParams]);
@@ -814,10 +825,13 @@ export default function CreatorProfilePage() {
 
   // Crystal Creator fields come from /api/public/creator/:username (routes.js
   // adds them from users.crystal_creator_active_until + crystal_creator_invited_at).
-  const creatorIsCrystal = creator.crystalCreator === true;
+  // Gated behind CRYSTAL_UI_ENABLED — when off, the profile behaves as if the
+  // creator has no Crystal pass, hiding the header band, avatar ring, services
+  // panel, and all gift/self CTAs at once.
+  const creatorIsCrystal = CRYSTAL_UI_ENABLED && creator.crystalCreator === true;
   const creatorIsFam = (creator as { pnptvFam?: boolean }).pnptvFam === true;
   const crystalActiveUntil = creator.crystalActiveUntil ?? null;
-  const crystalInvited = creator.crystalInvited === true;
+  const crystalInvited = CRYSTAL_UI_ENABLED && creator.crystalInvited === true;
 
   // Legacy Ice/Crystal/Diamond tier label removed 2026-07-24 — creators set
   // their own price. CTA copy prioritises the concrete offer: price + content
@@ -1094,7 +1108,9 @@ export default function CreatorProfilePage() {
 
           {/* Crystal Creator direct-services panel — renders nothing when the
               creator has no services (i.e., non-Crystal). Audience-gated. */}
-          <CrystalServicesPanel creatorId={creator.id} creatorUsername={creator.username || null} />
+          {CRYSTAL_UI_ENABLED && (
+            <CrystalServicesPanel creatorId={creator.id} creatorUsername={creator.username || null} />
+          )}
 
           {/* Crystal Creator CTA block — three mutually exclusive branches:
               1. Fan (not the creator) + creator is Crystal → "Gift Crystal Creator"
@@ -1901,6 +1917,15 @@ export default function CreatorProfilePage() {
         />
       )}
 
+      {/* ── Free 15-min intro-call confirm sheet ────────────────────────── */}
+      {showIntroCall && data && (
+        <IntroCallConfirmSheet
+          creatorId={creator.id}
+          creatorName={creator.first_name || creator.username}
+          onClose={() => setShowIntroCall(false)}
+        />
+      )}
+
       {/* ── Block confirm modal ────────────────────────────────────────── */}
       {showBlockConfirm && (
         <div
@@ -2026,5 +2051,156 @@ export default function CreatorProfilePage() {
         </div>
       )}
     </>
+  );
+}
+
+// ── Free 15-min intro call confirm sheet ─────────────────────────────────
+// One-tap confirm modal fired by ?action=book&duration=15 (from the Featured
+// Model of the Day interstitial). Fetches real eligibility so the sheet can
+// render a specific reason ("already used" / "creator doesn't offer this")
+// instead of a generic error. On confirm → POST /book-intro-call → redirects
+// to /private-call/:bookingId where existing LiveKit UI takes over.
+function IntroCallConfirmSheet({
+  creatorId,
+  creatorName,
+  onClose,
+}: {
+  creatorId: string;
+  creatorName: string;
+  onClose: () => void;
+}) {
+  const t = useI18n();
+  const es = t.lang === "es";
+  const navigate = useNavigate();
+
+  const [status, setStatus] = React.useState<{
+    creatorOffers: boolean; viewerEligible: boolean; reason: string | null; isSelf: boolean;
+  } | null>(null);
+  const [booking, setBooking] = React.useState(false);
+  const [bookErr, setBookErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!INTRO_CALL_ENABLED) { onClose(); return; }
+    let cancelled = false;
+    getIntroCallStatus(creatorId)
+      .then((res) => { if (!cancelled) setStatus(res); })
+      .catch(() => { if (!cancelled) setStatus({ creatorOffers: false, viewerEligible: false, reason: "load_failed", isSelf: false }); });
+    return () => { cancelled = true; };
+  }, [creatorId, onClose]);
+
+  const confirm = async () => {
+    setBooking(true);
+    setBookErr(null);
+    const res = await bookIntroCall(creatorId);
+    if (res.ok) {
+      navigate(`/private-call/${res.bookingId}`);
+      return;
+    }
+    setBookErr(res.error);
+    setBooking(false);
+  };
+
+  const canBook = !!status && status.creatorOffers && status.viewerEligible && !status.isSelf;
+  const errorCopy: string | null = (() => {
+    if (!status) return null;
+    if (status.isSelf) return es ? "No podés reservar una llamada contigo mismo." : "You can't book a call with yourself.";
+    if (!status.creatorOffers) return es ? "Este creador no ofrece intro gratis ahora mismo." : "This creator doesn't offer free intros right now.";
+    if (!status.viewerEligible && status.reason === "already_used")
+      return es ? "Ya usaste tu intro gratis — sos parte de la casa. Reservá una llamada regular abajo." : "You've already used your free intro — you're part of the family. Book a regular call below.";
+    if (!status.viewerEligible) return es ? "No podés reservar en este momento." : "You can't book right now.";
+    return null;
+  })();
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(6,4,12,0.88)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl overflow-hidden"
+        style={{ background: "#111017", border: "1px solid rgba(255,255,255,0.1)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-bold uppercase tracking-widest" style={{ color: "#5ED1C4" }}>
+              {es ? "Intro gratis · 15 min" : "Free intro · 15 min"}
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white"
+              aria-label={es ? "Cerrar" : "Close"}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <path d="M6 6l12 12M6 18L18 6" />
+              </svg>
+            </button>
+          </div>
+
+          {!status ? (
+            <div className="py-6 text-center text-sm text-white/70">
+              {es ? "Cargando…" : "Loading…"}
+            </div>
+          ) : errorCopy ? (
+            <>
+              <p className="text-[15px] leading-snug text-white">{errorCopy}</p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-3 rounded-full font-semibold text-sm text-white btn-gradient"
+              >
+                {es ? "Entendido" : "Got it"}
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-xl font-black leading-tight text-white">
+                {es ? `Un saludo con ${creatorName}` : `Say hi to ${creatorName}`}
+              </h2>
+              <p className="text-[14px] leading-snug text-white/85">
+                {es
+                  ? "15 minutos, sin cargo, sin compromiso. Una sola vez por miembro — usá la tuya con el creador que más te llame."
+                  : "15 minutes, no charge, no strings. One per member — spend yours on the creator that pulls you in."}
+              </p>
+              <div className="rounded-xl p-3 text-[12px] text-white/70" style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.2)" }}>
+                {es
+                  ? "Al confirmar te unís a la sala de video. Si el creador todavía no está, esperá unos segundos — vamos a avisarle."
+                  : "Confirming drops you into the video room. If the creator isn't there yet, wait a moment — we'll ping them."}
+              </div>
+              {bookErr && (
+                <div className="text-[13px] text-red-400">
+                  {bookErr === "already_used"
+                    ? (es ? "Ya usaste tu intro gratis." : "You've already used your free intro.")
+                    : bookErr === "creator_not_opted_in"
+                    ? (es ? "Este creador ya no ofrece intro gratis." : "This creator no longer offers free intros.")
+                    : (es ? "No pudimos crear la sala. Intentá de nuevo." : "Couldn't create the room. Try again.")}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={confirm}
+                disabled={!canBook || booking}
+                className="w-full py-3.5 rounded-full font-bold text-[15px] text-white btn-gradient shadow-lg active:scale-[0.98] transition-transform disabled:opacity-50"
+              >
+                {booking
+                  ? (es ? "Creando sala…" : "Creating room…")
+                  : (es ? "Empezar ahora" : "Start now")}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2 text-[13px] font-medium text-white/70 hover:text-white"
+              >
+                {es ? "Ahora no" : "Not now"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

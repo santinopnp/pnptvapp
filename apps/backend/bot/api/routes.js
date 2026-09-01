@@ -17589,7 +17589,7 @@ app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (r
     return res.json({ show: false, reason: 'acked_today' });
   }
 
-  // Admin-picked row for today.
+  // Admin-picked row for today — CRYSTAL CREATORS ONLY.
   const picked = await pool.query(
     `SELECT f.creator_id, f.pitch_en, f.pitch_es, f.media_url, f.cta_intro_call,
             u.username, u.first_name, u.photo_file_id, u.cover_url
@@ -17597,26 +17597,26 @@ app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (r
        JOIN users u ON u.id = f.creator_id
       WHERE f.date = $1
         AND u.deleted_at IS NULL
+        AND u.crystal_creator_active_until > NOW()
       LIMIT 1`,
     [today]
   );
   let row = picked.rows[0] || null;
 
-  // Fallback: rotate through active PNP Fam creators (deterministic by date
-  // so the same fam creator shows to everyone on the same day).
+  // Fallback: rotate through active Crystal Creators (deterministic by date
+  // so the same creator shows to everyone on the same day).
   if (!row) {
     const fallback = await pool.query(
       `SELECT id AS creator_id, username, first_name, photo_file_id, cover_url
          FROM users
-        WHERE is_pnptv_fam = TRUE
-          AND creator_status = 'active'
+        WHERE crystal_creator_active_until > NOW()
           AND deleted_at IS NULL
         ORDER BY id
         OFFSET (
           SELECT (EXTRACT(EPOCH FROM $1::date)::bigint / 86400)
                  % GREATEST((
                    SELECT COUNT(*) FROM users
-                    WHERE is_pnptv_fam = TRUE AND creator_status = 'active'
+                    WHERE crystal_creator_active_until > NOW()
                       AND deleted_at IS NULL
                  ), 1)
         )
@@ -17636,6 +17636,25 @@ app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (r
 
   if (!row) return res.json({ show: false, reason: 'no_pick' });
 
+  // Album photos for the carousel — social_posts images sorted by likes,
+  // filtered to non-exclusive so a paid-tier photo never lands in a public
+  // interstitial or X/Telegram promo.
+  const albumRes = await pool.query(
+    `SELECT COALESCE(media_url, (media_urls->>0)) AS url
+       FROM social_posts
+      WHERE user_id = $1
+        AND is_deleted = FALSE
+        AND COALESCE(is_exclusive, FALSE) = FALSE
+        AND (media_type = 'image'
+             OR (media_urls IS NOT NULL AND jsonb_array_length(media_urls) > 0))
+      ORDER BY likes_count DESC NULLS LAST, created_at DESC
+      LIMIT 6`,
+    [String(row.creator_id)]
+  );
+  const albumPhotos = albumRes.rows
+    .map((r) => r.url)
+    .filter((u) => typeof u === 'string' && u.length > 0);
+
   return res.json({
     show: true,
     featured: {
@@ -17648,6 +17667,7 @@ app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (r
       pitchEs: row.pitch_es,
       mediaUrl: row.media_url,
       ctaIntroCall: !!row.cta_intro_call,
+      albumPhotos,
     },
   });
 }));
@@ -17684,6 +17704,16 @@ app.put('/api/admin/featured-creators/:date', adminGuard, asyncHandler(async (re
   const { creatorId, pitchEn, pitchEs, mediaUrl = null, ctaIntroCall = false } = req.body || {};
   if (!creatorId || !pitchEn || !pitchEs) {
     return res.status(400).json({ error: 'missing_required_fields' });
+  }
+  // Featured Model of the Day is Crystal-Creators-only. Reject non-Crystal
+  // picks up-front so the admin sees a specific error instead of a mystery
+  // "nothing showing" downstream.
+  const crystalCheck = await getPool().query(
+    `SELECT id FROM users WHERE id = $1 AND crystal_creator_active_until > NOW() LIMIT 1`,
+    [String(creatorId)]
+  );
+  if (!crystalCheck.rows[0]) {
+    return res.status(400).json({ error: 'not_crystal_creator' });
   }
   const adminId = String(req.session.user.id);
   const { rows } = await getPool().query(

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Home as HomeIcon, User, Heart, Radio, MessageCircle, Layers, Settings, Sparkles, Gift } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
-import { getProfile } from "@/lib/api";
+import { CRYSTAL_UI_ENABLED, getProfile } from "@/lib/api";
 import { PnpFamFeedCustomizer, type Shortcut, type ShortcutType } from "./PnpFamFeedCustomizer";
 
 const TYPE_ICON: Record<ShortcutType, React.ComponentType<{ size?: number }>> = {
@@ -62,6 +62,7 @@ export function PnpFamHomeStrip() {
 
   // Fetch a Crystal Creator for the upsell card (first Crystal Creator in the fam list, fallback).
   useEffect(() => {
+    if (!CRYSTAL_UI_ENABLED) return;
     if (!isFam || mode !== "fam") return;
     let cancelled = false;
     fetch("/api/creators?filter=crystal&limit=1", { credentials: "include" })
@@ -252,7 +253,7 @@ export function PnpFamHomeStrip() {
 
       {/* Crystal Creator upsell — never asks fam to buy for themselves, only
           to fund a creator they care about. */}
-      {topCreator && !upsellDismissed && (
+      {CRYSTAL_UI_ENABLED && topCreator && !upsellDismissed && (
         <div
           className="rounded-2xl p-3 flex items-start gap-3"
           style={{
