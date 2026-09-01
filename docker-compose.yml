@@ -362,14 +362,10 @@ services:
       CORS_ORIGIN: "https://cms.pnptv.app,https://pnptv.app"
       FILES_MAX_SIZE: "2147483648"
       MAX_PAYLOAD_SIZE: "2gb"
-      # Both storage backends configured. "local" first so it is the default
-      # for new uploads AND so the 388 existing files (storage='local' in
-      # directus_files) continue to resolve. Restored 2026-05-02 — a prior
-      # change to "cloud"-only had silently 500'd every legacy file.
-      STORAGE_LOCATIONS: "local,cloud"
-      STORAGE_LOCAL_DRIVER: "local"
-      STORAGE_LOCAL_ROOT: "/directus/uploads"
-      STORAGE_LOCAL_ALLOW_RESUMABLE_UPLOAD: "true"
+      # Cloud-only since 2026-09-01 — all 501 legacy files migrated to R2 and
+      # local uploads dir moved to /opt/pnptvapp/backup/directus-uploads-pre-r2-*.
+      # New uploads write directly to R2; nothing should hit local disk.
+      STORAGE_LOCATIONS: "cloud"
       TUS_ENABLED: "true"
       STORAGE_CLOUD_DRIVER: "s3"
       STORAGE_CLOUD_KEY: ${S3_ACCESS_KEY_ID}
