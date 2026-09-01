@@ -560,19 +560,31 @@ class TokenCheckoutService {
       const ALLOWED_TOKEN_PAY_CURRENCIES = new Set(['eth', 'usdcerc20']);
       const validPayCurrency = (payCurrency && ALLOWED_TOKEN_PAY_CURRENCIES.has(String(payCurrency).toLowerCase()))
         ? String(payCurrency).toLowerCase() : 'usdcerc20';
-      const paymentResp = await axios.post(
-        `${NOWPAYMENTS_URL}/invoice`,
-        {
-          price_amount: usdAmount,
-          price_currency: 'usd',
-          pay_currency: validPayCurrency,
-          pay_currencies: ['eth', 'usdcerc20'],
-          order_id: orderId,
-          order_description: `${pkg.tokens} PNP Tokens`,
-          ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
-        },
-        { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' }, timeout: 10000 }
-      );
+      const invoiceBody = {
+        price_amount: usdAmount,
+        price_currency: 'usd',
+        pay_currency: validPayCurrency,
+        pay_currencies: ['eth', 'usdcerc20'],
+        order_id: orderId,
+        order_description: `${pkg.tokens} PNP Tokens`,
+        ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
+      };
+      const invoiceHeaders = { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' };
+      // One retry on transient failure (5xx / network). NP occasionally 500s
+      // for a few seconds at a time — 2026-09-01 probe showed intermittent
+      // INTERNAL_ERROR responses recovering within seconds. Same order_id is
+      // safe since fulfillment dedups on it in dash_subscription_orders.
+      let paymentResp;
+      try {
+        paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, { headers: invoiceHeaders, timeout: 10000 });
+      } catch (firstErr) {
+        const status = firstErr.response?.status;
+        const isTransient = !status || (status >= 500 && status < 600);
+        if (!isTransient) throw firstErr;
+        logger.warn('TokenCheckoutService.createNowPaymentsCheckout: NP transient error — retrying once', { status, orderId });
+        await new Promise((r) => setTimeout(r, 1000));
+        paymentResp = await axios.post(`${NOWPAYMENTS_URL}/invoice`, invoiceBody, { headers: invoiceHeaders, timeout: 10000 });
+      }
       const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
       invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;

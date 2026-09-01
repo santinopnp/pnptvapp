@@ -1313,31 +1313,71 @@ async function createCallCheckoutTokens({ memberId, packageId, clientNotes = nul
   const TOKENS_PER_USD = 6;
   const tokenCost = Math.round(parseFloat(pkg.price_usd) * TOKENS_PER_USD);
 
+  // Idempotency guard — 60s window on (member, package). Mirrors the
+  // /api/wallet/pay-call check so both frontends (Stream.tsx and BookCallModal)
+  // get the same double-tap protection.
+  const callDup = await query(
+    `SELECT created_at FROM token_ledger
+     WHERE user_id = $1 AND reason = 'call_book'
+       AND source_type = 'call_package' AND metadata->>'packageId' = $2
+       AND created_at > NOW() - INTERVAL '60 seconds'
+     ORDER BY created_at DESC LIMIT 1`,
+    [String(memberId), String(pkg.id)]
+  );
+  if (callDup.rows.length > 0) {
+    throw Object.assign(
+      new Error('You just booked this package moments ago. Please wait a few seconds before booking again.'),
+      { code: 'DUPLICATE_PURCHASE', status: 409, previousPurchaseAt: callDup.rows[0].created_at }
+    );
+  }
+
   const pool = getPool();
   const client = await pool.connect();
+  const syntheticPaymentId = uuidv4();
+  let newBalance;
   try {
     await client.query('BEGIN');
 
-    // Atomically debit tokens — fails cleanly if balance is insufficient
-    const debitResult = await client.query(
-      `UPDATE user_token_wallets
-       SET balance_tokens = balance_tokens - $2, updated_at = NOW()
-       WHERE user_id = $1 AND balance_tokens >= $2
-       RETURNING balance_tokens`,
-      [memberId, tokenCost]
-    );
-    if (debitResult.rows.length === 0) {
-      const err = new Error('Insufficient token balance');
-      err.code = 'INSUFFICIENT_TOKENS';
-      err.status = 402;
-      throw err;
+    // Debit Ru$h via tokenLedger inside our own txn (externalClient=client).
+    // Writes the wallet UPDATE + token_ledger row atomically, so any later
+    // failure (payments INSERT CHECK violation, call_credits insert, etc.)
+    // rolls back the debit. Pre-fix path did a raw UPDATE with no ledger row
+    // — a payment_provider CHECK failure on 2026-08-31 left an orphan −360
+    // Ru$h debit with no audit trail (refunded manually as ledger row 1789).
+    // Default allowGifted=false keeps gifted_balance reserved for Santino/Lex
+    // live tips per feedback_gifted_tokens_santino_lex_only.
+    const tokenLedger = require('./tokenLedgerService');
+    let debitRes;
+    try {
+      debitRes = await tokenLedger.debit({
+        userId: memberId,
+        amount: tokenCost,
+        reason: 'call_book',
+        sourceType: 'call_package',
+        sourceId: syntheticPaymentId,
+        actorId: String(memberId),
+        metadata: {
+          paymentId: syntheticPaymentId,
+          packageId: pkg.id,
+          packageSku: pkg.sku,
+          priceUsd: parseFloat(pkg.price_usd),
+        },
+        externalClient: client,
+      });
+    } catch (debitErr) {
+      if (debitErr.code === 'INSUFFICIENT_FUNDS' || /insufficient/i.test(debitErr.message || '')) {
+        const err = new Error('Insufficient token balance');
+        err.code = 'INSUFFICIENT_TOKENS';
+        err.status = 402;
+        throw err;
+      }
+      throw debitErr;
     }
-    const newBalance = debitResult.rows[0].balance_tokens;
+    newBalance = Number(debitRes?.balance_after ?? 0);
 
-    // Synthetic payment record (status=completed, provider=tokens)
-    // Use separate params for id and reference to avoid 42P08 type-inference conflict
+    // Synthetic payment record (status=completed, provider=manual).
+    // Separate params for id and reference avoid 42P08 type-inference conflict
     // (id is uuid, reference is varchar — same $N used for both confuses Postgres).
-    const syntheticPaymentId = uuidv4();
     await client.query(
       `INSERT INTO payments (id, reference, user_id, plan_id, provider, amount, currency, status, metadata, created_at, updated_at)
        VALUES ($1::uuid, $2::varchar, $3, NULL, 'manual', $4, 'USD', 'completed', $5::jsonb, NOW(), NOW())`,

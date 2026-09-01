@@ -1340,6 +1340,14 @@ async function createCheckoutTokens(req, res) {
     if (err.code === 'INSUFFICIENT_TOKENS') {
       return res.status(402).json({ success: false, error: 'Insufficient token balance' });
     }
+    if (err.code === 'DUPLICATE_PURCHASE') {
+      return res.status(409).json({
+        success: false,
+        error: err.message,
+        code: 'DUPLICATE_PURCHASE',
+        previousPurchaseAt: err.previousPurchaseAt,
+      });
+    }
     if (err.code === 'PERFORMER_NOT_FOUND') {
       return res.status(404).json({ success: false, error: 'Creator profile not found' });
     }

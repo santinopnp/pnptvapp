@@ -12415,6 +12415,28 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
   }
   // 6 Ru$h 💎 = $1 USD (see /root/.claude memory feedback_token_rate.md)
   const tokenCost = Math.round(basePrice * 6);
+
+  // Idempotency guard — 10-min window on (user, plan). Client-provided epoch in
+  // sourceId means every re-tap looks fresh; the walletSpendLimiter (10 req/5min)
+  // is way too loose to catch the 5-min double-tap that charged user 89a12bff
+  // twice for member_monthly on 2026-08-31. token_ledger is the source of truth.
+  const dupCheck = await dbQuery(
+    `SELECT created_at FROM token_ledger
+     WHERE user_id = $1 AND reason = 'membership_purchase'
+       AND source_type = 'plan' AND metadata->>'planId' = $2
+       AND created_at > NOW() - INTERVAL '10 minutes'
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, plan.id]
+  );
+  if (dupCheck.rows.length > 0) {
+    return res.status(409).json({
+      success: false,
+      error: 'Ya compraste este plan hace un momento. Refresca — tu membresía puede estar ya activa.',
+      code: 'DUPLICATE_PURCHASE',
+      previousPurchaseAt: dupCheck.rows[0].created_at,
+    });
+  }
+
   // Atomic debit via ledger — writes token_ledger row + updates wallet cache in one tx.
   // Platform tiers (member/prime) allow gifted_balance to be spent — this creates
   // no external payout liability since it's just a tier upgrade (see
@@ -12486,6 +12508,27 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
   if (!Number.isFinite(priceUsd) || priceUsd <= 0) return res.status(400).json({ success: false, error: 'Creator has no subscription price' });
   // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
   const tokenCost = Math.round(priceUsd * 6);
+
+  // Idempotency guard — 10-min window on (subscriber, creator). Same reason as
+  // pay-subscription above: the Santino→Lex duplicate charge on 2026-08-31
+  // (ledger row 1785, refunded as 1787) got through because the sourceId
+  // embeds Date.now() so every re-tap looks fresh. Check the actual sub table
+  // rather than ledger metadata so both onboarding + standard paths are covered.
+  const subDupCheck = await dbQuery(
+    `SELECT started_at FROM creator_subscriptions
+     WHERE subscriber_id = $1 AND creator_id = $2
+       AND started_at > NOW() - INTERVAL '10 minutes'
+     ORDER BY started_at DESC LIMIT 1`,
+    [subscriberId, String(creatorId)]
+  );
+  if (subDupCheck.rows.length > 0) {
+    return res.status(409).json({
+      success: false,
+      error: 'Ya te suscribiste a este creador hace un momento. Refresca — tu suscripción puede estar ya activa.',
+      code: 'DUPLICATE_PURCHASE',
+      previousPurchaseAt: subDupCheck.rows[0].started_at,
+    });
+  }
 
   // Onboarding tutorial branch — first-time sub to santinofurioso by a user
   // who just finished onboarding is allowed to spend gifted Ru$h. All other
@@ -12640,6 +12683,26 @@ app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHa
   const priceUsd = parseFloat(pkg.price_usd);
   // 6 Tokens = $1 USD (see memory feedback_token_rate.md)
   const tokenCost = Math.round(priceUsd * 6);
+
+  // Idempotency guard — 60s window on (member, package). Call packages ARE
+  // legitimately re-buyable, so keep the window tight (blocks accidental
+  // double-click but not deliberate second booking).
+  const callDupCheck = await dbQuery(
+    `SELECT created_at FROM token_ledger
+     WHERE user_id = $1 AND reason = 'call_book'
+       AND source_type = 'call_package' AND metadata->>'packageId' = $2
+       AND created_at > NOW() - INTERVAL '60 seconds'
+     ORDER BY created_at DESC LIMIT 1`,
+    [memberId, String(pkg.id)]
+  );
+  if (callDupCheck.rows.length > 0) {
+    return res.status(409).json({
+      success: false,
+      error: 'Ya reservaste este paquete hace un momento. Espera unos segundos antes de volver a reservar.',
+      code: 'DUPLICATE_PURCHASE',
+      previousPurchaseAt: callDupCheck.rows[0].created_at,
+    });
+  }
 
   // Debit + payment insert in ONE transaction. The pre-2026-08-31 code raw-
   // UPDATEd user_token_wallets (auto-commit) then created the payment outside
