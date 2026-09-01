@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -171,26 +171,54 @@ export function FeaturedModelInterstitial() {
   const [open, setOpen] = useState(false);
   const [beacon, setBeacon] = useState<string | null>(null);
 
+  // Refs so the visibility/focus listeners can read the latest state without
+  // being re-registered on every route change or open toggle.
+  const openRef = useRef(open);
+  const pathRef = useRef(location.pathname);
+  useEffect(() => { openRef.current = open; }, [open]);
+  useEffect(() => { pathRef.current = location.pathname; }, [location.pathname]);
+
   useEffect(() => {
     if (!FEATURED_MODEL_ENABLED) return;
     if (isLoading || !isAuthenticated) return;
     if (!user?.ageVerified || !user?.termsAccepted) return;
-    if (FEATURED_SKIP_ROUTES.some((r) => location.pathname.startsWith(r))) return;
-    // One fetch per Layout mount; the server enforces the once-per-day gate.
+
+    // Server enforces the once-per-day gate — re-checking on visibility/focus
+    // is cheap and lets mobile PWAs / Mini App resumes surface the modal
+    // without a full reload.
     let cancelled = false;
-    getFeaturedCreatorToday()
-      .then((res) => {
-        if (cancelled || !res.show || !res.featured) return;
-        setFeatured(res.featured);
-        setOpen(true);
-        setBeacon(res.featured.username);
-      })
-      .catch(() => {});
+    let inflight = false;
+    const check = () => {
+      if (cancelled || inflight || openRef.current) return;
+      if (FEATURED_SKIP_ROUTES.some((r) => pathRef.current.startsWith(r))) return;
+      inflight = true;
+      getFeaturedCreatorToday()
+        .then((res) => {
+          if (cancelled || !res.show || !res.featured) return;
+          setFeatured(res.featured);
+          setOpen(true);
+          setBeacon(res.featured.username);
+        })
+        .catch(() => {})
+        .finally(() => { inflight = false; });
+    };
+
+    check();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", check);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", check);
     };
-    // Intentionally single-shot per mount — we do NOT re-fire on route
-    // change. eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentionally scoped to auth-state changes; visibility/focus handle the
+    // "app returned from background" trigger without re-registering listeners
+    // per route change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isAuthenticated, user?.ageVerified, user?.termsAccepted]);
 
   // Fire-and-forget CRM view beacon once, when the modal first opens.
