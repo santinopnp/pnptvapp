@@ -544,21 +544,20 @@ async function createIntroCallBooking(creatorUserId, buyerUserId) {
     logger.info('[intro-call] booking created', { bookingId, creatorUserId, buyerUserId });
 
     // Fire-and-forget notifications — do not block the response.
+    // users.id doubles as the Telegram chat id for TG-signed-up users
+    // (numeric string). Web-only signups have UUIDs — DM silently no-ops via
+    // the /^\d+$/ guard below.
     (async () => {
       try {
         const bot = require('../bot/core/bot');
-        const { rows: cr } = await getPool().query(
-          `SELECT telegram_id, first_name, username FROM users WHERE id = $1`,
-          [String(creatorUserId)]
-        );
         const { rows: br } = await getPool().query(
           `SELECT first_name, username FROM users WHERE id = $1`,
           [String(buyerUserId)]
         );
         const buyerName = br[0]?.first_name || br[0]?.username || 'A fan';
-        if (cr[0]?.telegram_id && bot?.telegram) {
+        if (/^\d+$/.test(String(creatorUserId)) && bot?.telegram) {
           await bot.telegram.sendMessage(
-            cr[0].telegram_id,
+            creatorUserId,
             `🎁 ${buyerName} just booked their free 15-min intro call with you. Open the app to join when you're ready.`
           ).catch(() => {});
         }
