@@ -677,21 +677,36 @@ function ActivateView({ s, initialCode }: ActivateViewProps) {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/public/lifetime100/activate`, {
+      // Uses the session-authed activation endpoint (the earlier public MP-backed
+      // route at /api/public/lifetime100/activate was ripped in commit 88c54030
+      // when its mp_payment_links table proved dead). 401 → send the user to
+      // /login and bounce back here with the code preserved, so a fresh
+      // purchaser who lands via email link but has no session can complete
+      // the flow in one round-trip.
+      const res = await fetch(`${API_BASE}/api/webapp/user/activate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: trimmed }),
         credentials: "include",
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         setSuccess(true);
         setTimeout(() => {
-          // Use assign() to force a fresh page load so session cookies bind properly
           window.location.assign(data.redirect || "/");
         }, REDIRECT_DELAY_MS);
         return;
       }
+      if (res.status === 401 || res.status === 403) {
+        const next = encodeURIComponent(`/lifetime100/activate?code=${encodeURIComponent(trimmed)}`);
+        window.location.assign(`/login?next=${next}`);
+        return;
+      }
+      if (res.status === 422 && data.redirect) {
+        window.location.assign(data.redirect);
+        return;
+      }
+      if (res.status === 400) { setError({ type: "404" }); return; }
       if (res.status === 402) { setError({ type: "402" }); return; }
       if (res.status === 404) { setError({ type: "404" }); return; }
       if (res.status === 409) { setError({ type: "409" }); return; }

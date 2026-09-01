@@ -15788,17 +15788,26 @@ app.get('/api/crypto/payment-intent/:id', requireSessionAuth, asyncHandler(async
   return res.json(status);
 }));
 
-// POST /api/webhooks/alchemy-base — Alchemy Notify webhook for Base USDC transfers
-// Alchemy sends raw body; must NOT use express.json() here so we can verify HMAC on raw bytes.
-app.post('/api/webhooks/alchemy-base', webhookLimiter, express.text({ type: '*/*' }), asyncHandler(async (req, res) => {
+// POST /api/webhooks/alchemy-base — Alchemy Notify webhook for Base USDC transfers.
+// The global express.json() at the top of this file (with verify callback that
+// stashes req.rawBody) has already consumed the request body by the time any
+// route-level parser runs — so mounting express.text() here was a no-op and
+// left req.body as the already-parsed Object, which crashed hmac.update() with
+// ERR_INVALID_ARG_TYPE on every request. Same pattern as the Mux fix below.
+app.post('/api/webhooks/alchemy-base', webhookLimiter, asyncHandler(async (req, res) => {
   const CryptoPaymentService = require('../../services/cryptoPaymentService');
   const sig = req.headers['x-alchemy-signature'];
-  if (!CryptoPaymentService.verifyAlchemySignature(req.body, sig)) {
+  if (!req.rawBody) {
+    logger.error('[Alchemy] webhook rejected: rawBody missing — express.json verify callback not firing', { ip: req.ip });
+    return res.status(400).json({ error: 'raw_body_missing' });
+  }
+  const rawBody = req.rawBody.toString('utf8');
+  if (!CryptoPaymentService.verifyAlchemySignature(rawBody, sig)) {
     logger.warn('[Alchemy] Invalid webhook signature');
     return res.status(400).json({ error: 'invalid_signature' });
   }
   let payload;
-  try { payload = JSON.parse(req.body); } catch { return res.status(400).json({ error: 'invalid_json' }); }
+  try { payload = JSON.parse(rawBody); } catch { return res.status(400).json({ error: 'invalid_json' }); }
   await CryptoPaymentService.handleAlchemyWebhook(payload);
   return res.json({ ok: true });
 }));
@@ -16705,12 +16714,15 @@ app.get('/api/wallet/balance/eth', requireSessionAuth, asyncHandler(async (req, 
 // Body: { step: string, error: string, context?: object }
 app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
-  const { step, error, context } = req.body || {};
+  const { step, error, context, errorName, errorMessage, errorCause } = req.body || {};
   if (!step || !error || typeof step !== 'string' || typeof error !== 'string') {
     return res.status(400).json({ ok: false, error: 'step + error required' });
   }
   const safeStep = String(step).slice(0, 80);
   const safeError = String(error).slice(0, 500);
+  const safeName = typeof errorName === 'string' ? errorName.slice(0, 80) : null;
+  const safeMessage = typeof errorMessage === 'string' ? errorMessage.slice(0, 300) : null;
+  const safeCause = typeof errorCause === 'string' ? errorCause.slice(0, 300) : null;
   const safeContext = context && typeof context === 'object'
     ? JSON.stringify(context).slice(0, 1000)
     : null;
@@ -16719,6 +16731,9 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
     userId: String(user?.id || 'anon'),
     username: user?.username || null,
     step: safeStep,
+    errorName: safeName,
+    errorMessage: safeMessage,
+    errorCause: safeCause,
     error: safeError,
     context: safeContext,
   });

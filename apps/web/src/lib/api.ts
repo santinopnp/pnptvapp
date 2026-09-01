@@ -1831,12 +1831,35 @@ export async function getCctpAttestation(txHash: string): Promise<{
 // screenshot. Never throws — swallows fetch failures to avoid infinite loops.
 export function reportWalletClientError(step: string, error: unknown, context?: Record<string, unknown>): void {
   try {
-    const msg = error instanceof Error ? (error.stack || error.message) : String(error);
+    // Capture BOTH message and stack (and .cause when present) — earlier revisions
+    // only sent .stack, which for some Privy errors is a stack pointing at the
+    // minified onramp bundle with no `Error:` prefix, so the actual failure
+    // reason (e.g. "Something went wrong setting up checkout") was lost and we
+    // could not diagnose FiatOnrampScreen failures.
+    let payloadError: string;
+    let name: string | undefined;
+    let message: string | undefined;
+    let cause: string | undefined;
+    if (error instanceof Error) {
+      name = error.name;
+      message = error.message;
+      if ((error as { cause?: unknown }).cause !== undefined) {
+        const c = (error as { cause?: unknown }).cause;
+        cause = c instanceof Error ? `${c.name}: ${c.message}` : String(c);
+      }
+      payloadError = [
+        name && `${name}: ${message || ""}`,
+        cause && `cause: ${cause}`,
+        error.stack,
+      ].filter(Boolean).join("\n");
+    } else {
+      payloadError = String(error);
+    }
     fetch(`${API_BASE}/api/wallet/client-error`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step, error: msg, context: context || null }),
+      body: JSON.stringify({ step, error: payloadError, errorName: name, errorMessage: message, errorCause: cause, context: context || null }),
     }).catch(() => { /* swallow — telemetry must never break UX */ });
   } catch { /* swallow */ }
 }

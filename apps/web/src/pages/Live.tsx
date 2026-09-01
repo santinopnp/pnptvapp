@@ -16,9 +16,6 @@ import {
   getAllPerformers,
   getLiveStreams,
   getWalletBalance,
-  getTokenPackages,
-  buyTokens,
-  assertPaymentUrl,
   getLiveSchedule,
   subscribeToSlotReminder,
   unsubscribeFromSlotReminder,
@@ -28,7 +25,6 @@ import {
   type FeaturedPerformer,
   type LiveStream,
   type LiveScheduleSlot,
-  type TokenPackage,
   type CreatorMediaItem,
   type AvailableCreator,
 } from "@/lib/api";
@@ -166,11 +162,6 @@ export default function Live() {
       }
     })();
   }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const [tokenPackages, setTokenPackages] = useState<TokenPackage[]>([]);
-  const [buyingPackage, setBuyingPackage] = useState<string | null>(null);
-  const [buyError, setBuyError] = useState<string | null>(null);
-  const [buyMethod, setBuyMethod] = useState<"dash">("dash");
 
   // Performer drawer
   const [drawerPerformer, setDrawerPerformer] = useState<FeaturedPerformer | null>(null);
@@ -313,9 +304,6 @@ export default function Live() {
         setDpnsHandle(data.dpnsHandle);
       })
       .catch(() => {});
-    getTokenPackages()
-      .then((data) => setTokenPackages(data.packages || []))
-      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
@@ -381,40 +369,6 @@ export default function Live() {
       }
     };
   }, [nextSlot]);
-
-  const handleBuyTokens = async (pkg: TokenPackage) => {
-    setBuyingPackage(pkg.id);
-    setBuyError(null);
-    try {
-      let checkoutUrl: string;
-      // Dash — BTCPay has its own checkout page
-      const result = await buyTokens(pkg.id);
-      checkoutUrl = assertPaymentUrl(result.checkoutUrl);
-      const openedPopup = window.open(checkoutUrl, "_blank", "noopener,noreferrer,width=600,height=700");
-      if (!openedPopup) {
-        setBuyError("Your browser blocked the payment popup. Please allow popups for this site and try again.");
-        return; // don't close modal — user can retry
-      }
-      setShowBuyModal(false);
-      // Fallback balance refresh 15s after checkout opens (in case Socket.IO event is missed)
-      setTimeout(() => {
-        getWalletBalance().then((res) => {
-          if (typeof res.balance === 'number') setTokenBalance(res.balance);
-        }).catch(() => {});
-      }, 15_000);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      if (msg.includes("not available") || msg.includes("not configured")) {
-        setBuyError(t.live.errorDashUnavailable);
-      } else if (msg.includes("temporarily unavailable")) {
-        setBuyError(t.live.errorPaymentServerDown);
-      } else {
-        setBuyError(msg || t.live.errorFailedToOpenCheckout);
-      }
-    } finally {
-      setBuyingPackage(null);
-    }
-  };
 
   const handleCastingApply = async () => {
     setCastingSubmitting(true);
