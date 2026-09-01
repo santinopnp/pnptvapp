@@ -33,7 +33,10 @@ const axios = require('axios');
 const logger = require('../utils/logger');
 
 const ACCOUNTS = process.env.ZOHO_ACCOUNTS_URL || 'https://accounts.zoho.com';
-const API = process.env.ZOHO_CAMPAIGNS_API_URL || 'https://campaigns.zoho.com/api/v1.1';
+// Correct Zoho Campaigns OAuth endpoint host (2022+ standard). The older
+// campaigns.zoho.com/api/... returns HTML/401 with the modern refresh_token
+// grant — must use www.zohoapis.com/campaigns/v1.1 (v2.1 also works).
+const API = process.env.ZOHO_CAMPAIGNS_API_URL || 'https://www.zohoapis.com/campaigns/v1.1';
 
 let cachedToken = null;
 let cachedExpiry = 0;
@@ -93,7 +96,16 @@ async function _addToList(listKey, contact) {
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
       timeout: 15000,
     });
-    return { ok: resp.data?.status === 'success', body: resp.data };
+    // Zoho Campaigns returns:
+    //   - JSON { status: 'success' } when the list is Single Opt-In
+    //   - HTML confirmation fragment when the list is Double Opt-In (still
+    //     200 OK — a confirmation email was sent to the subscriber). Both
+    //     are success from our POV (the subscriber will eventually land in
+    //     the list). Log ok:true and let ops decide if they want to switch
+    //     lists to single opt-in via the Campaigns dashboard.
+    const jsonSuccess = resp.data?.status === 'success';
+    const htmlOk = typeof resp.data === 'string' && resp.data.includes('campaigns/static');
+    return { ok: jsonSuccess || htmlOk, body: resp.data, pendingConfirmation: htmlOk && !jsonSuccess };
   } catch (err) {
     return { ok: false, error: err.response?.data || err.message };
   }
@@ -111,7 +123,9 @@ async function _removeFromList(listKey, email) {
       headers: { Authorization: `Zoho-oauthtoken ${token}` },
       timeout: 15000,
     });
-    return { ok: resp.data?.status === 'success', body: resp.data };
+    const jsonSuccess = resp.data?.status === 'success';
+    const htmlOk = typeof resp.data === 'string' && resp.data.includes('campaigns/static');
+    return { ok: jsonSuccess || htmlOk, body: resp.data };
   } catch (err) {
     return { ok: false, error: err.response?.data || err.message };
   }
