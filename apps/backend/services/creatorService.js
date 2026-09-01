@@ -94,6 +94,11 @@ class CreatorService {
       entityType: 'creator',
       entityId: userId,
       message: 'You qualify as a creator! Activate your creator profile to start earning.',
+      metadata: {
+        url: '/creators/apply',
+        pushTitle: 'You qualify as a creator!',
+        pushBody: 'Tap to activate your creator profile and start earning.',
+      },
     }).catch(() => {});
 
     return true;
@@ -540,7 +545,7 @@ class CreatorService {
           entityId: String(userId),
           message: 'Your creator account is now active! You can accept subscribers.',
           metadata: {
-            url: '/creator-studio',
+            url: '/creators',
             pushTitle: 'Creator account live!',
             pushBody: 'Your creator account is now active. You can accept subscribers.',
           },
@@ -1044,7 +1049,7 @@ class CreatorService {
         const expStr = expiresAt
           ? new Date(expiresAt).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric' })
           : 'N/A';
-        const profileUrl = `https://pnptv.app/u/${subscriberRow?.username || subscriberId}`;
+        const profileUrl = `https://pnptv.app/profile/${subscriberId}`;
         const msg = [
           '💸 *¡Nueva suscripción!*',
           '',
@@ -1053,8 +1058,10 @@ class CreatorService {
           `📅 Vence: ${expStr}`,
           `🔗 Ver perfil: ${profileUrl}`,
         ].join('\n');
-        // Telegram notification mirroring disabled — notifications are in-app and push only
-        // await bot.telegram.sendMessage(creatorRow.telegram, msg, { parse_mode: 'Markdown' });
+        // Re-enabled 2026-09-01 — a new subscription is 'critical' per the
+        // feedback_creator_notifications_slack_only policy (Slack primary,
+        // Telegram fallback for critical events). Silent DM on failure.
+        await bot.telegram.sendMessage(creatorRow.telegram, msg, { parse_mode: 'Markdown' }).catch(() => {});
       }
     } catch (notifErr) {
       logger.warn('subscribeToCreator: failed to notify creator via Telegram', { creatorId, error: notifErr.message });
@@ -1242,6 +1249,11 @@ class CreatorService {
         entityType: 'creator_subscription',
         entityId: null,
         message: 'A subscriber cancelled their subscription to your creator profile.',
+        metadata: {
+          url: '/creators/subscribers',
+          pushTitle: 'Subscriber left',
+          pushBody: 'A subscriber cancelled their subscription.',
+        },
       });
     } catch (notifyErr) {
       logger.warn('unsubscribeFromCreator: failed to emit subscriber-left notification', {
@@ -1751,6 +1763,11 @@ class CreatorService {
       entityType: 'creator_milestone',
       entityId: String(notificationId),
       message: 'You qualify as a creator! Tap to activate your creator profile and start earning.',
+      metadata: {
+        url: '/creators/apply',
+        pushTitle: 'You qualify as a creator!',
+        pushBody: 'Tap to activate your creator profile and start earning.',
+      },
     });
 
     return { eligible: true, notificationId };
@@ -2304,6 +2321,11 @@ class CreatorService {
         entityType: 'creator_enrollment',
         entityId: String(enrollmentId),
         message: `Your ${enrollment.tier} creator profile has been approved! You can now start posting exclusive content and earning.`,
+        metadata: {
+          url: '/creators',
+          pushTitle: 'Creator profile approved 🎉',
+          pushBody: 'You can now post exclusive content and start earning.',
+        },
       });
     } catch (_) {}
 

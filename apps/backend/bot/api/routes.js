@@ -17506,6 +17506,154 @@ app.get('/api/crystal-creators', softAuth, asyncHandler(async (req, res) => {
   return res.json({ creators, viewerAudience: clientMap[audience] || 'public' });
 }));
 
+// ── Featured Model of the Day ───────────────────────────────────────────────
+// One editorial pick per date, shown as a full-screen interstitial on the
+// first authenticated pageview per user per day. Falls back to a rotating
+// PNP Fam creator when no admin row exists for today so the surface is
+// never blank. Ack sets users.last_featured_ack_at so the modal doesn't
+// re-fire until UTC midnight rolls over.
+
+app.get('/api/featured-creator/today', requireSessionAuth, asyncHandler(async (req, res) => {
+  const viewerId = String(req.session.user.id);
+  const pool = getPool();
+
+  // Once-per-day gate: hide if already ack'd today (UTC).
+  const ackRes = await pool.query(
+    `SELECT (last_featured_ack_at AT TIME ZONE 'UTC')::date AS ack_date
+       FROM users WHERE id = $1`,
+    [viewerId]
+  );
+  const ackDate = ackRes.rows[0]?.ack_date || null;
+  const todayRes = await pool.query(`SELECT (NOW() AT TIME ZONE 'UTC')::date AS today`);
+  const today = todayRes.rows[0].today;
+  if (ackDate && String(ackDate) === String(today)) {
+    return res.json({ show: false, reason: 'acked_today' });
+  }
+
+  // Admin-picked row for today.
+  const picked = await pool.query(
+    `SELECT f.creator_id, f.pitch_en, f.pitch_es, f.media_url, f.cta_intro_call,
+            u.username, u.first_name, u.photo_file_id, u.cover_url
+       FROM featured_creators f
+       JOIN users u ON u.id = f.creator_id
+      WHERE f.date = $1
+        AND u.deleted_at IS NULL
+      LIMIT 1`,
+    [today]
+  );
+  let row = picked.rows[0] || null;
+
+  // Fallback: rotate through active PNP Fam creators (deterministic by date
+  // so the same fam creator shows to everyone on the same day).
+  if (!row) {
+    const fallback = await pool.query(
+      `SELECT id AS creator_id, username, first_name, photo_file_id, cover_url
+         FROM users
+        WHERE is_pnptv_fam = TRUE
+          AND creator_status = 'active'
+          AND deleted_at IS NULL
+        ORDER BY id
+        OFFSET (
+          SELECT (EXTRACT(EPOCH FROM $1::date)::bigint / 86400)
+                 % GREATEST((
+                   SELECT COUNT(*) FROM users
+                    WHERE is_pnptv_fam = TRUE AND creator_status = 'active'
+                      AND deleted_at IS NULL
+                 ), 1)
+        )
+        LIMIT 1`,
+      [today]
+    );
+    if (fallback.rows[0]) {
+      row = {
+        ...fallback.rows[0],
+        pitch_en: null,
+        pitch_es: null,
+        media_url: null,
+        cta_intro_call: false,
+      };
+    }
+  }
+
+  if (!row) return res.json({ show: false, reason: 'no_pick' });
+
+  return res.json({
+    show: true,
+    featured: {
+      creatorId: row.creator_id,
+      username: row.username,
+      firstName: row.first_name,
+      photoUrl: row.photo_file_id ? `/api/profile-photo/${row.creator_id}` : null,
+      coverPhotoUrl: row.cover_url,
+      pitchEn: row.pitch_en,
+      pitchEs: row.pitch_es,
+      mediaUrl: row.media_url,
+      ctaIntroCall: !!row.cta_intro_call,
+    },
+  });
+}));
+
+app.post('/api/featured-creator/ack', requireSessionAuth, asyncHandler(async (req, res) => {
+  const viewerId = String(req.session.user.id);
+  await getPool().query(
+    `UPDATE users SET last_featured_ack_at = NOW() WHERE id = $1`,
+    [viewerId]
+  );
+  return res.json({ ok: true });
+}));
+
+// Admin — list scheduled picks (upcoming + last 30 days).
+app.get('/api/admin/featured-creators', adminGuard, asyncHandler(async (_req, res) => {
+  const { rows } = await getPool().query(
+    `SELECT f.date, f.creator_id, f.pitch_en, f.pitch_es, f.media_url,
+            f.cta_intro_call, f.created_at, f.updated_at,
+            u.username, u.first_name, u.photo_url
+       FROM featured_creators f
+       JOIN users u ON u.id = f.creator_id
+      WHERE f.date >= (NOW() AT TIME ZONE 'UTC')::date - INTERVAL '30 days'
+      ORDER BY f.date DESC`
+  );
+  return res.json({ picks: rows });
+}));
+
+// Admin — upsert one pick. Body: { creatorId, pitchEn, pitchEs, mediaUrl?, ctaIntroCall? }
+app.put('/api/admin/featured-creators/:date', adminGuard, asyncHandler(async (req, res) => {
+  const date = String(req.params.date); // expect YYYY-MM-DD
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'invalid_date_format' });
+  }
+  const { creatorId, pitchEn, pitchEs, mediaUrl = null, ctaIntroCall = false } = req.body || {};
+  if (!creatorId || !pitchEn || !pitchEs) {
+    return res.status(400).json({ error: 'missing_required_fields' });
+  }
+  const adminId = String(req.session.user.id);
+  const { rows } = await getPool().query(
+    `INSERT INTO featured_creators
+       (date, creator_id, pitch_en, pitch_es, media_url, cta_intro_call, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (date) DO UPDATE SET
+       creator_id     = EXCLUDED.creator_id,
+       pitch_en       = EXCLUDED.pitch_en,
+       pitch_es       = EXCLUDED.pitch_es,
+       media_url      = EXCLUDED.media_url,
+       cta_intro_call = EXCLUDED.cta_intro_call,
+       updated_at     = NOW()
+     RETURNING *`,
+    [date, creatorId, pitchEn, pitchEs, mediaUrl, !!ctaIntroCall, adminId]
+  );
+  return res.json({ pick: rows[0] });
+}));
+
+// Admin — delete a scheduled pick.
+app.delete('/api/admin/featured-creators/:date', adminGuard, asyncHandler(async (req, res) => {
+  const date = String(req.params.date);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'invalid_date_format' });
+  }
+  await getPool().query(`DELETE FROM featured_creators WHERE date = $1`, [date]);
+  return res.json({ ok: true });
+}));
+
 // ── Services offered by a single creator (audience-filtered) ────────────────
 // Non-Crystal creators return an empty list. Lower-tier viewers see the full
 // service list with `canBook:false` on gated rows (locked teaser pattern).
@@ -17516,6 +17664,99 @@ app.get('/api/creators/:id/services', softAuth, asyncHandler(async (req, res) =>
   const services = await crystalSvc.listServicesForCreator(String(req.params.id), audience);
   const clientMap = { public: 'public', crystal: 'crystal', whale_pig: 'inner_circle', fam: 'fam' };
   return res.json({ services, viewerAudience: clientMap[audience] || 'public' });
+}));
+
+// ── Free intro call: eligibility check ──────────────────────────────────────
+// Returns { creatorOffers, viewerEligible, reason? } so the profile page can
+// render the confirm sheet vs a specific error state without exposing DB detail.
+app.get('/api/creator/:creatorId/intro-call-status', requireSessionAuth, asyncHandler(async (req, res) => {
+  const crystalSvc = require('../../services/crystalServiceService');
+  const buyerId = String(req.session.user.id);
+  const creatorId = String(req.params.creatorId);
+  const [offersRes, eligRes] = await Promise.all([
+    crystalSvc.creatorOffersIntroCall(creatorId),
+    crystalSvc.isIntroCallEligible(buyerId),
+  ]);
+  return res.json({
+    creatorOffers: !!offersRes.offers,
+    viewerEligible: !!eligRes.eligible,
+    reason: eligRes.eligible ? null : (eligRes.reason || null),
+    isSelf: String(creatorId) === buyerId,
+  });
+}));
+
+// ── Free intro call: create booking ─────────────────────────────────────────
+// Rate-limited to 3/hour per buyer (a race would be caught by the DB but the
+// limit stops brute-force probing of eligibility).
+const introCallLimiter = require('express-rate-limit')({
+  windowMs: 3600_000, max: 3,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  message: { error: 'too_many_intro_call_attempts' },
+  standardHeaders: true, legacyHeaders: false,
+});
+app.post('/api/creator/:creatorId/book-intro-call',
+  requireSessionAuth,
+  introCallLimiter,
+  asyncHandler(async (req, res) => {
+    const crystalSvc = require('../../services/crystalServiceService');
+    const buyerId = String(req.session.user.id);
+    const creatorId = String(req.params.creatorId);
+    try {
+      const result = await crystalSvc.createIntroCallBooking(creatorId, buyerId);
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      const code = err.code || 'unknown';
+      const status = code === 'already_used' ? 409
+                   : code === 'creator_not_opted_in' ? 400
+                   : code === 'cannot_book_self' ? 400
+                   : code === 'unknown_user' ? 404
+                   : 500;
+      logger.warn('[intro-call] booking failed', { creatorId, buyerId, code, msg: err.message });
+      return res.status(status).json({ ok: false, error: code });
+    }
+  })
+);
+
+// ── Admin: list + toggle intro-call opt-in ─────────────────────────────────
+// GET returns every user with an active intro_call service row. PUT toggles
+// (create/deactivate) the row for :userId.
+app.get('/api/admin/intro-call-opt-in', adminGuard, asyncHandler(async (_req, res) => {
+  const { rows } = await getPool().query(
+    `SELECT s.creator_user_id AS user_id, s.is_active, s.updated_at,
+            u.username, u.first_name, u.photo_url, u.is_pnptv_fam
+       FROM creator_services s
+       JOIN users u ON u.id = s.creator_user_id
+      WHERE s.service_type = 'intro_call'
+      ORDER BY s.is_active DESC, u.username NULLS LAST`
+  );
+  return res.json({ optedIn: rows });
+}));
+
+app.put('/api/admin/intro-call-opt-in/:userId', adminGuard, asyncHandler(async (req, res) => {
+  const userId = String(req.params.userId);
+  const enabled = req.body?.enabled === true;
+  if (enabled) {
+    const { rows } = await getPool().query(
+      `INSERT INTO creator_services
+         (creator_user_id, service_type, price_cents, duration_minutes, fulfillment_days,
+          description_en, description_es, min_audience, is_active)
+       VALUES ($1, 'intro_call', 0, 15, NULL,
+               'Free 15-min intro. Say hi, get a feel for the vibe, no strings.',
+               'Intro gratis de 15 min. Un saludo, sentir la vibra, sin compromiso.',
+               'public', TRUE)
+       ON CONFLICT (creator_user_id, service_type) DO UPDATE
+         SET is_active = TRUE, updated_at = NOW()
+       RETURNING id, is_active`,
+      [userId]
+    );
+    return res.json({ ok: true, service: rows[0] });
+  }
+  await getPool().query(
+    `UPDATE creator_services SET is_active = FALSE, updated_at = NOW()
+      WHERE creator_user_id = $1 AND service_type = 'intro_call'`,
+    [userId]
+  );
+  return res.json({ ok: true });
 }));
 
 // ── Creator dashboard: list my Crystal Service bookings ────────────────────
@@ -17555,15 +17796,20 @@ app.post('/api/creator/services/bookings/:bookingId/livekit-token',
     const isCreator = String(b.creator_user_id) === userId;
     const isBuyer = String(b.buyer_user_id) === userId;
     if (!isCreator && !isBuyer) return res.status(403).json({ error: 'not_a_participant' });
-    if (b.service_type !== 'private_call' && b.service_type !== 'private_main_stage') {
+    if (b.service_type !== 'private_call' && b.service_type !== 'private_main_stage' && b.service_type !== 'intro_call') {
       return res.status(400).json({ error: 'not_a_livekit_booking' });
     }
     if (!['paid', 'fulfilled'].includes(b.status)) {
       return res.status(409).json({ error: 'booking_not_active', status: b.status });
     }
     const meta = b.metadata || {};
-    const roomName = meta.livekitRoomName || `crystal-call-${bookingId}`;
-    const ttlSeconds = ((Number(b.duration_minutes) || 60) + 60) * 60;  // duration + 1h buffer
+    // Intro calls get a distinct room name prefix + a tight TTL (15 + 5 grace).
+    const isIntro = b.service_type === 'intro_call';
+    const roomName = meta.livekitRoomName
+      || (isIntro ? `intro-call-${bookingId}` : `crystal-call-${bookingId}`);
+    const ttlSeconds = isIntro
+      ? 20 * 60
+      : ((Number(b.duration_minutes) || 60) + 60) * 60;  // duration + 1h buffer
     const livekitService = require('../../services/livekitService');
     try {
       const token = await livekitService.generateToken(
