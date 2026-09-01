@@ -628,6 +628,22 @@ export default function Subscribe() {
       {/* Current tier status banner */}
       {renderTierBanner()}
 
+      {/* Marketing hero — Rush wallet reveal loop (autoplay muted, no controls) */}
+      <div className="w-full mb-4 rounded-2xl overflow-hidden" style={{ background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          poster={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.jpg`}
+          className="w-full h-auto block"
+          aria-label={t.lang === "es" ? "Cómo funciona el pago con Ru$h" : "How Ru$h payment works"}
+        >
+          <source src={`/videos/rush-marketing-vertical-${t.lang === "es" ? "es" : "en"}.mp4`} type="video/mp4" />
+        </video>
+      </div>
+
       {/* New-to-crypto onboarding card — links to /crypto-guide */}
       <a
         href="/crypto-guide"
