@@ -1231,11 +1231,34 @@ app.use(async (req, res, next) => {
 // DM media, chat files, and hangout media are private — require a valid
 // session. Registered BEFORE express.static so the check runs first.
 const PRIVATE_UPLOAD_PREFIXES = ['/uploads/dm-media/', '/uploads/chat/', '/uploads/hangouts/', '/uploads/creator-media/', '/uploads/support/', '/uploads/recordings/'];
-app.use((req, res, next) => {
+// Creator-media files marked non-premium are what the creator has published to
+// their public profile — they must also be fetchable by unauthenticated
+// clients like Telegram (which fetches sendPhoto URLs with no session).
+// Cache the DB is_premium lookup for 5 min per filename to keep this cheap.
+app.use(async (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (!PRIVATE_UPLOAD_PREFIXES.some(p => req.path.startsWith(p))) return next();
-  if (!req.session?.user?.id) return res.status(401).json({ error: 'Authentication required' });
-  return next();
+  if (req.session?.user?.id) return next();
+  if (req.path.startsWith('/uploads/creator-media/')) {
+    try {
+      const { cache } = require('../../config/redis');
+      const cacheKey = `pnpapp:cm-public:${req.path}`;
+      let isPublic = await cache.get(cacheKey);
+      if (isPublic === null) {
+        const { getPool } = require('../../config/postgres');
+        const { rows } = await getPool().query(
+          `SELECT 1 FROM creator_media
+            WHERE (url = $1 OR thumb_url = $1) AND is_premium = FALSE
+            LIMIT 1`,
+          [req.path]
+        );
+        isPublic = rows.length > 0;
+        await cache.set(cacheKey, isPublic, 300);
+      }
+      if (isPublic) return next();
+    } catch (_) { /* fall through to 401 */ }
+  }
+  return res.status(401).json({ error: 'Authentication required' });
 });
 
 // Force SVG overlays to download, not execute in browser
@@ -17730,6 +17753,42 @@ app.delete('/api/admin/featured-creators/:date', adminGuard, asyncHandler(async 
   return res.json({ ok: true });
 }));
 
+// Admin — list active Crystal Creators (for the picker dropdown).
+app.get('/api/admin/featured-creators/crystal-pool', adminGuard, asyncHandler(async (_req, res) => {
+  const { rows } = await getPool().query(
+    `SELECT id, username, first_name, cover_url,
+            crystal_creator_active_until
+       FROM users
+      WHERE crystal_creator_active_until > NOW()
+        AND deleted_at IS NULL
+      ORDER BY LOWER(COALESCE(username, first_name, ''))`
+  );
+  return res.json({ creators: rows });
+}));
+
+// Admin — preview the album pics the promo would pick for a creator.
+app.get('/api/admin/featured-creators/preview/:creatorId', adminGuard, asyncHandler(async (req, res) => {
+  const creatorId = String(req.params.creatorId);
+  if (!/^\d+$/.test(creatorId)) {
+    return res.status(400).json({ error: 'invalid_creator_id' });
+  }
+  const promoSvc = require('../../services/featuredCreatorPromoService');
+  const photos = await promoSvc.pickAlbumPhotos(creatorId, 6);
+  return res.json({ photos });
+}));
+
+// Admin — force-run today's promo (posts to X + broadcasts on Telegram).
+// Clears the Redis dedup key first so a re-run today is possible.
+app.post('/api/admin/featured-creators/run-now', adminGuard, asyncHandler(async (_req, res) => {
+  const promoSvc = require('../../services/featuredCreatorPromoService');
+  const { cache } = require('../../config/redis');
+  const { rows } = await getPool().query(`SELECT (NOW() AT TIME ZONE 'UTC')::date AS today`);
+  const today = String(rows[0].today);
+  try { await cache.del(`pnpapp:featured-promo:${today}`); } catch (_) {}
+  const summary = await promoSvc.runDailyPromo({ force: true });
+  return res.json(summary);
+}));
+
 // ── Services offered by a single creator (audience-filtered) ────────────────
 // Non-Crystal creators return an empty list. Lower-tier viewers see the full
 // service list with `canBook:false` on gated rows (locked teaser pattern).
@@ -19664,6 +19723,20 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
       const status = ['draft', 'published'].includes(req.body?.status) ? req.body.status : 'published';
 
       try {
+
+      // Burn admin watermark into the tmp file before streaming to Directus.
+      // req.socket.setTimeout(0) is already set upstream so this can run inline.
+      // Non-fatal — original preserved on ffmpeg failure.
+      try {
+        const wmUser = (req.user && req.user.username) ? req.user.username : 'pnptv';
+        const primeExt = require('path').extname(tmpPath) || '.mp4';
+        const wmPath = tmpPath + '.watermark' + primeExt;
+        await require('../../services/watermarkService').applyVideoWatermark(tmpPath, wmPath, wmUser);
+        await require('fs').promises.unlink(tmpPath).catch(() => {});
+        await require('fs').promises.rename(wmPath, tmpPath);
+      } catch (wmErr) {
+        logger.warn('prime-videos watermark failed, keeping original', { tmpPath, error: wmErr.message });
+      }
 
       // Step 1 — stream file from disk to Directus (never loads the whole file into Node memory)
       let fileId;

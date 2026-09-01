@@ -1888,6 +1888,17 @@ const bulkCreateVideos = async (req, res) => {
       await fs.rename(file.path, finalPath);
       const mediaUrl = `/uploads/posts/${filename}`;
 
+      // Burn watermark before thumbnail + R2 upload so thumbnail is derived
+      // from the watermarked frame. Non-fatal.
+      try {
+        const wmPath = finalPath + '.watermark.' + ext;
+        await require('../../../services/watermarkService').applyVideoWatermark(finalPath, wmPath, user.username);
+        await fs.unlink(finalPath).catch(() => {});
+        await fs.rename(wmPath, finalPath);
+      } catch (wmErr) {
+        logger.warn('bulkCreateVideos watermark failed, keeping original', { userId: user.id, index: i, error: wmErr.message });
+      }
+
       // Generate thumbnail (non-fatal)
       let videoThumbnailUrl = null;
       const thumbFilename = `thumb-${user.id}-${Date.now()}-${i}.jpg`;

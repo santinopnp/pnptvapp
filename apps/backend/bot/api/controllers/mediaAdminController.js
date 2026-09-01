@@ -180,6 +180,18 @@ const uploadMedia = async (req, res) => {
     const filePath = path.join(uploadDir, fileName);
     await fs.writeFile(filePath, req.file.buffer);
 
+    // Video-only: burn watermark in place before duration probe + DB insert.
+    if (detected.mime.startsWith('video/')) {
+      try {
+        const wmPath = filePath + '.watermark' + fileExt;
+        await require('../../../services/watermarkService').applyVideoWatermark(filePath, wmPath, user.username);
+        await fs.unlink(filePath).catch(() => {});
+        await fs.rename(wmPath, filePath);
+      } catch (wmErr) {
+        logger.warn('mediaAdmin uploadMedia watermark failed, keeping original', { adminId: user.id, error: wmErr.message });
+      }
+    }
+
     const duration = await getMediaDuration(filePath);
 
     // Create media record in database

@@ -1839,6 +1839,19 @@ const uploadLocalRecording = (req, res) => {
       return res.status(500).json({ success: false, error: 'File verification failed' });
     }
 
+    // Burn watermark before DB insert so storage_path always references the
+    // watermarked file. Non-fatal — original preserved on ffmpeg failure.
+    try {
+      const wmExt = require('path').extname(req.file.path) || (req.file.mimetype === 'video/mp4' ? '.mp4' : '.webm');
+      const wmPath = req.file.path + '.watermark' + wmExt;
+      await require('../../../services/watermarkService').applyVideoWatermark(req.file.path, wmPath, req.user.username);
+      try { fs.unlinkSync(req.file.path); } catch { /* ok */ }
+      fs.renameSync(wmPath, req.file.path);
+      try { req.file.size = fs.statSync(req.file.path).size; } catch { /* ok */ }
+    } catch (wmErr) {
+      logger.warn('uploadLocalRecording watermark failed, keeping original', { userId: req.user?.id, error: wmErr.message });
+    }
+
     const userId = BigInt(req.user.id);
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.slice(0, 128) : null;
     const durationSec = req.body?.durationSec ? parseInt(req.body.durationSec, 10) || null : null;

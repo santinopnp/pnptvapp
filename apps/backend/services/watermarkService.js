@@ -64,16 +64,19 @@ async function applyImageWatermark(inputBuffer, username) {
       raw: { width: info.width, height: info.height, channels: 4 },
     }).png().toBuffer();
 
-    // Username pill (bottom-right)
+    // Username label (bottom-right) — white text with black drop shadow, no pill
     const label = '@' + xmlEscape(username);
     const fontSize = Math.max(11, Math.round(h * 0.022));
     const pad = 6;
     const pillW = Math.ceil((username.length + 1) * fontSize * 0.6) + pad * 2;
     const pillH = fontSize + pad;
-    const rx = pillH / 2;
     const pillSvg = `<svg width="${pillW}" height="${pillH}" xmlns="http://www.w3.org/2000/svg">
-      <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="${rx}" ry="${rx}" fill="rgba(0,0,0,0.60)"/>
-      <text x="${pillW / 2}" y="${fontSize}" font-family="sans-serif" font-size="${fontSize}px" font-weight="bold" fill="rgba(255,255,255,0.92)" text-anchor="middle">${label}</text>
+      <defs>
+        <filter id="ds" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="2" dy="2" stdDeviation="1.2" flood-color="black" flood-opacity="0.60"/>
+        </filter>
+      </defs>
+      <text x="${pillW / 2}" y="${fontSize}" font-family="sans-serif" font-size="${fontSize}px" font-weight="bold" fill="#ffffff" text-anchor="middle" filter="url(#ds)">${label}</text>
     </svg>`;
 
     const composites = [];
@@ -125,7 +128,7 @@ async function applyVideoWatermark(inputPath, outputPath, username) {
     // Overlay logo at bottom-left
     `[0:v][logo]overlay=x=10:y=H-h-10[withlogo]`,
     // Drawtext username at bottom-right
-    `[withlogo]drawtext=text='${label}':fontsize=h*0.022:fontcolor=white@0.85:x=w-tw-10:y=h-th-10:box=1:boxcolor=black@0.50:boxborderw=5`,
+    `[withlogo]drawtext=text='${label}':fontsize=h*0.022:fontcolor=white:x=w-tw-10:y=h-th-10:shadowcolor=black@0.60:shadowx=2:shadowy=2`,
   ].join(',');
 
   await execFileAsync(ffmpegBin, [
