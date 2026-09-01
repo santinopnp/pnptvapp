@@ -2417,7 +2417,7 @@ class CreatorService {
             ? '¡Felicidades! Ya eres creador en PNPtv!'
             : 'Congratulations! You are now a creator on PNPtv!',
           metadata: {
-            url: '/profile',
+            url: '/creators',
             pushTitle: isEs ? '¡Eres creador en PNPtv! 🎉' : 'You\'re a PNPtv creator! 🎉',
             pushBody: isEs
               ? 'Tu cuenta de creador ha sido activada. ¡Empieza a publicar!'

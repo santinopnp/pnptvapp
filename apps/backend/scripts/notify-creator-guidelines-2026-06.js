@@ -27,7 +27,7 @@ const MESSAGE =
 
 (async () => {
   const result = await NotificationService.broadcastNotification(USER_IDS, MESSAGE, {
-    url: '/creators/overview',
+    url: '/creators',
   });
   console.log(`Done — success: ${result.success}, failed: ${result.failed}`);
   process.exit(0);
