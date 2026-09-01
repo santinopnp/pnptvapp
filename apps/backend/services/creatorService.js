@@ -1346,7 +1346,11 @@ class CreatorService {
   static async getCreatorDashboard(creatorId) {
     const [subscriberRes, earningsRes, exclusiveRes, applicationRes, enrollmentRes] = await Promise.all([
       query(
-        'SELECT creator_subscriber_count, creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_dash_address, stream_rules, creator_subscription_paused, hype_bot_enabled FROM users WHERE id = $1',
+        `SELECT creator_subscriber_count, creator_status, creator_type, creator_price_usd,
+                creator_verified, creator_featured, creator_dash_address, stream_rules,
+                creator_subscription_paused, hype_bot_enabled,
+                crystal_creator_active_until, crystal_creator_invited_at
+           FROM users WHERE id = $1`,
         [creatorId]
       ),
       query(
@@ -1371,6 +1375,14 @@ class CreatorService {
     ]);
 
     const user = subscriberRes.rows[0] || {};
+    const crystalUntilRaw = user.crystal_creator_active_until || null;
+    const crystalActiveUntil = crystalUntilRaw
+      ? (crystalUntilRaw instanceof Date ? crystalUntilRaw.toISOString() : String(crystalUntilRaw))
+      : null;
+    const crystalCreator =
+      crystalActiveUntil === 'infinity' ||
+      (!!crystalUntilRaw && crystalUntilRaw instanceof Date && crystalUntilRaw.getTime() > Date.now()) ||
+      (typeof crystalUntilRaw === 'string' && crystalUntilRaw !== 'infinity' && new Date(crystalUntilRaw).getTime() > Date.now());
     return {
       subscriberCount: user.creator_subscriber_count || 0,
       creatorStatus: user.creator_status || 'none',
@@ -1387,6 +1399,9 @@ class CreatorService {
       streamRules: user.stream_rules || null,
       subscriptionPaused: user.creator_subscription_paused || false,
       hypeBotEnabled: user.hype_bot_enabled !== false, // default true
+      crystalCreator,
+      crystalActiveUntil,
+      crystalInvited: !!user.crystal_creator_invited_at,
     };
   }
 

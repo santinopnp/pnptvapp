@@ -20,6 +20,7 @@ const creatorSubscriptionAdminController = {
           u.avatar_url                    AS creator_avatar,
           u.creator_type,
           u.creator_price_usd,
+          u.crystal_creator_active_until,
           COALESCE(live.active_subscribers, 0)::int  AS active_subscribers,
           COALESCE(rev.total_revenue, 0)::numeric    AS total_revenue,
           COALESCE(rev.total_creator_earnings, 0)::numeric AS total_creator_earnings,
@@ -46,7 +47,22 @@ const creatorSubscriptionAdminController = {
         ORDER BY live.active_subscribers DESC NULLS LAST, rev.total_revenue DESC NULLS LAST
       `);
 
-      return res.json({ success: true, creators: rows });
+      const now = Date.now();
+      const creators = rows.map((r) => {
+        const raw = r.crystal_creator_active_until;
+        const iso = raw
+          ? (raw instanceof Date ? raw.toISOString() : String(raw))
+          : null;
+        const active =
+          iso === 'infinity' ||
+          (raw instanceof Date && raw.getTime() > now) ||
+          (typeof raw === 'string' && raw !== 'infinity' && new Date(raw).getTime() > now);
+        const { crystal_creator_active_until: _drop, ...rest } = r;
+        void _drop;
+        return { ...rest, crystalCreator: active, crystalActiveUntil: iso };
+      });
+
+      return res.json({ success: true, creators });
     } catch (err) {
       logger.error('listCreators admin error', { error: err.message });
       return res.status(500).json({ success: false, error: 'Failed to load creator list' });

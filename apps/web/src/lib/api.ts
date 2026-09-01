@@ -4272,6 +4272,12 @@ export interface CreatorDashboard {
   streamRules?: string | null;
   subscriptionPaused?: boolean;
   hypeBotEnabled?: boolean;
+  /** True when the creator has an active Crystal Creator pass. */
+  crystalCreator?: boolean;
+  /** ISO timestamp when the Crystal pass expires, "infinity" for lifetime, or null if none. */
+  crystalActiveUntil?: string | null;
+  /** True once the creator has ever been invited to (or granted) a Crystal pass. */
+  crystalInvited?: boolean;
 }
 
 export interface CreatorSubscriptionStatus {
@@ -7252,6 +7258,10 @@ export interface CreatorSubscriptionSummary {
   total_revenue: number;
   total_creator_earnings: number;
   pending_payout: number;
+  /** True when this creator has an active Crystal Creator pass. */
+  crystalCreator?: boolean;
+  /** ISO timestamp when the Crystal pass expires, "infinity" for lifetime, or null if none. */
+  crystalActiveUntil?: string | null;
 }
 
 export interface SubscriptionDetail {

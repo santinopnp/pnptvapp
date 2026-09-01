@@ -30,11 +30,9 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
   const isPerformer = creatorRole === "performer" || creatorRole === "both";
   const isContentCreator = creatorRole === "creator" || creatorRole === "both";
 
-  // Crystal Creator — backend adds these fields to the dashboard response.
-  // TODO(backend): confirm getCreatorDashboard returns crystalCreator, crystalActiveUntil, crystalInvited.
-  const crystalActive = (dashboard as unknown as { crystalCreator?: boolean }).crystalCreator === true;
-  const crystalActiveUntil: string | null = (dashboard as unknown as { crystalActiveUntil?: string | null }).crystalActiveUntil ?? null;
-  const crystalInvited = (dashboard as unknown as { crystalInvited?: boolean }).crystalInvited === true;
+  const crystalActive = dashboard.crystalCreator === true;
+  const crystalActiveUntil: string | null = dashboard.crystalActiveUntil ?? null;
+  const crystalInvited = dashboard.crystalInvited === true;
 
   // Crystal Creator checkout state — mirrors Subscribe.tsx walletPanelPlanId pattern.
   const [crystalWalletOpen, setCrystalWalletOpen] = React.useState(false);

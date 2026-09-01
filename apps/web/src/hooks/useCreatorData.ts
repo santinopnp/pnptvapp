@@ -21,11 +21,9 @@ export interface CreatorDataResult {
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
-  /** True when the authenticated creator has an active Crystal Creator pass.
-   *  TODO(backend): confirm getCreatorDashboard returns crystalCreator field. */
+  /** True when the authenticated creator has an active Crystal Creator pass. */
   crystalCreator: boolean;
-  /** ISO timestamp string when the Crystal pass expires, "infinity" for lifetime passes, or null if not active.
-   *  TODO(backend): confirm getCreatorDashboard returns crystalActiveUntil field. */
+  /** ISO timestamp string when the Crystal pass expires, "infinity" for lifetime passes, or null if not active. */
   crystalActiveUntil: string | null;
 }
 
@@ -91,12 +89,8 @@ export function useCreatorData(): CreatorDataResult {
     }
   }, [isAuthenticated, reload]);
 
-  // Extract Crystal Creator fields from dashboard response.
-  // These are denormalized from crystal_creator_passes by the backend.
-  // Default to false/null until the backend ships the fields.
-  const dashAny = dashboard as (DashboardData & { success: boolean; crystalCreator?: boolean; crystalActiveUntil?: string | null }) | null;
-  const crystalCreator: boolean = dashAny?.crystalCreator === true;
-  const crystalActiveUntil: string | null = dashAny?.crystalActiveUntil ?? null;
+  const crystalCreator: boolean = dashboard?.crystalCreator === true;
+  const crystalActiveUntil: string | null = dashboard?.crystalActiveUntil ?? null;
 
   return { eligibility, dashboard, earnings, withdrawable, withdrawals, loading, error, reload, crystalCreator, crystalActiveUntil };
 }

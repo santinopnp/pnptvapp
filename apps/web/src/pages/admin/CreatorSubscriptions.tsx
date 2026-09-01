@@ -1218,12 +1218,9 @@ export default function CreatorSubscriptions() {
     {
       key: "crystal",
       header: "Crystal",
-      // TODO(backend): confirm getCreatorSubscriptions returns crystalCreator: bool,
-      // crystalActiveUntil: string|null on each CreatorSubscriptionSummary row.
       render: (row: CreatorSubscriptionSummary) => {
-        const rowAny = row as unknown as { crystalCreator?: boolean; crystalActiveUntil?: string | null };
-        if (!rowAny.crystalCreator) return <span className="text-pnp-textSecondary text-xs">—</span>;
-        const until = rowAny.crystalActiveUntil;
+        if (!row.crystalCreator) return <span className="text-pnp-textSecondary text-xs">—</span>;
+        const until = row.crystalActiveUntil;
         const label = (!until || until === "infinity")
           ? "lifetime"
           : new Date(until).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
