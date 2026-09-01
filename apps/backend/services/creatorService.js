@@ -936,6 +936,11 @@ class CreatorService {
         entityType: 'creator_subscription',
         entityId: String(rows[0].id),
         message: `${subscriberName} subscribed to your creator profile for $${priceUsd}/mo`,
+        metadata: {
+          url: '/creators/subscribers',
+          pushTitle: 'New subscriber',
+          pushBody: `${subscriberName} subscribed for $${parseFloat(priceUsd).toFixed(2)}/mo`,
+        },
       });
     } catch (notifyErr) {
       logger.warn('subscribeToCreator: failed to emit new-subscriber notification', {

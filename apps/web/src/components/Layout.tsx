@@ -15,7 +15,7 @@ const CristinaWidget = lazy(() => import("@/components/CristinaWidget").then((m)
 
 import { NotificationBell } from "@/components/NotificationBell";
 import { UserAvatar } from "@/components/UserAvatar";
-import { PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
+import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
 import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus } from "@/lib/api";
@@ -1736,6 +1736,10 @@ export function Layout() {
           ?preview=pnp-fam-welcome (Santino canary). */}
       <PnpFamWelcomeGate />
 
+      {/* Featured Model of the Day — full-screen interstitial, once per user
+          per UTC day. Skips checkout/onboarding/login/main-stage routes. */}
+      <FeaturedModelInterstitial />
+
       {/* Global announcement strip — only after verification */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
         <div className={`fixed left-0 right-0 z-40 pointer-events-none lg:bottom-0 lg:left-72 ${
@@ -2188,6 +2192,19 @@ function WalletFloater() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const path = location.pathname;
+  // Auto-open on ?openWallet=1 so /wallet deep-links (push notifications,
+  // broadcast emails, etc.) that redirect here actually surface the sheet.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("openWallet") === "1") {
+      setOpen(true);
+      // Clean the query so a subsequent Back button press doesn't re-open it.
+      const cleaned = new URLSearchParams(location.search);
+      cleaned.delete("openWallet");
+      const search = cleaned.toString();
+      window.history.replaceState({}, "", location.pathname + (search ? `?${search}` : "") + location.hash);
+    }
+  }, [location.search, location.pathname, location.hash]);
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
   return (

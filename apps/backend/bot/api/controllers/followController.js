@@ -93,7 +93,7 @@ const followUser = async (req, res) => {
         metadata: {
           pushTitle: 'New Follower',
           pushBody: `${actorName} started following you`,
-          url: `/profile/${actor.username || actor.id}`,
+          url: `/profile/${actor.id}`,
         },
       });
     }

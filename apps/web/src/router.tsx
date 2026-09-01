@@ -816,6 +816,10 @@ export const router = createBrowserRouter([
       // Short shareable alias: pnptv.app/h/123 → chat room
       { path: "h/:groupId", element: <HangoutToChatRedirect /> },
       { path: "pnplive", element: <Navigate to="/live" replace /> },
+      // Wallet lives inside a global sheet opened by the FAB on Home; deep
+      // links from push/email/broadcast (e.g. wallet-launch push) land on
+      // Home with a hint the sheet should auto-open on mount.
+      { path: "wallet", element: <Navigate to="/?openWallet=1" replace /> },
       { path: "pnptv-haus", element: <Navigate to="/?view=hangouts" replace /> },
       { path: "community-room", element: <Navigate to="/?view=hangouts" replace /> },
       { path: "da-haus", element: <Navigate to="/?view=hangouts" replace /> },
