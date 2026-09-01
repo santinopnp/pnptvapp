@@ -221,4 +221,139 @@ async function logCrystalPassPayment(opts) {
   }
 }
 
-module.exports = { isConfigured, logCrystalPassPayment };
+// ── Generic item cache (per-process) ────────────────────────────────────────
+// Books items are our SKU catalog. Rather than requiring env vars for every
+// possible product, we auto-create items by name on-the-fly and cache the
+// resulting IDs. Restart-safe because we search by name before creating.
+const _itemIdCache = new Map();  // itemName → item_id
+
+async function _ensureItemByName(itemName, defaultRate) {
+  if (_itemIdCache.has(itemName)) return _itemIdCache.get(itemName);
+  const token = await getAccessToken();
+  const orgId = process.env.ZOHO_BOOKS_ORG_ID;
+  // Search first
+  try {
+    const search = await axios.get(`${API}/items`, {
+      headers: _headers(token), params: { organization_id: orgId, name: itemName }, timeout: 15000,
+    });
+    const found = (search.data?.items || []).find((i) => i.name === itemName);
+    if (found?.item_id) {
+      _itemIdCache.set(itemName, found.item_id);
+      return found.item_id;
+    }
+  } catch { /* fall through to create */ }
+  // Create
+  try {
+    const create = await axios.post(`${API}/items`, {
+      name: itemName,
+      rate: defaultRate,
+      product_type: 'service',
+      description: `Auto-created by PNPtv revenue logger. SKU: ${itemName}`,
+    }, { headers: _headers(token), params: { organization_id: orgId }, timeout: 20000 });
+    const id = create.data?.item?.item_id;
+    if (id) {
+      _itemIdCache.set(itemName, id);
+      return id;
+    }
+  } catch (err) {
+    logger.warn('[zohoBooks] _ensureItemByName failed', {
+      itemName, error: err.response?.data || err.message,
+    });
+  }
+  return null;
+}
+
+/**
+ * Generic revenue logger. Creates a paid invoice + matching customer payment
+ * in Zoho Books for any successful transaction. Idempotent via reference_number
+ * (Books rejects duplicate refs with 40010, we swallow silently). Auto-creates
+ * SKU items on first sight so callers don't need pre-config.
+ *
+ * Called from every payment-success hook: NP IPN branches, wallet fulfillment,
+ * tips, call bookings. Fire-and-forget — throw NEVER blocks the primary write.
+ *
+ * @param {object} opts
+ * @param {string} opts.buyerUserId
+ * @param {string|null} opts.buyerEmail
+ * @param {string|null} opts.buyerName
+ * @param {string|null} opts.buyerUsername
+ * @param {string} opts.sku              — human-readable SKU / item name
+ *                                          (e.g. "PRIME monthly", "Ru$h pack 100",
+ *                                          "Creator sub — @foo", "Tip → @bar")
+ * @param {number} opts.priceCents       — amount charged
+ * @param {string} opts.provider         — nowpayments | wallet_usdc | wallet_rush |
+ *                                          stripe | moonpay | efipay | dash
+ * @param {string} opts.reference        — natural key for idempotency
+ *                                          (payment_ref, tx hash, intent id, etc.)
+ * @param {string|null} opts.notes       — free-form note (recipient, buyer note, ...)
+ * @returns {Promise<{invoiceId?:string, alreadyLogged?:boolean, skipped?:boolean}>}
+ */
+async function logRevenue(opts) {
+  if (!isConfigured()) return { skipped: true };
+  const {
+    buyerUserId, buyerEmail = null, buyerName = null, buyerUsername = null,
+    sku, priceCents, provider, reference, notes = null,
+  } = opts;
+  if (!buyerUserId || !sku || !priceCents || !reference) {
+    logger.warn('[zohoBooks] logRevenue: missing required fields', {
+      hasBuyer: !!buyerUserId, hasSku: !!sku, hasPrice: !!priceCents, hasRef: !!reference,
+    });
+    return { skipped: true };
+  }
+  try {
+    const contactId = await _ensureContact({
+      userId: buyerUserId, email: buyerEmail, firstName: buyerName, lastName: null, username: buyerUsername,
+    });
+    if (!contactId) return { skipped: true };
+
+    const usd = (Number(priceCents) || 0) / 100;
+    const itemId = await _ensureItemByName(sku.slice(0, 200), usd);
+    if (!itemId) return { skipped: true };
+
+    const token = await getAccessToken();
+    const orgId = process.env.ZOHO_BOOKS_ORG_ID;
+
+    let invoiceId;
+    try {
+      const invoice = await axios.post(`${API}/invoices`, {
+        customer_id: contactId,
+        reference_number: String(reference).slice(0, 100),
+        line_items: [{ item_id: itemId, quantity: 1, rate: usd }],
+        notes: notes ? `${notes} · via ${provider} · ref ${reference}`.slice(0, 500)
+                     : `Paid via ${provider}. Ref ${reference}.`,
+      }, { headers: _headers(token), params: { organization_id: orgId, send: false }, timeout: 20000 });
+      invoiceId = invoice.data?.invoice?.invoice_id;
+    } catch (invErr) {
+      const code = invErr.response?.data?.code;
+      // Books returns 40010 for duplicate reference_number — idempotency win.
+      if (code === 40010) {
+        return { alreadyLogged: true };
+      }
+      throw invErr;
+    }
+    if (!invoiceId) return { skipped: true };
+
+    await axios.post(`${API}/invoices/${invoiceId}/status/sent`, {}, {
+      headers: _headers(token), params: { organization_id: orgId }, timeout: 15000,
+    }).catch(() => { /* non-fatal if already sent */ });
+
+    await axios.post(`${API}/customerpayments`, {
+      customer_id: contactId,
+      payment_mode: provider === 'wallet_usdc' || provider === 'wallet_rush' ? 'crypto' : provider,
+      amount: usd,
+      date: new Date().toISOString().slice(0, 10),
+      reference_number: String(reference).slice(0, 100),
+      invoices: [{ invoice_id: invoiceId, amount_applied: usd }],
+    }, { headers: _headers(token), params: { organization_id: orgId }, timeout: 15000 });
+
+    logger.info('[zohoBooks] revenue logged', { sku, priceCents, provider, reference, invoiceId });
+    return { invoiceId };
+  } catch (err) {
+    logger.warn('[zohoBooks] logRevenue failed (non-fatal)', {
+      sku, reference, error: err.response?.data || err.message,
+    });
+    return { skipped: true };
+  }
+}
+
+module.exports = { isConfigured, logCrystalPassPayment, logRevenue };

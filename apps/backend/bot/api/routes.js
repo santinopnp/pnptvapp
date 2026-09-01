@@ -8621,7 +8621,7 @@ app.post('/api/webapp/me/crypto-guide-complete', requireSessionAuth, asyncHandle
           entityType: 'crypto_guide',
           entityId: String(user.id),
           message: 'You completed the crypto guide — 30 Ru$h 💎 added to spend on Santino 🎁',
-          metadata: { url: '/creator/santinofurioso', pushTitle: '+30 Santino Ru$h', pushBody: 'Crypto guide complete — enjoy the reward on Santino.' },
+          metadata: { url: '/c/santinofurioso', pushTitle: '+30 Santino Ru$h', pushBody: 'Crypto guide complete — enjoy the reward on Santino.' },
         }).catch(() => {});
       } catch (_) { /* non-fatal */ }
     } catch (grantErr) {
@@ -8702,7 +8702,7 @@ async function maybeGrantFirstHourCryptoBonus(userId) {
       entityType: 'crypto_guide',
       entityId: String(userId),
       message: '⚡ First-hour bonus unlocked — +100 Ru$h 💎 added to spend on Santino',
-      metadata: { url: '/creator/santinofurioso', pushTitle: '+100 Santino Ru$h', pushBody: 'First-hour crypto bonus unlocked.' },
+      metadata: { url: '/c/santinofurioso', pushTitle: '+100 Santino Ru$h', pushBody: 'First-hour crypto bonus unlocked.' },
     }).catch(() => {});
   } catch (_) { /* non-fatal */ }
   logger.info('[crypto_guide] first-hour bonus granted', { userId, tokens: 100, creatorId: SANTINO_USER_ID });
@@ -14124,6 +14124,61 @@ app.get('/api/webapp/payments/history', requireSessionAuth, asyncHandler(async (
   return res.json({ success: true, payments });
 }));
 
+// Central revenue logger for NP IPN branches → Zoho Books + CRM sync.
+// Called once per successful payment branch (after DSO marked completed).
+// Fire-and-forget so a Books/Zoho outage never breaks payment fulfillment.
+function _npLogRevenueAndSync(order, paymentId) {
+  setImmediate(async () => {
+    try {
+      if (!order || !order.user_id) return;
+      const zohoBooks = require('../../services/zohoBooksService');
+      if (!zohoBooks.isConfigured()) return;
+      const usd = Number(order.usd_amount) || 0;
+      if (usd <= 0) return;
+
+      const meta = order.metadata || {};
+      const planId = order.plan_id;
+      const skuMap = {
+        token_purchase:      `Ru$h tokens${meta.packageId ? ` — ${meta.packageId}` : ''}`,
+        creator_tip:         `Tip → creator ${order.creator_id ? String(order.creator_id).slice(0, 12) : 'unknown'}`,
+        call_package:        `Call package${meta.packageId ? ` — ${meta.packageId}` : ''}`,
+        crystal_creator:     meta.isGift ? 'Crystal Creator Pass — Gift' : 'Crystal Creator Pass — Self',
+        crystal_service:     `Crystal service — ${meta.serviceType || 'unknown'}`,
+        promo_token_bundle:  `Promo token bundle${meta.promoCode ? ` — ${meta.promoCode}` : ''}`,
+        channel_access:      `Channel access — ${meta.channelId || 'unknown'}`,
+        hangout_access:      `Hangout access — ${meta.hangoutGroupId || 'unknown'}`,
+        creator_monthly:     `Creator sub → ${order.creator_id ? String(order.creator_id).slice(0, 12) : 'unknown'}`,
+      };
+      const sku = skuMap[planId] || `PRIME/Membership — ${planId}`;
+
+      const { rows: uRows } = await query(
+        `SELECT email, first_name, username FROM users WHERE id = $1`, [String(order.user_id)]
+      );
+      const u = uRows[0] || {};
+
+      await zohoBooks.logRevenue({
+        buyerUserId: String(order.user_id),
+        buyerEmail: u.email || order.email || null,
+        buyerName: u.first_name || null,
+        buyerUsername: u.username || null,
+        sku,
+        priceCents: Math.round(usd * 100),
+        provider: 'nowpayments',
+        reference: `np:${paymentId}`,
+        notes: order.creator_id ? `Creator: ${order.creator_id}` : null,
+      });
+
+      // CRM sync — buyer's contact reflects the new purchase (tier + earnings +
+      // sub count all recompute in the sync query).
+      require('../../services/zohoSyncService').syncOneUser(String(order.user_id)).catch(() => {});
+    } catch (err) {
+      require('../../utils/logger').warn('[np-ipn] revenue log hook failed', {
+        planId: order?.plan_id, paymentId, error: err.message,
+      });
+    }
+  });
+}
+
 // POST /api/webhooks/nowpayments — NOWPayments IPN webhook
 // Processes synchronously so NOWPayments retries on any 5xx (no fire-and-forget).
 // Grant runs BEFORE marking completed so a crash leaves the order retryable.
@@ -14202,7 +14257,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
                 entityType: 'token_purchase',
                 entityId: String(order.id),
                 message: `You paid ${(paidRatio * 100).toFixed(0)}% of your Ru$h order — we credited ${prorated} Ru$h (of ${baseTokens} full).`,
-                metadata: { url: '/buy-tokens', pushTitle: 'Ru$h 💎 credited', pushBody: `${prorated} Ru$h added — top up any time for the rest.` },
+                metadata: { url: '/?openWallet=1', pushTitle: 'Ru$h 💎 credited', pushBody: `${prorated} Ru$h added — top up any time for the rest.` },
               }).catch(() => {});
             } catch (_) { /* non-fatal */ }
             logger.info('[NOWPayments] auto-prorated token grant', {
@@ -14785,6 +14840,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     }
 
     maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
+    _npLogRevenueAndSync(order, payment_id);
     return res.json({ received: true, type: 'creator_tip' });
   }
 
@@ -15052,6 +15108,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     logger.info('[Crystal] IPN: Crystal Creator pass activated', {
       order_id, targetCreatorId, isGift, payment_id,
     });
+    _npLogRevenueAndSync(order, payment_id);
     return res.json({ received: true, type: 'crystal_creator' });
   }
 
@@ -15091,6 +15148,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
       logger.error('[Crystal] IPN: crystal_service record failed', { order_id, error: svcErr.message });
       return res.status(500).json({ error: 'crystal_service:record_failed' });
     }
+    _npLogRevenueAndSync(order, payment_id);
     return res.json({ received: true, type: 'crystal_service' });
   }
 
@@ -15529,6 +15587,7 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
   } catch (_) {}
 
   maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
+  _npLogRevenueAndSync(order, payment_id);
   return res.json({ received: true });
 }));
 

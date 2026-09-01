@@ -610,25 +610,82 @@ async function verifyAndFulfillUsdc(opts) {
  *   other: { add_on_id, duration_days?, is_lifetime?, creator_id?, scope_id?, auto_renew? }
  */
 async function _fulfill(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd }) {
+  let fulfillResult;
   if (surface === 'rush') {
-    return _fulfillRush(client, { userId, entitlementSpec, provider, intentId });
+    fulfillResult = await _fulfillRush(client, { userId, entitlementSpec, provider, intentId });
+  } else if (surface === 'tip') {
+    fulfillResult = await _fulfillTip(client, { payerUserId: userId, entitlementSpec, provider, intentId, amountUsd });
+  } else if (surface === 'call') {
+    fulfillResult = await _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  } else if (surface === 'crystal_self') {
+    fulfillResult = await _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: false });
+  } else if (surface === 'crystal_gift') {
+    fulfillResult = await _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: true });
+  } else if (surface === 'crystal_service') {
+    fulfillResult = await _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  } else {
+    fulfillResult = await _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
   }
-  if (surface === 'tip') {
-    return _fulfillTip(client, { payerUserId: userId, entitlementSpec, provider, intentId, amountUsd });
-  }
-  if (surface === 'call') {
-    return _fulfillCallBooking(client, { userId, entitlementSpec, provider, intentId, amountUsd });
-  }
-  if (surface === 'crystal_self') {
-    return _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: false });
-  }
-  if (surface === 'crystal_gift') {
-    return _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: true });
-  }
-  if (surface === 'crystal_service') {
-    return _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd });
-  }
-  return _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
+
+  // Zoho revenue log + CRM sync — fire-and-forget, never blocks fulfillment.
+  // Skips wallet_usdc calls when the amount is zero (e.g. founder grants) or
+  // when the surface is 'rush' (Ru$h purchases are logged separately via
+  // _fulfillRush's own hook to include the token count).
+  setImmediate(async () => {
+    try {
+      const zohoBooks = require('./zohoBooksService');
+      if (!zohoBooks.isConfigured()) return;
+      if (Number(amountUsd) <= 0) return;
+
+      // Build a human-readable SKU per surface so P&L breaks down by product.
+      const spec = entitlementSpec || {};
+      const skuMap = {
+        rush:            `Ru$h tokens${spec.packageId ? ` — ${spec.packageId}` : (spec.tokens ? ` — ${spec.tokens}` : '')}`,
+        tip:             `Tip${spec.creatorId ? ` → ${String(spec.creatorId).slice(0, 12)}` : ''}`,
+        call:            `Private call${spec.creatorId ? ` — ${String(spec.creatorId).slice(0, 12)}` : ''}`,
+        crystal_self:    'Crystal Creator Pass — Self',
+        crystal_gift:    'Crystal Creator Pass — Gift',
+        crystal_service: `Crystal service — ${spec.serviceType || 'unknown'}`,
+        prime:           `PRIME — ${spec.add_on_id || spec.plan_id || 'plan'}`,
+        membership:      `Membership — ${spec.add_on_id || spec.plan_id || 'plan'}`,
+        creator_sub:     `Creator sub${spec.creator_id || spec.creatorId ? ` — ${String(spec.creator_id || spec.creatorId).slice(0, 12)}` : ''}`,
+        channel:         `Channel access${spec.creator_id ? ` — ${String(spec.creator_id).slice(0, 12)}` : ''}`,
+        hangout:         `Hangout access${spec.creator_id ? ` — ${String(spec.creator_id).slice(0, 12)}` : ''}`,
+        donation:        'Donation',
+      };
+      const sku = skuMap[surface] || `Purchase — ${surface}`;
+
+      const { rows: uRows } = await query(
+        `SELECT email, first_name, username FROM users WHERE id = $1`, [String(userId)]
+      );
+      const u = uRows[0] || {};
+
+      await zohoBooks.logRevenue({
+        buyerUserId: String(userId),
+        buyerEmail: u.email || null,
+        buyerName: u.first_name || null,
+        buyerUsername: u.username || null,
+        sku,
+        priceCents: Math.round((Number(amountUsd) || 0) * 100),
+        provider: `wallet_${(entitlementSpec?.rail || 'usdc')}`,
+        reference: `checkout_intent:${intentId}`,
+        notes: spec.creatorId || spec.creator_id
+          ? `Recipient creator: ${spec.creatorId || spec.creator_id}`
+          : (spec.serviceType ? `Service: ${spec.serviceType}` : null),
+      });
+    } catch (err) {
+      logger.warn('[walletCheckout._fulfill] Books logRevenue hook failed', {
+        surface, intentId, error: err.message,
+      });
+    }
+
+    // CRM sync — refresh the buyer's contact so tier/earnings/subs update
+    try {
+      require('./zohoSyncService').syncOneUser(String(userId)).catch(() => {});
+    } catch { /* no-op if module missing */ }
+  });
+
+  return fulfillResult;
 }
 
 /**
