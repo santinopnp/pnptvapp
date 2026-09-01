@@ -48,6 +48,28 @@ const MARQUEE_END_PAD_PX = 12; // ensure the last character clears the edge
 const UPDATE_MESSAGES: RawMessage[] = [
   {
     category: "UPDATE",
+    en: "🎥 New: watch how Ru$h actually works — card in, tips out in 30 sec →",
+    es: "🎥 Nuevo: mira cómo funciona Ru$h — tarjeta a tips en 30 seg →",
+    href: "/subscribe",
+  },
+  {
+    category: "UPDATE",
+    en: "💎 Diamond Pass · $99.99 · a whole year of PRIME. Best value we ship →",
+    es: "💎 Diamond Pass · $99.99 · un año entero de PRIME. El mejor valor →",
+    href: "/subscribe",
+  },
+  {
+    category: "UPDATE",
+    en: "📞 Book one-on-one time with your favorite creator — 30 or 60 min →",
+    es: "📞 Reserva tiempo uno-a-uno con tu creator favorito — 30 o 60 min →",
+    href: "/creators",
+  },
+  {
+    category: "UPDATE",
+    en: "⭐ Subscribe once — every locked photo, video, and story lands in your feed →",
+    es: "⭐ Suscríbete una vez — cada foto, video y post bloqueado en tu feed →",
+    href: "/creators",
+  },
     en: "👥 See who's live with you on Main Stage — open the People tab and say hi →",
     es: "👥 Mira quién está en vivo contigo en el Main Stage — abre la pestaña Personas y saluda →",
     href: "/main-stage",
