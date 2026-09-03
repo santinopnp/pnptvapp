@@ -2207,3 +2207,269 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
+
+// ── TipButton ─────────────────────────────────────────────────────────────
+// Shared pink→orange 💸 pill + dual-rail (Ru$h / USDC) tip sheet. Reused
+// across content pages (channel header, video player toolbar, PrimeHub, etc.)
+// so a single tip UX ships everywhere. Lifted from the MainStage tip sheet
+// (MainStage.tsx ~2379–2528) and kept in this file per feedback_no_new_files.md.
+//
+// Only Crystal Creators can receive tips — the backend rejects non-Crystal
+// recipients with 403 RECIPIENT_NOT_CRYSTAL_CREATOR on both rails. Callers
+// MUST pass `isCrystalCreator` from a source that computed the flag in SQL
+// (crystal_creator_active_until > NOW()) — never a JS `new Date()` compare,
+// which mis-handles Postgres 'infinity' (parsed to JS Infinity by node-pg).
+//
+// If !isCrystalCreator the component returns null so we never show a button
+// that would 403.
+
+// Lazy-load TipRushRail — same trick QuickTipSheet in Layout.tsx uses so
+// the base checkout bundle doesn't pull in the Ru$h rail unless a user
+// actually opens a tip sheet.
+const _LazyTipRushRail = _lazy(() => import("@/components/payments/TipRushRail").then((m) => ({ default: m.TipRushRail })));
+
+export interface TipButtonProps {
+  /** The recipient's user ID (creator or video uploader). */
+  creatorId: string;
+  /** Display handle (@username) — shown in the sheet header when provided. */
+  creatorUsername?: string;
+  /** MUST be true for the button to render — see file header. */
+  isCrystalCreator: boolean;
+  /** `inline` = default pill in a flex row. `floating` = fixed FAB (not currently used). */
+  variant?: "inline" | "floating";
+  lang?: "en" | "es";
+  className?: string;
+  /**
+   * Optional current Ru$h + gifted balances. When both add up to cover the
+   * selected tip (6 Ru$h = $1), the sheet defaults to the Ru$h rail; otherwise
+   * USDC. Passing neither defaults to USDC — safe fallback (the rail toggle
+   * is always visible so users can switch).
+   */
+  tokenBalance?: number;
+  giftedBalance?: number;
+}
+
+export function TipButton({
+  creatorId,
+  creatorUsername,
+  isCrystalCreator,
+  variant = "inline",
+  lang = "en",
+  className,
+  tokenBalance,
+  giftedBalance,
+}: TipButtonProps) {
+  const es = lang === "es";
+  const [open, setOpen] = _useState(false);
+  const [tipAmount, setTipAmount] = _useState<number>(() => {
+    try {
+      const raw = localStorage.getItem("pnptv:lastTipUsd");
+      const n = parseInt(raw ?? "", 10);
+      if (Number.isFinite(n) && n > 0 && n <= 500) return n;
+    } catch { /* storage blocked */ }
+    return TIP_PRESETS_USD[0];
+  });
+  const [tipMessage, setTipMessage] = _useState<string>("");
+  // Rail default: Ru$h when balance covers, else USDC. Recomputed each
+  // open + when amount changes so a repeat-tipper who tops up mid-session
+  // sees the correct default.
+  const [tipRailMode, setTipRailMode] = _useState<"rush" | "usdc">("usdc");
+  const { authenticated: privyAuthenticated, login: privyLogin } = usePrivy();
+
+  _useEffect(() => {
+    if (!open) return;
+    const needRush = tipAmount * 6;
+    const haveRush = (tokenBalance ?? 0) + (giftedBalance ?? 0);
+    setTipRailMode(haveRush >= needRush && haveRush > 0 ? "rush" : "usdc");
+  }, [open, tipAmount, tokenBalance, giftedBalance]);
+
+  // Hard gate — hide entirely for non-Crystal recipients so we never show a
+  // button that would 403. See file header for the reasoning.
+  if (!isCrystalCreator) return null;
+
+  const closeSheet = () => setOpen(false);
+
+  const pillClass = variant === "floating"
+    ? "fixed bottom-24 right-4 z-40 min-h-[52px] px-4 rounded-full font-bold text-white shadow-lg active:scale-95 transition-all flex items-center gap-1.5"
+    : `min-h-[44px] px-3 rounded-full font-bold text-white text-sm active:scale-95 transition-all flex items-center gap-1 ${className ?? ""}`;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        className={pillClass}
+        style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+        title={es ? "Enviar propina" : "Send tip"}
+        aria-label={es ? "Enviar propina" : "Send tip"}
+      >
+        <span aria-hidden>💸</span>
+        <span>{es ? "Propina" : "Tip"}</span>
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeSheet}
+        >
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
+            style={{ background: "rgba(19, 16, 26, 0.98)", border: "1px solid rgba(212,0,122,0.35)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="space-y-1">
+              <p className="text-base font-bold text-white">
+                💸 {es ? "Enviar propina a" : "Tip"}{" "}
+                <span className="text-pink-400">
+                  {creatorUsername ? `@${creatorUsername}` : (es ? "este creador" : "this creator")}
+                </span>
+              </p>
+              <p className="text-[11px] text-white/60">
+                {es
+                  ? "USDC en Base o Ru$h 💎. 100% va al creador, al instante."
+                  : "USDC on Base or Ru$h 💎. 100% goes to the creator, instantly."}
+              </p>
+            </div>
+
+            {/* Preset chips — same dual-label ($USD + Ru$h) as MainStage */}
+            <div className="grid grid-cols-4 gap-2">
+              {TIP_PRESETS_USD.map((amt, i) => {
+                const rushAmt = TIP_PRESETS_RUSH[i];
+                const selected = tipAmount === amt;
+                return (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => {
+                      setTipAmount(amt);
+                      try { localStorage.setItem("pnptv:lastTipUsd", String(amt)); } catch { /* blocked */ }
+                    }}
+                    className={`py-2.5 rounded-lg text-center transition-colors ${
+                      selected
+                        ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
+                        : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
+                    }`}
+                  >
+                    <span className="block text-sm font-bold">${amt}</span>
+                    <span className="block text-[10px] opacity-70">{rushAmt} 💎</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom amount */}
+            <input
+              type="number"
+              min={1}
+              max={500}
+              step={1}
+              value={tipAmount}
+              onChange={(e) => {
+                const v = parseInt(e.target.value || "0", 10);
+                if (Number.isFinite(v) && v > 0) {
+                  const clamped = Math.min(500, v);
+                  setTipAmount(clamped);
+                  try { localStorage.setItem("pnptv:lastTipUsd", String(clamped)); } catch { /* blocked */ }
+                }
+              }}
+              className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+              placeholder={es ? "Cantidad personalizada ($)" : "Custom amount ($)"}
+            />
+            <input
+              type="text"
+              maxLength={140}
+              value={tipMessage}
+              onChange={(e) => setTipMessage(e.target.value)}
+              className="w-full py-2 px-3 rounded-lg text-xs text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+              placeholder={es ? "Agrega un mensaje (opcional)" : "Add a message (optional)"}
+            />
+
+            {!privyAuthenticated ? (
+              <button
+                type="button"
+                onClick={() => privyLogin()}
+                className="w-full py-3 rounded-xl text-sm font-bold text-white transition-transform active:scale-95"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                {es ? "Inicia sesión para enviar propina" : "Sign in to send tip"}
+              </button>
+            ) : (
+              <>
+                {/* Rail selector — Ru$h (instant, no fees) vs USDC (gasless on Base) */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTipRailMode("rush")}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                      tipRailMode === "rush"
+                        ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                        : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                    }`}
+                  >
+                    {es ? "Pagar con Ru$h 💎 — instante" : "Pay with Ru$h 💎 — instant"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTipRailMode("usdc")}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                      tipRailMode === "usdc"
+                        ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
+                        : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                    }`}
+                  >
+                    {es ? "Pagar con USDC — sin gas" : "Pay with USDC — gasless"}
+                  </button>
+                </div>
+
+                {tipRailMode === "rush" ? (
+                  // Ledger mode — content pages are not Main Stage, so we
+                  // don't fire tip animations. TipRushRail's `mode="ledger"`
+                  // hits /api/webapp/tip-tokens which enforces the same
+                  // Crystal-only gate as /live/tips.
+                  <_Suspense fallback={<div className="h-16 flex items-center justify-center text-white/40 text-xs">…</div>}>
+                    <_LazyTipRushRail
+                      creatorId={creatorId}
+                      creatorName={creatorUsername ? `@${creatorUsername}` : undefined}
+                      mode="ledger"
+                      variant="full"
+                      showMessage={false}
+                      showBalance
+                      allowGifted={false}
+                      onSuccess={() => setTimeout(closeSheet, 1200)}
+                    />
+                  </_Suspense>
+                ) : (
+                  <WalletPayCard
+                    surface="tip"
+                    amountUsd={tipAmount}
+                    entitlementSpec={{
+                      creator_id: creatorId,
+                      message: tipMessage.trim() || undefined,
+                    }}
+                    metadata={{ context: "content_page" }}
+                    label={es ? `Enviar propina de $${tipAmount}` : `Send $${tipAmount} tip`}
+                    lang={lang}
+                    onSuccess={() => setTimeout(closeSheet, 1200)}
+                    compact
+                  />
+                )}
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={closeSheet}
+              className="w-full text-xs text-white/50 hover:text-white/80 transition"
+            >
+              {es ? "Cancelar" : "Cancel"}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

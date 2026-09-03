@@ -10644,9 +10644,12 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
   if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel ID' });
 
   try {
-    // Fetch channel with creator info
+    // Fetch channel with creator info. crystal_creator_active_until +
+    // NOW() comparison in SQL avoids the JS `Infinity` bug (node-pg parses
+    // Postgres 'infinity' timestamptz as JS Number Infinity).
     const chRes = await getPool().query(
-      `SELECT cc.*, u.username, u.first_name, u.last_name, u.photo_file_id, u.creator_verified
+      `SELECT cc.*, u.username, u.first_name, u.last_name, u.photo_file_id, u.creator_verified,
+              (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW()) AS creator_crystal
        FROM creator_channels cc
        JOIN users u ON u.id = cc.creator_id
        WHERE cc.id = $1 AND cc.is_active = true`,
@@ -10716,6 +10719,11 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       priceUsd: ch.price_usd ? Number(ch.price_usd) : null,
       priceFreeForm: ch.price_free_form || null,
       requiresPrime: ch.access_type === 'prime',
+      // Crystal Creator status — used by the client to gate tip surfaces.
+      // Only Crystal Creators can receive tips (backend /api/webapp/tip-tokens
+      // + /api/proxy/live/tips + /api/wallet/checkout/initiate surface=tip
+      // return 403 RECIPIENT_NOT_CRYSTAL_CREATOR otherwise).
+      creatorCrystal: ch.creator_crystal === true,
     };
 
     // Check access — owner/collaborator always allowed; otherwise delegate to
@@ -10753,6 +10761,8 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
                 (cv.promo_post_id IS NOT NULL AND cv.post_to_feed = false) AS is_mirrored,
                 u.username AS uploader_username,
                 COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username) AS uploader_display_name,
+                (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW()) AS uploader_crystal,
+                cv.uploader_id::text AS uploader_id,
                 COALESCE(sp.likes_count, 0) AS likes_count,
                 COALESCE(sp.hype_score, 0) AS hype_score,
                 CASE WHEN $2::text IS NOT NULL THEN EXISTS(
@@ -10822,8 +10832,10 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           ai_generated_meta: cv.ai_generated_meta ?? {},
           tagged_creator_ids: taggedIds,
           tagged_creators: taggedIds.map((id) => taggedCreatorMap[id]).filter(Boolean),
+          uploader_id: cv.uploader_id ?? null,
           uploader_username: cv.uploader_username ?? null,
           uploader_display_name: cv.uploader_display_name ?? null,
+          uploader_crystal: cv.uploader_crystal === true,
           likes_count: cv.likes_count ?? 0,
           hype_score: cv.hype_score ?? 0,
           liked_by_me: cv.liked_by_me === true,

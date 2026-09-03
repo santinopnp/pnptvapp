@@ -47,6 +47,7 @@ import { connectSocket } from "@/lib/socket";
 import { UploadVideoButton } from "@/components/channels/UploadVideoButton";
 import { UserAvatar } from "@/components/UserAvatar";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+import { TipButton } from "@/components/payments/PayInWalletChips";
 
 // ── Tier badge colors ────────────────────────────────────────────────────────
 const TIER_COLORS: Record<string, { bg: string; text: string; label: string }> = {
@@ -1298,6 +1299,18 @@ function ChannelDetailView({
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Tip the channel creator — only renders when creator is an
+                  active Crystal Creator (SQL-computed on the backend to
+                  handle the crystal_active_until = Infinity edge case).
+                  Hidden for the creator's own view + collaborators to avoid
+                  self-tipping surface noise. */}
+              {!channel.isOwner && !channel.isCollaborator && channel.creatorId && (
+                <TipButton
+                  creatorId={String(channel.creatorId)}
+                  creatorUsername={channel.creatorUsername ?? undefined}
+                  isCrystalCreator={channel.creatorCrystal === true}
+                />
+              )}
               <span className="text-sm text-pnp-textSecondary">
                 {(channel.videoCount ?? videos.length)} video{(channel.videoCount ?? videos.length) !== 1 ? "s" : ""}
               </span>
@@ -1809,6 +1822,27 @@ function ChannelDetailView({
                         </svg>
                       </button>
                     )}
+                    {/* Tip the uploader — collab channels may have a video
+                        uploaded by someone other than the channel owner, so
+                        we prefer uploader_* fields with a channel-owner
+                        fallback. Only shown when the uploader is an active
+                        Crystal Creator (SQL-computed on backend). */}
+                    {(() => {
+                      const uploaderId = pv?.uploader_id ?? channel.creatorId;
+                      const uploaderName = pv?.uploader_username ?? channel.creatorUsername ?? undefined;
+                      const uploaderCrystal = pv?.uploader_id
+                        ? pv?.uploader_crystal === true
+                        : channel.creatorCrystal === true;
+                      // Never tip yourself
+                      if (!uploaderId || String(user?.id ?? "") === String(uploaderId)) return null;
+                      return (
+                        <TipButton
+                          creatorId={String(uploaderId)}
+                          creatorUsername={uploaderName ?? undefined}
+                          isCrystalCreator={uploaderCrystal}
+                        />
+                      );
+                    })()}
                   </>
                 );
               })()}

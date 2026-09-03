@@ -4472,6 +4472,8 @@ export interface CreatorChannel {
   telegramChannelId?: string | null;
   bridgeEnabled?: boolean;
   requiresPrime?: boolean;
+  /** True when channel creator is an active Crystal Creator (can receive tips). */
+  creatorCrystal?: boolean;
 }
 
 export function getOwnChannels(): Promise<{ success: boolean; channels: CreatorChannel[] }> {
@@ -9538,6 +9540,8 @@ export interface ChannelVideo {
   uploader_display_name?: string | null;
   /** Username of the uploader. */
   uploader_username?: string | null;
+  /** True when the video's uploader is an active Crystal Creator (can receive tips). */
+  uploader_crystal?: boolean;
   /** Like count from the associated promo social_post row. */
   likes_count?: number;
   /** Hype score from the associated promo social_post row. */
