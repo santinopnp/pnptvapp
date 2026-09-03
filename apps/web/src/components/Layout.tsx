@@ -2188,10 +2188,210 @@ function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
 // address (copy + Basescan), fund-with-card, buy Ru$h, and a drill-in to
 // the BuyTokensModal for legacy provider fallbacks. Auto-hides on carve-out
 // surfaces where it would visually collide with call/tip controls.
+//
+// On /main-stage the FAB becomes an expandable action stack: tap to fan
+// sub-buttons upward (Tip Crystal Creators + Support Main Stage fallback),
+// tap a sub-button to open the compact QuickTipSheet below.
+
+// Shared Ru$h rate constant — 1 USD = 6 Ru$h (see feedback_token_rate.md).
+const RUSH_PER_USD = 6;
+
+// Preset Ru$h amounts for the quick-tip sheet.
+const QUICK_TIP_PRESETS = [
+  { rush: 30,  usd: 5  },
+  { rush: 60,  usd: 10 },
+  { rush: 120, usd: 20 },
+  { rush: 300, usd: 50 },
+] as const;
+
+// Platform donation user ID — Santino's account, used as the fallback
+// recipient when no Crystal Creator is on stage.
+const PLATFORM_DONATION_USER_ID = "8599671840";
+
+interface QuickTipRecipient {
+  userId: string;
+  /** Display label — @username or "Main Stage" for donation mode. */
+  label: string;
+  isDonation: boolean;
+}
+
+// ── QuickTipSheet ──────────────────────────────────────────────────────────
+// Compact bottom sheet (~40% vh) opened by the Main Stage FAB action stack.
+// Composes TipRushRail (Ru$h, "live" mode fires tip animations) and
+// WalletPayCard (USDC on Base, gasless via Privy) as two side-by-side rails.
+//
+// This component is defined inline in Layout.tsx (per feedback_no_new_files.md).
+
+function QuickTipSheet({
+  recipient,
+  onClose,
+}: {
+  recipient: QuickTipRecipient;
+  onClose: () => void;
+}) {
+  const [selectedRush, setSelectedRush] = useState<number>(QUICK_TIP_PRESETS[1].rush);
+  const [railMode, setRailMode] = useState<"rush" | "usdc">("rush");
+  const [rushDone, setRushDone] = useState(false);
+
+  // Derived USD amount for WalletPayCard based on selected preset.
+  const selectedUsd = selectedRush / RUSH_PER_USD;
+
+  // entitlementSpec mirrors what MainStage.tsx passes to WalletPayCard.
+  const entitlementSpec = {
+    creator_id: recipient.userId,
+  };
+  const metadata = {
+    context: "main_stage_fab",
+    ...(recipient.isDonation ? { donation: "platform" } : {}),
+  };
+
+  return (
+    // Backdrop — click outside to dismiss.
+    <div
+      className="fixed inset-0 z-[110] flex items-end justify-center"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div
+        className="relative w-full max-w-md rounded-t-2xl p-5 space-y-4"
+        style={{
+          background: "rgba(19,16,26,0.98)",
+          border: "1px solid rgba(212,0,122,0.35)",
+          maxHeight: "44vh",
+          overflowY: "auto",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            {recipient.isDonation ? (
+              <p className="text-sm font-bold text-white">
+                Support Main Stage — Community Donation
+              </p>
+            ) : (
+              <p className="text-sm font-bold text-white">
+                Tip <span className="text-pink-400">{recipient.label}</span>
+              </p>
+            )}
+            <p className="text-[11px] text-white/50 mt-0.5">
+              {recipient.isDonation
+                ? "Your donation supports PNPtv and the Main Stage."
+                : "100% goes to the creator instantly."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-white/40 hover:text-white/80 transition-colors text-xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Preset chips — shared between both rails */}
+        <div className="grid grid-cols-4 gap-2">
+          {QUICK_TIP_PRESETS.map(({ rush, usd }) => (
+            <button
+              key={rush}
+              type="button"
+              onClick={() => { setSelectedRush(rush); setRushDone(false); }}
+              className={`py-2.5 rounded-lg text-center transition-colors ${
+                selectedRush === rush
+                  ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
+                  : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
+              }`}
+            >
+              <span className="block text-sm font-bold">{rush} 💎</span>
+              <span className="block text-[10px] text-white/60">~${usd}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Rail selector */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setRailMode("rush")}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+              railMode === "rush"
+                ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+            }`}
+          >
+            Pay with Ru$h 💎 — instant
+          </button>
+          <button
+            type="button"
+            onClick={() => setRailMode("usdc")}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+              railMode === "usdc"
+                ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
+                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+            }`}
+          >
+            Pay with USDC — gasless
+          </button>
+        </div>
+
+        {/* Active rail */}
+        {railMode === "rush" && !rushDone && (
+          <Suspense fallback={<div className="h-16 flex items-center justify-center text-white/40 text-xs">Loading…</div>}>
+            <LazyTipRushRail
+              creatorId={recipient.userId}
+              creatorName={recipient.label}
+              mode="live"
+              variant="compact"
+              showMessage={false}
+              showBalance={false}
+              allowGifted={recipient.userId === PLATFORM_DONATION_USER_ID}
+              selectedPreset={selectedRush}
+              onSuccess={() => { setRushDone(true); setTimeout(onClose, 1200); }}
+            />
+          </Suspense>
+        )}
+        {railMode === "rush" && rushDone && (
+          <p className="text-center text-sm text-emerald-400 font-semibold py-3">
+            Tip sent! 💎
+          </p>
+        )}
+        {railMode === "usdc" && (
+          <Suspense fallback={<div className="h-16 flex items-center justify-center text-white/40 text-xs">Loading…</div>}>
+            <LazyWalletPayCard
+              surface="tip"
+              amountUsd={selectedUsd}
+              entitlementSpec={entitlementSpec}
+              metadata={metadata}
+              label={`Send ${selectedRush} Ru$h ($${selectedUsd}) tip`}
+              lang="en"
+              compact
+              onSuccess={() => setTimeout(onClose, 1200)}
+            />
+          </Suspense>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── WalletFloater ─────────────────────────────────────────────────────────────
+
 function WalletFloater() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  // Main Stage context: expanded action stack state + fetched state + tip sheet.
+  const [stackOpen, setStackOpen] = useState(false);
+  const [msState, setMsState] = useState<{
+    crystalOnStage: Array<{ userId: string; username: string | null }>;
+    platformDonationUserId: string;
+  } | null>(null);
+  const [tipRecipient, setTipRecipient] = useState<QuickTipRecipient | null>(null);
   const path = location.pathname;
+  const isMainStage = path === "/main-stage";
+
   // Auto-open on ?openWallet=1 so /wallet deep-links (push notifications,
   // broadcast emails, etc.) that redirect here actually surface the sheet.
   useEffect(() => {
@@ -2205,8 +2405,159 @@ function WalletFloater() {
       window.history.replaceState({}, "", location.pathname + (search ? `?${search}` : "") + location.hash);
     }
   }, [location.search, location.pathname, location.hash]);
+
+  // Poll /api/main-stage/state while on Main Stage so newly-arriving Crystal
+  // Creators surface in the action stack without a page reload. Stops on
+  // unmount / navigation away.
+  useEffect(() => {
+    if (!isMainStage) {
+      setMsState(null);
+      setStackOpen(false);
+      return;
+    }
+    let cancelled = false;
+    function fetchState() {
+      import("@/lib/api")
+        .then(({ getMainStageState }) => getMainStageState())
+        .then((state) => {
+          if (cancelled) return;
+          const onStage = state.spotlight?.onStage ?? [];
+          const crystalOnStage = onStage
+            .filter((e) => e.isCrystal)
+            .slice(0, 2);
+          setMsState({
+            crystalOnStage,
+            platformDonationUserId: state.platformDonationUserId ?? PLATFORM_DONATION_USER_ID,
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setMsState({ crystalOnStage: [], platformDonationUserId: PLATFORM_DONATION_USER_ID });
+          }
+        });
+    }
+    fetchState();
+    const interval = setInterval(fetchState, 10_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [isMainStage]);
+
+  // Collapse stack when navigating away.
+  useEffect(() => {
+    if (!isMainStage) setStackOpen(false);
+  }, [isMainStage]);
+
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
+
+  // ── Main Stage mode: expandable action stack ─────────────────────────────
+  if (isMainStage) {
+    // Build sub-button list from Crystal Creators + the always-present Support button.
+    const crystals = msState?.crystalOnStage ?? [];
+    const donationUserId = msState?.platformDonationUserId ?? PLATFORM_DONATION_USER_ID;
+
+    const subButtons: QuickTipRecipient[] = [
+      ...crystals.map((c) => ({
+        userId: c.userId,
+        label: c.username ? `@${c.username}` : c.userId,
+        isDonation: false,
+      })),
+      {
+        userId: donationUserId,
+        label: "Main Stage",
+        isDonation: true,
+      },
+    ];
+
+    function handleSubButton(recipient: QuickTipRecipient) {
+      setStackOpen(false);
+      setTipRecipient(recipient);
+    }
+
+    function handleFabClick() {
+      if (stackOpen) {
+        setStackOpen(false);
+      } else {
+        setStackOpen(true);
+      }
+    }
+
+    return (
+      <>
+        {/* Sub-buttons — fan upward above the FAB, visible when stackOpen */}
+        <div
+          className="fixed z-[45] flex flex-col-reverse items-end gap-2.5"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px) + 60px)",
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            // Pointer events only when open so taps-through work while collapsed.
+            pointerEvents: stackOpen ? "auto" : "none",
+          }}
+        >
+          {subButtons.map((btn) => (
+            <button
+              key={btn.userId + (btn.isDonation ? "-donation" : "")}
+              type="button"
+              onClick={() => handleSubButton(btn)}
+              aria-label={btn.isDonation ? "Support Main Stage" : `Tip ${btn.label}`}
+              className={`flex items-center gap-2 pl-3 pr-4 rounded-full text-xs font-bold text-white shadow-lg border border-white/15 backdrop-blur-md transition-all duration-200 ${
+                stackOpen ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+              }`}
+              style={{
+                height: 40,
+                background: btn.isDonation
+                  ? "linear-gradient(135deg,#6366f1,#4f46e5)"
+                  : "linear-gradient(135deg,#D4007A,#E69138)",
+                transitionDelay: stackOpen ? "0ms" : "0ms",
+              }}
+            >
+              <span aria-hidden>💎</span>
+              <span>
+                {btn.isDonation ? "Support Main Stage" : `Tip ${btn.label}`}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Backdrop — tap outside to collapse stack */}
+        {stackOpen && (
+          <div
+            className="fixed inset-0 z-[44]"
+            onClick={() => setStackOpen(false)}
+            aria-hidden
+          />
+        )}
+
+        {/* Primary FAB — identical style/size/position as the default FAB */}
+        <button
+          type="button"
+          onClick={handleFabClick}
+          aria-label={stackOpen ? "Close tip menu" : "Open tip menu"}
+          aria-expanded={stackOpen}
+          className="fixed z-[46] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            width: 52, height: 52,
+            background: "linear-gradient(135deg,#10b981,#059669)",
+            color: "white",
+            fontSize: 22,
+          }}
+        >
+          💎
+        </button>
+
+        {/* Quick-tip sheet — mounted when a sub-button is tapped */}
+        {tipRecipient && (
+          <QuickTipSheet
+            recipient={tipRecipient}
+            onClose={() => setTipRecipient(null)}
+          />
+        )}
+      </>
+    );
+  }
+
+  // ── Default mode: open WalletHomeSheet ────────────────────────────────────
   return (
     <>
       <button
@@ -2239,6 +2590,28 @@ function WalletFloater() {
 const LazyWalletHomeSheet = lazy(async () => {
   const mod = await import("@/components/payments/PayInWalletChips");
   return { default: mod.WalletHomeSheet };
+});
+
+// Lazy-load TipRushRail for the QuickTipSheet Ru$h rail — keeps the base
+// Layout bundle lean; only downloaded when a user taps a tip sub-button.
+// The component signature is TipRushRailProps — we additionally accept
+// selectedPreset so QuickTipSheet can drive the initial selection.
+const LazyTipRushRail = lazy(async () => {
+  const mod = await import("@/components/payments/TipRushRail");
+  // Wrap to accept selectedPreset (drives TipRushRail's internal state via
+  // the preset prop if TipRushRail supports it, otherwise ignored gracefully).
+  type Props = React.ComponentProps<typeof mod.TipRushRail> & { selectedPreset?: number };
+  const Wrapped = (props: Props) => {
+    const { selectedPreset: _ignored, ...rest } = props;
+    return <mod.TipRushRail {...rest} />;
+  };
+  return { default: Wrapped };
+});
+
+// Lazy-load WalletPayCard for the QuickTipSheet USDC rail.
+const LazyWalletPayCard = lazy(async () => {
+  const mod = await import("@/components/payments/PayInWalletChips");
+  return { default: mod.WalletPayCard };
 });
 
 // REMOVED 2026-05-01 — FloatingMainStagePlayer (220×130 fixed PiP video).
