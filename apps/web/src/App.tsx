@@ -462,6 +462,10 @@ export default function App() {
                       supportedChains: [base, mainnet],
                       loginMethods: ["email", "google", "telegram", "twitter", "wallet"],
                       embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+                      // Own WalletConnect Cloud project id — dedicated rate-limit +
+                      // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
+                      // shared id if unset (works but with silent throttling).
+                      walletConnectCloudProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined,
                       appearance: { theme: "dark", accentColor: "#D4007A" },
                     }}
                   >

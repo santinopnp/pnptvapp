@@ -501,7 +501,20 @@ function StepCrypto({
   const es = t.lang === "es";
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
-  const { connectWallet } = useConnectWallet();
+  const [connectError, setConnectError] = useState<string | null>(null);
+  // Callbacks so we can dismiss the spinner on cancel + show a real error if
+  // WalletConnect handshake fails (was silently hanging the "Creating…" UI).
+  const { connectWallet } = useConnectWallet({
+    onSuccess: () => { setConnectError(null); setConnecting(false); },
+    onError: (err) => {
+      setConnecting(false);
+      const msg = typeof err === "string" ? err : String(err);
+      if (/exited|closed|cancel|reject/i.test(msg)) return;
+      setConnectError(es
+        ? "No pudimos conectar tu wallet. Intenta de nuevo."
+        : "We couldn't connect your wallet. Please try again.");
+    },
+  });
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
   const walletReady = authenticated && !!embeddedWallet;
   const [connecting, setConnecting] = useState(false);
@@ -516,12 +529,14 @@ function StepCrypto({
 
   // "Create my wallet" path — social login (Telegram / X) → embedded wallet auto-created
   const handleCreateWallet = useCallback(() => {
+    setConnectError(null);
     setConnecting(true);
     login();
   }, [login]);
 
   // "I already use crypto" path — connect existing external wallet (MetaMask, Coinbase, …)
   const handleConnectExternal = useCallback(() => {
+    setConnectError(null);
     setConnecting(true);
     connectWallet();
   }, [connectWallet]);
@@ -625,6 +640,12 @@ function StepCrypto({
               </p>
             </div>
           </button>
+
+          {connectError && (
+            <div className="text-[11px] leading-snug text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
+              {connectError}
+            </div>
+          )}
 
           {/* Security note */}
           <div className="flex items-start gap-3 p-3 rounded-xl bg-pnp-surface/50 border border-pnp-border/50">

@@ -197,7 +197,7 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
 import { useEffect as _useEffect, useState as _useState } from "react";
-import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -312,11 +312,34 @@ export function WalletPayCard({
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const { connectWallet } = useConnectWallet();
+  const [connectError, setConnectError] = _useState<string | null>(null);
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => {
+      setConnectError(null);
+      if (wallet?.address) _setPreferredWallet(wallet.address);
+    },
+    onError: (err) => {
+      const msg = typeof err === "string" ? err : String(err);
+      if (/exited|closed|cancel|reject/i.test(msg)) return;
+      setConnectError(msg || (es ? "No se pudo conectar la billetera." : "Could not connect wallet."));
+      reportWalletClientError("connectWallet", err, { surface });
+    },
+  });
   const { sendTransaction: privySendTransaction } = useSendTransaction();
-  // Active wallet: prefer the embedded PNPtv wallet (Privy) but fall back to
-  // the first connected external wallet (Trust/MetaMask via WalletConnect).
-  const activeWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
+  // Active wallet: honor user's preferred wallet (WalletHomeSheet writes this)
+  // so tips/subs use the SAME wallet the user just picked. Fallback = embedded
+  // then first external — never silently override an explicit choice.
+  // State-backed so switching triggers re-render; sync to localStorage below.
+  const [preferredAddr, setPreferredAddrState] = _useState<string | null>(() => _getPreferredWallet());
+  const setPreferred = (addr: string) => {
+    _setPreferredWallet(addr);
+    setPreferredAddrState(addr);
+  };
+  const preferredWallet = preferredAddr ? wallets.find((w) => w.address === preferredAddr) : null;
+  const activeWallet = preferredWallet
+    || wallets.find((w) => w.walletClientType === "privy")
+    || wallets[0]
+    || null;
   const isEmbedded = activeWallet?.walletClientType === "privy";
   const [usdc, setUsdc] = _useState<number | null>(null);
   const [loading, setLoading] = _useState(false);
@@ -369,13 +392,22 @@ export function WalletPayCard({
         <button
           type="button"
           onClick={() => {
+            setConnectError(null);
             try { connectWallet(); }
-            catch (err) { reportWalletClientError("connectWallet", err, { surface }); }
+            catch (err) {
+              reportWalletClientError("connectWallet", err, { surface });
+              setConnectError(err instanceof Error ? err.message : String(err));
+            }
           }}
           className="w-full mt-2 py-2 rounded-xl text-[11px] font-semibold text-white/70 border border-white/10 hover:bg-white/[0.04] transition"
         >
           {es ? "o conecta Trust / MetaMask" : "or connect Trust / MetaMask"}
         </button>
+        {connectError && (
+          <p className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5 mt-2">
+            {connectError}
+          </p>
+        )}
         <p className="text-[9px] leading-snug text-pnp-textSecondary/70 mt-2 text-center">
           {es
             ? "Con tu Billetera PNPtv — sin comisiones y sin apps."
@@ -403,10 +435,12 @@ export function WalletPayCard({
   const canAfford = usdc != null && usdc >= amountUsd;
 
   const handleConnectExternal = () => {
+    setConnectError(null);
     try {
       connectWallet();
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { surface });
+      setConnectError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -575,9 +609,52 @@ export function WalletPayCard({
         </div>
       </div>
 
+      {/* Wallet switcher — appears when the user has both an embedded and one
+          or more external wallets. Tapping switches which wallet signs this
+          specific payment AND persists the choice for future payments. Same
+          shared preference key as WalletHomeSheet so both surfaces agree. */}
+      {wallets.length > 1 && (
+        <div className="flex flex-wrap gap-1 items-center">
+          <span className="text-[9px] uppercase tracking-wide text-white/40 font-semibold pr-1">
+            {es ? "Pagar desde:" : "Pay from:"}
+          </span>
+          {wallets.map((w) => {
+            const isActive = activeWallet?.address === w.address;
+            const isPrivy = w.walletClientType === "privy";
+            const walletLabel = isPrivy
+              ? "PNPtv"
+              : w.walletClientType === "metamask"
+                ? "MetaMask"
+                : w.walletClientType === "coinbase_wallet"
+                  ? "Coinbase"
+                  : w.walletClientType === "walletconnect"
+                    ? "WalletConnect"
+                    : "External";
+            return (
+              <button
+                key={w.address}
+                type="button"
+                onClick={() => setPreferred(w.address)}
+                className={`text-[10px] font-semibold px-2 py-1 rounded-md transition ${
+                  isActive
+                    ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
+                    : "bg-white/[0.04] text-white/60 border border-white/10 hover:bg-white/[0.08]"
+                }`}
+              >
+                {isActive ? "✓ " : ""}{walletLabel}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {error && (
         <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
           {error}
+        </div>
+      )}
+      {connectError && (
+        <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+          {connectError}
         </div>
       )}
       {success && (
@@ -725,11 +802,45 @@ const _LazyBuyTokensModal = _lazy(() =>
   import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
 );
 
+// Preferred wallet address is stored per-Privy-app so a returning user lands on
+// the same wallet they last picked (e.g. Trust) instead of snapping back to the
+// embedded default every reload. Shared with WalletPayCard so both surfaces
+// agree on which wallet is active.
+const _PREFERRED_WALLET_KEY = "pnptv.wallet.preferred";
+const _getPreferredWallet = (): string | null => {
+  try { return localStorage.getItem(_PREFERRED_WALLET_KEY); } catch { return null; }
+};
+const _setPreferredWallet = (addr: string | null) => {
+  try {
+    if (addr) localStorage.setItem(_PREFERRED_WALLET_KEY, addr);
+    else localStorage.removeItem(_PREFERRED_WALLET_KEY);
+  } catch { /* storage full / blocked — non-fatal */ }
+};
+
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const { authenticated, login, exportWallet } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const { connectWallet } = useConnectWallet();
+  const [connectError, setConnectError] = _useState<string | null>(null);
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => {
+      setConnectError(null);
+      // Auto-switch to freshly connected wallet + persist as preferred.
+      if (wallet?.address) {
+        setActiveAddress(wallet.address);
+        _setPreferredWallet(wallet.address);
+      }
+    },
+    onError: (err) => {
+      // Privy fires onError for user-cancel too — filter those out so we don't
+      // show a scary error when the user just closed the modal.
+      const msg = typeof err === "string" ? err : String(err);
+      if (/exited|closed|cancel|reject/i.test(msg)) return;
+      setConnectError(msg || "Could not connect wallet — please try again.");
+      reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
+    },
+  });
+  const { unlink: unlinkWallet } = useUnlinkWallet();
   // Privy's own tx sender — handles chain switching + fee estimation on the
   // embedded wallet correctly (unlike viem's walletClient which was ignoring
   // wallet_switchEthereumChain when we tried it, defaulting to Base and
@@ -738,16 +849,21 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
   // Wallet selector: user may have both an embedded PNPtv wallet AND external
   // (Trust/MetaMask via WalletConnect). When multiple, they pick which one the
-  // balances + Fund/Send actions target. Default = embedded (created by
-  // "Create wallet") then first external.
+  // balances + Fund/Send actions target. Preferred wallet (localStorage) wins;
+  // fallback = embedded then first external.
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || null;
   const externalWallets = wallets.filter((w) => w.walletClientType !== "privy");
   const [activeAddress, setActiveAddress] = _useState<string | null>(null);
+  const [unlinkingAddress, setUnlinkingAddress] = _useState<string | null>(null);
 
   _useEffect(() => {
     // Whenever wallet list changes, ensure activeAddress still exists in it.
     if (activeAddress && wallets.some((w) => w.address === activeAddress)) return;
-    const fallback = embeddedWallet?.address || externalWallets[0]?.address || null;
+    const preferred = _getPreferredWallet();
+    const preferredStillConnected = preferred && wallets.some((w) => w.address === preferred);
+    const fallback = preferredStillConnected
+      ? preferred
+      : (embeddedWallet?.address || externalWallets[0]?.address || null);
     setActiveAddress(fallback);
   }, [wallets.map((w) => w.address).join(","), embeddedWallet?.address]);
 
@@ -899,11 +1015,48 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
   const handleConnectExternal = () => {
     setError(null);
+    setConnectError(null);
     try {
       connectWallet();
     } catch (err: unknown) {
       reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
-      setError(err instanceof Error ? err.message : String(err));
+      setConnectError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // Set a wallet as the persistent default across reloads + across surfaces
+  // (WalletPayCard reads the same localStorage key). Switching active wallet
+  // in the picker also updates the preference — this is the explicit form.
+  const handleSelectWallet = (addr: string) => {
+    setActiveAddress(addr);
+    _setPreferredWallet(addr);
+  };
+
+  // Disconnect an external wallet from the Privy account. Embedded PNPtv
+  // wallet is intentionally NOT unlinkable here — many flows (gas topup,
+  // card onramp, Ru$h ledger link) assume it exists. Users who really want
+  // to remove it can do so from Privy's account UI directly.
+  const handleUnlinkWallet = async (addr: string, isEmbedded: boolean) => {
+    if (isEmbedded) return;
+    if (!confirm("Disconnect this wallet from your PNPtv account? You can reconnect it any time.")) return;
+    setError(null);
+    setConnectError(null);
+    setUnlinkingAddress(addr);
+    try {
+      await unlinkWallet({ address: addr });
+      if (activeAddress === addr) {
+        // Fall back to embedded if the just-unlinked wallet was active.
+        const fallback = embeddedWallet?.address || wallets.find((w) => w.address !== addr)?.address || null;
+        setActiveAddress(fallback);
+        _setPreferredWallet(fallback);
+      }
+      if (_getPreferredWallet() === addr) _setPreferredWallet(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setConnectError(`Could not disconnect: ${msg}`);
+      reportWalletClientError("unlinkWallet", err, { source: "WalletHomeSheet", address: addr });
+    } finally {
+      setUnlinkingAddress(null);
     }
   };
 
@@ -1371,6 +1524,11 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     {_isEs ? "🔗 Conectar Trust / MetaMask" : "🔗 Connect Trust / MetaMask"}
                   </button>
                 </div>
+                {connectError && (
+                  <div className="text-[10px] leading-snug text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2 max-w-xs mx-auto">
+                    {connectError}
+                  </div>
+                )}
                 <p className="text-[10px] text-white/40 leading-relaxed pt-1">
                   {_isEs
                     ? "Tu billetera te sigue entre dispositivos — mismo login, misma billetera."
@@ -1571,26 +1729,49 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 <div className="flex flex-wrap gap-1.5">
                   {wallets.map((w) => {
                     const isActive = w.address === activeAddress;
-                    const label = w.walletClientType === "privy"
+                    const isEmbedded = w.walletClientType === "privy";
+                    const isUnlinking = unlinkingAddress === w.address;
+                    const label = isEmbedded
                       ? "PNPtv"
                       : w.walletClientType === "metamask"
                         ? "MetaMask"
                         : w.walletClientType === "coinbase_wallet"
                           ? "Coinbase"
-                          : w.walletClientType || "External";
+                          : w.walletClientType === "walletconnect"
+                            ? "WalletConnect"
+                            : w.walletClientType || "External";
                     return (
-                      <button
+                      <div
                         key={w.address}
-                        type="button"
-                        onClick={() => setActiveAddress(w.address)}
-                        className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition ${
+                        className={`inline-flex items-stretch rounded-lg overflow-hidden border transition ${
                           isActive
-                            ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
-                            : "bg-white/[0.04] text-white/70 border border-white/10 hover:bg-white/[0.08]"
+                            ? "bg-emerald-500/20 border-emerald-500/40"
+                            : "bg-white/[0.04] border-white/10 hover:bg-white/[0.08]"
                         }`}
                       >
-                        {label} · {w.address.slice(0, 5)}…{w.address.slice(-3)}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectWallet(w.address)}
+                          className={`text-[11px] font-semibold px-2.5 py-1.5 transition ${
+                            isActive ? "text-emerald-200" : "text-white/70"
+                          }`}
+                          title={isActive ? "Active wallet" : "Use this wallet"}
+                        >
+                          {isActive ? "✓ " : ""}{label} · {w.address.slice(0, 5)}…{w.address.slice(-3)}
+                        </button>
+                        {!isEmbedded && (
+                          <button
+                            type="button"
+                            onClick={() => handleUnlinkWallet(w.address, isEmbedded)}
+                            disabled={isUnlinking}
+                            aria-label={`Disconnect ${label}`}
+                            title="Disconnect wallet"
+                            className="px-2 py-1.5 text-white/40 hover:text-red-300 hover:bg-red-500/10 border-l border-white/10 transition disabled:opacity-40"
+                          >
+                            {isUnlinking ? "…" : "×"}
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                   {/* Always-present "+ Connect" chip — even a PNPtv-embedded user
@@ -1603,6 +1784,16 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     + Connect Trust / MetaMask
                   </button>
                 </div>
+                {connectError && (
+                  <div className="mt-2 text-[10px] leading-snug text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+                    {connectError}
+                  </div>
+                )}
+                {wallets.length > 1 && (
+                  <p className="mt-1.5 text-[10px] text-white/40 px-1 leading-snug">
+                    Your choice sticks across reloads and pages.
+                  </p>
+                )}
               </div>
 
               {/* Spend-it-now nudge — appears when user has meaningful on-chain
