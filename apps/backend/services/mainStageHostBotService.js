@@ -161,10 +161,14 @@ async function getCurrentCammerName() {
   try {
     const cammer = await getRedis().get('mainstage:spotlight:cammer');
     if (!cammer) return null;
-    const r = await query('SELECT first_name, username FROM users WHERE id = $1 OR telegram = $1 LIMIT 1', [String(cammer)]);
+    const r = await query('SELECT id::text AS id, first_name, username FROM users WHERE id = $1 OR telegram = $1 LIMIT 1', [String(cammer)]);
     const row = r.rows && r.rows[0];
     if (!row) return null;
-    return row.first_name || row.username || null;
+    const name = row.first_name || row.username || null;
+    if (!name) return null;
+    // Return an object so composeTipMsg can attach the recipientUserId to the
+    // CTA. Callers only reading `.name` still work; back-compat via toString.
+    return { name, userId: row.id ? String(row.id) : null };
   } catch (_) {
     return null;
   }
@@ -206,15 +210,20 @@ function bilingual(pair) {
 }
 
 async function composeTipMsg() {
-  const name = await getCurrentCammerName();
-  if (name) {
+  const cammer = await getCurrentCammerName();
+  if (cammer && cammer.name) {
     const t = pickLangPair(TIP_TEMPLATES);
+    const cta = { label: 'Send tip · Enviar tip', action: 'open-tip' };
+    // Only forward recipientUserId when we resolved the current cammer to a
+    // real user id. Generic "tip anyone on stage" prompts (cinema fallback)
+    // leave the field out so the client falls back to its own picker.
+    if (cammer.userId) cta.recipientUserId = String(cammer.userId);
     return {
       text: bilingual({
-        es: t.es.replace('{name}', name),
-        en: t.en.replace('{name}', name),
+        es: t.es.replace('{name}', cammer.name),
+        en: t.en.replace('{name}', cammer.name),
       }),
-      cta: { label: 'Send tip · Enviar tip', action: 'open-tip' },
+      cta,
     };
   }
   const t = pickLangPair(TIP_TEMPLATES_CINEMA);

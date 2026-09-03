@@ -11324,12 +11324,31 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
 
     // --- Token-based instant tip ---
     if (paymentMethod === 'tokens') {
+      // Idempotency belt-and-suspenders: the DB unique index on
+      // pnp_tips.idempotency_key handles server-round-trip retries with the
+      // same key, but rage-tap on the tip button generates a fresh UUID per
+      // click. A short Redis NX lock per (payer, recipient, amount) collapses
+      // those into a single tip so a double-tap = single debit + single
+      // broadcast. Lock TTL matches the wallet-tip dedup window used by
+      // /api/webapp/tip-tokens.
+      const rateLockKey = `mainstage:tip:${userId}:${resolvedPerformerUserId}:${numAmount}`;
+      const rateLockOk = await cache.setNX(rateLockKey, '1', 5);
+      if (!rateLockOk) {
+        return res.status(409).json({
+          success: false,
+          error: 'DUPLICATE_TIP',
+          message: 'Duplicate tip request. Please wait a moment.',
+        });
+      }
+      // Server-generated fallback key so the DB uniqueness dedup still fires
+      // even when older callers don't supply one.
+      const effectiveIdempotencyKey = idempotencyKey || crypto.randomUUID();
       // processTipWithTokens atomically debits wallet + inserts tip + emits sockets in one transaction.
       // ON CONFLICT on idempotency_key inside processTipWithTokens makes this dedup-safe atomically.
       let tokenTipResult;
       try {
         tokenTipResult = await PNPLiveTipsService.processTipWithTokens(
-          userId, numAmount, (message || '').slice(0, 200), resolvedPerformerId, idempotencyKey || null
+          userId, numAmount, (message || '').slice(0, 200), resolvedPerformerId, effectiveIdempotencyKey
         );
       } catch (tokenErr) {
         if (tokenErr.name === 'InsufficientFundsError') {
@@ -13915,7 +13934,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     ? rawMessage.trim().slice(0, 140) || null
     : null;
 
-  // Lookup recipient — must be an active performer
+  // Lookup recipient — must be an active performer and a non-deleted user
   const { query: dbQuery } = require('../../config/postgres');
   const { rows: recipientRows } = await dbQuery(
     `SELECT u.id::text AS id, u.username
@@ -13923,6 +13942,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
      JOIN performers p ON p.user_id = u.id::text
      WHERE (u.id::text = $1 OR u.username ILIKE $1)
        AND p.status = 'active'
+       AND u.is_deleted = false
      LIMIT 1`,
     [recipientId.trim()]
   );
@@ -13936,6 +13956,20 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
   // Anti-self-tip
   if (recipientUserId === String(payerUser.id)) {
     return res.status(400).json({ success: false, error: 'You cannot tip yourself.' });
+  }
+
+  // Crystal-Creator gate — mirrors /api/proxy/live/tips (CRIT-04). Only Crystal
+  // Creators (or the platform donation account for Support-the-Main-Stage
+  // flows) may receive tips. Without this gate a caller can curl-tip any
+  // active performer, bypassing the tier restriction enforced in the UI.
+  const PLATFORM_DONATION_USER_ID = '8599671840';
+  const isPlatformDonation = String(recipientUserId) === PLATFORM_DONATION_USER_ID;
+  if (!isPlatformDonation) {
+    const CreatorService = require('../../services/creatorService');
+    const isCrystal = await CreatorService.isCrystalCreator(String(recipientUserId));
+    if (!isCrystal) {
+      return res.status(403).json({ success: false, error: 'RECIPIENT_NOT_CRYSTAL_CREATOR' });
+    }
   }
 
   const payerUserId = String(payerUser.id);
@@ -13985,10 +14019,49 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
       externalClient: pgClient,
     });
 
-    await pgClient.query(
+    const { rows: tipInsertRows } = await pgClient.query(
       `INSERT INTO creator_tips (payer_id, creator_id, amount_usd, order_id, message, status)
-       VALUES ($1, $2, $3::numeric, $4, $5, 'completed')`,
+       VALUES ($1, $2, $3::numeric, $4, $5, 'completed')
+       RETURNING id`,
       [payerUserId, recipientUserId, amountUsd, orderId, message]
+    );
+    const creatorTipRowId = tipInsertRows[0]?.id;
+
+    // Weekly-payout linkage — mirror pnpLiveTipsService earnings insert so the
+    // payout batcher can see these Ru$h tips. Without this row, tokens tips
+    // credit the creator's Ru$h wallet but never generate a USD earnings
+    // record, so the creator can't cash out. Split matches CREATOR_REVENUE_RATE
+    // (70/30) with the standard 7-day hold used for live-tip earnings.
+    const {
+      CREATOR_REVENUE_RATE,
+      EARNINGS_HOLD_HOURS,
+    } = require('../../config/monetizationConfig');
+    const grossUsd = Number(amountUsd);
+    const amountCreatorUsd = Math.round(grossUsd * CREATOR_REVENUE_RATE * 100) / 100;
+    const amountPlatformUsd = Math.round((grossUsd - amountCreatorUsd) * 100) / 100;
+    const sourcePaymentId = `rush_tip:${creatorTipRowId || orderId}`;
+    await pgClient.query(
+      `INSERT INTO creator_earnings
+         (creator_id, amount_gross, amount_creator, amount_platform, status, available_at,
+          source_payment_id, is_tip, period_month, metadata)
+       VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval,
+               $6, true, date_trunc('month', CURRENT_DATE), $7::jsonb)
+       ON CONFLICT (source_payment_id, creator_id) DO NOTHING`,
+      [
+        recipientUserId,
+        grossUsd,
+        amountCreatorUsd,
+        amountPlatformUsd,
+        String(EARNINGS_HOLD_HOURS),
+        sourcePaymentId,
+        JSON.stringify({
+          payerUserId,
+          orderId,
+          rushAmount: parsedAmount,
+          rail: 'rush_tip',
+          creatorTipId: creatorTipRowId || null,
+        }),
+      ]
     );
 
     await pgClient.query('COMMIT');
@@ -16003,9 +16076,19 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
     if (!cid) throwErr('creator_id required', 400);
     if (cid === userId) throwErr('cannot tip yourself', 400);
     const { rows } = await dbQuery(
-      `SELECT id FROM users WHERE id::text = $1 AND creator_status = 'active'`, [cid]
+      `SELECT id FROM users WHERE id::text = $1 AND creator_status = 'active' AND is_deleted = false`, [cid]
     );
     if (rows.length === 0) throwErr('creator not found or inactive', 404);
+    // Crystal-Creator gate — mirrors /api/proxy/live/tips (CRIT-04) and
+    // /api/webapp/tip-tokens. Only Crystal Creators may receive tips through
+    // the wallet-checkout surface. The platform donation account (Santino) is
+    // allowlisted so the Support-the-Main-Stage donation flow keeps working.
+    const PLATFORM_DONATION_USER_ID = '8599671840';
+    if (cid !== PLATFORM_DONATION_USER_ID) {
+      const CreatorService = require('../../services/creatorService');
+      const isCrystal = await CreatorService.isCrystalCreator(cid);
+      if (!isCrystal) throwErr('RECIPIENT_NOT_CRYSTAL_CREATOR', 403);
+    }
     const amt = Number(spec?.amountUsd);
     if (!Number.isFinite(amt) || amt < 1 || amt > 500) throwErr('tip amount must be $1–$500', 400);
     return {
