@@ -1037,9 +1037,16 @@ export function sendTip(
   message?: string,
   paymentMethod: "tokens" = "tokens"
 ): Promise<{ success: boolean; tipId: number; paymentUrl: string | null; invoiceId?: string; checkoutUrl?: string; amount: number; paymentMethod: string; newBalance?: number }> {
+  // Idempotency key: dedupes accidental double-taps / retries on the backend
+  // so a single user intent = a single tip debit even if the request is fired
+  // twice. Backend accepts (and echoes) this key on /api/proxy/live/tips.
+  const idempotencyKey =
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID()
+      : `tip-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return request("/api/proxy/live/tips", {
     method: "POST",
-    body: { performerId, amount, message, paymentMethod },
+    body: { performerId, amount, message, paymentMethod, idempotencyKey },
   });
 }
 

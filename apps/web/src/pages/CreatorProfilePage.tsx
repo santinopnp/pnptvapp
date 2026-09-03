@@ -60,7 +60,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { UserAvatar } from "@/components/UserAvatar";
 import { BadgeRow } from "@/components/badges/UserBadges";
 import { CrystalServicesPanel } from "@/components/crystal/CrystalServicesPanel";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
 import type { CreatorType } from "@/components/creators/CreatorCard";
 import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
@@ -1481,9 +1481,9 @@ export default function CreatorProfilePage() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-5 gap-2 mb-3">
-                    {([30, 60, 90, 120, 150] as const).map((amt) => {
-                      const usdLabel = amt === 30 ? "$5" : amt === 60 ? "$10" : amt === 90 ? "$15" : amt === 120 ? "$20" : "$25";
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {TIP_PRESETS_RUSH.map((amt) => {
+                      const usdLabel = amt === 30 ? "$5" : amt === 60 ? "$10" : amt === 150 ? "$25" : amt === 300 ? "$50" : `$${Math.round(amt / 6)}`;
                       const selected = tipAmount === amt;
                       return (
                         <button

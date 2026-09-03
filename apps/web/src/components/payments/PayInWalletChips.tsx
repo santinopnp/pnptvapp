@@ -146,6 +146,15 @@ export function PayInWalletChips({
   );
 }
 
+// ── Unified tip presets ───────────────────────────────────────────────────
+// Single source of truth for tipping preset amounts across the app.
+// USD presets are used by USDC / fiat rails; Rush presets are the token
+// equivalents at 6 Ru$h = $1 (approximate). Any surface that shows tip
+// chips (MainStage tip sheet, WalletFloater QuickTipSheet, CreatorProfile)
+// should import these constants rather than hard-coding.
+export const TIP_PRESETS_USD = [5, 10, 25, 50] as const;
+export const TIP_PRESETS_RUSH = [30, 60, 150, 300] as const; // ~= $5/$10/$25/$50 at 6 Ru$h = $1
+
 // ── WalletCheckoutHero ────────────────────────────────────────────────────
 // Marketing pitch shown above any WalletPayCard entry point the first time
 // a user encounters wallet checkout. Named `Hero` because it's the one and

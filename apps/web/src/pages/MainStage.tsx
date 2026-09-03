@@ -34,7 +34,9 @@ import { NowPlayingChip } from "@/components/mainstage/NowPlayingChip";
 import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
-import { WalletPayCard } from "@/components/payments/PayInWalletChips";
+import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
+import { TipRushRail } from "@/components/payments/TipRushRail";
+import { usePrivy } from "@privy-io/react-auth";
 
 // ── Guest credential shape (written by MainStageGuestJoin, consumed once here) ─
 
@@ -446,7 +448,7 @@ interface ChatMessage {
   text: string;
   timestamp: number;
   kind?: 'auto';
-  cta?: { label: string; action?: 'open-tip'; href?: string } | null;
+  cta?: { label: string; action?: 'open-tip'; href?: string; recipientUserId?: string } | null;
 }
 interface FloatingReaction { id: string; emoji: string; x: number; }
 
@@ -546,8 +548,35 @@ export default function MainStage() {
   // Tracks which crystal creator is selected in the multi-cammer tip sheet.
   // null = use the first crystal creator in onStage (or donation account if none).
   const [tipSelectedCreatorId, setTipSelectedCreatorId] = useState<string | null>(null);
-  const [tipAmount, setTipAmount] = useState<number>(10);
+  // Persist last-selected tip amount across sessions (localStorage) so a $10
+  // repeat-tipper doesn't have to re-click every time. Falls back to the first
+  // unified preset ($5) if storage is unreadable or empty.
+  const [tipAmount, setTipAmount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem('pnptv:lastTipUsd');
+      const n = parseInt(raw ?? '', 10);
+      if (Number.isFinite(n) && n > 0 && n <= 500) return n;
+    } catch { /* storage blocked */ }
+    return TIP_PRESETS_USD[0];
+  });
+  // Rail selector — "rush" pays from the user's Ru$h balance (instant, no fees,
+  // fires MainStage tip animations). "usdc" pays gasless USDC on Base via
+  // WalletPayCard. Default = rush when the user's Ru$h balance covers the
+  // selected preset (converted to Rush at 6 = $1); otherwise usdc.
+  const [tipRailMode, setTipRailMode] = useState<'rush' | 'usdc'>('rush');
   const [tipMessage, setTipMessage] = useState<string>("");
+  const { authenticated: privyAuthenticated, login: privyLogin } = usePrivy();
+
+  // When the tip sheet opens, pick the smartest default rail: Ru$h if the
+  // user's Ru$h + gifted balance already covers the selected preset (6 = $1),
+  // else USDC so they don't hit an "insufficient" wall. Recomputes when the
+  // sheet is (re)opened or the selected amount changes.
+  useEffect(() => {
+    if (!showTipSheet) return;
+    const needRush = tipAmount * 6;
+    const haveRush = (tokenBalance ?? 0) + (giftedBalance ?? 0);
+    setTipRailMode(haveRush >= needRush ? 'rush' : 'usdc');
+  }, [showTipSheet, tipAmount, tokenBalance, giftedBalance]);
   // Seed with known community topics so the strip is always visible immediately,
   // even before the fetch resolves or if both network calls fail.
   const [mainTopics, setMainTopics] = useState<TopicLite[]>([
@@ -2283,7 +2312,25 @@ export default function MainStage() {
                           msg.cta.action === 'open-tip' ? (
                             <button
                               type="button"
-                              onClick={() => setShowTipSheet(true)}
+                              onClick={() => {
+                                // Pre-select the CTA's recipient (e.g. "Send tip to Dejesusof22"
+                                // chip should open the sheet already targeting Dejesusof22).
+                                // If the recipientUserId doesn't match anyone on stage, fall
+                                // through to default selection (first crystal / donation).
+                                const recipientId = msg.cta?.recipientUserId ?? null;
+                                if (recipientId) {
+                                  const onStage = state?.spotlight?.onStage ?? [];
+                                  const match = onStage.find((x) => String(x.userId) === String(recipientId));
+                                  if (!match && import.meta.env.DEV) {
+                                    // eslint-disable-next-line no-console
+                                    console.warn('[MainStage] chat CTA recipientUserId not on stage:', recipientId);
+                                  }
+                                  setTipSelectedCreatorId(recipientId);
+                                } else {
+                                  setTipSelectedCreatorId(null);
+                                }
+                                setShowTipSheet(true);
+                              }}
                               className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
                               style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
                             >
@@ -2465,21 +2512,32 @@ export default function MainStage() {
                   </div>
                 </div>
               )}
+              {/* Preset chips — dual-labeled ($USD + Rush at 6/$1). Selecting
+                  persists to localStorage so a repeat tipper sees the same
+                  default next time. */}
               <div className="grid grid-cols-4 gap-2">
-                {[5, 10, 25, 50].map((amt) => (
-                  <button
-                    key={amt}
-                    type="button"
-                    onClick={() => setTipAmount(amt)}
-                    className={`py-2.5 rounded-lg text-sm font-bold transition-colors ${
-                      tipAmount === amt
-                        ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
-                        : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
-                    }`}
-                  >
-                    ${amt}
-                  </button>
-                ))}
+                {TIP_PRESETS_USD.map((amt, i) => {
+                  const rushAmt = TIP_PRESETS_RUSH[i];
+                  const selected = tipAmount === amt;
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => {
+                        setTipAmount(amt);
+                        try { localStorage.setItem('pnptv:lastTipUsd', String(amt)); } catch { /* blocked */ }
+                      }}
+                      className={`py-2.5 rounded-lg text-center transition-colors ${
+                        selected
+                          ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
+                          : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      <span className="block text-sm font-bold">${amt}</span>
+                      <span className="block text-[10px] opacity-70">{rushAmt} 💎</span>
+                    </button>
+                  );
+                })}
               </div>
               <input
                 type="number"
@@ -2489,7 +2547,11 @@ export default function MainStage() {
                 value={tipAmount}
                 onChange={(e) => {
                   const v = parseInt(e.target.value || "0", 10);
-                  if (Number.isFinite(v) && v > 0) setTipAmount(Math.min(500, v));
+                  if (Number.isFinite(v) && v > 0) {
+                    const clamped = Math.min(500, v);
+                    setTipAmount(clamped);
+                    try { localStorage.setItem('pnptv:lastTipUsd', String(clamped)); } catch { /* blocked */ }
+                  }
                 }}
                 className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
                 placeholder="Custom amount ($)"
@@ -2502,19 +2564,81 @@ export default function MainStage() {
                 className="w-full py-2 px-3 rounded-lg text-xs text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
                 placeholder="Add a message (optional)"
               />
-              <WalletPayCard
-                surface="tip"
-                amountUsd={tipAmount}
-                entitlementSpec={{
-                  creator_id: tipRecipientId,
-                  message: tipMessage.trim() || undefined,
-                }}
-                metadata={{ context: "main_stage", donation: isDonationMode ? "platform" : undefined }}
-                label={`Send $${tipAmount} tip`}
-                lang="en"
-                onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
-                compact
-              />
+
+              {/* Rail selector — Ru$h (instant, no fees) vs USDC (gasless on
+                  Base). Ru$h defaults ON when the user's balance covers the
+                  tip; otherwise USDC. Both rails available in donation AND
+                  crystal-creator modes. */}
+              {!privyAuthenticated ? (
+                <button
+                  type="button"
+                  onClick={() => privyLogin()}
+                  className="w-full py-3 rounded-xl text-sm font-bold text-white transition-transform active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >
+                  {isDonationMode ? "Sign in to send donation" : "Sign in to send tip"}
+                </button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTipRailMode('rush')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                        tipRailMode === 'rush'
+                          ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with Ru$h 💎 — instant
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTipRailMode('usdc')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                        tipRailMode === 'usdc'
+                          ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with USDC — gasless
+                    </button>
+                  </div>
+
+                  {tipRailMode === 'rush' ? (
+                    // Ru$h rail — computes rush amount from selected USD (6 Ru$h = $1).
+                    // Donation mode uses "live" mode so tip animations still fire;
+                    // recipient is the platform donation user (Santino).
+                    // allowGifted=true for donation so gifted_balance counts (only
+                    // Santino/Lex are in the gifted-allowed backend list).
+                    <TipRushRail
+                      creatorId={tipRecipientId}
+                      creatorName={isDonationMode ? "Main Stage" : (crystalOnStage.find((c) => c.userId === tipRecipientId)?.username ?? undefined)}
+                      mode="live"
+                      variant="full"
+                      showMessage={false}
+                      showBalance={true}
+                      allowGifted={isDonationMode}
+                      onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
+                    />
+                  ) : (
+                    <WalletPayCard
+                      surface="tip"
+                      amountUsd={tipAmount}
+                      entitlementSpec={{
+                        creator_id: tipRecipientId,
+                        message: tipMessage.trim() || undefined,
+                      }}
+                      metadata={{ context: "main_stage", donation: isDonationMode ? "platform" : undefined }}
+                      label={isDonationMode ? `Send $${tipAmount} donation` : `Send $${tipAmount} tip`}
+                      lang="en"
+                      onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
+                      compact
+                    />
+                  )}
+                </>
+              )}
+
               <button
                 type="button"
                 onClick={() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }}

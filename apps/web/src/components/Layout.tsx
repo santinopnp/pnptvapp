@@ -23,6 +23,7 @@ import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
+import { TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
 import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
 
@@ -2197,12 +2198,14 @@ function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
 const RUSH_PER_USD = 6;
 
 // Preset Ru$h amounts for the quick-tip sheet.
-const QUICK_TIP_PRESETS = [
-  { rush: 30,  usd: 5  },
-  { rush: 60,  usd: 10 },
-  { rush: 120, usd: 20 },
-  { rush: 300, usd: 50 },
-] as const;
+// Unified tip presets — sourced from the shared PayInWalletChips constants
+// so every tip surface (MainStage sheet, QuickTipSheet, creator profile)
+// stays in sync. USD is authoritative; Rush is the paired dual-label at
+// 6 Ru$h = $1 (per feedback_token_rate.md).
+const QUICK_TIP_PRESETS = TIP_PRESETS_USD.map((usd, i) => ({
+  rush: TIP_PRESETS_RUSH[i],
+  usd,
+}));
 
 // Platform donation user ID — Santino's account, used as the fallback
 // recipient when no Crystal Creator is on stage.
