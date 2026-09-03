@@ -83,6 +83,43 @@ export async function adminDeleteFeaturedCreator(date: string): Promise<void> {
   if (!res.ok) throw new Error(`http_${res.status}`);
 }
 
+export interface CrystalCreatorPoolEntry {
+  id: string;
+  username: string | null;
+  first_name: string | null;
+  cover_url: string | null;
+  crystal_creator_active_until: string | null;
+}
+export async function adminListCrystalCreatorPool(): Promise<{ creators: CrystalCreatorPoolEntry[] }> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators/crystal-pool`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  return res.json();
+}
+export async function adminPreviewFeaturedAlbum(creatorId: string): Promise<{ photos: string[] }> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators/preview/${encodeURIComponent(creatorId)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  return res.json();
+}
+export async function adminRunFeaturedPromoNow(): Promise<{
+  ok: boolean; date: string; creator?: string; source?: string;
+  albumSize?: number; heroUrl?: string | null;
+  x?: { ok: boolean; reason?: string };
+  telegram?: { ok: boolean; total?: number; sent?: number; failed?: number };
+  skipped?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/admin/featured-creators/run-now`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json?.error || `http_${res.status}`);
+  }
+  return res.json();
+}
+
 // ── Free 15-min intro call ─────────────────────────────────────────────────
 // Feature flag: kill-switch for the confirm sheet + interstitial's secondary
 // CTA. Backend endpoints stay live independently.
@@ -4866,13 +4903,22 @@ export function approveCreatorApplication(
   });
 }
 
+export type CreatorRejectionReason =
+  | "identity_issue"
+  | "underage_docs"
+  | "duplicate_account"
+  | "off_platform_solicitation"
+  | "incomplete_docs"
+  | "other";
+
 export function rejectCreatorApplication(
   applicationId: string,
-  notes?: string
-): Promise<{ success: boolean }> {
+  notes?: string,
+  reason?: CreatorRejectionReason
+): Promise<{ success: boolean; rejectionReason: CreatorRejectionReason | null }> {
   return request(`/api/webapp/creator/applications/${applicationId}/reject`, {
     method: "POST",
-    body: { notes },
+    body: { notes, reason },
   });
 }
 
@@ -8882,13 +8928,22 @@ export function updateRecording(
 // Main Stage
 // ============================================================================
 
+export interface MainStageOnStageEntry {
+  userId: string;
+  username: string | null;
+  isCrystal: boolean;
+}
+
 export interface MainStageState {
   mode: "cinema" | "spotlight" | "grid3x3";
   spotlight: {
     cammer: string | null;
+    isCrystal: boolean;
     nextAt: number | null;
     queue: string[];
+    onStage?: MainStageOnStageEntry[];
   };
+  platformDonationUserId?: string;
   media: {
     kind: "video" | "music" | "off";
     src: string | null;

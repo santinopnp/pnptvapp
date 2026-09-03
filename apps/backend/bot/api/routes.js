@@ -11252,16 +11252,34 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
     // Look up the user_id that owns this performer record and reject if it matches
     // the authenticated tipper. This blocks a creator from tipping themselves to
     // farm platform earnings or inflate token stats.
+    // We also capture the resolved user_id here for the crystal-creator gate below.
+    let resolvedPerformerUserId = resolvedPerformerId;
     try {
       const selfCheck = await getPool().query(
         'SELECT user_id FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
         [resolvedPerformerId]
       );
-      if (selfCheck.rows.length > 0 && String(selfCheck.rows[0].user_id) === String(userId)) {
-        return res.status(400).json({ success: false, error: 'self_tip_forbidden' });
+      if (selfCheck.rows.length > 0) {
+        resolvedPerformerUserId = String(selfCheck.rows[0].user_id);
+        if (resolvedPerformerUserId === String(userId)) {
+          return res.status(400).json({ success: false, error: 'self_tip_forbidden' });
+        }
       }
     } catch (selfErr) {
       logger.warn(`Tips: self-tip check failed (non-fatal): ${selfErr.message}`);
+    }
+
+    // CRIT-04: Main Stage crystal-creator gate.
+    // Only Crystal Creators may receive tips on the Main Stage.
+    // Santino (platform donation account) is allowlisted so that the "Support
+    // the Main Stage" donation flow works even when no crystal creator is on stage.
+    const PLATFORM_DONATION_USER_ID = '8599671840';
+    if (String(resolvedPerformerUserId) !== PLATFORM_DONATION_USER_ID) {
+      const CreatorService = require('../../services/creatorService');
+      const isCrystal = await CreatorService.isCrystalCreator(resolvedPerformerUserId);
+      if (!isCrystal) {
+        return res.status(403).json({ success: false, error: 'RECIPIENT_NOT_CRYSTAL_CREATOR' });
+      }
     }
 
     // Look up performer name for payment description
@@ -17774,7 +17792,7 @@ app.get('/api/admin/featured-creators', adminGuard, asyncHandler(async (_req, re
   const { rows } = await getPool().query(
     `SELECT f.date, f.creator_id, f.pitch_en, f.pitch_es, f.media_url,
             f.cta_intro_call, f.created_at, f.updated_at,
-            u.username, u.first_name, u.photo_url
+            u.username, u.first_name, u.photo_file_id AS photo_url
        FROM featured_creators f
        JOIN users u ON u.id = f.creator_id
       WHERE f.date >= (NOW() AT TIME ZONE 'UTC')::date - INTERVAL '30 days'

@@ -543,6 +543,9 @@ export default function MainStage() {
   const [bonusGiftBalance, setBonusGiftBalance] = useState<number>(0);
   const [showBuyTokens, setShowBuyTokens] = useState(false);
   const [showTipSheet, setShowTipSheet] = useState(false);
+  // Tracks which crystal creator is selected in the multi-cammer tip sheet.
+  // null = use the first crystal creator in onStage (or donation account if none).
+  const [tipSelectedCreatorId, setTipSelectedCreatorId] = useState<string | null>(null);
   const [tipAmount, setTipAmount] = useState<number>(10);
   const [tipMessage, setTipMessage] = useState<string>("");
   // Seed with known community topics so the strip is always visible immediately,
@@ -2369,18 +2372,33 @@ export default function MainStage() {
         dpnsHandle={null}
       />
 
-      {/* Tip sheet — recipient defaults to the spotlighted cammer, falls back
-          to Santino when nobody is on stage. Same TipSheet UX as hangout/DM
-          tip flows; sends USDC on Base via wallet, 100% to the creator. */}
+      {/* Tip sheet — Crystal Creators on stage receive tips directly.
+          Multi-cammer: every Crystal Creator in the queue is tippable.
+          When no Crystal Creator is on stage (empty or non-crystal only),
+          falls back to donation mode targeting the platform account. */}
       {showTipSheet && (() => {
-        const tipRecipientId = state?.spotlight?.cammer || "8599671840";
-        const isFallback = !state?.spotlight?.cammer;
+        const onStage = state?.spotlight?.onStage ?? [];
+        const crystalOnStage = onStage.filter((x) => x.isCrystal);
+        const isDonationMode = crystalOnStage.length === 0;
+
+        // Per-creator tip recipient state: defaults to first crystal creator,
+        // or platform donation account in donation mode.
+        const defaultRecipientId = isDonationMode
+          ? "8599671840"
+          : crystalOnStage[0]?.userId ?? "8599671840";
+        // tipRecipientId is tracked in the closure; selecting a creator updates it.
+        // We use a React ref trick: store selected userId inside a local variable
+        // that re-initialises each render of this IIFE. Because the IIFE re-runs
+        // when showTipSheet changes (and when state changes), we drive selection
+        // via a separate piece of state lifted one level up.
+        const tipRecipientId = tipSelectedCreatorId ?? defaultRecipientId;
+
         return (
           <div
             className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"
             role="dialog"
             aria-modal="true"
-            onClick={() => setShowTipSheet(false)}
+            onClick={() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }}
           >
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <div
@@ -2388,16 +2406,65 @@ export default function MainStage() {
               style={{ background: "rgba(19, 16, 26, 0.98)", border: "1px solid rgba(212,0,122,0.35)" }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div>
-                <p className="text-base font-bold text-white">
-                  💸 {isFallback ? "Tip Santino" : "Tip on-stage creator"}
-                </p>
-                <p className="text-[11px] text-white/60 mt-0.5">
-                  {isFallback
-                    ? "No cammer on stage right now — your tip goes to Santino. USDC on Base, gas-sponsored, instant."
-                    : "USDC on Base. Gas-sponsored. 100% goes to the creator, instantly."}
-                </p>
-              </div>
+              {isDonationMode ? (
+                <div>
+                  <p className="text-base font-bold text-white">
+                    💸 Support the Main Stage — Send a Donation
+                  </p>
+                  <p className="text-[11px] text-white/60 mt-0.5">
+                    Your donation supports PNPtv and the Main Stage.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-base font-bold text-white">
+                    💸 Tip a Crystal Creator on stage
+                  </p>
+                  <p className="text-[11px] text-white/60">
+                    USDC on Base. Gas-sponsored. 100% goes to the creator, instantly.
+                  </p>
+                  {/* Creator selector — one row per crystal creator on stage */}
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    {crystalOnStage.map((creator) => {
+                      const isSelected = tipRecipientId === creator.userId;
+                      return (
+                        <div
+                          key={creator.userId}
+                          className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-colors cursor-pointer ${
+                            isSelected
+                              ? "border-pink-500/60 bg-pink-500/10"
+                              : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+                          }`}
+                          onClick={() => setTipSelectedCreatorId(creator.userId)}
+                        >
+                          <span className="text-sm font-semibold text-white">
+                            ❖ {creator.username ?? creator.userId}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {creator.username && (
+                              <button
+                                type="button"
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20 text-white/60 hover:text-white/90 hover:border-white/40 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/c/${creator.username}?action=book`);
+                                }}
+                              >
+                                Book a call
+                              </button>
+                            )}
+                            <div
+                              className={`w-4 h-4 rounded-full border-2 flex-shrink-0 transition-colors ${
+                                isSelected ? "border-pink-500 bg-pink-500" : "border-white/30 bg-transparent"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-4 gap-2">
                 {[5, 10, 25, 50].map((amt) => (
                   <button
@@ -2442,15 +2509,15 @@ export default function MainStage() {
                   creator_id: tipRecipientId,
                   message: tipMessage.trim() || undefined,
                 }}
-                metadata={{ context: "main_stage", fallback: isFallback ? "santino" : undefined }}
+                metadata={{ context: "main_stage", donation: isDonationMode ? "platform" : undefined }}
                 label={`Send $${tipAmount} tip`}
                 lang="en"
-                onSuccess={() => setTimeout(() => setShowTipSheet(false), 1200)}
+                onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
                 compact
               />
               <button
                 type="button"
-                onClick={() => setShowTipSheet(false)}
+                onClick={() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }}
                 className="w-full text-xs text-white/50 hover:text-white/80 transition"
               >
                 Cancel

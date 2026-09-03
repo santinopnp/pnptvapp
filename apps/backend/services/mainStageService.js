@@ -349,13 +349,96 @@ async function getState() {
     redis.get(PNPTV_MODE_GRACE_UNTIL_KEY),
   ]);
 
+  // Enrich spotlight with isCrystal so the frontend can gate the tip button.
+  // Resolves to false when no cammer is spotlighted (null check) or on error.
+  let spotlightIsCrystal = false;
+  if (spotlightCammer) {
+    try {
+      const CreatorService = require('./creatorService');
+      // spotlightCammer is a user_id (numeric string stored in Redis).
+      // Resolve underlying user_id via performers table in case it is a performer id.
+      const { rows } = await getPool().query(
+        'SELECT user_id FROM performers WHERE id::text = $1 OR user_id = $1 LIMIT 1',
+        [String(spotlightCammer)]
+      );
+      const userIdToCheck = rows.length > 0 ? String(rows[0].user_id) : String(spotlightCammer);
+      spotlightIsCrystal = await CreatorService.isCrystalCreator(userIdToCheck);
+    } catch (crystalErr) {
+      logger.warn(`getState: crystal check failed for spotlight ${spotlightCammer}: ${crystalErr.message}`);
+    }
+  }
+
+  // Enrich every queue entry with username + isCrystal for multi-cammer tipping.
+  // Human queue entries only — excludes MEDIA_BOT_IDENTITY and guest_/viewer_ prefixes.
+  // Batched: one performers query + one users query, no per-entry loop.
+  let onStage = [];
+  const humanEntries = queue.filter((id) => isHumanCammerIdentity(id));
+  if (humanEntries.length > 0) {
+    try {
+      // Step 1: resolve each entry to a canonical user_id via the performers table.
+      // Some queue entries may already be user_ids; the OR covers both cases.
+      const perfResult = await getPool().query(
+        'SELECT id::text AS perf_id, user_id::text AS user_id FROM performers WHERE id::text = ANY($1) OR user_id::text = ANY($1)',
+        [humanEntries]
+      );
+      // Build a lookup: input identity → resolved user_id.
+      // For entries that don't appear in performers, the entry itself is treated as user_id.
+      const resolvedIds = new Map(); // inputIdentity → resolvedUserId
+      for (const entry of humanEntries) {
+        // Default: the entry itself is its own user_id.
+        resolvedIds.set(entry, entry);
+      }
+      for (const row of perfResult.rows) {
+        // If a queue entry matches a performer id or performer user_id, map it to user_id.
+        for (const entry of humanEntries) {
+          if (entry === row.perf_id || entry === row.user_id) {
+            resolvedIds.set(entry, row.user_id);
+          }
+        }
+      }
+
+      // Step 2: fetch username + crystal status for all resolved user_ids in one query.
+      const uniqueUserIds = [...new Set(resolvedIds.values())];
+      const usersResult = await getPool().query(
+        `SELECT id::text AS id, username, crystal_creator_active_until
+           FROM users
+          WHERE id::text = ANY($1)`,
+        [uniqueUserIds]
+      );
+      const userMap = new Map(); // userId → { username, isCrystal }
+      const now = new Date();
+      for (const row of usersResult.rows) {
+        userMap.set(row.id, {
+          username: row.username || null,
+          isCrystal: row.crystal_creator_active_until != null && new Date(row.crystal_creator_active_until) > now,
+        });
+      }
+
+      // Build onStage, preserving queue order, deduplicating by resolved userId.
+      const seen = new Set();
+      for (const entry of humanEntries) {
+        const userId = resolvedIds.get(entry) || entry;
+        if (seen.has(userId)) continue;
+        seen.add(userId);
+        const info = userMap.get(userId) || { username: null, isCrystal: false };
+        onStage.push({ userId, username: info.username, isCrystal: info.isCrystal });
+      }
+    } catch (onStageErr) {
+      logger.warn(`getState: onStage enrichment failed (non-fatal): ${onStageErr.message}`);
+      onStage = [];
+    }
+  }
+
   return {
     mode:      mode || 'cinema',
     spotlight: {
-      cammer: spotlightCammer || null,
-      nextAt: spotlightNextAt ? parseInt(spotlightNextAt, 10) : null,
+      cammer:    spotlightCammer || null,
+      isCrystal: spotlightIsCrystal,
+      nextAt:    spotlightNextAt ? parseInt(spotlightNextAt, 10) : null,
       queue,
+      onStage,
     },
+    platformDonationUserId: '8599671840',
     media,
     cams: {
       volume: camsVolRaw !== null ? parseInt(camsVolRaw, 10) : 80,
