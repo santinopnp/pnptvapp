@@ -65,6 +65,8 @@ export const strings = {
     ctaGetAccess: "CLAIM YOUR SPOT — $100",
     ctaPayWithCrypto: "💎 PAY WITH CRYPTO — $100",
     ctaPayWithCard: "💳 PAY WITH CARD — $100",
+    ctaPayWithWallet: "💳 PAY WITH WALLET (USDC) — $100",
+    ctaPayWithDash: "🐎 PAY WITH DASH — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
 
@@ -72,6 +74,18 @@ export const strings = {
     cardModalTitle: "Pay with Card via MercadoPago",
     cardModalBody: "You'll be redirected to MercadoPago to complete your $100 payment. MercadoPago will charge ~320,000 COP (the equivalent of $100 USD). After paying, come back to /mercadopago to complete your activation — usually within a few hours.",
     cardModalOpenButton: "Open MercadoPago →",
+
+    // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
+    walletModalTitle: "Pay with Wallet — USDC on Base",
+    walletModalSubtitle: "Pay with your credit/debit card, Apple Pay, Google Pay, or connect Trust / MetaMask. Settles instantly as USDC on Base — PRIME activates the moment the payment confirms.",
+    walletPayLabel: "Pay $100 · Lifetime PRIME",
+
+    // ── Dash Direct modal ─────────────────────────────────────────────────────
+    dashModalTitle: "🐎 Dash Direct",
+    dashModalBody: "Send ≈ $100 USD worth of Dash to this address:",
+    dashCurrentPrice: "Current price:",
+    dashAfterPay: "📧 After paying, email your tx hash + your email to support@pnptv.app — we activate within 2h (24h max).",
+    dashCopyAddress: "📋 Copy address",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Get Your Payment Link",
@@ -231,6 +245,8 @@ export const strings = {
     ctaGetAccess: "RECLAMA TU LUGAR — $100",
     ctaPayWithCrypto: "💎 PAGAR CON CRIPTO — $100",
     ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
+    ctaPayWithWallet: "💳 PAGAR CON BILLETERA (USDC) — $100",
+    ctaPayWithDash: "🐎 PAGAR CON DASH — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",
 
@@ -238,6 +254,18 @@ export const strings = {
     cardModalTitle: "Pagar con Tarjeta vía MercadoPago",
     cardModalBody: "Serás redirigido a MercadoPago para completar tu pago de $100. MercadoPago cobrará ~320.000 COP (el equivalente a $100 USD). Después de pagar, vuelve a /mercadopago para completar tu activación — normalmente en pocas horas.",
     cardModalOpenButton: "Abrir MercadoPago →",
+
+    // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
+    walletModalTitle: "Pagar con Billetera — USDC en Base",
+    walletModalSubtitle: "Paga con tu tarjeta de crédito/débito, Apple Pay, Google Pay, o conecta Trust / MetaMask. Se acredita al instante como USDC en Base — PRIME se activa apenas confirme el pago.",
+    walletPayLabel: "Pagar $100 · PRIME de por vida",
+
+    // ── Dash Direct modal ─────────────────────────────────────────────────────
+    dashModalTitle: "🐎 Dash Directo",
+    dashModalBody: "Envía ≈ $100 USD en Dash a esta dirección:",
+    dashCurrentPrice: "Precio actual:",
+    dashAfterPay: "📧 Después de pagar, envía el tx hash + tu correo a support@pnptv.app — activamos en menos de 2h (máx 24h).",
+    dashCopyAddress: "📋 Copiar dirección",
 
     // ── Email capture modal ────────────────────────────────────────────────────
     modalTitle: "Obtén Tu Link de Pago",
