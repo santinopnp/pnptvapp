@@ -1184,7 +1184,10 @@ async function _fulfillEntitlement(client, { userId, entitlementSpec, surface, p
            is_lifetime       = user_entitlements.is_lifetime OR EXCLUDED.is_lifetime,
            auto_renew        = EXCLUDED.auto_renew,
            source_payment_id = EXCLUDED.source_payment_id,
+           source_plan_id    = EXCLUDED.source_plan_id,
            grant_source      = EXCLUDED.grant_source,
+           is_consumed       = false,
+           granted_at        = NOW(),
            updated_at        = NOW()
      RETURNING id`,
     [
