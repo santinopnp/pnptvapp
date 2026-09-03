@@ -1111,12 +1111,16 @@ const updateChannel = async (req, res) => {
   if (!Number.isFinite(channelId)) return res.status(400).json({ error: 'Invalid channel ID' });
 
   try {
-    // Verify ownership and not a system-managed channel
+    // Verify ownership and not a system-managed channel. Superadmins retain
+    // the ability to edit system channels (e.g. PNPtv! PRIME, id=209) since
+    // there is no dedicated admin UI for their meta fields.
+    const viewerRole = (req.session?.user?.role || '').toLowerCase();
+    const isSuperadmin = viewerRole === 'superadmin';
     const chRes = await query('SELECT * FROM creator_channels WHERE id = $1 AND is_active = true', [channelId]);
-    if (!chRes.rows.length || chRes.rows[0].creator_id !== req.user.id) {
+    if (!chRes.rows.length || (chRes.rows[0].creator_id !== req.user.id && !isSuperadmin)) {
       return res.status(404).json({ error: 'Channel not found or not yours' });
     }
-    if (chRes.rows[0].is_system) {
+    if (chRes.rows[0].is_system && !isSuperadmin) {
       return res.status(403).json({ error: 'This channel is managed by the admin panel and cannot be edited here.' });
     }
 
@@ -1222,13 +1226,17 @@ const updateChannel = async (req, res) => {
     if (accessType !== undefined || priceUsd !== undefined) {
       const CREATOR_ALLOWED = new Set(['paid', 'subscription']);
       const currentAccessType = chRes.rows[0].access_type;
-      if (accessType !== undefined && !CREATOR_ALLOWED.has(accessType)) {
+      // Superadmins editing a system channel may re-send the current access_type
+      // (form round-trip) but cannot change it — access_type transitions on
+      // system / prime channels stay locked.
+      const isNoOpAccessType = accessType === undefined || accessType === currentAccessType;
+      if (accessType !== undefined && !CREATOR_ALLOWED.has(accessType) && !(isSuperadmin && isNoOpAccessType)) {
         return res.status(403).json({
           error: 'Creators can only set access to paid or subscription.',
           code: 'ACCESS_TYPE_FORBIDDEN',
         });
       }
-      if (currentAccessType === 'prime' || chRes.rows[0].is_system) {
+      if ((currentAccessType === 'prime' || chRes.rows[0].is_system) && !(isSuperadmin && isNoOpAccessType)) {
         return res.status(403).json({
           error: 'System channels cannot be reconfigured.',
           code: 'SYSTEM_CHANNEL_LOCKED',
