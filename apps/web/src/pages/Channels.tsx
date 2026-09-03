@@ -277,7 +277,7 @@ function ChannelDetailView({
     setCreatorUpsellDismissed(true);
   };
 
-  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
   // Set to true once the <video> metadata reveals a landscape aspect ratio.
   // Only landscape videos get the wider modal + taller player (semi-fullscreen);
@@ -758,11 +758,16 @@ function ChannelDetailView({
     if (!Number.isFinite(vidId)) return;
     const v = videos.find((x) => x.id === vidId);
     if (!v || !channel) return;
-    const playUrl = v.mux_playback_id
-      ? `https://stream.mux.com/${v.mux_playback_id}.m3u8`
-      : v.video_url;
+    // Prefer Mux only when the asset is actually delivered — a stale playback
+    // id on an errored/cancelled ingest will 404 the player.
+    const muxUsable = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
+    const muxUrl = muxUsable ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : null;
+    const directusUrl = v.video_url || null;
+    const playUrl = muxUrl || directusUrl;
+    const fallbackUrl = muxUrl && directusUrl && muxUrl !== directusUrl ? directusUrl : null;
     setPlayingVideo({
       url: playUrl,
+      fallbackUrl,
       title: v.title,
       videoId: v.id,
       channelId: channel.id,
@@ -780,14 +785,19 @@ function ChannelDetailView({
   const renderVideoCard = (v: ChannelVideo) => {
     const isEditing = editingVideoId === v.id;
     const isDeleting = deletingVideoId === v.id;
-    // Legacy Directus uploads (mux_upload_id NULL, video_url set) sit at
-    // mux_status='waiting' forever — the reconciler skips them. Only flag as
-    // processing when there is genuinely no playable URL yet.
-    const hasPlayableUrl = !!v.mux_playback_id || !!v.video_url;
-    const isFailed = v.mux_status === "errored" || v.mux_status === "cancelled" || v.status === "failed";
+    // Playable when Mux delivered a playback id OR the backend still holds a
+    // Directus/local source it can stream (video_url falls back to the /stream
+    // endpoint which 302s to Directus).
+    const muxReady = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
+    const hasDirectusFallback = !!v.directus_file_id;
+    const hasPlayableSource = muxReady || hasDirectusFallback || !!v.video_url;
+    // A Mux ingest failure is only a real dead-end when there is no Directus
+    // fallback — otherwise the /stream endpoint will still deliver the file.
+    const muxFailed = v.mux_status === "errored" || v.mux_status === "cancelled";
+    const isFailed = v.status === "failed" || (muxFailed && !hasDirectusFallback);
     const isProcessing = !isFailed && (v.status === "processing"
-      || ((v.mux_status === "preparing" || v.mux_status === "waiting") && !hasPlayableUrl));
-    const isUnavailable = isFailed || (!hasPlayableUrl && !isProcessing);
+      || ((v.mux_status === "preparing" || v.mux_status === "waiting") && !hasPlayableSource));
+    const isUnavailable = isFailed || (!hasPlayableSource && !isProcessing);
     const duration = formatDuration(v.duration_sec);
 
     // Thumbnail fallback chain: gif_url (hover only) → thumbnail_url → placeholder
@@ -817,8 +827,14 @@ function ChannelDetailView({
           onClick={() => {
             if (isProcessing || isUnavailable) return;
             setVideoPlayerError(false);
+            const muxUsable = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
+            const muxUrl = muxUsable ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : null;
+            const directusUrl = v.video_url || null;
+            const playUrl = muxUrl || directusUrl;
+            const fallbackUrl = muxUrl && directusUrl && muxUrl !== directusUrl ? directusUrl : null;
             setPlayingVideo({
-              url: v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : v.video_url,
+              url: playUrl,
+              fallbackUrl,
               title: v.title,
               videoId: v.id,
               channelId: channel!.id,
@@ -1892,7 +1908,17 @@ function ChannelDetailView({
                   creatorDisclaimer
                   intro={intro}
                   onContextMenu={(e) => e.preventDefault()}
-                  onError={() => setVideoPlayerError(true)}
+                  onError={() => {
+                    // If the primary source (usually Mux HLS) fails and we
+                    // have a Directus fallback we haven't tried yet, swap and
+                    // retry once before surfacing "Video unavailable".
+                    const fb = playingVideo.fallbackUrl;
+                    if (fb && fb !== playingVideo.url) {
+                      setPlayingVideo({ ...playingVideo, url: fb, fallbackUrl: null });
+                    } else {
+                      setVideoPlayerError(true);
+                    }
+                  }}
                   onLoadedMetadata={(e) => {
                     // Landscape source → widen the modal + expand the player
                     // to semi-fullscreen. Portrait/square stays compact.

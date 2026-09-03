@@ -10777,7 +10777,9 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
           // For Mux-uploaded videos, hand the browser the HLS URL directly —
           // <video src=".m3u8"> gets picked up by hls.js. A 302 from /stream
           // does NOT work here (browsers try to play the playlist as mp4).
-          video_url: cv.mux_playback_id
+          // Fall back to the /stream endpoint when Mux ingest failed so the
+          // Directus source (or local /uploads/) still serves.
+          video_url: cv.mux_playback_id && cv.mux_status !== 'errored' && cv.mux_status !== 'cancelled'
             ? `https://stream.mux.com/${cv.mux_playback_id}.m3u8`
             : `/api/webapp/channels/${channelId}/videos/${cv.id}/stream`,
           mux_playback_id: cv.mux_playback_id ?? null,
@@ -10863,7 +10865,7 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
 
   try {
     const { rows } = await getPool().query(
-      `SELECT cv.directus_file_id, cv.video_url, cv.mux_playback_id, cc.creator_id
+      `SELECT cv.directus_file_id, cv.video_url, cv.mux_playback_id, cv.mux_status, cc.creator_id
        FROM channel_videos cv
        JOIN creator_channels cc ON cc.id = cv.channel_id
        WHERE cv.id = $1 AND cv.channel_id = $2 AND cv.status = 'published'`,
@@ -10882,7 +10884,8 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
       if (!decision.allowed) return res.status(403).json({ error: 'Access denied', code: decision.code });
     }
 
-    if (video.mux_playback_id) {
+    const muxUsable = video.mux_playback_id && video.mux_status !== 'errored' && video.mux_status !== 'cancelled';
+    if (muxUsable) {
       // Videos uploaded via Studio Express go through Mux; hand the browser the
       // public HLS URL directly (Mux serves it CDN-cached with CORS).
       return res.redirect(302, `https://stream.mux.com/${video.mux_playback_id}.m3u8`);
