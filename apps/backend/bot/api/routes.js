@@ -9258,6 +9258,36 @@ app.post('/api/webapp/internal/prime-videos/sync', asyncHandler(async (req, res)
          updated_at = NOW()`,
       [SANTINO_ID, content, mediaUrl, PRIME_CHANNEL_ID, thumbUrl, title, description, JSON.stringify(frameUrls), directusId]
     );
+
+    // Also mirror into channel_videos so the item appears on the Channels
+    // 209 tile grid — social_posts alone is not surfaced by getChannelDetail.
+    // Keyed by (channel_id, directus_file_id) so re-sync is idempotent.
+    try {
+      await getPool().query(
+        `INSERT INTO channel_videos (
+           channel_id, uploader_id, directus_file_id, title, description,
+           duration_sec, thumbnail_url, status, post_to_feed
+         ) VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, 'published', false)
+         ON CONFLICT (channel_id, directus_file_id)
+           WHERE directus_file_id IS NOT NULL AND status != 'removed'
+         DO UPDATE SET
+           title = EXCLUDED.title,
+           description = EXCLUDED.description,
+           duration_sec = EXCLUDED.duration_sec,
+           thumbnail_url = EXCLUDED.thumbnail_url,
+           status = 'published',
+           updated_at = NOW()`,
+        [PRIME_CHANNEL_ID, SANTINO_ID, row.video_file, title.slice(0, 255), description, durationSecs || null, thumbUrl]
+      );
+    } catch (cvErr) {
+      // Non-fatal — the unique index below the try/catch may be missing on
+      // older DBs (added in migration 3xx). Log and continue so the primary
+      // social_posts upsert isn't rolled back.
+      logger.warn('prime-videos sync: channel_videos mirror failed (non-fatal)', {
+        directusId, error: cvErr.message,
+      });
+    }
+
     results.push({ key: directusId, status: needsThumbs ? 'upserted_with_new_thumbs' : 'upserted', frames: frameUuids.length });
   }
 

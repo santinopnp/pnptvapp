@@ -41,3 +41,6 @@ ds-bundle/
 .design-sync/node_modules
 packages/ui-kit/.ds-cache/
 backup/
+
+# Operator-local setup notes / device provisioning docs
+*.pdf
