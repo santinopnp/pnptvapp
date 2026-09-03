@@ -406,12 +406,23 @@ async function getState() {
         [uniqueUserIds]
       );
       const userMap = new Map(); // userId → { username, isCrystal }
-      const now = new Date();
+      const nowMs = Date.now();
       for (const row of usersResult.rows) {
-        userMap.set(row.id, {
-          username: row.username || null,
-          isCrystal: row.crystal_creator_active_until != null && new Date(row.crystal_creator_active_until) > now,
-        });
+        // crystal_creator_active_until can be 'infinity' (sentinel for permanent
+        // Crystal grants like Santino/Lex/Dejesusof22). JS `new Date('infinity')`
+        // returns Invalid Date, so infinity users would silently be false — the
+        // same trap that hid tip UI for 2 live crystal creators on 2026-09-03.
+        const raw = row.crystal_creator_active_until;
+        let isCrystal = false;
+        if (raw != null) {
+          if (raw === 'infinity' || (typeof raw === 'string' && raw === 'infinity')) {
+            isCrystal = true;
+          } else {
+            const asDate = raw instanceof Date ? raw : new Date(raw);
+            isCrystal = !isNaN(asDate.getTime()) && asDate.getTime() > nowMs;
+          }
+        }
+        userMap.set(row.id, { username: row.username || null, isCrystal });
       }
 
       // Build onStage, preserving queue order, deduplicating by resolved userId.
