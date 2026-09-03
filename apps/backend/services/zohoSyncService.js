@@ -82,6 +82,12 @@ async function _loadCreators({ delta = false, mode = 'creators' } = {}) {
       u.is_pnptv_fam,
       u.pnptv_fam_since,
       u.is_whale_pig,
+      u.application_submitted_at,
+      u.application_reviewed_at,
+      u.application_rejection_reason,
+      u.creator_onboarded_at,
+      u.creator_suspended_at,
+      u.identity_verified,
       (
         u.crystal_creator_active_until IS NOT NULL
         AND (
@@ -172,6 +178,43 @@ function _toZohoContact(row) {
       ? new Date(row.pnptv_fam_since).toISOString()
       : null;
     c.Whale_Pig = !!row.is_whale_pig;
+
+    // ── Creator application lifecycle (7 fields, added 2026-09-01) ─────────
+    // Derived Application_Status collapses SQL creator_status + 2257 state
+    // into a single Zoho picklist for segmentation:
+    //   Applied → row exists in model_applications / creator_enrollments but
+    //             not yet reviewed (creator_status='pending_review' or app row
+    //             created after app_submitted_at with no reviewed_at)
+    //   Under_Review → docs submitted + admin has started but not finalized
+    //   Approved → creator_status='approved_hold' or 'active'
+    //   Rejected → last review outcome was reject (application_rejection_reason set + not currently active)
+    //   Suspended → creator_status='suspended'
+    //   Not_Applied → default for non-applicants
+    let applicationStatus = 'Not_Applied';
+    if (row.creator_status === 'suspended') applicationStatus = 'Suspended';
+    else if (row.creator_status === 'active' || row.creator_status === 'approved_hold') applicationStatus = 'Approved';
+    else if (row.creator_status === 'pending_review') applicationStatus = 'Under_Review';
+    else if (row.application_rejection_reason && !row.creator_status?.startsWith('app')) applicationStatus = 'Rejected';
+    else if (row.application_submitted_at) applicationStatus = 'Applied';
+
+    c.Application_Status = applicationStatus;
+    c.Application_Submitted_At = row.application_submitted_at
+      ? new Date(row.application_submitted_at).toISOString() : null;
+    c.Application_Reviewed_At = row.application_reviewed_at
+      ? new Date(row.application_reviewed_at).toISOString() : null;
+    c.Application_Rejection_Reason = row.application_rejection_reason || null;
+
+    // Documents_Status = simple projection of 2257 state
+    let docsStatus = 'Missing';
+    if (row.identity_verified === true) docsStatus = 'Approved';
+    else if (row.verified_2257 === true) docsStatus = 'Approved';
+    else if (row.application_submitted_at && !row.identity_verified) docsStatus = 'Pending';
+    c.Documents_Status = docsStatus;
+
+    c.Creator_Onboarded_At = row.creator_onboarded_at
+      ? new Date(row.creator_onboarded_at).toISOString() : null;
+    c.Creator_Suspended_At = row.creator_suspended_at
+      ? new Date(row.creator_suspended_at).toISOString() : null;
   }
   return c;
 }
@@ -265,6 +308,12 @@ async function syncOneUser(userId) {
         u.is_pnptv_fam,
         u.pnptv_fam_since,
         u.is_whale_pig,
+        u.application_submitted_at,
+        u.application_reviewed_at,
+        u.application_rejection_reason,
+        u.creator_onboarded_at,
+        u.creator_suspended_at,
+        u.identity_verified,
         (
           u.crystal_creator_active_until IS NOT NULL
           AND (

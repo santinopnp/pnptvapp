@@ -168,13 +168,15 @@ const approveApplication = async (req, res) => {
 };
 
 // POST /api/webapp/creator/applications/:id/reject
+// Body: { notes?: string, reason?: identity_issue|underage_docs|duplicate_account|off_platform_solicitation|incomplete_docs|other }
 // Protected at route level by roleGuard('admin', 'superadmin')
 const rejectApplication = async (req, res) => {
   try {
     const result = await CreatorService.rejectApplication(
       req.params.id,
       req.user.id,
-      req.body.notes || null
+      req.body.notes || null,
+      req.body.reason || null
     );
     return res.json({ success: true, ...result });
   } catch (err) {
@@ -761,6 +763,7 @@ const approve2257 = async (req, res) => {
 };
 
 // POST /api/webapp/creator/2257/records/:userId/reject (admin)
+// Body: { notes: string (required), reason?: identity_issue|underage_docs|duplicate_account|off_platform_solicitation|incomplete_docs|other }
 const reject2257 = async (req, res) => {
   try {
     if (!req.body.notes) {
@@ -769,7 +772,8 @@ const reject2257 = async (req, res) => {
     const record = await IdentityVerificationService.reject2257Record(
       req.params.userId,
       req.user.id,
-      req.body.notes
+      req.body.notes,
+      req.body.reason || null
     );
     return res.json({ success: true, record });
   } catch (err) {

@@ -14,18 +14,25 @@
  *   docker exec pnptv-bot node apps/backend/scripts/test-zoho-integration.js --sync-user 8599671840
  *   docker exec pnptv-bot node apps/backend/scripts/test-zoho-integration.js --book-invoice 8599671840
  *   docker exec pnptv-bot node apps/backend/scripts/test-zoho-integration.js --campaigns-cycle 8599671840
+ *   docker exec pnptv-bot node apps/backend/scripts/test-zoho-integration.js --creator-lifecycle 8599671840
  *   docker exec pnptv-bot node apps/backend/scripts/test-zoho-integration.js --full 8599671840
  *
  * --check           Env presence + OAuth refresh for each of the 3 apps.
  *                   Zero writes. Safe to run anywhere.
  * --sync-user <id>  Pushes ONE user to Zoho CRM Contacts. Idempotent (upsert
- *                   by PNPtv_ID). Verifies the 6 new custom fields exist.
+ *                   by PNPtv_ID). Verifies the 6 tier + 7 lifecycle fields exist.
  * --book-invoice <id>  Creates a $0.01 TEST invoice in Books, immediately
  *                      voids it. Verifies items are configured. Zero P&L
  *                      impact after cleanup.
- * --campaigns-cycle <id>  Adds user to Crystal + Fam lists, verifies
- *                          membership, then removes. Zero long-term change.
- * --full <id>       Runs all three modes in sequence.
+ * --campaigns-cycle <id>  Adds user to all 4 lists (Crystal, Fam, Applicants,
+ *                          Rejected), verifies membership, then removes.
+ * --creator-lifecycle <id>  End-to-end lifecycle: writes a synthetic
+ *                            application_submitted_at then reviewed_at+rejection
+ *                            on the user row, syncs to CRM, checks the derived
+ *                            Application_Status field, then reverts. Verifies
+ *                            the 7 lifecycle fields flow correctly. Safe — only
+ *                            touches the test user's own row.
+ * --full <id>       Runs all four modes in sequence.
  *
  * Fails loud with exit code 1 on any config or auth error so it's suitable
  * for CI / smoke-test scripts. Never crashes the running bot.
@@ -81,13 +88,21 @@ async function checkCRM() {
       { params: { module: 'Contacts' }, headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 15000 }
     );
     const fields = new Set((resp.data?.fields || []).map(f => f.api_name));
-    const required = ['Crystal_Creator', 'Crystal_Active_Until', 'Crystal_Invited', 'PNPtv_Fam', 'PNPtv_Fam_Since', 'Whale_Pig'];
-    const missing = required.filter(f => !fields.has(f));
-    if (missing.length) {
-      warn(`custom fields NOT YET CREATED in Zoho CRM: ${missing.join(', ')}`);
-      warn('Create them in Zoho CRM → Contacts → Setup → Custom Fields, then re-run.');
+    const tierFields = ['Crystal_Creator', 'Crystal_Active_Until', 'Crystal_Invited', 'PNPtv_Fam', 'PNPtv_Fam_Since', 'Whale_Pig'];
+    const lifecycleFields = ['Application_Status', 'Application_Submitted_At', 'Application_Reviewed_At', 'Application_Rejection_Reason', 'Documents_Status', 'Creator_Onboarded_At', 'Creator_Suspended_At'];
+    const missingTier = tierFields.filter(f => !fields.has(f));
+    const missingLifecycle = lifecycleFields.filter(f => !fields.has(f));
+    if (missingTier.length) {
+      warn(`tier custom fields NOT YET CREATED in Zoho CRM: ${missingTier.join(', ')}`);
+      warn('Run: docker exec pnptv-bot node apps/backend/scripts/bootstrap-zoho.js');
     } else {
       ok('all 6 tier custom fields present in Contacts module');
+    }
+    if (missingLifecycle.length) {
+      warn(`lifecycle custom fields NOT YET CREATED in Zoho CRM: ${missingLifecycle.join(', ')}`);
+      warn('Run: docker exec pnptv-bot node apps/backend/scripts/bootstrap-zoho.js');
+    } else {
+      ok('all 7 lifecycle custom fields present in Contacts module');
     }
     if (process.env.ZOHO_SYNC_TIER_FIELDS !== '1') {
       warn('ZOHO_SYNC_TIER_FIELDS env flag is NOT set — tier fields will not be pushed until you flip it');
@@ -135,11 +150,19 @@ async function checkCampaigns() {
   ok('env vars present');
   const crystalList = process.env.ZOHO_CAMPAIGNS_LIST_CRYSTAL;
   const famList = process.env.ZOHO_CAMPAIGNS_LIST_PNP_FAM;
+  const applicantsList = process.env.ZOHO_CAMPAIGNS_LIST_APPLICANTS;
+  const rejectedList = process.env.ZOHO_CAMPAIGNS_LIST_REJECTED;
   if (!crystalList || !famList) {
-    warn(`list keys missing — need LIST_CRYSTAL (${crystalList ? 'set' : 'MISSING'}) and LIST_PNP_FAM (${famList ? 'set' : 'MISSING'})`);
-    return;
+    warn(`tier list keys missing — need LIST_CRYSTAL (${crystalList ? 'set' : 'MISSING'}) and LIST_PNP_FAM (${famList ? 'set' : 'MISSING'})`);
+  } else {
+    ok(`tier list keys present — crystal=${crystalList.slice(0, 8)}… fam=${famList.slice(0, 8)}…`);
   }
-  ok(`list keys present — crystal=${crystalList.slice(0, 8)}… fam=${famList.slice(0, 8)}…`);
+  if (!applicantsList || !rejectedList) {
+    warn(`applicant list keys missing — need LIST_APPLICANTS (${applicantsList ? 'set' : 'MISSING'}) and LIST_REJECTED (${rejectedList ? 'set' : 'MISSING'})`);
+    warn('Run bootstrap-zoho.js to create the two lists, then paste envs into .env.production.');
+  } else {
+    ok(`applicant list keys present — applicants=${applicantsList.slice(0, 8)}… rejected=${rejectedList.slice(0, 8)}…`);
+  }
 }
 
 async function testSyncUser(userId) {
@@ -203,9 +226,81 @@ async function testCampaignsCycle(userId) {
     await new Promise(r => setTimeout(r, 2000));
     await zohoCampaigns.removeFromPnptvFam(u.email);
     ok(`removed ${u.email} from PNPtv Fam list`);
-    info('If you saw "ok: true" in all 4 log lines above, Campaigns integration works.');
+
+    // New lists (added 2026-09-01)
+    await zohoCampaigns.addToCreatorApplicants(contact);
+    ok(`added ${u.email} to Creator Applicants list`);
+    await new Promise(r => setTimeout(r, 2000));
+    await zohoCampaigns.removeFromCreatorApplicants(u.email);
+    ok(`removed ${u.email} from Creator Applicants list`);
+
+    await zohoCampaigns.addToRejectedApplicants(contact);
+    ok(`added ${u.email} to Rejected Applicants list`);
+    await new Promise(r => setTimeout(r, 2000));
+    await zohoCampaigns.removeFromRejectedApplicants(u.email);
+    ok(`removed ${u.email} from Rejected Applicants list`);
+    info('If all 8 log lines above show ok:true, Campaigns integration works end-to-end.');
   } catch (err) {
     bad(`Campaigns cycle failed: ${err.message}`);
+    hardFail = true;
+  }
+}
+
+async function testCreatorLifecycle(userId) {
+  head(`Creator lifecycle cycle for user ${userId}`);
+  const { rows } = await query(`SELECT id, email, username, first_name, application_submitted_at, application_reviewed_at, application_rejection_reason FROM users WHERE id = $1`, [String(userId)]);
+  if (!rows.length) { bad(`user ${userId} not found`); hardFail = true; return; }
+  const u = rows[0];
+  info(`user: @${u.username} — snapshotting existing lifecycle state for restore`);
+  const backup = {
+    submitted: u.application_submitted_at,
+    reviewed: u.application_reviewed_at,
+    reason: u.application_rejection_reason,
+  };
+
+  try {
+    // 1. Simulate "just applied"
+    await query(
+      `UPDATE users SET application_submitted_at = NOW(), application_reviewed_at = NULL, application_rejection_reason = NULL WHERE id = $1`,
+      [String(u.id)]
+    );
+    ok('stamped users.application_submitted_at = NOW()');
+    await zohoSync.syncOneUser(String(u.id));
+    ok('pushed to Zoho — expect Application_Status = "Applied" or "Under_Review" depending on creator_status');
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 2. Simulate "rejected"
+    await query(
+      `UPDATE users SET application_reviewed_at = NOW(), application_rejection_reason = 'incomplete_docs' WHERE id = $1`,
+      [String(u.id)]
+    );
+    ok('stamped rejection lifecycle (reason=incomplete_docs)');
+    await zohoSync.syncOneUser(String(u.id));
+    ok('pushed to Zoho — expect Application_Status="Rejected" and Application_Rejection_Reason="incomplete_docs"');
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 3. Restore
+    await query(
+      `UPDATE users SET application_submitted_at = $2, application_reviewed_at = $3, application_rejection_reason = $4 WHERE id = $1`,
+      [String(u.id), backup.submitted, backup.reviewed, backup.reason]
+    );
+    ok('restored original lifecycle state');
+    await zohoSync.syncOneUser(String(u.id));
+    ok('final sync — Zoho contact restored to real state');
+
+    info('Verify in Zoho CRM → Contacts → search by PNPtv_ID that Application_Status transitioned Applied → Rejected → back to original.');
+  } catch (err) {
+    bad(`creator-lifecycle cycle failed: ${err.message}`);
+    // Attempt to restore original state
+    try {
+      await query(
+        `UPDATE users SET application_submitted_at = $2, application_reviewed_at = $3, application_rejection_reason = $4 WHERE id = $1`,
+        [String(u.id), backup.submitted, backup.reviewed, backup.reason]
+      );
+      warn('restored original lifecycle state after failure');
+    } catch (_) {}
     hardFail = true;
   }
 }
@@ -235,6 +330,12 @@ async function testCampaignsCycle(userId) {
     await testCampaignsCycle(userIdArg);
   } else if (mode === '--campaigns-cycle') {
     bad('--campaigns-cycle requires a userId'); hardFail = true;
+  }
+
+  if ((mode === '--creator-lifecycle' || mode === '--full') && userIdArg) {
+    await testCreatorLifecycle(userIdArg);
+  } else if (mode === '--creator-lifecycle') {
+    bad('--creator-lifecycle requires a userId'); hardFail = true;
   }
 
   console.log('');

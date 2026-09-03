@@ -27,8 +27,8 @@ const TG_BATCH_SIZE = 25;         // messages per second cap (Telegram allows 30
 const TG_BATCH_DELAY_MS = 1100;   // 1.1s between batches — comfortable under limit
 
 async function todayUtcDate() {
-  const { rows } = await getPool().query(`SELECT (NOW() AT TIME ZONE 'UTC')::date AS today`);
-  return String(rows[0].today);
+  const { rows } = await getPool().query(`SELECT to_char((NOW() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS today`);
+  return rows[0].today;
 }
 
 /**
@@ -82,30 +82,17 @@ async function resolveTodaysFeatured(today) {
 }
 
 /**
- * Pick up to `max` album photos for a creator. Prefers social_posts images
- * ordered by likes, then falls through to cover + profile so we always
- * return at least one url when any is set.
+ * Pick up to `max` album photos for a creator. Sources, in order:
+ *   1. creator_media (non-premium, creator-curated album)
+ *   2. channel_videos.thumbnail_url (published)
+ * social_posts and cover/profile are intentionally excluded — the social
+ * feed leaked off-brand pics into the promo hero (santinofurioso 2026-09-01).
  */
 async function pickAlbumPhotos(userId, max = 6) {
   const pool = getPool();
   const uid = String(userId);
 
-  // Source 1 — top non-exclusive social_posts (over-fetch to leave room for dedup).
   const s1 = await pool.query(
-    `SELECT COALESCE(media_url, (media_urls->>0)) AS url
-       FROM social_posts
-      WHERE user_id = $1
-        AND is_deleted = FALSE
-        AND COALESCE(is_exclusive, FALSE) = FALSE
-        AND (media_type = 'image'
-             OR (media_urls IS NOT NULL AND jsonb_array_length(media_urls) > 0))
-      ORDER BY likes_count DESC NULLS LAST, created_at DESC
-      LIMIT $2`,
-    [uid, max * 3]
-  );
-
-  // Source 2 — non-premium creator_media (creator-curated album).
-  const s2 = await pool.query(
     `SELECT COALESCE(thumb_url, url) AS url
        FROM creator_media
       WHERE creator_id = $1 AND is_premium = FALSE
@@ -114,8 +101,7 @@ async function pickAlbumPhotos(userId, max = 6) {
     [uid, max]
   );
 
-  // Source 3 — published channel_videos thumbnails from their channels.
-  const s3 = await pool.query(
+  const s2 = await pool.query(
     `SELECT v.thumbnail_url AS url
        FROM channel_videos v
        JOIN creator_channels c ON c.id = v.channel_id
@@ -127,19 +113,9 @@ async function pickAlbumPhotos(userId, max = 6) {
     [uid, max]
   );
 
-  // Source 4 — creator's own cover + profile photo as final backstop so we
-  // never return an empty album (Lex-day fallback).
-  const s4 = await pool.query(
-    `SELECT cover_url, photo_file_id FROM users WHERE id = $1 LIMIT 1`,
-    [uid]
-  );
-  const backstop = [];
-  if (s4.rows[0]?.cover_url) backstop.push({ url: s4.rows[0].cover_url });
-  if (s4.rows[0]?.photo_file_id) backstop.push({ url: `/api/profile-photo/${encodeURIComponent(uid)}` });
-
   const seen = new Set();
   const out = [];
-  for (const src of [s1.rows, s2.rows, s3.rows, backstop]) {
+  for (const src of [s1.rows, s2.rows]) {
     for (const r of src) {
       if (!r.url || typeof r.url !== 'string') continue;
       if (seen.has(r.url)) continue;
@@ -231,6 +207,24 @@ async function broadcastTelegram({ caption, link, imageUrl }) {
     return { ok: false, sent: 0, failed: 0, reason: 'bot_unavailable' };
   }
 
+  // Telegram sendPhoto only accepts JPEG/PNG via HTTP URL. If our hero is
+  // .webp (creator_media default), fetch + convert once with sharp and reuse
+  // the Buffer across all sends via Telegraf's { source } form.
+  let photoInput = imageUrl;
+  if (imageUrl && /\.webp(\?|$)/i.test(imageUrl)) {
+    try {
+      const axios = require('axios');
+      const sharp = require('sharp');
+      const resp = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
+      const jpeg = await sharp(Buffer.from(resp.data)).jpeg({ quality: 88 }).toBuffer();
+      photoInput = { source: jpeg };
+      logger.info('[featured-promo] converted webp hero to jpeg', { bytes: jpeg.length });
+    } catch (err) {
+      logger.warn('[featured-promo] webp→jpeg conversion failed, falling back to text-only', { error: err.message });
+      photoInput = null;
+    }
+  }
+
   const { rows: audience } = await getPool().query(
     `SELECT telegram
        FROM users
@@ -242,26 +236,49 @@ async function broadcastTelegram({ caption, link, imageUrl }) {
 
   const inline = { inline_keyboard: [[{ text: '💎 Open profile', url: link }]] };
   let sent = 0, failed = 0;
+  let firstErrLogged = false;
+  let reusableFileId = null;
+
+  const sendWithTimeout = (fn) => Promise.race([
+    fn(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('send_timeout_20s')), 20000)),
+  ]);
 
   for (let i = 0; i < audience.length; i++) {
     const u = audience[i];
     try {
-      if (imageUrl) {
-        await bot.telegram.sendPhoto(u.telegram, imageUrl, {
+      if (photoInput) {
+        // After the first successful upload, reuse the returned file_id so
+        // subsequent sends don't re-upload the 81 KB buffer 2000+ times.
+        const media = reusableFileId || photoInput;
+        const resp = await sendWithTimeout(() => bot.telegram.sendPhoto(u.telegram, media, {
           caption,
           parse_mode: 'HTML',
           reply_markup: inline,
-        });
+        }));
+        if (!reusableFileId && Array.isArray(resp?.photo) && resp.photo.length) {
+          // photo[] is sorted small→large; take the largest file_id
+          reusableFileId = resp.photo[resp.photo.length - 1].file_id;
+          logger.info('[featured-promo] captured reusable photo file_id — subsequent sends will be fast');
+        }
       } else {
-        await bot.telegram.sendMessage(u.telegram, caption, {
+        await sendWithTimeout(() => bot.telegram.sendMessage(u.telegram, caption, {
           parse_mode: 'HTML',
           reply_markup: inline,
           disable_web_page_preview: false,
-        });
+        }));
       }
       sent++;
     } catch (err) {
       failed++;
+      if (!firstErrLogged) {
+        logger.warn('[featured-promo] first send failure diag', {
+          to: u.telegram, imageUrl,
+          errMsg: err.message, errCode: err.code,
+          description: err.description, response: err.response,
+        });
+        firstErrLogged = true;
+      }
       // 403 = user blocked the bot; not worth logging each one.
       if (!String(err.message || '').includes('bot was blocked')) {
         logger.debug('[featured-promo] tg send failed', { to: u.telegram, error: err.message });
@@ -279,7 +296,11 @@ async function broadcastTelegram({ caption, link, imageUrl }) {
 }
 
 function safeRequireBot() {
-  try { return require('../bot/core/bot'); } catch (_) { return null; }
+  try {
+    const mod = require('../bot/core/bot');
+    if (mod && typeof mod.getBotInstance === 'function') return mod.getBotInstance();
+    return mod;
+  } catch (_) { return null; }
 }
 
 /**

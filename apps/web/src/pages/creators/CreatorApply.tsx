@@ -512,6 +512,74 @@ export default function CreatorApply() {
     </div>
   );
 
+  // ── Applicant timeline (bilingual) ────────────────────────────────────────────
+  // Warm 4-step timeline so applicants know exactly where they stand in the funnel.
+  // Language follows the user profile (falls back to browser). Copy is warm — never
+  // hostile — per feedback_never_approach_creators_hostile_tone.
+  const isEs = ((user as { language?: string } | null)?.language || navigator?.language || "en").toLowerCase().startsWith("es");
+  const timelineCopy = isEs
+    ? {
+        title: "Tu solicitud, paso a paso",
+        subtitle: "Te avisamos apenas cada paso quede listo. Aquí puedes ver dónde vamos.",
+        steps: [
+          { key: "submitted", label: "Solicitud enviada", desc: "Recibimos tu información." },
+          { key: "docs",      label: "Documentos",         desc: "Verificamos tu identidad (2257)." },
+          { key: "review",    label: "En revisión",        desc: "El equipo evalúa tu perfil." },
+          { key: "approved",  label: "¡Aprobado/a!",       desc: "Se activa tu estudio." },
+        ],
+      }
+    : {
+        title: "Your application, step by step",
+        subtitle: "We'll notify you the moment each step is cleared. Here's where things stand.",
+        steps: [
+          { key: "submitted", label: "Submitted",     desc: "We got your info." },
+          { key: "docs",      label: "Documents",     desc: "We verify your identity (2257)." },
+          { key: "review",    label: "Under review",  desc: "Our team looks over your profile." },
+          { key: "approved",  label: "Approved!",     desc: "Your studio goes live." },
+        ],
+      };
+
+  const applicantTimeline = (currentStep: "submitted" | "docs" | "review" | "approved") => {
+    const currentIdx = timelineCopy.steps.findIndex((s) => s.key === currentStep);
+    return (
+      <div className="glass-card-sm p-4 mb-4">
+        <p className="text-sm font-semibold text-white mb-1">{timelineCopy.title}</p>
+        <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          {timelineCopy.subtitle}
+        </p>
+        <ol className="space-y-2">
+          {timelineCopy.steps.map((step, i) => {
+            const isDone = i < currentIdx;
+            const isCurrent = i === currentIdx;
+            const dotBg = isDone ? "#5ED1C4" : isCurrent ? "#FFB454" : "rgba(255,255,255,0.15)";
+            const dotColor = isDone || isCurrent ? "#0B0B0F" : "#8E8E93";
+            return (
+              <li key={step.key} className="flex items-start gap-3">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5"
+                  style={{ background: dotBg, color: dotColor }}
+                >
+                  {isDone ? "✓" : i + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p
+                    className="text-xs font-semibold leading-tight"
+                    style={{ color: isDone ? "#5ED1C4" : isCurrent ? "#fff" : "var(--pnp-text-secondary, #8E8E93)" }}
+                  >
+                    {step.label}
+                  </p>
+                  <p className="text-[11px] leading-tight" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    {step.desc}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    );
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
@@ -769,12 +837,17 @@ export default function CreatorApply() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-bold text-white mb-2">You're Approved — Activation Pending</h2>
+              <h2 className="text-xl font-bold text-white mb-2">
+                {isEs ? "¡Aprobado/a! — activación en curso" : "You're Approved — Activation Pending"}
+              </h2>
               <p className="text-sm leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                Your application was approved. An admin is activating your creator account — this usually takes a few hours.
-                You'll receive a notification the moment your studio is live.
+                {isEs
+                  ? "Tu solicitud fue aprobada. Un administrador está activando tu cuenta — suele tomar unas horas. Te avisamos apenas tu estudio esté en vivo."
+                  : "Your application was approved. An admin is activating your creator account — this usually takes a few hours. You'll receive a notification the moment your studio is live."}
               </p>
             </div>
+
+            {applicantTimeline("approved")}
 
             {/* Approval date + over-threshold prompt */}
             {(() => {
@@ -827,12 +900,17 @@ export default function CreatorApply() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-bold text-white mb-2">Application Under Review</h2>
+              <h2 className="text-xl font-bold text-white mb-2">
+                {isEs ? "Solicitud en revisión" : "Application Under Review"}
+              </h2>
               <p className="text-sm leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                Your application was received and is being reviewed by our team. This typically takes 24–48 hours.
-                You'll receive a notification the moment a decision is made.
+                {isEs
+                  ? "Recibimos tu solicitud y nuestro equipo la está revisando. Suele tomar entre 24 y 48 horas. Te avisamos apenas haya una decisión."
+                  : "Your application was received and is being reviewed by our team. This typically takes 24–48 hours. You'll receive a notification the moment a decision is made."}
               </p>
             </div>
+
+            {applicantTimeline("review")}
 
             {/* Submitted date + over-threshold prompt */}
             {(() => {

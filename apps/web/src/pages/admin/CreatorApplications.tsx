@@ -9,10 +9,31 @@ import {
   getCastingApplications,
   reviewCastingApplication,
   getCreatorTriageSummary,
+  adminListFeaturedCreators,
+  adminUpsertFeaturedCreator,
+  adminDeleteFeaturedCreator,
+  adminListCrystalCreatorPool,
+  adminPreviewFeaturedAlbum,
+  adminRunFeaturedPromoNow,
   type CreatorApplication,
   type CastingApplication,
   type CreatorTriageSummary,
+  type CreatorRejectionReason,
+  type FeaturedCreatorAdminPick,
+  type CrystalCreatorPoolEntry,
 } from "@/lib/api";
+
+// Rejection-reason picklist — mirrors backend CHECK constraint on
+// model_applications.rejection_reason. Feeds Zoho CRM Application_Rejection_Reason
+// segment + Rejected_Applicants Campaigns list for nurture.
+const REJECTION_REASONS: { value: CreatorRejectionReason; label: string }[] = [
+  { value: "identity_issue",            label: "Identity issue (ID unclear / mismatched)" },
+  { value: "underage_docs",             label: "Underage documents" },
+  { value: "duplicate_account",         label: "Duplicate account" },
+  { value: "off_platform_solicitation", label: "Off-platform solicitation" },
+  { value: "incomplete_docs",           label: "Incomplete documents" },
+  { value: "other",                     label: "Other (see notes)" },
+];
 import ActiveCreatorsTab from "@/components/admin/ActiveCreatorsTab";
 import EnrollmentsList from "@/components/admin/EnrollmentsList";
 
@@ -184,7 +205,7 @@ function TriageBanner({
 
 // ── Main tab type ─────────────────────────────────────────────────────────────
 
-type MainTab = "applications" | "active" | "enrollments" | "casting";
+type MainTab = "applications" | "active" | "enrollments" | "casting" | "featured";
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -199,6 +220,7 @@ export default function CreatorApplications() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("pending");
   const [actionNotes, setActionNotes] = useState<Record<string, string>>({});
+  const [rejectReasons, setRejectReasons] = useState<Record<string, CreatorRejectionReason | "">>({});
   const [processing, setProcessing] = useState<string | null>(null);
 
   // Casting tab state
@@ -302,9 +324,14 @@ export default function CreatorApplications() {
 
   const handleReject = async (id: string) => {
     if (processing) return;
+    const reason = rejectReasons[id];
+    if (!reason) {
+      setError("Pick a rejection reason before rejecting — it feeds Zoho CRM segments.");
+      return;
+    }
     setProcessing(id);
     try {
-      await rejectCreatorApplication(id, actionNotes[id]);
+      await rejectCreatorApplication(id, actionNotes[id], reason);
       await load();
       fetchTriage();
     } catch (err) {
@@ -353,6 +380,7 @@ export default function CreatorApplications() {
             { value: "casting",      label: t.creators.tabCasting },
             { value: "active",       label: t.creators.tabActiveCreators },
             { value: "enrollments",  label: t.creators.tabEnrollments },
+            { value: "featured",     label: "Model of the Day" },
           ] as { value: MainTab; label: string }[]
         ).map((tab) => (
           <button
@@ -378,6 +406,8 @@ export default function CreatorApplications() {
         <ActiveCreatorsTab />
       ) : mainTab === "enrollments" ? (
         <EnrollmentsList />
+      ) : mainTab === "featured" ? (
+        <FeaturedModelOfTheDayPanel />
       ) : mainTab === "casting" ? (
         <>
           {/* Casting filter tabs */}
@@ -728,6 +758,23 @@ export default function CreatorApplications() {
                             style={{ fontSize: "16px" }}
                             className="w-full bg-white/5 text-white rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/20"
                           />
+                          <select
+                            value={rejectReasons[app.id] || ""}
+                            onChange={(e) =>
+                              setRejectReasons((prev) => ({
+                                ...prev,
+                                [app.id]: e.target.value as CreatorRejectionReason | "",
+                              }))
+                            }
+                            style={{ fontSize: "14px" }}
+                            className="w-full bg-white/5 text-white rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30"
+                            title="Required only if rejecting — feeds Zoho CRM segments"
+                          >
+                            <option value="">— Rejection reason (required to reject) —</option>
+                            {REJECTION_REASONS.map((r) => (
+                              <option key={r.value} value={r.value}>{r.label}</option>
+                            ))}
+                          </select>
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleApprove(app.id)}
@@ -743,13 +790,14 @@ export default function CreatorApplications() {
                             </button>
                             <button
                               onClick={() => handleReject(app.id)}
-                              disabled={processing === app.id}
-                              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                              disabled={processing === app.id || !rejectReasons[app.id]}
+                              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                               style={{
                                 background: "rgba(239,68,68,0.1)",
                                 color: "#EF4444",
                                 border: "1px solid rgba(239,68,68,0.2)",
                               }}
+                              title={!rejectReasons[app.id] ? "Pick a rejection reason first" : "Reject application"}
                             >
                               {processing === app.id ? t.shared.processing : t.shared.reject}
                             </button>
@@ -764,6 +812,287 @@ export default function CreatorApplications() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ── Featured Model of the Day panel ──────────────────────────────────────────
+
+function todayUtcYmd(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+function FeaturedModelOfTheDayPanel() {
+  const [pool, setPool] = useState<CrystalCreatorPoolEntry[]>([]);
+  const [picks, setPicks] = useState<FeaturedCreatorAdminPick[]>([]);
+  const [date, setDate] = useState<string>(todayUtcYmd());
+  const [creatorId, setCreatorId] = useState<string>("");
+  const [pitchEn, setPitchEn] = useState<string>("");
+  const [pitchEs, setPitchEs] = useState<string>("");
+  const [mediaUrl, setMediaUrl] = useState<string>("");
+  const [ctaIntroCall, setCtaIntroCall] = useState<boolean>(false);
+  const [preview, setPreview] = useState<string[]>([]);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<boolean>(false);
+  const [runSummary, setRunSummary] = useState<Awaited<ReturnType<typeof adminRunFeaturedPromoNow>> | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [p, list] = await Promise.all([
+        adminListCrystalCreatorPool(),
+        adminListFeaturedCreators(),
+      ]);
+      setPool(p.creators);
+      setPicks(list.picks);
+      // Prefill from an existing pick for the current date, if any.
+      const existing = list.picks.find((x) => String(x.date).slice(0, 10) === date);
+      if (existing) {
+        setCreatorId(String(existing.creator_id));
+        setPitchEn(existing.pitch_en || "");
+        setPitchEs(existing.pitch_es || "");
+        setMediaUrl(existing.media_url || "");
+        setCtaIntroCall(!!existing.cta_intro_call);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "load_failed");
+    }
+  }, [date]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!creatorId) { setPreview([]); return; }
+    setPreviewLoading(true);
+    adminPreviewFeaturedAlbum(creatorId)
+      .then((r) => setPreview(r.photos || []))
+      .catch(() => setPreview([]))
+      .finally(() => setPreviewLoading(false));
+  }, [creatorId]);
+
+  const handleSave = async () => {
+    if (!creatorId || !pitchEn.trim() || !pitchEs.trim()) {
+      setError("creator + both pitches required"); return;
+    }
+    setBusy(true); setStatus(null); setError(null);
+    try {
+      await adminUpsertFeaturedCreator(date, {
+        creatorId, pitchEn, pitchEs,
+        mediaUrl: mediaUrl.trim() || null,
+        ctaIntroCall,
+      });
+      setStatus("saved");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "save_failed");
+    } finally { setBusy(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`Delete pick for ${date}?`)) return;
+    setBusy(true); setStatus(null); setError(null);
+    try {
+      await adminDeleteFeaturedCreator(date);
+      setStatus("deleted");
+      setCreatorId(""); setPitchEn(""); setPitchEs(""); setMediaUrl(""); setCtaIntroCall(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "delete_failed");
+    } finally { setBusy(false); }
+  };
+
+  const handleRunNow = async () => {
+    if (!confirm("Force-run today's promo now? Posts to X and DMs every eligible user.")) return;
+    setBusy(true); setStatus(null); setError(null); setRunSummary(null);
+    try {
+      const summary = await adminRunFeaturedPromoNow();
+      setRunSummary(summary);
+      setStatus("fired");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "run_failed");
+    } finally { setBusy(false); }
+  };
+
+  const chosen = pool.find((c) => String(c.id) === String(creatorId)) || null;
+
+  return (
+    <div className="space-y-6">
+      <div className="glass-card-sm p-4 space-y-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <div className="mb-1">Date (UTC)</div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
+            />
+          </label>
+          <label className="flex-1 min-w-[180px] text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <div className="mb-1">Crystal Creator ({pool.length} eligible)</div>
+            <select
+              value={creatorId}
+              onChange={(e) => setCreatorId(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
+            >
+              <option value="">— pick one —</option>
+              {pool.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.first_name || c.username || c.id}{c.username ? ` (@${c.username})` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <div className="mb-1">Pitch (EN)</div>
+            <textarea
+              value={pitchEn}
+              onChange={(e) => setPitchEn(e.target.value)}
+              rows={3}
+              maxLength={220}
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
+              placeholder="Featured today on PNPtv — the ones setting the pace."
+            />
+          </label>
+          <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <div className="mb-1">Pitch (ES)</div>
+            <textarea
+              value={pitchEs}
+              onChange={(e) => setPitchEs(e.target.value)}
+              rows={3}
+              maxLength={220}
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
+              placeholder="Modelo del día en PNPtv — marca el ritmo."
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap gap-3 items-center">
+          <label className="flex-1 min-w-[220px] text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            <div className="mb-1">Media URL override (optional)</div>
+            <input
+              type="url"
+              value={mediaUrl}
+              onChange={(e) => setMediaUrl(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
+              placeholder="https://pnptv.app/uploads/..."
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-white/80 pb-1.5">
+            <input
+              type="checkbox"
+              checked={ctaIntroCall}
+              onChange={(e) => setCtaIntroCall(e.target.checked)}
+            />
+            Include intro-call CTA
+          </label>
+        </div>
+
+        <div>
+          <div className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            Album preview {chosen ? `for ${chosen.first_name || chosen.username || chosen.id}` : ""} — hero uses first pic if no override
+          </div>
+          {previewLoading ? (
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="w-16 h-16 bg-white/5 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : preview.length === 0 ? (
+            <div className="text-xs text-white/40">
+              {creatorId ? "No album pics or channel-video thumbs for this creator." : "Pick a creator to preview."}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {preview.map((url, i) => (
+                <img
+                  key={url}
+                  src={url.startsWith("/") ? url : url}
+                  alt=""
+                  className="w-16 h-16 rounded object-cover border"
+                  style={{ borderColor: i === 0 ? "#D4007A" : "rgba(255,255,255,0.1)" }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={handleSave}
+            disabled={busy}
+            className="px-3 py-1.5 rounded text-xs font-semibold"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff", opacity: busy ? 0.5 : 1 }}
+          >
+            {busy ? "Working…" : "Save pick"}
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={busy}
+            className="px-3 py-1.5 rounded text-xs font-medium"
+            style={{ background: "rgba(239,68,68,0.1)", color: "#EF4444", border: "1px solid rgba(239,68,68,0.2)", opacity: busy ? 0.5 : 1 }}
+          >
+            Delete pick
+          </button>
+          <button
+            onClick={handleRunNow}
+            disabled={busy}
+            className="px-3 py-1.5 rounded text-xs font-semibold ml-auto"
+            style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4", border: "1px solid rgba(94,209,196,0.3)", opacity: busy ? 0.5 : 1 }}
+            title="Clears today's dedup key + runs the full promo (X + Telegram) immediately"
+          >
+            Force run now
+          </button>
+        </div>
+
+        {status && <div className="text-xs text-emerald-400">✓ {status}</div>}
+        {error && <div className="text-xs text-red-400">✗ {error}</div>}
+
+        {runSummary && (
+          <div className="text-xs text-white/70 bg-white/5 rounded p-2">
+            {runSummary.skipped
+              ? <>Skipped: {runSummary.skipped}</>
+              : <>
+                  Fired for <b>{runSummary.creator}</b> ({runSummary.source}) —
+                  album:{runSummary.albumSize ?? 0},
+                  X:{runSummary.x?.ok ? "✓" : `✗ ${runSummary.x?.reason || ""}`},
+                  TG:{runSummary.telegram?.sent ?? 0}/{runSummary.telegram?.total ?? 0} sent
+                  {runSummary.telegram?.failed ? ` (${runSummary.telegram.failed} failed)` : ""}
+                </>
+            }
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          Last 30 days
+        </div>
+        <div className="space-y-2">
+          {picks.length === 0 ? (
+            <div className="text-xs text-white/40">No picks scheduled.</div>
+          ) : picks.map((p) => (
+            <div
+              key={p.date}
+              className="glass-card-sm p-3 flex items-center gap-3 cursor-pointer hover:bg-white/5"
+              onClick={() => setDate(String(p.date).slice(0, 10))}
+            >
+              <div className="text-xs text-white/60 w-24">{String(p.date).slice(0, 10)}</div>
+              <div className="flex-1 text-sm text-white">
+                {p.first_name || p.username || p.creator_id}
+                {p.username && <span className="text-white/40 text-xs ml-1">@{p.username}</span>}
+              </div>
+              {p.cta_intro_call && <div className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-400">CTA</div>}
+              {p.media_url && <div className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">override</div>}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

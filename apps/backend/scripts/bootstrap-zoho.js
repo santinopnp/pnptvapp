@@ -97,6 +97,36 @@ async function bootstrapCRM() {
     { field_label: 'PNPtv Fam',            api_name: 'PNPtv_Fam',            data_type: 'boolean' },
     { field_label: 'PNPtv Fam Since',      api_name: 'PNPtv_Fam_Since',      data_type: 'datetime' },
     { field_label: 'Whale Pig',            api_name: 'Whale_Pig',            data_type: 'boolean' },
+    // Creator application lifecycle (added 2026-09-01) — 7 fields.
+    { field_label: 'Application Status',           api_name: 'Application_Status',           data_type: 'picklist',
+      pick_list_values: [
+        { display_value: 'Not_Applied',   actual_value: 'Not_Applied' },
+        { display_value: 'Applied',       actual_value: 'Applied' },
+        { display_value: 'Under_Review',  actual_value: 'Under_Review' },
+        { display_value: 'Approved',      actual_value: 'Approved' },
+        { display_value: 'Rejected',      actual_value: 'Rejected' },
+        { display_value: 'Suspended',     actual_value: 'Suspended' },
+      ] },
+    { field_label: 'Application Submitted At', api_name: 'Application_Submitted_At', data_type: 'datetime' },
+    { field_label: 'Application Reviewed At',  api_name: 'Application_Reviewed_At',  data_type: 'datetime' },
+    { field_label: 'Application Rejection Reason', api_name: 'Application_Rejection_Reason', data_type: 'picklist',
+      pick_list_values: [
+        { display_value: 'identity_issue',            actual_value: 'identity_issue' },
+        { display_value: 'underage_docs',             actual_value: 'underage_docs' },
+        { display_value: 'duplicate_account',         actual_value: 'duplicate_account' },
+        { display_value: 'off_platform_solicitation', actual_value: 'off_platform_solicitation' },
+        { display_value: 'incomplete_docs',           actual_value: 'incomplete_docs' },
+        { display_value: 'other',                     actual_value: 'other' },
+      ] },
+    { field_label: 'Documents Status', api_name: 'Documents_Status', data_type: 'picklist',
+      pick_list_values: [
+        { display_value: 'Missing',  actual_value: 'Missing' },
+        { display_value: 'Pending',  actual_value: 'Pending' },
+        { display_value: 'Approved', actual_value: 'Approved' },
+        { display_value: 'Rejected', actual_value: 'Rejected' },
+      ] },
+    { field_label: 'Creator Onboarded At', api_name: 'Creator_Onboarded_At', data_type: 'datetime' },
+    { field_label: 'Creator Suspended At', api_name: 'Creator_Suspended_At', data_type: 'datetime' },
   ];
 
   let created = 0, skipped = 0, failed = 0;
@@ -109,13 +139,13 @@ async function bootstrapCRM() {
     try {
       // Zoho v5 supports POST /settings/fields; v2 requires the "layouts" API.
       // Try v5 first; fall back if not enabled.
-      const body = {
-        fields: [{
-          api_name: f.api_name,
-          field_label: f.field_label,
-          data_type: f.data_type,
-        }],
+      const fieldPayload = {
+        api_name: f.api_name,
+        field_label: f.field_label,
+        data_type: f.data_type,
       };
+      if (f.pick_list_values) fieldPayload.pick_list_values = f.pick_list_values;
+      const body = { fields: [fieldPayload] };
       const resp = await axios.post(
         `${CRM_API}/crm/v5/settings/fields`,
         body,
@@ -243,8 +273,11 @@ async function bootstrapCampaigns() {
   }
 
   const targets = [
-    { listname: 'Crystal Creators', envKey: 'ZOHO_CAMPAIGNS_LIST_CRYSTAL' },
-    { listname: 'PNPtv Fam',        envKey: 'ZOHO_CAMPAIGNS_LIST_PNP_FAM' },
+    { listname: 'Crystal Creators',     envKey: 'ZOHO_CAMPAIGNS_LIST_CRYSTAL' },
+    { listname: 'PNPtv Fam',            envKey: 'ZOHO_CAMPAIGNS_LIST_PNP_FAM' },
+    // Creator application funnel lists (added 2026-09-01)
+    { listname: 'Creator Applicants',   envKey: 'ZOHO_CAMPAIGNS_LIST_APPLICANTS' },
+    { listname: 'Rejected Applicants',  envKey: 'ZOHO_CAMPAIGNS_LIST_REJECTED' },
   ];
 
   // Fetch existing lists first (getmailinglists returns all)
@@ -305,7 +338,8 @@ async function bootstrapCampaigns() {
 
   head('Env vars to paste into .env.production');
   const envLines = [];
-  if (crmRes.ok || (crmRes.skipped + crmRes.created) === 6) envLines.push('ZOHO_SYNC_TIER_FIELDS=1');
+  // 6 tier fields + 7 lifecycle fields = 13 total on Contacts.
+  if (crmRes.ok || (crmRes.skipped + crmRes.created) === 13) envLines.push('ZOHO_SYNC_TIER_FIELDS=1');
   if (booksRes.ok) {
     envLines.push('ZOHO_BOOKS_ENABLED=1');
     Object.entries(booksRes.results || {}).forEach(([k, v]) => envLines.push(`${k}=${v}`));

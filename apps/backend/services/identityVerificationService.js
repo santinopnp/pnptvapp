@@ -153,17 +153,12 @@ class IdentityVerificationService {
 
     logger.info(`2257: record approved for user ${userId} by admin ${adminId}`);
 
-    // Sync approval to Zoho CRM Contact (fire-and-forget, no-op when unconfigured)
+    // Sync approval to Zoho CRM Contact via the canonical single-user sync so
+    // all Contact fields (including the new lifecycle segment) refresh at once.
     setImmediate(async () => {
       try {
-        const zoho = require('./zohoService');
-        if (!zoho.isConfigured()) return;
-        await zoho.upsertContactByPnptvId(String(userId), {
-          Verified_2257: true,
-          Verification_Expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-          Legal_Package_Version: process.env.LEGAL_PACKAGE_VERSION || 'v1.0-2026-08-07-DRAFT',
-          Legal_Package_URL: process.env.LEGAL_PACKAGE_URL || 'https://pnptv.app/docs/legal/creator/',
-        });
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(String(userId));
       } catch (crmErr) {
         logger.warn('2257: Zoho CRM sync failed (non-fatal)', { userId, error: crmErr.message });
       }
@@ -263,17 +258,26 @@ class IdentityVerificationService {
 
   /**
    * Reject a 2257 record. Does NOT set identity_verified on users.
-   * Notes (rejection reason) are mandatory.
+   * Notes (free-text) are mandatory. Reason (picklist) is optional but recommended
+   * so Zoho CRM Application_Rejection_Reason can segment.
    *
    * @param {string} userId
    * @param {string} adminId
-   * @param {string} notes - Reason for rejection (required)
+   * @param {string} notes - Free-text explanation (required)
+   * @param {string|null} [reason] - One of: identity_issue | underage_docs |
+   *   duplicate_account | off_platform_solicitation | incomplete_docs | other
    * @returns {Promise<object>} Updated record row
    */
-  static async reject2257Record(userId, adminId, notes) {
+  static async reject2257Record(userId, adminId, notes, reason = null) {
     if (!userId) throw new Error('userId is required');
     if (!adminId) throw new Error('adminId is required');
     if (!notes || !notes.trim()) throw new Error('Rejection reason (notes) is required');
+
+    const VALID_REASONS = new Set([
+      'identity_issue', 'underage_docs', 'duplicate_account',
+      'off_platform_solicitation', 'incomplete_docs', 'other',
+    ]);
+    const cleanReason = reason && VALID_REASONS.has(reason) ? reason : null;
 
     // If the record was previously approved, determine ban status based on resubmission_count
     const { rows: existing } = await query(
@@ -292,19 +296,46 @@ class IdentityVerificationService {
              verified_at                = NOW(),
              verified_by                = $2,
              admin_notes                = $3,
+             rejection_reason           = $5,
              banned_from_applying_until = CASE WHEN $4 THEN NOW() + INTERVAL '6 months' ELSE banned_from_applying_until END
        WHERE user_id = $1
        RETURNING *`,
-      [userId, adminId, notes.trim(), banUser]
+      [userId, adminId, notes.trim(), banUser, cleanReason]
     );
 
-    // Revoke identity_verified on users table when re-rejecting a previously approved record
+    // Revoke identity_verified + stamp lifecycle on users table.
+    // 2257 rejection is treated as an application review event for CRM purposes.
     if (wasApproved) {
       await query(
-        `UPDATE users SET identity_verified = FALSE, identity_verified_at = NULL WHERE id = $1`,
-        [userId]
+        `UPDATE users SET
+           identity_verified = FALSE,
+           identity_verified_at = NULL,
+           application_reviewed_at = NOW(),
+           application_rejection_reason = $2,
+           updated_at = NOW()
+         WHERE id = $1`,
+        [userId, cleanReason]
+      );
+    } else {
+      await query(
+        `UPDATE users SET
+           application_reviewed_at = NOW(),
+           application_rejection_reason = $2,
+           updated_at = NOW()
+         WHERE id = $1`,
+        [userId, cleanReason]
       );
     }
+
+    // JIT Zoho CRM sync so Documents_Status + rejection lifecycle fields propagate.
+    setImmediate(async () => {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(String(userId));
+      } catch (crmErr) {
+        logger.warn('2257 reject: Zoho CRM sync failed (non-fatal)', { userId, error: crmErr.message });
+      }
+    });
 
     logger.info(`2257: record rejected for user ${userId} by admin ${adminId}, wasApproved=${wasApproved}, banned=${banUser}, reason: ${notes.trim()}`);
 
@@ -853,7 +884,8 @@ Rules:
       await IdentityVerificationService.reject2257Record(
         userId,
         'persona-system',
-        'Identity verification declined by Persona automated review'
+        'Identity verification declined by Persona automated review',
+        'identity_issue'
       );
 
       logger.info(`2257: Persona inquiry declined for user ${userId}`);

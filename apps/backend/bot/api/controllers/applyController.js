@@ -308,6 +308,16 @@ class ApplyController {
 
       const application = result.rows[0];
 
+      // Stamp application_submitted_at on users so Zoho CRM lifecycle segment works.
+      // Only stamps when NULL — repeat applications keep the earliest timestamp.
+      query(
+        `UPDATE users SET
+           application_submitted_at = COALESCE(application_submitted_at, $2),
+           updated_at = NOW()
+         WHERE id = $1`,
+        [userId, application.created_at || new Date()]
+      ).catch(err => logger.warn(`application lifecycle stamp failed (non-fatal): ${err.message}`));
+
       // Notify admin via Telegram (fire-and-forget)
       ApplyController._notifyAdmin(userId, stageName, applicationType, application.id).catch((err) => {
         logger.warn(`Failed to send admin notification for model application: ${err.message}`);
@@ -326,6 +336,28 @@ class ApplyController {
           appliedAt: application.created_at ? new Date(application.created_at).toISOString() : new Date().toISOString(),
         }).catch(() => {});
       } catch (_) {}
+
+      // JIT push new applicant → Zoho CRM Contact + Creator_Applicants Campaigns list.
+      setImmediate(async () => {
+        try {
+          const zohoSync = require('../../../services/zohoSyncService');
+          await zohoSync.syncOneUser(String(userId));
+        } catch (err) {
+          logger.warn(`apply: Zoho CRM JIT sync failed (non-fatal): ${err.message}`);
+        }
+        try {
+          const zohoCampaigns = require('../../../services/zohoCampaignsService');
+          const { rows } = await query('SELECT email, first_name, last_name FROM users WHERE id = $1', [userId]);
+          const contact = rows[0];
+          if (contact?.email) {
+            await zohoCampaigns.addToCreatorApplicants({
+              email: contact.email, firstName: contact.first_name, lastName: contact.last_name, pnptvId: String(userId),
+            });
+          }
+        } catch (err) {
+          logger.warn(`apply: Campaigns applicant-add failed (non-fatal): ${err.message}`);
+        }
+      });
 
       return res.json({ success: true, application });
     } catch (error) {

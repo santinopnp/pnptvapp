@@ -18,14 +18,18 @@
  *   ZOHO_CAMPAIGNS_CLIENT_ID
  *   ZOHO_CAMPAIGNS_CLIENT_SECRET
  *   ZOHO_CAMPAIGNS_REFRESH_TOKEN
- *   ZOHO_CAMPAIGNS_ENABLED=1     — kill switch; defaults to disabled
- *   ZOHO_CAMPAIGNS_LIST_CRYSTAL  — Zoho listkey for the Crystal Creators list
- *   ZOHO_CAMPAIGNS_LIST_PNP_FAM  — Zoho listkey for the PNPtv Fam list
+ *   ZOHO_CAMPAIGNS_ENABLED=1        — kill switch; defaults to disabled
+ *   ZOHO_CAMPAIGNS_LIST_CRYSTAL     — listkey for the Crystal Creators list
+ *   ZOHO_CAMPAIGNS_LIST_PNP_FAM     — listkey for the PNPtv Fam list
+ *   ZOHO_CAMPAIGNS_LIST_APPLICANTS  — listkey for the Creator Applicants list (added 2026-09-01)
+ *   ZOHO_CAMPAIGNS_LIST_REJECTED    — listkey for the Rejected Applicants nurture list (added 2026-09-01)
  *
  * Zoho Campaigns setup Santino needs to do ONCE:
  *   1. Contacts → Manage Lists → New List:
  *      - "Crystal Creators" (active-tier drip audience)
  *      - "PNPtv Fam" (inner-circle drip audience)
+ *      - "Creator Applicants" (in-flight application nurture)
+ *      - "Rejected Applicants" (post-rejection warm follow-up)
  *   2. Copy each list's listkey (Campaigns → List detail → API section) into env.
  */
 
@@ -163,8 +167,50 @@ async function removeFromPnptvFam(email) {
   logger.info('[zohoCampaigns] remove ← PNPtv Fam', { email, ok: r.ok });
 }
 
+// ── Creator Applicants (added 2026-09-01) ────────────────────────────────
+// Auto-added on Apply.tsx submit + submitEnrollment; auto-removed on
+// approve/reject. Feeds a warm nurture drip during the review window.
+
+async function addToCreatorApplicants(contact) {
+  if (!isConfigured()) return;
+  const listKey = process.env.ZOHO_CAMPAIGNS_LIST_APPLICANTS;
+  if (!listKey) { logger.warn('[zohoCampaigns] LIST_APPLICANTS env missing'); return; }
+  const r = await _addToList(listKey, contact);
+  logger.info('[zohoCampaigns] add → Creator Applicants', { email: contact.email, ok: r.ok });
+}
+
+async function removeFromCreatorApplicants(email) {
+  if (!isConfigured()) return;
+  const listKey = process.env.ZOHO_CAMPAIGNS_LIST_APPLICANTS;
+  if (!listKey) return;
+  const r = await _removeFromList(listKey, email);
+  logger.info('[zohoCampaigns] remove ← Creator Applicants', { email, ok: r.ok });
+}
+
+// ── Rejected Applicants nurture (added 2026-09-01) ───────────────────────
+// Auto-added on rejection so we can send a warm follow-up sequence later
+// (never a "you failed" tone — see feedback_never_approach_creators_hostile_tone).
+
+async function addToRejectedApplicants(contact) {
+  if (!isConfigured()) return;
+  const listKey = process.env.ZOHO_CAMPAIGNS_LIST_REJECTED;
+  if (!listKey) { logger.warn('[zohoCampaigns] LIST_REJECTED env missing'); return; }
+  const r = await _addToList(listKey, contact);
+  logger.info('[zohoCampaigns] add → Rejected Applicants', { email: contact.email, ok: r.ok });
+}
+
+async function removeFromRejectedApplicants(email) {
+  if (!isConfigured()) return;
+  const listKey = process.env.ZOHO_CAMPAIGNS_LIST_REJECTED;
+  if (!listKey) return;
+  const r = await _removeFromList(listKey, email);
+  logger.info('[zohoCampaigns] remove ← Rejected Applicants', { email, ok: r.ok });
+}
+
 module.exports = {
   isConfigured,
   addToCrystalCreators, removeFromCrystalCreators,
   addToPnptvFam, removeFromPnptvFam,
+  addToCreatorApplicants, removeFromCreatorApplicants,
+  addToRejectedApplicants, removeFromRejectedApplicants,
 };

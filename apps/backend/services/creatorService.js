@@ -304,10 +304,22 @@ class CreatorService {
 
     await query(
       `UPDATE model_applications SET
-         status = 'approved', reviewed_by = $2, admin_notes = $3, reviewed_at = NOW()
+         status = 'approved', reviewed_by = $2, admin_notes = $3, reviewed_at = NOW(),
+         rejection_reason = NULL
        WHERE id = $1`,
       [applicationId, adminId, notes || null]
     );
+
+    // Stamp application lifecycle on users so Zoho CRM segments cleanly.
+    await query(
+      `UPDATE users
+          SET application_reviewed_at = NOW(),
+              application_rejection_reason = NULL,
+              creator_onboarded_at = COALESCE(creator_onboarded_at, NOW()),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [app.user_id]
+    ).catch(err => logger.warn('approveApplication: lifecycle stamp failed (non-fatal)', { userId: app.user_id, error: err.message }));
 
     const priceUsd = app.requested_price_usd || 15.00;
 
@@ -406,10 +418,38 @@ class CreatorService {
       });
     }
 
+    // JIT push creator lifecycle → Zoho CRM Contacts + Campaigns.
+    // Applicant list gets a remove; nightly + JIT sync handle CRM fields.
+    setImmediate(async () => {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(String(app.user_id));
+      } catch (err) {
+        logger.warn('approveApplication: Zoho CRM JIT sync failed (non-fatal)', { userId: app.user_id, error: err.message });
+      }
+      try {
+        const zohoCampaigns = require('./zohoCampaignsService');
+        const { rows } = await query('SELECT email FROM users WHERE id = $1', [app.user_id]);
+        if (rows[0]?.email) await zohoCampaigns.removeFromCreatorApplicants(rows[0].email);
+      } catch (err) {
+        logger.warn('approveApplication: Campaigns remove failed (non-fatal)', { userId: app.user_id, error: err.message });
+      }
+    });
+
     return { success: true };
   }
 
-  static async rejectApplication(applicationId, adminId, notes) {
+  /**
+   * Reject a creator application.
+   *
+   * @param {string} applicationId
+   * @param {string} adminId
+   * @param {string|null} notes  — free-text admin note (optional)
+   * @param {string|null} [reason] — structured picklist reason. One of:
+   *   identity_issue | underage_docs | duplicate_account | off_platform_solicitation
+   *   | incomplete_docs | other. Feeds Zoho CRM Application_Rejection_Reason segment.
+   */
+  static async rejectApplication(applicationId, adminId, notes, reason = null) {
     const appRes = await query(
       'SELECT * FROM model_applications WHERE id = $1',
       [applicationId]
@@ -417,33 +457,91 @@ class CreatorService {
     const app = appRes.rows[0];
     if (!app) throw new Error('Application not found');
 
+    const VALID_REASONS = new Set([
+      'identity_issue', 'underage_docs', 'duplicate_account',
+      'off_platform_solicitation', 'incomplete_docs', 'other',
+    ]);
+    const cleanReason = reason && VALID_REASONS.has(reason) ? reason : null;
+
     await query(
       `UPDATE model_applications SET
-         status = 'rejected', reviewed_by = $2, admin_notes = $3, reviewed_at = NOW()
+         status = 'rejected', reviewed_by = $2, admin_notes = $3, reviewed_at = NOW(),
+         rejection_reason = $4
        WHERE id = $1`,
-      [applicationId, adminId, notes || null]
+      [applicationId, adminId, notes || null, cleanReason]
     );
 
     // Do NOT reset creator_status — the user remains an active tier creator.
     // Only full-time promotion is denied; their existing tier enrollment is preserved.
 
-    NotificationEmitter.emit({
-      type: 'creator_rejected',
-      category: 'commerce',
-      priority: 'normal',
-      actorId: adminId,
-      targetUserId: app.user_id,
-      entityType: 'model_application',
-      entityId: applicationId,
-      message: 'Your creator application was not approved at this time.',
-      metadata: {
-        url: '/creators/apply#identity-verification',
-        pushTitle: 'Creator application ⚠️',
-        pushBody: notes ? notes.slice(0, 80) : 'Your application was not approved. Tap to review your ID submission.',
-      },
+    // Stamp lifecycle on users so Zoho CRM can segment rejected applicants.
+    await query(
+      `UPDATE users
+          SET application_reviewed_at = NOW(),
+              application_rejection_reason = $2,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [app.user_id, cleanReason]
+    ).catch(err => logger.warn('rejectApplication: lifecycle stamp failed (non-fatal)', { userId: app.user_id, error: err.message }));
+
+    // Warm bilingual rejection copy — never hostile, always leaves a door open.
+    // Language follows the creator's own users.language preference.
+    setImmediate(async () => {
+      try {
+        const { rows: userRows } = await query(
+          `SELECT first_name, username, language FROM users WHERE id = $1`,
+          [app.user_id]
+        );
+        const u = userRows[0] || {};
+        const isEs = (u.language || 'en').startsWith('es');
+        const msgEn = `Thanks for applying to become a PNPtv creator. We can't move forward with your application right now, but you're welcome to reach out to our team any time — we'd love to help you find the right fit.`;
+        const msgEs = `Gracias por postularte como creador/a de PNPtv. Por ahora no podemos avanzar con tu solicitud, pero puedes escribirnos cuando quieras — nos encantará ayudarte a encontrar el camino correcto.`;
+        const body = isEs ? msgEs : msgEn;
+
+        NotificationEmitter.emit({
+          type: 'creator_rejected',
+          category: 'commerce',
+          priority: 'normal',
+          actorId: adminId,
+          targetUserId: app.user_id,
+          entityType: 'model_application',
+          entityId: applicationId,
+          message: body,
+          metadata: {
+            url: '/creators/apply',
+            pushTitle: isEs ? 'Solicitud de creador/a' : 'Creator application',
+            pushBody: body.slice(0, 120),
+          },
+        }).catch(() => {});
+      } catch (notifyErr) {
+        logger.warn('rejectApplication: notification failed (non-fatal)', { userId: app.user_id, error: notifyErr.message });
+      }
     });
 
-    return { success: true };
+    // JIT push → Zoho CRM Contact fields + Campaigns lists.
+    setImmediate(async () => {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(String(app.user_id));
+      } catch (err) {
+        logger.warn('rejectApplication: Zoho CRM JIT sync failed (non-fatal)', { userId: app.user_id, error: err.message });
+      }
+      try {
+        const zohoCampaigns = require('./zohoCampaignsService');
+        const { rows } = await query('SELECT email, first_name, last_name FROM users WHERE id = $1', [app.user_id]);
+        const contact = rows[0];
+        if (contact?.email) {
+          await zohoCampaigns.removeFromCreatorApplicants(contact.email);
+          await zohoCampaigns.addToRejectedApplicants({
+            email: contact.email, firstName: contact.first_name, lastName: contact.last_name, pnptvId: String(app.user_id),
+          });
+        }
+      } catch (err) {
+        logger.warn('rejectApplication: Campaigns hooks failed (non-fatal)', { userId: app.user_id, error: err.message });
+      }
+    });
+
+    return { success: true, rejectionReason: cleanReason };
   }
 
   // ── Subscriptions ──────────────────────────────────────────────────────────
@@ -2101,9 +2199,37 @@ class CreatorService {
     );
 
     await query(
-      `UPDATE users SET creator_status = 'pending_review', creator_type = $2, creator_price_usd = $3 WHERE id = $1`,
+      `UPDATE users SET
+         creator_status = 'pending_review',
+         creator_type = $2,
+         creator_price_usd = $3,
+         application_submitted_at = COALESCE(application_submitted_at, NOW()),
+         updated_at = NOW()
+       WHERE id = $1`,
       [userId, creatorType, resolvedPrice]
     );
+
+    // JIT push → Zoho CRM Contact fields + add to Creator_Applicants Campaigns list.
+    setImmediate(async () => {
+      try {
+        const zohoSync = require('./zohoSyncService');
+        await zohoSync.syncOneUser(String(userId));
+      } catch (err) {
+        logger.warn('submitEnrollment: Zoho CRM JIT sync failed (non-fatal)', { userId, error: err.message });
+      }
+      try {
+        const zohoCampaigns = require('./zohoCampaignsService');
+        const { rows } = await query('SELECT email, first_name, last_name FROM users WHERE id = $1', [userId]);
+        const contact = rows[0];
+        if (contact?.email) {
+          await zohoCampaigns.addToCreatorApplicants({
+            email: contact.email, firstName: contact.first_name, lastName: contact.last_name, pnptvId: String(userId),
+          });
+        }
+      } catch (err) {
+        logger.warn('submitEnrollment: Campaigns applicant-add failed (non-fatal)', { userId, error: err.message });
+      }
+    });
 
     // Sync terms agreement back into model_applications so getMyConsents reflects
     // the enrollment wizard completion without requiring a separate flow.
