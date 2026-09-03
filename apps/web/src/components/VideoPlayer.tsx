@@ -58,6 +58,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       onEnded,
       onPlay,
       onLoadedMetadata,
+      onError,
       className = "",
       style,
       autoPlay,
@@ -100,17 +101,58 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         return;
       }
 
+      // Mux serves with `access-control-allow-origin: *`; keeping crossOrigin
+      // explicit makes hls.js reuse fetched manifests as texture data without
+      // an opaque-response CORS downgrade.
+      video.crossOrigin = "anonymous";
+
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = src;
         return;
       }
 
       if (Hls.isSupported()) {
-        const hls = new Hls({ enableWorker: true });
+        // VOD tuning — no live-edge params. Generous retries so transient
+        // network jitter (Mux CDN hiccup, mobile Wi-Fi flap) self-heals
+        // instead of surfacing a fatal error to the user.
+        const hls = new Hls({
+          enableWorker: true,
+          manifestLoadingMaxRetry: 6,
+          manifestLoadingRetryDelay: 1000,
+          levelLoadingMaxRetry: 6,
+          levelLoadingRetryDelay: 1000,
+          fragLoadingMaxRetry: 6,
+          fragLoadingRetryDelay: 500,
+        });
+        let mediaErrorCount = 0;
+        let networkErrorCount = 0;
+        const MAX_RECOVERY = 3;
         hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (_e, data) => {
-          if (data.fatal) setPlaybackError(data.details || "playback_error");
+          if (!data.fatal) return;
+          console.warn("[VideoPlayer] HLS fatal:", data.type, data.details, "src:", src);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            networkErrorCount += 1;
+            if (networkErrorCount <= MAX_RECOVERY) {
+              hls.startLoad();
+              return;
+            }
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            mediaErrorCount += 1;
+            if (mediaErrorCount <= MAX_RECOVERY) {
+              hls.recoverMediaError();
+              return;
+            }
+          }
+          setPlaybackError(data.details || "playback_error");
+          // Bubble to the parent so consumers (PostCard etc.) can render
+          // their own "video unavailable" affordance in place of ours.
+          if (onError) {
+            try {
+              onError({} as React.SyntheticEvent<HTMLVideoElement>);
+            } catch { /* swallow — the internal overlay still renders */ }
+          }
         });
         hlsRef.current = hls;
         return () => {
@@ -120,8 +162,11 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       }
     }, [src]);
 
-    const handleVideoError = () => {
+    const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const el = e.currentTarget;
+      console.warn("[VideoPlayer] native video error:", el?.error?.code, el?.error?.message, "src:", src);
       setPlaybackError("playback_error");
+      onError?.(e);
     };
 
     const handleRetry = () => {
