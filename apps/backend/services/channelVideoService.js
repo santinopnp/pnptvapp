@@ -52,9 +52,13 @@ function directusFileUrl(fileId) {
   // Public CDN URL the SPA uses.
   return `https://cms.pnptv.app/assets/${fileId}`;
 }
-function directusThumbUrl(fileId) {
-  // The cms video-thumb extension generates JPG poster frames asynchronously.
-  return `https://cms.pnptv.app/video-thumb/${fileId}.jpg`;
+function directusThumbUrl(_fileId) {
+  // The cms /video-thumb/ extension serves pre-generated poster JPGs, but the
+  // generator never populated /directus/uploads/_thumbs so every request 404s.
+  // Return null so the frontend shows the video element's own poster fallback
+  // instead of a broken image. Callers with a Mux playback id should build
+  // `https://image.mux.com/<id>/thumbnail.jpg` themselves.
+  return null;
 }
 
 // ── Per-creator Directus folder helpers ───────────────────────────────────────

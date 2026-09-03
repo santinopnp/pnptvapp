@@ -529,11 +529,10 @@ class SocialPostService {
           id: v.id,
           title: v.title || 'Untitled',
           duration: v.duration || null,
-          // The Directus video-thumb extension auto-extracts a frame from
-          // the video file — works whether or not the thumbnail field is
-          // populated, and never accidentally returns the raw MP4 (the
-          // thumbnail field sometimes holds the video UUID itself).
-          thumbnail_url: `/cms/video-thumb/${v.video_file}.jpg`,
+          // The Directus /video-thumb/ generator was never wired up so
+          // its endpoint 404s. Prefer the Directus row's own thumbnail
+          // field when present, else null (frontend shows a placeholder).
+          thumbnail_url: v.thumbnail ? `https://cms.pnptv.app/assets/${v.thumbnail}` : null,
           link: `/media?play=${v.id}`,
         }));
 

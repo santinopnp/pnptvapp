@@ -19924,7 +19924,6 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
       if (status === 'published') {
         try {
           const mediaUrl = `https://cms.pnptv.app/assets/${fileId}`;
-          const thumbUrl = `https://cms.pnptv.app/video-thumb/${fileId}.jpg`;
           const content = description && description.trim() ? description : titleInput;
           await getPool().query(
             `INSERT INTO social_posts
@@ -19932,7 +19931,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
                media_url, media_type, content_tier, video_thumbnail_url, video_thumbnails,
                is_shareable, source_channel, created_at, updated_at)
              VALUES ($1, 5, $2, $3, $4, $5, $6, 'video', 'PRIME', $7, '[]'::jsonb, true, 'prime', NOW(), NOW())`,
-            ['8599671840', primeRow.id, content, titleInput, description, mediaUrl, thumbUrl]
+            ['8599671840', primeRow.id, content, titleInput, description, mediaUrl, null]
           );
         } catch (syncErr) {
           logger.warn('social_posts mirror after upload failed (non-fatal)', { id: primeRow.id, error: syncErr.message });
@@ -19942,13 +19941,12 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
       // Step 5 — insert into channel_videos so the video appears on the /channels/5 page
       try {
         const cvStatus = status === 'published' ? 'published' : 'draft';
-        const thumbUrl = `https://cms.pnptv.app/video-thumb/${fileId}.jpg`;
         await getPool().query(
           `INSERT INTO channel_videos
              (channel_id, uploader_id, directus_file_id, title, description, duration_sec,
               thumbnail_url, status, created_at, updated_at)
            VALUES (5, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
-          ['8599671840', fileId, titleInput.slice(0, 255), description, durationSec, thumbUrl, cvStatus]
+          ['8599671840', fileId, titleInput.slice(0, 255), description, durationSec, null, cvStatus]
         );
         logger.info('prime-videos: channel_videos row created', { fileId, status: cvStatus });
       } catch (cvErr) {
@@ -19959,11 +19957,10 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
         success: true,
         item: {
           ...primeRow,
-          poster_url: `https://cms.pnptv.app/video-thumb/${fileId}.jpg`,
-          preview_url: `https://cms.pnptv.app/video-thumb/${fileId}_preview.mp4`,
+          poster_url: null,
+          preview_url: null,
           video_url: `https://cms.pnptv.app/assets/${fileId}`,
         },
-        note: 'Thumbnail will appear within 10 minutes (cron generates it).',
       });
 
       } finally {
@@ -20488,7 +20485,9 @@ app.delete('/api/webapp/creators/media/:id',
       if (newOffset >= meta.uploadLength && meta.uploadLength > 0) {
         const fileId = req.params.uploadId;
         const url = `${CMS_PUBLIC_URL}/assets/${fileId}`;
-        const thumbUrl = meta.mediaType === 'video' ? `${CMS_PUBLIC_URL}/video-thumb/${fileId}.jpg` : null;
+        // Directus /video-thumb/ extension generator was never wired up — leave
+        // poster null and let the video element show its own first-frame.
+        const thumbUrl = null;
 
         // Best-effort duration probe against the now-complete Directus asset URL —
         // TUS chunks are relayed straight through to Directus, so no local file
@@ -20671,7 +20670,10 @@ app.delete('/api/webapp/creators/media/:id',
       }
 
       const assetUrl = fileResult.url; // https://cms.pnptv.app/assets/<uuid>
-      const thumbUrl = isVideo ? `${CMS_PUBLIC_URL}/video-thumb/${fileResult.fileId}.jpg` : null;
+      // Directus /video-thumb/ extension generator was never wired up — leave
+      // poster null so the video element renders its own first-frame instead
+      // of a broken image glyph.
+      const thumbUrl = null;
       const mediaType = isVideo ? 'video' : 'photo';
 
       // Best-effort duration probe — the whole file is already in memory (multer

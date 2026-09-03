@@ -49,24 +49,14 @@ self.addEventListener('fetch', (event) => {
   // API calls: network only
   if (url.pathname.startsWith('/api/')) return;
 
-  // Hashed assets (JS/CSS in /assets/): network-first, cache fallback.
-  // These filenames contain content hashes so stale cache = broken app after deploy.
-  // Only cache 2xx responses — a 404 during a rebuild race must NEVER be cached
-  // (it would persist as a phantom-missing chunk even after the file returns).
-  if (url.pathname.startsWith('/assets/')) {
-    event.respondWith(
-      fetch(request).then((resp) => {
-        if (resp && resp.ok) {
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        } else if (resp && resp.status === 404) {
-          caches.open(CACHE_NAME).then((cache) => cache.delete(request));
-        }
-        return resp;
-      }).catch(() => caches.match(request))
-    );
-    return;
-  }
+  // Hashed assets (JS/CSS in /assets/): let the browser handle these directly.
+  // Filenames are content-hashed and served with immutable cache headers, so
+  // the HTTP cache already de-dupes them across sessions. Intercepting via SW
+  // caused a "cross-world service worker resource mismatch" — link-rel-
+  // modulepreload requests initiated by the parser weren't attributed back to
+  // the SW-issued fetch(), so the browser discarded the preload and re-fetched
+  // (doubling bandwidth on ~49 chunks per page load). Skip entirely.
+  if (url.pathname.startsWith('/assets/')) return;
 
   // Other static assets (images, fonts): stale-while-revalidate. Return the
   // cached copy immediately for speed, then fetch in the background to
