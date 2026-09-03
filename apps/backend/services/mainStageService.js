@@ -408,14 +408,14 @@ async function getState() {
       const userMap = new Map(); // userId → { username, isCrystal }
       const nowMs = Date.now();
       for (const row of usersResult.rows) {
-        // crystal_creator_active_until can be 'infinity' (sentinel for permanent
-        // Crystal grants like Santino/Lex/Dejesusof22). JS `new Date('infinity')`
-        // returns Invalid Date, so infinity users would silently be false — the
-        // same trap that hid tip UI for 2 live crystal creators on 2026-09-03.
+        // crystal_creator_active_until can be Postgres 'infinity' (permanent
+        // grants: Santino, Lex, Dejesusof22...). node-pg parses timestamptz
+        // 'infinity' as the JS Number `Infinity`, NOT the string 'infinity',
+        // so `new Date(Infinity)` → Invalid Date. Handle all three shapes.
         const raw = row.crystal_creator_active_until;
         let isCrystal = false;
         if (raw != null) {
-          if (raw === 'infinity' || (typeof raw === 'string' && raw === 'infinity')) {
+          if (raw === Infinity || raw === 'infinity') {
             isCrystal = true;
           } else {
             const asDate = raw instanceof Date ? raw : new Date(raw);
