@@ -4,6 +4,19 @@ import * as Sentry from "@sentry/react";
 import App from "./App";
 import "./styles/globals.css";
 
+// crypto.randomUUID polyfill — iOS Safari <15.4 and some in-app browsers lack it.
+// Without this, App.tsx / MainStageProvider crash on first render.
+if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID !== "function") {
+  (crypto as Crypto & { randomUUID: () => `${string}-${string}-${string}-${string}-${string}` }).randomUUID = function randomUUID() {
+    const bytes = new Uint8Array(16);
+    (crypto.getRandomValues || ((b: Uint8Array) => { for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256); return b; }))(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as `${string}-${string}-${string}-${string}-${string}`;
+  };
+}
+
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN as string,

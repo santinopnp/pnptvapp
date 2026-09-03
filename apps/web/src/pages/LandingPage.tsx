@@ -27,6 +27,19 @@ function bufferToB64url(buf: ArrayBuffer | null | undefined): string | undefined
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// Probe for a real, usable platform authenticator (Face ID / Touch ID / Android biometrics).
+// iOS in-app browsers (Instagram/TikTok/Facebook) expose PublicKeyCredential
+// but return false here — we skip passkey UX and go straight to magic-link.
+async function hasPlatformAuthenticator(): Promise<boolean> {
+  try {
+    if (typeof window === "undefined" || !window.PublicKeyCredential) return false;
+    if (typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable !== "function") return false;
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || "https://pnptv.app";
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
@@ -500,24 +513,26 @@ export function LandingPage() {
   // Offer passkey registration after any successful auth (Telegram, registration).
   // `redirectTo` is where to send the user after they save or skip.
   const offerPasskeyOrRedirect = useCallback((redirectTo: string) => {
-    if (typeof window === "undefined" || !window.PublicKeyCredential) {
-      window.location.href = redirectTo;
-      return;
-    }
     pendingRedirectRef.current = redirectTo;
-    setShowPasskeyPrompt(true);
-    setPasskeyPromptCountdown(30);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      setPasskeyPromptCountdown((prev) => {
-        if (prev <= 1) {
-          if (countdownRef.current) clearInterval(countdownRef.current);
-          window.location.href = pendingRedirectRef.current;
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    hasPlatformAuthenticator().then((supported) => {
+      if (!supported) {
+        window.location.href = redirectTo;
+        return;
+      }
+      setShowPasskeyPrompt(true);
+      setPasskeyPromptCountdown(30);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownRef.current = setInterval(() => {
+        setPasskeyPromptCountdown((prev) => {
+          if (prev <= 1) {
+            if (countdownRef.current) clearInterval(countdownRef.current);
+            window.location.href = pendingRedirectRef.current;
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    });
   }, []);
 
   const handleRegisterPasskeyAfterMagicLink = useCallback(async () => {
@@ -601,9 +616,9 @@ export function LandingPage() {
   const handleOidcLogin = async () => {
     try { localStorage.setItem("pnptv_last_auth", "pnptv_id"); } catch { /* ignore */ }
 
-    const supportsPasskey = typeof window !== "undefined" && !!window.PublicKeyCredential;
+    const supportsPasskey = await hasPlatformAuthenticator();
     if (!supportsPasskey) {
-      openMagicForm("Your browser doesn't support passkeys — sign in with email instead.");
+      openMagicForm("This browser can't use passkeys — sign in with email instead.");
       return;
     }
 
@@ -638,9 +653,11 @@ export function LandingPage() {
         // errors (network, TimeoutError) are also non-actionable here — fall
         // back to magic-link in every case.
         const name = (err as { name?: string })?.name || "";
-        const hint = name === "NotAllowedError"
-          ? "No passkey on this device — sign in with email instead."
-          : "Passkey couldn't be used. Sign in with email instead.";
+        console.warn("[passkey] get() failed", name, err);
+        let hint = "Passkey couldn't be used. Sign in with email instead.";
+        if (name === "NotAllowedError") hint = "No passkey on this device — sign in with email instead.";
+        else if (name === "SecurityError") hint = "Passkey is blocked on this browser. Sign in with email instead.";
+        else if (name === "InvalidStateError") hint = "This device isn't set up for passkeys. Sign in with email instead.";
         openMagicForm(hint);
         return;
       }
@@ -729,15 +746,26 @@ export function LandingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, username }),
       });
-      const data = await res.json();
+      // Some 5xx responses lack a JSON body — never let res.json() bubble as a
+      // generic "connection error" that misleads the user.
+      const data = await res.json().catch(() => ({} as { error?: string }));
       if (!res.ok) {
-        setRegError(data.error || "Registration failed. Please try again.");
+        let msg = data.error;
+        if (!msg) {
+          if (res.status === 429) msg = "Too many attempts. Please wait a few minutes and try again.";
+          else if (res.status === 503) msg = "Sign-up is temporarily unavailable. Please try again in a moment.";
+          else if (res.status === 409) msg = "That email or username is already taken. Try signing in instead.";
+          else msg = `Registration failed (error ${res.status}). Please try again.`;
+        }
+        setRegError(msg);
         setRegState("form");
         return;
       }
       offerPasskeyOrRedirect("/");
-    } catch {
-      setRegError("Connection error. Please try again.");
+    } catch (err) {
+      // Network-level failure (offline, DNS, Safari ITP tracker block, CORS).
+      console.warn("[register] network error", err);
+      setRegError("Couldn't reach the server. Check your connection and try again.");
       setRegState("form");
     }
   };

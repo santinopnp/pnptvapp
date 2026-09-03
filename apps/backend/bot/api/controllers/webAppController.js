@@ -774,10 +774,38 @@ const passkeyFinish = async (req, res) => {
       // Clean up the Authentik fallback state too (best-effort).
       redis.del(`passkey:login:ak:${stateToken}`).catch(() => {});
 
-      const rawId = assertion.rawId || assertion.id;
-      const credentialRow = rawId
-        ? (await query('SELECT * FROM user_passkeys WHERE credential_id = $1', [rawId])).rows[0]
-        : null;
+      // iOS Safari sends rawId as a base64url string in the JSON body. On very
+      // old browsers it can arrive with `=` padding — normalize both sides.
+      const normalizeCredId = (v) => String(v || '').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+      const rawIdCandidates = [assertion.rawId, assertion.id]
+        .filter(Boolean)
+        .map(normalizeCredId)
+        .filter((v, i, a) => a.indexOf(v) === i);
+
+      let credentialRow = null;
+      if (rawIdCandidates.length) {
+        const q = await query(
+          'SELECT * FROM user_passkeys WHERE credential_id = ANY($1::text[]) LIMIT 1',
+          [rawIdCandidates]
+        );
+        credentialRow = q.rows[0] || null;
+      }
+
+      // Secondary lookup via userHandle → all passkeys for that user. Guards
+      // against future encoding drift; iOS in particular round-trips userHandle
+      // reliably even when credential_id encoding differs across SW versions.
+      if (!credentialRow && assertion.response?.userHandle) {
+        try {
+          const uh = Buffer.from(String(assertion.response.userHandle), 'base64url').toString('utf8');
+          if (uh && rawIdCandidates.length) {
+            const q2 = await query(
+              'SELECT * FROM user_passkeys WHERE user_id = $1 AND credential_id = ANY($2::text[]) LIMIT 1',
+              [uh, rawIdCandidates]
+            );
+            credentialRow = q2.rows[0] || null;
+          }
+        } catch { /* userHandle wasn't a stored user-id */ }
+      }
 
       if (credentialRow) {
         let verification;
@@ -831,12 +859,15 @@ const passkeyFinish = async (req, res) => {
           req.session.save((err) => (err ? reject(err) : resolve()))
         );
 
-        logger.info('[Passkey] local sign-in: user', user.id);
+        logger.info(`[Passkey] local sign-in: user ${user.id}`);
         return res.json({ authenticated: true, user: { id: user.id, username: user.username, pnptvId: user.pnptv_id } });
       }
 
       // No local credential found — fall through to Authentik path below.
-      logger.info('[Passkey] no local credential found for rawId, trying Authentik fallback');
+      logger.info('[Passkey] no local credential found for rawId, trying Authentik fallback', {
+        rawIdSample: rawIdCandidates[0]?.slice(0, 12) || null,
+        hasUserHandle: !!assertion.response?.userHandle,
+      });
     }
 
     // ── Authentik fallback (passkeys registered before migration) ────────────
@@ -880,7 +911,7 @@ const passkeyFinish = async (req, res) => {
       req.session.save((err) => (err ? reject(err) : resolve()))
     );
 
-    logger.info('[Passkey] Authentik sign-in: user', user.id);
+    logger.info(`[Passkey] Authentik sign-in: user ${user.id}`);
     return res.json({ authenticated: true, user: { id: user.id, username: user.username, pnptvId: user.pnptv_id } });
   } catch (err) {
     logger.error('[Passkey] passkeyFinish unexpected error:', err);
@@ -889,6 +920,19 @@ const passkeyFinish = async (req, res) => {
 };
 
 // ── Passkey registration (authenticated user adding a new passkey) ─────────────
+
+// iOS Safari <16 silently rejects residentKey='required' with NotAllowedError,
+// leaving the user staring at a passkey prompt that never appears. Sniff the
+// UA and downgrade to 'preferred' — still creates a discoverable credential on
+// modern devices, but doesn't hard-fail on old ones.
+function isOldIOSSafari(userAgent) {
+  const ua = String(userAgent || '');
+  if (!/iPad|iPhone|iPod/.test(ua)) return false;
+  // Extract iOS major version from "OS 15_4_1 like Mac OS X" style UA strings.
+  const m = ua.match(/OS (\d+)_/);
+  if (!m) return true; // unknown iOS version — be conservative
+  return parseInt(m[1], 10) < 16;
+}
 
 const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'pnptv.app';
 // Accept both apex and www since Nginx serves the SPA on both hostnames.
@@ -916,6 +960,7 @@ const passkeyRegisterBegin = async (req, res) => {
       }
     }
 
+    const iosLegacy = isOldIOSSafari(req.headers['user-agent']);
     const options = await generateRegistrationOptions({
       rpName: 'PNPtv',
       rpID: WEBAUTHN_RP_ID,
@@ -926,10 +971,9 @@ const passkeyRegisterBegin = async (req, res) => {
       authenticatorSelection: {
         // 'required' forces a discoverable/resident key so the platform can
         // offer the passkey during future passwordless login (no username hint).
-        // Without this, some authenticators skip resident storage and the
-        // login prompt silently returns NotAllowedError.
-        residentKey: 'required',
-        requireResidentKey: true,
+        // iOS <16 rejects 'required' silently — downgrade there to 'preferred'.
+        residentKey: iosLegacy ? 'preferred' : 'required',
+        requireResidentKey: !iosLegacy,
         userVerification: 'preferred',
       },
       excludeCredentials,
