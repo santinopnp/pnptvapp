@@ -913,6 +913,45 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setActiveAddress(fallback);
   }, [wallets.map((w) => w.address).join(","), embeddedWallet?.address]);
 
+  // Hydrate localStorage preference from the server row once on mount. Ensures
+  // "my preferred wallet" survives clearing the browser cache or switching
+  // devices — the DB column preferred_wallet_address was being WRITTEN but
+  // never READ, so a fresh browser always snapped back to embedded until the
+  // user manually re-picked their wallet.
+  _useEffect(() => {
+    if (_getPreferredWallet()) return; // localStorage already has a value; trust it.
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/wallet/linked", { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const serverPref = data?.preferredWalletAddress;
+        if (serverPref && wallets.some((w) => w.address === serverPref)) {
+          setActiveAddress(serverPref);
+          _setPreferredWallet(serverPref);
+        }
+      } catch { /* offline / unauth — non-fatal, localStorage stays empty */ }
+    })();
+    return () => { cancelled = true; };
+  // Only run once per wallet-list-change; do not depend on activeAddress to avoid a loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallets.map((w) => w.address).join(",")]);
+
+  // One-tap reset to the PNPtv embedded wallet. Explicit + forceful — bypasses
+  // any lingering "preferred=external" state and always ends with the embedded
+  // wallet active. Renders as a prominent primary button whenever the active
+  // wallet is external, so a user who accidentally connected Trust and can't
+  // find the small × disconnect chip still has an obvious way back.
+  const handleUsePnptvWallet = () => {
+    if (!embeddedWallet) return;
+    setError(null);
+    setConnectError(null);
+    setActiveAddress(embeddedWallet.address);
+    _setPreferredWallet(embeddedWallet.address);
+  };
+
   const activeWallet = wallets.find((w) => w.address === activeAddress) || null;
   const isActiveEmbedded = activeWallet?.walletClientType === "privy";
 
@@ -1088,19 +1127,27 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setError(null);
     setConnectError(null);
     setUnlinkingAddress(addr);
+    // Optimistically clear the preference + snap active back to embedded RIGHT
+    // AWAY. Even if Privy's unlink call errors out (some WalletConnect sessions
+    // return a "wallet already unlinked" error after the user disconnected from
+    // the wallet app side), the user's PNPtv-side state still ends up correct
+    // so subsequent tips/subs sign with the embedded wallet, not the ghost.
+    const wasActive = activeAddress === addr;
+    if (wasActive || _getPreferredWallet() === addr) {
+      const fallback = embeddedWallet?.address || wallets.find((w) => w.address !== addr)?.address || null;
+      setActiveAddress(fallback);
+      _setPreferredWallet(fallback);
+    }
     try {
       await unlinkWallet({ address: addr });
-      if (activeAddress === addr) {
-        // Fall back to embedded if the just-unlinked wallet was active.
-        const fallback = embeddedWallet?.address || wallets.find((w) => w.address !== addr)?.address || null;
-        setActiveAddress(fallback);
-        _setPreferredWallet(fallback);
-      }
-      if (_getPreferredWallet() === addr) _setPreferredWallet(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setConnectError(`Could not disconnect: ${msg}`);
-      reportWalletClientError("unlinkWallet", err, { source: "WalletHomeSheet", address: addr });
+      // "wallet not linked" / "not found" mean Privy already forgot the wallet —
+      // benign, treat as success. Anything else, surface prominently.
+      if (!/not linked|not found|already/i.test(msg)) {
+        setConnectError(`Could not disconnect: ${msg}. Your PNPtv wallet is still active — try refreshing the page.`);
+        reportWalletClientError("unlinkWallet", err, { source: "WalletHomeSheet", address: addr });
+      }
     } finally {
       setUnlinkingAddress(null);
     }
@@ -1766,6 +1813,21 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
             </>
           ) : (
             <>
+              {/* One-tap reset to the PNPtv embedded wallet. Only rendered when
+                  the active wallet is external AND an embedded wallet exists —
+                  matches the exact scenario where a user connected Trust and
+                  now wants to go back but can't find the tiny × chip. */}
+              {!isActiveEmbedded && embeddedWallet && (
+                <button
+                  type="button"
+                  onClick={handleUsePnptvWallet}
+                  className="w-full mb-2 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold text-white min-h-[44px] active:scale-95 transition-all border border-emerald-500/40"
+                  style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.20), rgba(16,185,129,0.08))" }}
+                >
+                  <WalletTypeIcon clientType="privy" size={14} />
+                  <span>Use PNPtv Wallet</span>
+                </button>
+              )}
               {/* Wallet selector — always visible so a PNPtv-embedded user can
                   discover Trust/MetaMask, and multi-wallet users can switch. */}
               <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2">
