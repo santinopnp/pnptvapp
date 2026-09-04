@@ -29,10 +29,12 @@ import {
   Diamond,
   X,
   Video,
+  AtSign,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
   getPublicProfile,
+  getTaggedInPosts,
   getCreatorManual,
   blockUser,
   unblockUser,
@@ -333,6 +335,14 @@ export default function CreatorProfilePage() {
   const [postsCursor, setPostsCursor] = useState<string | null>(null);
   const [postsLoading, setPostsLoading] = useState(false);
   const [postsError, setPostsError] = useState<string | null>(null);
+  // "Posts" (author's own wall) vs "Tagged" (every post that @-mentions
+  // this creator). Tagged tab is lazy-loaded on first activation.
+  const [wallTab, setWallTab] = useState<"posts" | "tagged">("posts");
+  const [taggedPosts, setTaggedPosts] = useState<SocialPostItem[]>([]);
+  const [taggedCursor, setTaggedCursor] = useState<string | null>(null);
+  const [taggedLoading, setTaggedLoading] = useState(false);
+  const [taggedError, setTaggedError] = useState<string | null>(null);
+  const [taggedLoaded, setTaggedLoaded] = useState(false);
   const [manualMarkdown, setManualMarkdown] = useState<string>("");
   const [manualLoaded, setManualLoaded] = useState(false);
 
@@ -566,6 +576,50 @@ export default function CreatorProfilePage() {
     } catch { /* ignore */ }
     finally { setPostsLoading(false); }
   }, [data?.creator?.id, postsCursor, postsLoading]);
+
+  // Reset tagged-tab cache when navigating to a new creator so we don't
+  // show the previous creator's tagged-in feed while fetching the new one.
+  useEffect(() => {
+    setTaggedPosts([]);
+    setTaggedCursor(null);
+    setTaggedLoaded(false);
+    setTaggedError(null);
+    setWallTab("posts");
+  }, [data?.creator?.id]);
+
+  // Lazy-load Tagged posts the first time the tab is activated. Silent
+  // degrade if the backend hasn't shipped /social/tagged-in yet — the
+  // empty state renders with the standard "no tags yet" copy.
+  useEffect(() => {
+    if (wallTab !== "tagged" || taggedLoaded) return;
+    if (!data?.creator?.id) return;
+    const id = data.creator.id;
+    setTaggedLoading(true);
+    setTaggedError(null);
+    getTaggedInPosts(id)
+      .then((res) => {
+        setTaggedPosts(res.posts || []);
+        setTaggedCursor(res.nextCursor || null);
+      })
+      .catch((err) => {
+        setTaggedError(err instanceof Error ? err.message : "Could not load tags");
+      })
+      .finally(() => {
+        setTaggedLoaded(true);
+        setTaggedLoading(false);
+      });
+  }, [wallTab, taggedLoaded, data?.creator?.id]);
+
+  const loadMoreTagged = useCallback(async () => {
+    if (!data?.creator?.id || !taggedCursor || taggedLoading) return;
+    setTaggedLoading(true);
+    try {
+      const res = await getTaggedInPosts(data.creator.id, taggedCursor);
+      setTaggedPosts((prev) => [...prev, ...(res.posts || [])]);
+      setTaggedCursor(res.nextCursor || null);
+    } catch { /* ignore */ }
+    finally { setTaggedLoading(false); }
+  }, [data?.creator?.id, taggedCursor, taggedLoading]);
 
   // Actions
   function handleSubscribeCta() {
@@ -804,7 +858,9 @@ export default function CreatorProfilePage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--pnp-bg, #121212)" }}>
-        <div className="animate-pulse text-white/40">Cargando…</div>
+        <div className="animate-pulse text-white/40">
+          {t.lang === "es" ? "Cargando…" : "Loading…"}
+        </div>
       </div>
     );
   }
@@ -1628,7 +1684,9 @@ export default function CreatorProfilePage() {
             {manualExpanded && (
               <div className="px-4 pb-4">
                 {!manualLoaded ? (
-                  <div className="py-3 text-xs text-white/40">Cargando…</div>
+                  <div className="py-3 text-xs text-white/40">
+                    {t.lang === "es" ? "Cargando…" : "Loading…"}
+                  </div>
                 ) : manualMarkdown ? (
                   <div className="text-[13px] leading-relaxed whitespace-pre-wrap text-white/90">
                     {manualMarkdown}
@@ -1653,11 +1711,10 @@ export default function CreatorProfilePage() {
             )}
           </div>
 
-          {/* Tabs */}
-          {/* Wall — single chronological list of every post. */}
+          {/* Wall — Posts / Tagged tabs. */}
           <div className="space-y-3">
-            {/* Creator Video Upload Entry Card above the post wall */}
-            {isOwnProfile && (
+            {/* Creator Video Upload Entry Card above the post wall — only on Posts tab */}
+            {isOwnProfile && wallTab === "posts" && (
               <div className="mb-4 p-4 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -1704,84 +1761,217 @@ export default function CreatorProfilePage() {
                 </div>
               </div>
             )}
-            {postsLoading && posts.length === 0 && (
-              <div className="text-center py-8 text-white/40 text-sm">Cargando…</div>
-            )}
-            {!postsLoading && postsError && posts.length === 0 && (
-              <div
-                className="text-center py-10 rounded-xl"
-                style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-              >
-                <p className="text-sm mb-2">No pudimos cargar las publicaciones.</p>
-                <button
-                  onClick={() => {
-                    if (!data?.creator?.id) return;
-                    const id = data.creator.id;
-                    setPostsLoading(true);
-                    setPostsError(null);
-                    getPublicProfile(id)
-                      .then((res) => { setPosts(res.posts || []); setPostsCursor(res.nextCursor); })
-                      .catch((err) => setPostsError(err instanceof Error ? err.message : "Could not load posts"))
-                      .finally(() => setPostsLoading(false));
-                  }}
-                  className="text-xs px-3 py-1 rounded border border-white/20 hover:border-white/40"
-                >
-                  Reintentar
-                </button>
-              </div>
-            )}
-            {!postsLoading && !postsError && posts.length === 0 && (
-              <div
-                className="text-center py-10 rounded-xl"
-                style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
-              >
-                <p className="text-sm">Aún no hay publicaciones.</p>
-              </div>
-            )}
-            {posts.map((post) => {
-              const isExclusiveUnlocked = post.is_exclusive && !post.content_locked;
-              return (
-                <div key={post.id} className="relative">
-                  {isExclusiveUnlocked && (
-                    <span
-                      className="absolute z-10 top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg"
-                      style={{
-                        background: "linear-gradient(135deg, #D4007A, #E69138)",
-                        color: "#fff",
-                      }}
-                      aria-label="Paid content — unlocked"
-                    >
-                      <Diamond size={10} />
-                      PAID
-                    </span>
-                  )}
-                  <PostCard
-                    post={post}
-                    isOwn={String(user?.dbId || user?.id) === post.author_id}
-                    isAdmin={user?.role === "admin" || user?.role === "superadmin"}
-                    isOwnProfile={isOwnProfile}
-                    isSubscribed={canSeeExclusives}
-                    creatorPriceUsd={creator.creator_price_usd}
-                    currentUserId={String(user?.dbId || user?.id || "")}
-                    userLang={(user?.language as string) || "en"}
-                    onLike={handleLike}
-                    onDelete={() => { /* delete from Studio, not here */ }}
-                    onAuthorTap={handleAuthorTap}
-                    onSubscribeCta={handleSubscribeCta}
-                    hideCreatorCta
-                  />
-                </div>
-              );
-            })}
-            {postsCursor && (
+
+            {/* Tab strip — Posts / Tagged */}
+            <div
+              className="flex border-b border-white/10 mb-3"
+              role="tablist"
+              aria-label={t.lang === "es" ? "Secciones del muro" : "Wall sections"}
+            >
               <button
-                onClick={loadMorePosts}
-                disabled={postsLoading}
-                className="w-full py-2.5 rounded-xl text-xs font-medium mt-2 transition-opacity disabled:opacity-40"
-                style={{ background: "rgba(255,255,255,0.06)", color: "#fff" }}
+                role="tab"
+                aria-selected={wallTab === "posts"}
+                onClick={() => setWallTab("posts")}
+                className={`flex-1 py-2.5 text-sm font-semibold text-center transition-colors relative ${
+                  wallTab === "posts" ? "text-white" : "text-white/50 hover:text-white/70"
+                }`}
               >
-                {postsLoading ? "Cargando…" : "Cargar más"}
+                {t.lang === "es" ? "Publicaciones" : "Posts"}
+                {wallTab === "posts" && (
+                  <span
+                    className="absolute left-4 right-4 bottom-0 h-0.5 rounded-full"
+                    style={{ background: "#2DD4BF" }}
+                  />
+                )}
               </button>
+              <button
+                role="tab"
+                aria-selected={wallTab === "tagged"}
+                onClick={() => setWallTab("tagged")}
+                className={`flex-1 py-2.5 text-sm font-semibold text-center transition-colors relative inline-flex items-center justify-center gap-1.5 ${
+                  wallTab === "tagged" ? "text-white" : "text-white/50 hover:text-white/70"
+                }`}
+              >
+                <AtSign size={14} aria-hidden="true" />
+                {t.lang === "es" ? "Etiquetas" : "Tagged"}
+                {wallTab === "tagged" && (
+                  <span
+                    className="absolute left-4 right-4 bottom-0 h-0.5 rounded-full"
+                    style={{ background: "#2DD4BF" }}
+                  />
+                )}
+              </button>
+            </div>
+
+            {/* ── Posts tab ── */}
+            {wallTab === "posts" && (
+              <>
+                {postsLoading && posts.length === 0 && (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {t.lang === "es" ? "Cargando…" : "Loading…"}
+                  </div>
+                )}
+                {!postsLoading && postsError && posts.length === 0 && (
+                  <div
+                    className="text-center py-10 rounded-xl"
+                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  >
+                    <p className="text-sm mb-2">
+                      {t.lang === "es"
+                        ? "No pudimos cargar las publicaciones."
+                        : "We couldn't load the posts."}
+                    </p>
+                    <button
+                      onClick={() => {
+                        if (!data?.creator?.id) return;
+                        const id = data.creator.id;
+                        setPostsLoading(true);
+                        setPostsError(null);
+                        getPublicProfile(id)
+                          .then((res) => { setPosts(res.posts || []); setPostsCursor(res.nextCursor); })
+                          .catch((err) => setPostsError(err instanceof Error ? err.message : "Could not load posts"))
+                          .finally(() => setPostsLoading(false));
+                      }}
+                      className="text-xs px-3 py-1 rounded border border-white/20 hover:border-white/40"
+                    >
+                      {t.lang === "es" ? "Reintentar" : "Retry"}
+                    </button>
+                  </div>
+                )}
+                {!postsLoading && !postsError && posts.length === 0 && (
+                  <div
+                    className="text-center py-10 rounded-xl"
+                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  >
+                    <p className="text-sm">
+                      {t.lang === "es" ? "Aún no hay publicaciones." : "No posts yet."}
+                    </p>
+                  </div>
+                )}
+                {posts.map((post) => {
+                  const isExclusiveUnlocked = post.is_exclusive && !post.content_locked;
+                  return (
+                    <div key={post.id} className="relative">
+                      {isExclusiveUnlocked && (
+                        <span
+                          className="absolute z-10 top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg"
+                          style={{
+                            background: "linear-gradient(135deg, #D4007A, #E69138)",
+                            color: "#fff",
+                          }}
+                          aria-label="Paid content — unlocked"
+                        >
+                          <Diamond size={10} />
+                          PAID
+                        </span>
+                      )}
+                      <PostCard
+                        post={post}
+                        isOwn={String(user?.dbId || user?.id) === post.author_id}
+                        isAdmin={user?.role === "admin" || user?.role === "superadmin"}
+                        isOwnProfile={isOwnProfile}
+                        isSubscribed={canSeeExclusives}
+                        creatorPriceUsd={creator.creator_price_usd}
+                        currentUserId={String(user?.dbId || user?.id || "")}
+                        userLang={(user?.language as string) || "en"}
+                        onLike={handleLike}
+                        onDelete={() => { /* delete from Studio, not here */ }}
+                        onAuthorTap={handleAuthorTap}
+                        onSubscribeCta={handleSubscribeCta}
+                        hideCreatorCta
+                      />
+                    </div>
+                  );
+                })}
+                {postsCursor && (
+                  <button
+                    onClick={loadMorePosts}
+                    disabled={postsLoading}
+                    className="w-full py-2.5 rounded-xl text-xs font-medium mt-2 transition-opacity disabled:opacity-40"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "#fff" }}
+                  >
+                    {postsLoading
+                      ? (t.lang === "es" ? "Cargando…" : "Loading…")
+                      : (t.lang === "es" ? "Cargar más" : "Load more")}
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* ── Tagged tab ── */}
+            {wallTab === "tagged" && (
+              <div role="tabpanel" aria-label={t.lang === "es" ? "Publicaciones etiquetadas" : "Tagged posts"}>
+                {taggedLoading && taggedPosts.length === 0 && (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {t.lang === "es" ? "Cargando…" : "Loading…"}
+                  </div>
+                )}
+                {!taggedLoading && taggedError && taggedPosts.length === 0 && (
+                  <div
+                    className="text-center py-10 rounded-xl"
+                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  >
+                    <p className="text-sm mb-2">
+                      {t.lang === "es"
+                        ? "No pudimos cargar las etiquetas."
+                        : "We couldn't load tagged posts."}
+                    </p>
+                    <button
+                      onClick={() => {
+                        setTaggedLoaded(false);
+                        setTaggedError(null);
+                      }}
+                      className="text-xs px-3 py-1 rounded border border-white/20 hover:border-white/40"
+                    >
+                      {t.lang === "es" ? "Reintentar" : "Retry"}
+                    </button>
+                  </div>
+                )}
+                {!taggedLoading && !taggedError && taggedLoaded && taggedPosts.length === 0 && (
+                  <div
+                    className="text-center py-10 rounded-xl"
+                    style={{ background: "var(--pnp-surface, #1e1e1e)", color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  >
+                    <AtSign size={22} className="mx-auto mb-2 opacity-60" aria-hidden="true" />
+                    <p className="text-sm">
+                      {t.lang === "es"
+                        ? `Nadie ha etiquetado a @${creator.username ?? ""} todavía.`
+                        : `No one has tagged @${creator.username ?? ""} yet.`}
+                    </p>
+                  </div>
+                )}
+                {taggedPosts.map((post) => (
+                  <div key={post.id} className="relative">
+                    <PostCard
+                      post={post}
+                      isOwn={String(user?.dbId || user?.id) === post.author_id}
+                      isAdmin={user?.role === "admin" || user?.role === "superadmin"}
+                      isOwnProfile={String(user?.dbId || user?.id) === post.author_id}
+                      isSubscribed={canSeeExclusives}
+                      creatorPriceUsd={creator.creator_price_usd}
+                      currentUserId={String(user?.dbId || user?.id || "")}
+                      userLang={(user?.language as string) || "en"}
+                      onLike={handleLike}
+                      onDelete={() => { /* delete from Studio, not here */ }}
+                      onAuthorTap={handleAuthorTap}
+                      onSubscribeCta={handleSubscribeCta}
+                      hideCreatorCta
+                    />
+                  </div>
+                ))}
+                {taggedCursor && (
+                  <button
+                    onClick={loadMoreTagged}
+                    disabled={taggedLoading}
+                    className="w-full py-2.5 rounded-xl text-xs font-medium mt-2 transition-opacity disabled:opacity-40"
+                    style={{ background: "rgba(255,255,255,0.06)", color: "#fff" }}
+                  >
+                    {taggedLoading
+                      ? (t.lang === "es" ? "Cargando…" : "Loading…")
+                      : (t.lang === "es" ? "Cargar más" : "Load more")}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
