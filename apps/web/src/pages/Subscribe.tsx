@@ -30,7 +30,6 @@ import {
   metaMaskDeepLink,
   isMetaMaskCompatible,
 } from "@/components/payments/PayInWalletChips";
-import { CardPaymentModal } from "@/components/payments/CardPaymentModal";
 import { connectSocket } from "@/lib/socket";
 
 const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
@@ -39,27 +38,9 @@ const MEMBER_PLAN_IDS = new Set(["member_monthly"]);
 // monthly-pass-promo-15 + yearly50 = promo/discount SKUs granted out-of-band; never on /subscribe.
 const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", "monthly-pass-promo-15", "yearly50"]);
 
-// MercadoPago (mpago.li) hosted-checkout links per plan. Only plans present
-// in this map show the "💳 Card" button — buyer pays in COP, then submits
-// their MP "número de operación" on /mercadopago for admin verification.
-const MERCADOPAGO_LINKS: Record<string, { link: string; copApprox: number; nameEs: string }> = {
-  "member_monthly":          { link: "https://mpago.li/2psRirn", copApprox: 32000,  nameEs: "Membresía Básica (mensual)" },
-  "prime-week-pass-7d":      { link: "https://mpago.li/2wKDS3q", copApprox: 48000,  nameEs: "PRIME · Pase Semanal" },
-  "monthly-pass":            { link: "https://mpago.li/2VvAg9K", copApprox: 80000,  nameEs: "PRIME · Pase Mensual" },
-  "prime-diamond-pass-365d": { link: "https://mpago.li/1Spwqd5", copApprox: 320000, nameEs: "PRIME Diamond · Pase Anual" },
-  "lifetime-pass":           { link: "https://mpago.li/1xjtaya", copApprox: 800000, nameEs: "PRIME Lifetime Pass" },
-};
-
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
 const RECOMMENDED_PLAN = "prime-diamond-pass-365d";
-
-// (MP_LINKS was here — superseded by MERCADOPAGO_LINKS above which powers the
-// shared CardPaymentModal + op# activation flow. Do NOT re-add.)
-
-// Direct Dash receive address. Manual activation — user sends USD-equivalent
-// Dash and emails the tx hash to support@pnptv.app.
-const DASH_ADDRESS = "Xbz9ZsZTdRyPXhKyTM2XrS7ELDFvJr9zL3";
 
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
@@ -156,10 +137,6 @@ export default function Subscribe() {
   // Wallet-USDC-on-Base checkout — expands the WalletPayCard for the picked plan.
   // Server resolves canonical price + duration via planId — client just passes it.
   const [walletPanelPlanId, setWalletPanelPlanId] = useState<string | null>(null);
-  // MercadoPago modal — holds the plan_id whose Card button was clicked.
-  const [cardModalPlanId, setCardModalPlanId] = useState<string | null>(null);
-  // Dash inline panel — plan_id whose Dash CTA was clicked.
-  const [dashPanelPlanId, setDashPanelPlanId] = useState<string | null>(null);
   const [tokenBalance, setTokensBalance] = useState<number | null>(null);
   // Gifted balance is spendable on member/prime plans (safe: tier unlock, no external payout).
   // See feedback_gifted_tokens_santino_lex_only.md for the scope rules.
@@ -219,7 +196,7 @@ export default function Subscribe() {
         .catch(() => {});
     }
 
-    // Clean up any stale BTC/Dash session storage from before retirement
+    // Clean up any stale BTC session storage from before retirement
     sessionStorage.removeItem("pnp_pending_btc_order");
     sessionStorage.removeItem("pnp_pending_dash_order");
 
@@ -872,10 +849,10 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — card is primary, then any-crypto, then
-                  Ru$h if user has balance. WalletPayCard handles the card and
-                  Privy-wallet cases inline; NowPayments popup handles BTC/ETH/
-                  USDT/etc. for users who prefer another crypto. */}
+              {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
+                  any-crypto via NowPayments popup, then Ru$h if the user has
+                  balance. WalletPayCard handles card + Privy-wallet cases
+                  inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -892,16 +869,6 @@ export default function Subscribe() {
                     {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
                   </button>
                 </div>
-                {MERCADOPAGO_LINKS[plan.id] && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setCardModalPlanId(plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white transition-all"
-                    style={{ background: "linear-gradient(90deg,#009EE3,#00B4E6)", boxShadow: "0 6px 16px rgba(0,158,227,0.30)" }}
-                  >
-                    💳 {t.lang === "es" ? "Tarjeta (MercadoPago)" : "Card (MercadoPago)"}
-                  </button>
-                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -939,44 +906,6 @@ export default function Subscribe() {
                       }}
                       compact
                     />
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setDashPanelPlanId(dashPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${dashPanelPlanId === plan.id ? "bg-gradient-to-r from-cyan-500 to-cyan-700 ring-2 ring-cyan-300" : "bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700"}`}
-                >
-                  🐎 {t.lang === "es" ? "Pagar con Dash" : "Pay with Dash"}
-                </button>
-                {dashPanelPlanId === plan.id && (
-                  <div className="w-full mt-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                    <div className="text-sm font-semibold text-pnp-textPrimary">
-                      🐎 Dash Direct
-                    </div>
-                    <div className="text-xs text-pnp-textSecondary">
-                      {t.lang === "es"
-                        ? `Envía ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD en Dash a esta dirección:`
-                        : `Send ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD worth of Dash to this address:`}
-                    </div>
-                    <div className="font-mono text-xs bg-black/40 p-2 rounded break-all select-all text-pnp-textPrimary">
-                      {DASH_ADDRESS}
-                    </div>
-                    <div className="text-[11px] text-pnp-textSecondary">
-                      {t.lang === "es" ? "Precio actual: " : "Current price: "}
-                      <a href="https://www.coingecko.com/en/coins/dash" target="_blank" rel="noopener noreferrer" className="underline">coingecko.com/dash</a>
-                    </div>
-                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
-                      {t.lang === "es"
-                        ? "📧 Después de pagar, envía el tx hash a support@pnptv.app — activamos en menos de 2h (máx 24h)."
-                        : "📧 After paying, email your tx hash to support@pnptv.app — we activate within 2h (24h max)."}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(DASH_ADDRESS); }}
-                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700 transition-all"
-                    >
-                      📋 {t.lang === "es" ? "Copiar dirección" : "Copy address"}
-                    </button>
                   </div>
                 )}
               </div>
@@ -1103,10 +1032,10 @@ export default function Subscribe() {
                 </div>
               )}
 
-              {/* Quick-pay buttons — card is primary, then any-crypto, then
-                  Ru$h if user has balance. WalletPayCard handles the card and
-                  Privy-wallet cases inline; NowPayments popup handles BTC/ETH/
-                  USDT/etc. for users who prefer another crypto. */}
+              {/* Quick-pay buttons — Wallet USDC (Base) is primary, then
+                  any-crypto via NowPayments popup, then Ru$h if the user has
+                  balance. WalletPayCard handles card + Privy-wallet cases
+                  inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -1123,16 +1052,6 @@ export default function Subscribe() {
                     {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
                   </button>
                 </div>
-                {MERCADOPAGO_LINKS[plan.id] && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setCardModalPlanId(plan.id); }}
-                    className="w-full py-3 rounded-lg font-bold text-sm text-white transition-all"
-                    style={{ background: "linear-gradient(90deg,#009EE3,#00B4E6)", boxShadow: "0 6px 16px rgba(0,158,227,0.30)" }}
-                  >
-                    💳 {t.lang === "es" ? "Tarjeta (MercadoPago)" : "Card (MercadoPago)"}
-                  </button>
-                )}
                 {(() => {
                   const cost = Math.round(parseFloat(String(plan.price)) * 6);
                   const isPlatform = MEMBER_PLAN_IDS.has(plan.id) || String(plan.id).startsWith("prime");
@@ -1170,44 +1089,6 @@ export default function Subscribe() {
                       }}
                       compact
                     />
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setDashPanelPlanId(dashPanelPlanId === plan.id ? null : plan.id); }}
-                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${dashPanelPlanId === plan.id ? "bg-gradient-to-r from-cyan-500 to-cyan-700 ring-2 ring-cyan-300" : "bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700"}`}
-                >
-                  🐎 {t.lang === "es" ? "Pagar con Dash" : "Pay with Dash"}
-                </button>
-                {dashPanelPlanId === plan.id && (
-                  <div className="w-full mt-2 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                    <div className="text-sm font-semibold text-pnp-textPrimary">
-                      🐎 Dash Direct
-                    </div>
-                    <div className="text-xs text-pnp-textSecondary">
-                      {t.lang === "es"
-                        ? `Envía ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD en Dash a esta dirección:`
-                        : `Send ≈ $${parseFloat(String(plan.price)).toFixed(2)} USD worth of Dash to this address:`}
-                    </div>
-                    <div className="font-mono text-xs bg-black/40 p-2 rounded break-all select-all text-pnp-textPrimary">
-                      {DASH_ADDRESS}
-                    </div>
-                    <div className="text-[11px] text-pnp-textSecondary">
-                      {t.lang === "es" ? "Precio actual: " : "Current price: "}
-                      <a href="https://www.coingecko.com/en/coins/dash" target="_blank" rel="noopener noreferrer" className="underline">coingecko.com/dash</a>
-                    </div>
-                    <div className="text-xs text-pnp-textSecondary bg-white/5 p-2 rounded">
-                      {t.lang === "es"
-                        ? "📧 Después de pagar, envía el tx hash a support@pnptv.app — activamos en menos de 2h (máx 24h)."
-                        : "📧 After paying, email your tx hash to support@pnptv.app — we activate within 2h (24h max)."}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(DASH_ADDRESS); }}
-                      className="block w-full text-center py-3 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-600 to-cyan-800 hover:from-cyan-500 hover:to-cyan-700 transition-all"
-                    >
-                      📋 {t.lang === "es" ? "Copiar dirección" : "Copy address"}
-                    </button>
                   </div>
                 )}
               </div>
@@ -1267,25 +1148,6 @@ export default function Subscribe() {
           }}
         />
       )}
-
-      {/* MercadoPago (mpago.li) modal — email + op# activation */}
-      {cardModalPlanId && (() => {
-        const cfg = MERCADOPAGO_LINKS[cardModalPlanId];
-        const plan = plans.find((p) => p.id === cardModalPlanId);
-        if (!cfg || !plan) return null;
-        const priceUsd = parseFloat(String(plan.price)) || 0;
-        return (
-          <CardPaymentModal
-            link={cfg.link}
-            planId={cardModalPlanId}
-            planName={cfg.nameEs}
-            priceUsd={priceUsd}
-            copApprox={cfg.copApprox}
-            lang={t.lang}
-            onClose={() => setCardModalPlanId(null)}
-          />
-        );
-      })()}
 
       {/* Error banner */}
       {error && (

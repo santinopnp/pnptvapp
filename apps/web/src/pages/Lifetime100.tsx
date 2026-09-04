@@ -11,7 +11,6 @@ import {
   isMetaMaskCompatible,
   WalletPayCard,
 } from "@/components/payments/PayInWalletChips";
-import { CardPaymentModal } from "@/components/payments/CardPaymentModal";
 import { useAuth } from "@/hooks/useAuth";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -19,10 +18,6 @@ import { useAuth } from "@/hooks/useAuth";
 const API_BASE = import.meta.env.VITE_API_URL || "https://pnptv.app";
 const LANG_STORAGE_KEY = "pnptv:lifetime100:lang";
 const REDIRECT_DELAY_MS = 2500;
-
-// Direct Dash receive address. Manual activation — user sends ≈ $100 in Dash
-// and emails the tx hash + their email to support@pnptv.app.
-const DASH_ADDRESS = "Xbz9ZsZTdRyPXhKyTM2XrS7ELDFvJr9zL3";
 
 // Lifetime PRIME entitlement — pinned to the $100 founders' plan id used by
 // the existing /lifetime100 payment paths.
@@ -630,16 +625,6 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
   );
 }
 
-// ── Card payment modal (MercadoPago hosted link — mpago.li) ──────────────────
-//
-// One-step redirect flow: opens the mpago.li checkout in a new tab. Buyer pays
-// in COP (~320,000 ≈ $100 USD). After payment they return to /mercadopago,
-// enter their email → admin activates from /admin/manual-activations.
-
-// CardPaymentModal now lives in @/components/payments/CardPaymentModal.tsx —
-// shared with Subscribe.tsx so both surfaces get the same email + operation
-// number activation flow.
-
 // ── Activate view ──────────────────────────────────────────────────────────────
 
 interface ActivateViewProps {
@@ -908,9 +893,7 @@ interface HeroViewProps {
 
 function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpenSheet }: HeroViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [cardModalOpen, setCardModalOpen] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
-  const [dashModalOpen, setDashModalOpen] = useState(false);
   const { isAuthenticated } = useAuth();
 
   const isSoldOut = available === 0;
@@ -921,19 +904,9 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
     setModalOpen(true);
   };
 
-  const handleCardClick = () => {
-    if (isClosed) return;
-    setCardModalOpen(true);
-  };
-
   const handleWalletClick = () => {
     if (isClosed) return;
     setWalletModalOpen(true);
-  };
-
-  const handleDashClick = () => {
-    if (isClosed) return;
-    setDashModalOpen(true);
   };
 
   const activateHref = `/lifetime100/activate`;
@@ -1324,57 +1297,9 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
               : s.ctaPayWithCrypto}
           </button>
 
-          <button
-            onClick={handleCardClick}
-            disabled={availabilityLoading || isClosed}
-            aria-disabled={availabilityLoading || isClosed}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              width: "100%",
-              padding: "18px 24px",
-              borderRadius: 16,
-              border: "none",
-              background: isClosed
-                ? "rgba(255,255,255,0.08)"
-                : "linear-gradient(90deg, #009EE3, #00B4E6)",
-              color: isClosed ? "#8E8E93" : "#ffffff",
-              fontSize: 15,
-              fontWeight: 800,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-              minHeight: 56,
-              boxShadow: isClosed
-                ? "none"
-                : "0 8px 32px rgba(0,158,227,0.4)",
-              transition: "opacity 0.15s, transform 0.1s",
-            }}
-            onMouseDown={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onMouseUp={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-            onTouchStart={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onTouchEnd={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-          >
-            {availabilityLoading
-              ? s.ctaLoading
-              : isClosed
-              ? s.ctaSoldOut
-              : s.ctaPayWithCard}
-          </button>
-
           {/* Wallet / USDC on Base — requires a pnptv session because
               /api/wallet/checkout/initiate is session-authed. Anonymous
-              visitors can still use Crypto (NP), Card (MP), or Dash. */}
+              visitors fall back to Crypto (NP). */}
           {isAuthenticated && (
             <button
               onClick={handleWalletClick}
@@ -1425,53 +1350,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
             </button>
           )}
 
-          <button
-            onClick={handleDashClick}
-            disabled={availabilityLoading || isClosed}
-            aria-disabled={availabilityLoading || isClosed}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              width: "100%",
-              padding: "18px 24px",
-              borderRadius: 16,
-              border: "none",
-              background: isClosed
-                ? "rgba(255,255,255,0.08)"
-                : "linear-gradient(90deg, #0891b2, #164e63)",
-              color: isClosed ? "#8E8E93" : "#ffffff",
-              fontSize: 15,
-              fontWeight: 800,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: availabilityLoading || isClosed ? "not-allowed" : "pointer",
-              minHeight: 56,
-              boxShadow: isClosed
-                ? "none"
-                : "0 8px 32px rgba(8,145,178,0.4)",
-              transition: "opacity 0.15s, transform 0.1s",
-            }}
-            onMouseDown={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onMouseUp={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-            onTouchStart={(e) => {
-              if (!isClosed) (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
-            }}
-            onTouchEnd={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
-            }}
-          >
-            {availabilityLoading
-              ? s.ctaLoading
-              : isClosed
-              ? s.ctaSoldOut
-              : s.ctaPayWithDash}
-          </button>
         </div>
       </div>
 
@@ -1484,19 +1362,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         />
       )}
 
-      {/* Card payment modal — MercadoPago (mpago.li) redirect + op# activation */}
-      {cardModalOpen && (
-        <CardPaymentModal
-          link="https://mpago.li/2hvNVkH"
-          planId="lifetime100"
-          planName="Miembro de por vida + 2 Meses PRIME"
-          priceUsd={100}
-          copApprox={320000}
-          lang={lang}
-          onClose={() => setCardModalOpen(false)}
-        />
-      )}
-
       {/* Wallet payment modal — USDC on Base via Privy (card / connect wallet) */}
       {walletModalOpen && (
         <WalletPaymentModal
@@ -1506,13 +1371,6 @@ function HeroView({ s, available, availabilityLoading, lang, onLangChange, onOpe
         />
       )}
 
-      {/* Dash Direct modal — copy address + email tx hash to support */}
-      {dashModalOpen && (
-        <DashPaymentModal
-          s={s}
-          onClose={() => setDashModalOpen(false)}
-        />
-      )}
     </div>
   );
 }
@@ -1559,118 +1417,6 @@ function WalletPaymentModal({ s, lang, onClose }: WalletPaymentModalProps) {
           onClick={onClose}
           style={{
             marginTop: 14,
-            width: "100%",
-            padding: "12px 20px",
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: 12,
-            color: "#cfcfd4",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          {s.cryptoCancel}
-        </button>
-      </div>
-    </ModalOverlay>
-  );
-}
-
-// ── Dash Direct modal ─────────────────────────────────────────────────────────
-//
-// Manual activation flow: user copies the address, sends ≈ $100 of Dash, then
-// emails the tx hash + their email to support@pnptv.app so we can grant the
-// lifetime entitlement. Public — no session required.
-
-interface DashPaymentModalProps {
-  s: Lifetime100Strings;
-  onClose: () => void;
-}
-
-function DashPaymentModal({ s, onClose }: DashPaymentModalProps) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    try {
-      navigator.clipboard?.writeText(DASH_ADDRESS);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      // Clipboard unavailable — user can still long-press to copy.
-    }
-  };
-  return (
-    <ModalOverlay onClose={onClose}>
-      <div style={{ maxHeight: "85dvh", overflowY: "auto" }}>
-        <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 700, color: "#ffffff" }}>
-          {s.dashModalTitle}
-        </h2>
-        <p style={{ margin: "0 0 12px", fontSize: 13, color: "#e5e5ea", lineHeight: 1.5 }}>
-          {s.dashModalBody}
-        </p>
-        <div
-          style={{
-            fontFamily: "monospace",
-            fontSize: 12,
-            background: "rgba(0,0,0,0.4)",
-            border: "1px solid rgba(8,145,178,0.35)",
-            padding: "10px 12px",
-            borderRadius: 10,
-            wordBreak: "break-all",
-            userSelect: "all",
-            color: "#e5e5ea",
-            marginBottom: 10,
-          }}
-        >
-          {DASH_ADDRESS}
-        </div>
-        <p style={{ margin: "0 0 10px", fontSize: 11, color: "#8E8E93" }}>
-          {s.dashCurrentPrice}{" "}
-          <a
-            href="https://www.coingecko.com/en/coins/dash"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: "#22d3ee", textDecoration: "underline" }}
-          >
-            coingecko.com/dash
-          </a>
-        </p>
-        <div
-          style={{
-            padding: "10px 12px",
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 10,
-            fontSize: 12,
-            color: "#cfcfd4",
-            lineHeight: 1.5,
-            marginBottom: 14,
-          }}
-        >
-          {s.dashAfterPay}
-        </div>
-        <button
-          type="button"
-          onClick={handleCopy}
-          style={{
-            width: "100%",
-            padding: "14px 20px",
-            background: "linear-gradient(90deg, #0891b2, #164e63)",
-            border: "none",
-            borderRadius: 12,
-            color: "#ffffff",
-            fontSize: 14,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          {copied ? "✓" : s.dashCopyAddress}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            marginTop: 10,
             width: "100%",
             padding: "12px 20px",
             background: "transparent",
