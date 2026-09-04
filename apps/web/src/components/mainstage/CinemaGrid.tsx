@@ -37,6 +37,8 @@ interface UrlMediaPlayerProps {
   playing: boolean;
   volume: number;
   startedAt?: number | null;
+  /** Slim horizontal music UI (mini vinyl + inline controls). Ignored for kind='video'. */
+  compact?: boolean;
 }
 
 // ── Watermark positions ───────────────────────────────────────────────────────
@@ -84,7 +86,7 @@ function IconVolumeUp({ size = 16 }: { size?: number }) {
 
 // ── UrlMediaPlayer ────────────────────────────────────────────────────────────
 
-export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMediaPlayerProps) {
+export function UrlMediaPlayer({ src, kind, playing, volume, startedAt, compact = false }: UrlMediaPlayerProps) {
   const t = useI18n().live;
   const { userMusicPlaying: userOptedIn, userMusicMuted: muted, setUserMusicPlaying: setUserOptedIn, setUserMusicMuted: setMuted } = useMainStageRoom();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -199,6 +201,61 @@ export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMed
 
   // ── Music UI ────────────────────────────────────────────────────────────────
   if (kind === "music") {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-3 w-full">
+          <div
+            className="relative w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{
+              background: "radial-gradient(circle at 30% 30%, rgba(212,0,122,0.45), rgba(123,97,255,0.25) 60%, rgba(0,0,0,0.6) 100%)",
+              animation: isPlaying ? "spin 12s linear infinite" : "none",
+            }}
+          >
+            <svg className="w-4 h-4 text-white/90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+            </svg>
+          </div>
+          <p className="text-white/70 text-[11px] font-medium truncate flex-1 min-w-0" title={src}>
+            {decodeURIComponent(src.split("/").pop() || src)}
+          </p>
+          <button
+            type="button"
+            onClick={handleToggleMute}
+            disabled={!userOptedIn}
+            aria-label={muted ? "Unmute" : "Mute"}
+            className="w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-[0.93] disabled:opacity-30 flex-shrink-0"
+            style={{
+              background: muted ? "rgba(255,255,255,0.06)" : "rgba(94,209,196,0.15)",
+              color: muted ? "rgba(255,255,255,0.4)" : "#5ED1C4",
+            }}
+          >
+            {muted ? <IconVolumeOff size={12} /> : <IconVolumeUp size={12} />}
+          </button>
+          {!userOptedIn ? (
+            <button
+              type="button"
+              onClick={handlePlay}
+              aria-label="Play music"
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white transition-all active:scale-[0.93] flex-shrink-0"
+              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+            >
+              <IconPlay size={14} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handlePause}
+              aria-label="Pause music"
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white transition-all active:scale-[0.93] flex-shrink-0"
+              style={{ background: "rgba(255,255,255,0.10)" }}
+            >
+              <IconPause size={14} />
+            </button>
+          )}
+          <audio ref={audioRef} playsInline preload="auto" muted />
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center gap-6 px-6 text-center">
         {/* Vinyl disc */}
@@ -467,7 +524,7 @@ export function CinemaGrid({
           <UrlMediaPlayer
             src={mediaSrc}
             kind={mediaKind === "music" ? "music" : "video"}
-            playing={mediaPlaying}
+            playing={mediaPlaying && cammerTracks.length === 0}
             volume={mediaVolume}
             startedAt={mediaStartedAt}
           />
