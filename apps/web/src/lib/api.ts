@@ -9016,6 +9016,16 @@ export interface MainStageState {
     volume: number;
   };
   autoplay_enabled: boolean;
+  /** PNPtv Mode — spotlight-lock format that engages when a Crystal Creator
+   * (or legacy pnptv_mode_expires_at grantee) is on stage. When locked, mode
+   * is forced to 'spotlight' pinned on the holder and admin toggles reject. */
+  pnptvMode?: {
+    locked: boolean;
+    holder: string | null;
+    sessionId: string | null;
+    startedAt: number | null;
+    graceUntil: number | null;
+  };
   counts: {
     participants: number;
     guests: number;

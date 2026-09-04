@@ -637,11 +637,22 @@ async function fetchPnptvModeGrant(identity) {
   if (!isHumanCammerIdentity(identity)) return false;
   try {
     const pool = getPool();
+    // ANY Crystal Creator on stage triggers PNPtv Mode automatically so the
+    // Main Stage locks to spotlight on them (viewers focus on the featured
+    // model). Also honor the legacy per-user `pnptv_mode_expires_at` grant
+    // for non-crystal users who paid for the format directly. SQL comparison
+    // handles the 'infinity' timestamptz sentinel natively.
+    // Also accept when the on-stage identity resolves to a user_id via the
+    // performers table (main-stage cammers can be a performer id, not a user id).
     const { rows } = await pool.query(
-      `SELECT 1 FROM users
-        WHERE id::text = $1
-          AND pnptv_mode_expires_at IS NOT NULL
-          AND pnptv_mode_expires_at > NOW()
+      `SELECT 1
+         FROM users u
+         LEFT JOIN performers p ON p.user_id = u.id::text
+        WHERE (u.id::text = $1 OR p.id::text = $1)
+          AND (
+            (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW())
+            OR (u.pnptv_mode_expires_at IS NOT NULL AND u.pnptv_mode_expires_at > NOW())
+          )
         LIMIT 1`,
       [String(identity)]
     );

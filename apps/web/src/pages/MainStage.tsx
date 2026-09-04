@@ -1623,20 +1623,45 @@ export default function MainStage() {
         />
 
         {/* Mode chip — yields space to action buttons on narrow viewports.
-            Title text hides below 400px; mode label hides below sm. */}
-        <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full text-xs font-semibold bg-white/[0.06] border border-white/10 text-white/80 min-w-0 flex-shrink overflow-hidden">
-          <span className="text-pnp-accent flex-shrink-0">{MODE_ICONS[mode]}</span>
-          <span className="hidden [min-width:400px]:inline truncate">{t.live.mainStageTitle}</span>
-          <span className="hidden sm:inline text-white/30 mx-0.5">·</span>
-          <span className="hidden sm:inline text-white/55 truncate">{modeLabels[mode]}</span>
-          {liveParticipants > 0 && (
-            <>
-              <span className="text-white/20 mx-0.5 flex-shrink-0">·</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-              <span className="tabular-nums text-white/70 flex-shrink-0">{liveParticipants}</span>
-            </>
-          )}
-        </div>
+            When PNPtv Mode is locked (Crystal Creator on stage), the chip
+            swaps to a distinct obsidian/platinum treatment so viewers know
+            the format is pinned on the featured model. */}
+        {state?.pnptvMode?.locked ? (
+          <div
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full text-xs font-bold min-w-0 flex-shrink overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, rgba(15,15,20,0.95), rgba(35,30,55,0.95))",
+              border: "1px solid rgba(220,220,255,0.55)",
+              color: "#F0EDFF",
+              boxShadow: "0 0 12px rgba(180,170,255,0.25)",
+            }}
+            title="PNPtv Mode — spotlight locked on a Crystal Creator"
+          >
+            <span className="flex-shrink-0" aria-hidden>❖</span>
+            <span className="truncate">PNPtv Mode</span>
+            {liveParticipants > 0 && (
+              <>
+                <span className="opacity-40 mx-0.5 flex-shrink-0">·</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="tabular-nums opacity-80 flex-shrink-0">{liveParticipants}</span>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full text-xs font-semibold bg-white/[0.06] border border-white/10 text-white/80 min-w-0 flex-shrink overflow-hidden">
+            <span className="text-pnp-accent flex-shrink-0">{MODE_ICONS[mode]}</span>
+            <span className="hidden [min-width:400px]:inline truncate">{t.live.mainStageTitle}</span>
+            <span className="hidden sm:inline text-white/30 mx-0.5">·</span>
+            <span className="hidden sm:inline text-white/55 truncate">{modeLabels[mode]}</span>
+            {liveParticipants > 0 && (
+              <>
+                <span className="text-white/20 mx-0.5 flex-shrink-0">·</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="tabular-nums text-white/70 flex-shrink-0">{liveParticipants}</span>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
           {isViewerMode && (
