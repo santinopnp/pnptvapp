@@ -1343,6 +1343,7 @@ export default function SocialPostCard({
                   text={translatedContent ?? localContent ?? post.content}
                   className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
                   maxLength={200}
+                  resolvedMentions={post.resolved_mentions}
                 />
               )}
               {translatedContent && !isEditing && (
@@ -2158,6 +2159,7 @@ export default function SocialPostCard({
                         <MentionText
                           text={reply.content}
                           className="text-xs text-white/80 mt-0.5 whitespace-pre-wrap block"
+                          resolvedMentions={reply.resolved_mentions}
                         />
                         {/* Per-reply actions — hidden while row is pending (no real id yet) */}
                         {!pending && (

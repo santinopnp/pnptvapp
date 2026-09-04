@@ -6,6 +6,15 @@ interface MentionTextProps {
   className?: string;
   /** Collapse text beyond this character count with a "View more" toggle */
   maxLength?: number;
+  /**
+   * Server-resolved list of every `@username` token found in `text`, matched
+   * against the users table. `user_id: null` means the mention does not
+   * resolve to a real account (renamed / deleted / typo) — those tokens are
+   * rendered as plain (light-gray) text so they can't send viewers to a
+   * dead profile page. When this prop is absent (older callers), every
+   * `@word` still renders as a clickable link — preserving prior behavior.
+   */
+  resolvedMentions?: Array<{ username: string; user_id: string | null }>;
 }
 
 function truncateAtWord(text: string, max: number): string {
@@ -21,7 +30,7 @@ function truncateAtWord(text: string, max: number): string {
  * Plain http(s) URLs open in a new tab.
  * Optionally collapses long text behind a "View more" toggle.
  */
-export function MentionText({ text, className, maxLength }: MentionTextProps) {
+export function MentionText({ text, className, maxLength, resolvedMentions }: MentionTextProps) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
 
@@ -34,6 +43,14 @@ export function MentionText({ text, className, maxLength }: MentionTextProps) {
 
   // Split on @mention, #hashtag, and URL tokens
   const parts = displayText.split(/(@[a-zA-Z0-9_]{2,32}|#[a-zA-Z0-9_À-ɏ]{1,64}|https?:\/\/[^\s<>"]+)/g);
+
+  // Build a case-insensitive lookup of resolved mentions so we can decide
+  // whether an `@token` should render as a clickable link (real user) or
+  // degrade to plain gray text (unresolved / deleted account). When the
+  // prop is undefined we fall back to legacy behavior (always link).
+  const mentionLookup: Map<string, string | null> | null = resolvedMentions
+    ? new Map(resolvedMentions.map((m) => [m.username.toLowerCase(), m.user_id]))
+    : null;
 
   return (
     <span className={className}>
@@ -71,6 +88,25 @@ export function MentionText({ text, className, maxLength }: MentionTextProps) {
 
         if (/^@[a-zA-Z0-9_]{2,32}$/.test(part)) {
           const username = part.slice(1);
+          // When the caller supplied a resolvedMentions map, only link out
+          // if the mention resolved to a real user_id. Unresolved (or
+          // absent-from-map) tokens render as muted plain text so they
+          // can't route to /profile/<ghost>.
+          if (mentionLookup) {
+            const resolvedId = mentionLookup.get(username.toLowerCase());
+            if (!resolvedId) {
+              return (
+                <span
+                  key={i}
+                  className="font-medium"
+                  style={{ color: "rgba(255,255,255,0.45)" }}
+                  title="This account is not available"
+                >
+                  {part}
+                </span>
+              );
+            }
+          }
           return (
             <span
               key={i}

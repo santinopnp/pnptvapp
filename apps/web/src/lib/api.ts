@@ -1508,6 +1508,12 @@ export interface SocialPostItem {
   hype_score?: number;
   hyped_by_me?: boolean;
   top_hypers?: Array<{ id: string; username: string | null; first_name: string | null; photo_file_id: string | null }>;
+  // Every `@username` token in `content` resolved against the users table.
+  // `user_id: null` means the mentioned account was renamed or deleted — the
+  // renderer should degrade that mention to plain text (see MentionText).
+  // Populated by the backend on every post payload; may be absent on older
+  // responses cached before the resolved-mentions rollout.
+  resolved_mentions?: Array<{ username: string; user_id: string | null }>;
 }
 
 export interface PostCardSnapshot {
@@ -2182,6 +2188,26 @@ export function getPublicProfile(
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
   return request(`/api/webapp/social/profile/${userId}?${params}`);
+}
+
+/**
+ * Fetch posts that @-mention the given user (i.e. every post whose author's
+ * text contains `@username` for this user). Powers the "Tagged" tab on
+ * creator + member profiles. Same page shape as the profile feed so the same
+ * PostCard component can render both.
+ */
+export function getTaggedInPosts(
+  userId: string,
+  cursor?: string,
+  limit = 20
+): Promise<{
+  success: boolean;
+  posts: SocialPostItem[];
+  nextCursor: string | null;
+}> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return request(`/api/webapp/social/tagged-in/${userId}?${params}`);
 }
 
 export function getPublicPost(
