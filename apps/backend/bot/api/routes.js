@@ -14168,7 +14168,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
           source_payment_id, is_tip, period_month, metadata)
        VALUES ($1, $2, $3, $4, 'holding', NOW() + ($5 || ' hours')::interval,
                $6, true, date_trunc('month', CURRENT_DATE), $7::jsonb)
-       ON CONFLICT (source_payment_id, creator_id) DO NOTHING`,
+       ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING`,
       [
         recipientUserId,
         grossUsd,
