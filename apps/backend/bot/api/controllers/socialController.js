@@ -675,7 +675,11 @@ const editPost = async (req, res) => {
   if (!content || typeof content !== 'string' || !content.trim()) {
     return res.status(400).json({ error: 'Content is required' });
   }
-  const trimmed = content.trim().slice(0, 2000);
+  // FIX 3 (audit 2026-09-04): match createPost's 5000-char ceiling. The
+  // previous 2000 cap silently truncated valid edits from users with longer
+  // originals. Replies still cap at 500 in createPost — edits of replies are
+  // rare and land here rather than the reply path.
+  const trimmed = content.trim().slice(0, 5000);
   try {
     const { assertCleanText } = require('../../../services/contentModerationFilter');
     assertCleanText(trimmed, 'content');
@@ -709,6 +713,14 @@ const editPost = async (req, res) => {
       }
     }
 
+    // FIX 3: re-parse @mentions from the edited content. Only NEW mentions
+    // (not present in the prior version) get a notification. Fire-and-forget
+    // to keep the edit response snappy — mirrors how createPost handles it.
+    setImmediate(() => {
+      const { syncPostMentions } = require('../../../services/mentionService');
+      syncPostMentions(postId, user.id, trimmed).catch(() => {});
+    });
+
     return res.json({
       success: true,
       content: result.rows[0].content,
@@ -718,6 +730,33 @@ const editPost = async (req, res) => {
   } catch (err) {
     logger.error('editPost error', err);
     return res.status(500).json({ error: 'Failed to edit post' });
+  }
+};
+
+// ── FIX 2: Posts tagging a specific user ──────────────────────────────────────
+// GET /api/webapp/social/tagged-in/:userId — chronological desc list of posts
+// where the target user is in post_mentions with mention_type IN ('mention','tag').
+// Applies the same visibility gates as feed/wall.
+const getTaggedIn = async (req, res) => {
+  const user = authGuard(req, res); if (!user) return;
+  try {
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin' || EntitlementAccessService.isSuperGod(user.id);
+    const viewerTier = await validateTierFresh(user.id, user.tier || 'free');
+    if (viewerTier !== (user.tier || 'free').toLowerCase()) req.session.user.tier = viewerTier;
+    const blockedRes = await dbQuery('SELECT blocked FROM users WHERE id = $1', [user.id]);
+    const blockedIds = (blockedRes.rows[0]?.blocked || []).map(Number);
+
+    const targetUserId = await resolveUserId(req.params.userId);
+    if (!targetUserId) return res.status(404).json({ error: 'User not found' });
+
+    const result = await SocialPostService.getPostsTaggingUser(
+      targetUserId, user.id, req.query.cursor, req.query.limit,
+      viewerTier, isAdmin, blockedIds
+    );
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    logger.error('getTaggedIn error', err);
+    return res.status(500).json({ error: 'Failed to load tagged posts' });
   }
 };
 
@@ -2100,6 +2139,15 @@ const getPost = async (req, res) => {
       plan_slug: contentLocked ? (authorIsPrimeCoFounder ? 'monthly-pass' : null) : undefined,
       creator_channel_url: contentLocked && row.author_username ? `/c/${row.author_username}` : undefined,
     };
+    // FIX 4: attach resolved_mentions so the single-post detail view renders
+    // clickable @usernames matching the feed/wall contract.
+    try {
+      const { hydrateResolvedMentions } = require('../../../services/socialPostService');
+      await hydrateResolvedMentions([post]);
+    } catch (hyErr) {
+      logger.warn('getPost: resolved_mentions hydrate failed', { postId: id, err: hyErr.message });
+      post.resolved_mentions = [];
+    }
     return res.json({ success: true, post });
   } catch (err) {
     logger.error('getPost error', err);
@@ -2116,10 +2164,15 @@ const getPublicPost = async (req, res) => {
   }
 
   try {
+    // FIX 6 (audit 2026-09-04): the previous filter only checked `is_exclusive`
+    // and leaked content_tier='prime', channel-gated, and hangout-gated posts
+    // to unauthenticated callers via the OG/public share endpoint. Tighten to
+    // strictly free, no-channel, no-hangout posts.
     const result = await dbQuery(
       `SELECT
          sp.id,
          LEFT(sp.content, 200)   AS content,
+         sp.content              AS full_content,
          sp.media_url,
          sp.media_type,
          sp.media_urls,
@@ -2131,12 +2184,15 @@ const getPublicPost = async (req, res) => {
        JOIN users u ON sp.user_id = u.id
        WHERE sp.id = $1
          AND sp.is_deleted = false
-         AND (sp.is_exclusive IS NOT TRUE)`,
+         AND sp.is_exclusive IS NOT TRUE
+         AND COALESCE(sp.content_tier, 'free') = 'free'
+         AND sp.channel_id IS NULL
+         AND sp.hangout_group_id IS NULL`,
       [id]
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ error: 'Post not found' });
+      return res.status(404).json({ error: 'Post not found', code: 'NOT_FOUND_OR_GATED' });
     }
 
     const post = result.rows[0];
@@ -2154,6 +2210,20 @@ const getPublicPost = async (req, res) => {
     if (!isValidPhotoUrl(post.author_photo)) {
       post.author_photo = null;
     }
+
+    // FIX 4: attach resolved_mentions (parsed from full content so unresolved
+    // usernames still surface, then stripped of the internal field before
+    // returning so we don't leak more than the 200-char preview).
+    try {
+      const { hydrateResolvedMentions } = require('../../../services/socialPostService');
+      const clone = { id: post.id, content: post.full_content };
+      await hydrateResolvedMentions([clone]);
+      post.resolved_mentions = clone.resolved_mentions || [];
+    } catch (hyErr) {
+      logger.warn('getPublicPost: resolved_mentions hydrate failed', { postId: id, err: hyErr.message });
+      post.resolved_mentions = [];
+    }
+    delete post.full_content;
 
     return res.json({ success: true, post });
   } catch (err) {
@@ -2562,4 +2632,4 @@ const sharePostToHangouts = async (req, res) => {
   return res.json({ success: true, results });
 };
 
-module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, toggleHype, getHypers, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts };
+module.exports = { getFeed, getHomeFeed, getWall, createPost, toggleLike, toggleHype, getHypers, deletePost, editPost, getReplies, postToMastodon, createPostWithMedia, createPostWithMultiMedia, getPublicProfile, bulkCreateVideos, getPost, getPublicPost, searchMentions, assignPostToChannel, unassignPostFromChannel, getHangoutFeed, dropToFeed, getUserHangoutActivity, getHashtagFeed, sharePostToHangouts, getTaggedIn };

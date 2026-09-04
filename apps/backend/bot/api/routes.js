@@ -8902,6 +8902,8 @@ app.get('/api/webapp/social/feed', requireSessionAuth, asyncHandler(socialContro
 // Hashtag feed — posts containing a specific #tag (?tag=pnp)
 app.get('/api/webapp/social/hashtag-feed', requireSessionAuth, asyncHandler(socialController.getHashtagFeed));
 app.get('/api/webapp/social/wall/:userId', asyncHandler(socialController.getWall));
+// FIX 2 (audit 2026-09-04): posts tagging/mentioning this user (chronological desc)
+app.get('/api/webapp/social/tagged-in/:userId', requireSessionAuth, asyncHandler(socialController.getTaggedIn));
 app.get('/api/webapp/social/profile/:userId', asyncHandler(socialController.getPublicProfile));
 // M-10: 2257 compliance check middleware — enforced for active creators only
 const require2257ForCreators = asyncHandler(async (req, res, next) => {

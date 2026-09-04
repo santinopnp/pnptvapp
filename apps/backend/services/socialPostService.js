@@ -1201,6 +1201,86 @@ class SocialPostService {
     return { profile, posts, nextCursor };
   }
 
+  // ── Posts tagging a specific user ─────────────────────────────────────────
+  /**
+   * Chronologically desc list of posts where `targetUserId` appears in
+   * post_mentions with mention_type IN ('mention','tag'). Same visibility
+   * gates as the main feed (channel access, content_tier blur, soft-delete,
+   * block filter, hangout privacy).
+   *
+   * @param {string} targetUserId  who is tagged/mentioned
+   * @param {string} viewerId      authenticated viewer
+   * @param {string} [cursor]      opaque cursor (post ID)
+   * @param {number} [limit=20]    page size (max 50)
+   * @param {string} [viewerTier]  'free' | 'member' | 'prime'
+   * @param {boolean} [isAdmin=false]
+   * @param {number[]} [blockedIds=[]]  from users.blocked (numeric)
+   */
+  static async getPostsTaggingUser(targetUserId, viewerId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    // Param order: $1=viewerId, $2=targetUserId, $3=lim, [$4=cursorId], $N=blockedParam,
+    //              [$N+1=viewerIdForBlockJoin — same as $1, used inside NOT EXISTS]
+    const params = [viewerId, String(targetUserId), lim];
+    if (cursorId) params.push(cursorId);
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $4` : '';
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+       FROM social_posts sp
+       JOIN post_mentions pm ON pm.post_id = sp.id
+        AND pm.mentioned_user_id = $2::varchar
+        AND pm.mention_type IN ('mention', 'tag')
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         ${cursorClause}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM blocked_users bu
+            WHERE (bu.user_id = $1::varchar AND bu.blocked_user_id = sp.user_id)
+               OR (bu.user_id = sp.user_id AND bu.blocked_user_id = $1::varchar)
+         )
+       ORDER BY sp.id DESC LIMIT $3`,
+      params
+    );
+
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
+    return { posts, nextCursor };
+  }
+
   // ── Create Post ───────────────────────────────────────────────────────────
 
   static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null, isAiGenerated = false) {
