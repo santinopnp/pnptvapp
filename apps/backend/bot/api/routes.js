@@ -12166,7 +12166,8 @@ app.get('/api/wallet/linked', requireSessionAuth, asyncHandler(async (req, res) 
   const user = req.session?.user;
   const userId = String(user.telegram_id || user.id);
   const { rows } = await getPool().query(
-    `SELECT wallet_address, privy_id, wallet_linked_at FROM users WHERE id = $1 LIMIT 1`,
+    `SELECT wallet_address, privy_id, wallet_linked_at, preferred_wallet_address
+       FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
   const row = rows[0] || {};
@@ -12175,7 +12176,42 @@ app.get('/api/wallet/linked', requireSessionAuth, asyncHandler(async (req, res) 
     walletAddress: row.wallet_address ? String(row.wallet_address) : null,
     hasPrivyId: !!row.privy_id,
     linkedAt: row.wallet_linked_at || null,
+    // Preferred signing wallet — set by the client when the user explicitly
+    // switches wallets. Null when the user has never made a choice (frontend
+    // falls back to embedded → first external in that case).
+    preferredWalletAddress: row.preferred_wallet_address
+      ? String(row.preferred_wallet_address)
+      : null,
   });
+}));
+
+// PUT /api/wallet/preferred — persist the user's chosen signing wallet across
+// devices. localStorage is still the fast path (single-device), but this row
+// is authoritative so switching wallets on phone reflects on desktop next
+// login. Body: { address: string|null } — pass null to clear the preference.
+app.put('/api/wallet/preferred', requireSessionAuth, asyncHandler(async (req, res) => {
+  const user = req.session?.user;
+  const userId = String(user.telegram_id || user.id);
+  const raw = req.body && Object.prototype.hasOwnProperty.call(req.body, 'address')
+    ? req.body.address
+    : undefined;
+  if (raw === undefined) {
+    return res.status(400).json({ ok: false, error: 'address_required' });
+  }
+  // Accept null / empty string to clear; else must look like an EVM address.
+  let normalized = null;
+  if (raw !== null && raw !== '') {
+    const asStr = String(raw).trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(asStr)) {
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    normalized = asStr.toLowerCase();
+  }
+  await getPool().query(
+    `UPDATE users SET preferred_wallet_address = $1 WHERE id = $2`,
+    [normalized, userId]
+  );
+  res.json({ ok: true, preferredWalletAddress: normalized });
 }));
 
 // GET /api/wallet/history — purchase history

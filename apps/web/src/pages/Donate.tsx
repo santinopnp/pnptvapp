@@ -7,7 +7,7 @@ import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { usePrivy, useWallets, useAddFunds, useConnectWallet } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base } from "viem/chains";
-import { getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { getPreferredWallet, setPreferredWallet, walletTypeLabel, WalletTypeIcon } from "@/components/payments/PayInWalletChips";
 
 // CAIP-2 chain id for Base — used by Privy's useAddFunds destination.
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -375,27 +375,21 @@ export default function Donate() {
                 )}
                 {wallets.map((w) => {
                   const isActive = activeWallet?.address === w.address;
-                  const label = w.walletClientType === "privy"
-                    ? "PNPtv"
-                    : w.walletClientType === "metamask"
-                      ? "MetaMask"
-                      : w.walletClientType === "coinbase_wallet"
-                        ? "Coinbase"
-                        : w.walletClientType === "walletconnect"
-                          ? "WalletConnect"
-                          : "External";
+                  const label = walletTypeLabel(w.walletClientType);
                   return (
                     <button
                       key={w.address}
                       type="button"
                       onClick={() => setPreferred(w.address)}
-                      className={`text-[10px] font-semibold px-2 py-1 rounded-md transition ${
+                      className={`text-[10px] font-semibold px-2 py-1 rounded-md transition inline-flex items-center gap-1 ${
                         isActive
                           ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
                           : "bg-white/[0.04] text-white/60 border border-white/10 hover:bg-white/[0.08]"
                       }`}
                     >
-                      {isActive ? "✓ " : ""}{label}
+                      {isActive && <span className="text-emerald-300">✓</span>}
+                      <WalletTypeIcon clientType={w.walletClientType} size={10} />
+                      <span>{label}</span>
                     </button>
                   );
                 })}

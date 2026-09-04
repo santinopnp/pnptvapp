@@ -23,7 +23,8 @@ import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
-import { TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
+import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { useWallets } from "@privy-io/react-auth";
 import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
 
@@ -2385,6 +2386,26 @@ function QuickTipSheet({
 function WalletFloater() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  // Active wallet detection — used to badge the FAB so users see which wallet
+  // is signing without having to open the sheet. Mirrors WalletHomeSheet's
+  // preferred → embedded → first external order.
+  const { wallets } = useWallets();
+  const [preferredAddr, setPreferredAddr] = useState<string | null>(() => getPreferredWallet());
+  useEffect(() => {
+    // Keep in sync with other surfaces that write the preference.
+    const sync = () => setPreferredAddr(getPreferredWallet());
+    window.addEventListener("storage", sync);
+    // Poll infrequently — WalletHomeSheet writes via setPreferredWallet in the
+    // same tab (no storage event) so the FAB needs to notice too.
+    const iv = window.setInterval(sync, 2000);
+    return () => { window.removeEventListener("storage", sync); window.clearInterval(iv); };
+  }, []);
+  const preferredWallet = preferredAddr ? wallets.find((w) => w.address === preferredAddr) : null;
+  const activeFabWallet = preferredWallet
+    || wallets.find((w) => w.walletClientType === "privy")
+    || wallets[0]
+    || null;
+  const showFabBadge = !!activeFabWallet && activeFabWallet.walletClientType !== "privy";
   // Main Stage context: expanded action stack state + fetched state + tip sheet.
   const [stackOpen, setStackOpen] = useState(false);
   const [msState, setMsState] = useState<{
@@ -2566,7 +2587,7 @@ function WalletFloater() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="Open wallet"
+        aria-label={showFabBadge ? `Open wallet (using ${activeFabWallet?.walletClientType})` : "Open wallet"}
         className="fixed z-40 flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
         style={{
           bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
@@ -2578,6 +2599,20 @@ function WalletFloater() {
         }}
       >
         💎
+        {showFabBadge && (
+          <span
+            aria-hidden="true"
+            className="absolute flex items-center justify-center rounded-full bg-white shadow"
+            style={{
+              bottom: -2, right: -2,
+              width: 20, height: 20,
+              border: "2px solid rgba(19,16,26,0.98)",
+            }}
+            title={`Signing as ${activeFabWallet?.walletClientType}`}
+          >
+            <WalletTypeIcon clientType={activeFabWallet?.walletClientType} size={12} />
+          </span>
+        )}
       </button>
       {open && (
         <Suspense fallback={null}>

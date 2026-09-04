@@ -1926,13 +1926,35 @@ export async function linkPrivyIdentity(privyToken: string): Promise<{ ok: true;
 // via /api/privy/link). Lets the wallet UI render a read-only balance view on
 // devices where Privy hasn't been authenticated locally — the pnptv session
 // cookie is cross-device, whereas Privy's useWallets() is per-browser.
-export async function getLinkedWallet(): Promise<{ ok: true; walletAddress: string | null; hasPrivyId: boolean; linkedAt: string | null }> {
+export async function getLinkedWallet(): Promise<{
+  ok: true;
+  walletAddress: string | null;
+  hasPrivyId: boolean;
+  linkedAt: string | null;
+  /** User's explicit preferred signing wallet — set via setPreferredWalletServer.
+      Null when the user has never made an explicit choice. */
+  preferredWalletAddress?: string | null;
+}> {
   const res = await fetch(`${API_BASE}/api/wallet/linked`, { credentials: "include" });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(error.error || `API error ${res.status}`);
   }
   return res.json();
+}
+
+// Persist the user's chosen wallet server-side so the preference follows them
+// across devices. Fire-and-forget from the client — localStorage remains the
+// fast local path; this call just mirrors it. Pass null to clear.
+export async function setPreferredWalletServer(address: string | null): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/api/wallet/preferred`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+  } catch { /* non-fatal — localStorage still holds the choice on this device */ }
 }
 
 export async function deleteAvatar(): Promise<{ success: boolean }> {

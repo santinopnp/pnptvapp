@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { PrivyProvider, usePrivy, useWallets } from "@privy-io/react-auth";
-import { linkPrivyIdentity } from "@/lib/api";
+import { linkPrivyIdentity, getLinkedWallet } from "@/lib/api";
+import { PREFERRED_WALLET_KEY } from "@/components/payments/PayInWalletChips";
 import * as Sentry from "@sentry/react";
 import { base, mainnet } from "viem/chains";
 import { AuthProvider } from "@/hooks/useAuth";
@@ -342,6 +343,40 @@ function PrivyIdentitySync() {
     })();
     return () => { cancelled = true; };
   }, [authenticated, embeddedWallet?.address, getAccessToken]);
+
+  // Cross-device seed for preferred wallet: if this browser has no localStorage
+  // preference but the server row has one (set from another device), seed it
+  // so this device also honors the choice. Runs once per auth cycle. Uses a
+  // sessionStorage flag to avoid re-fetching on every route change.
+  useEffect(() => {
+    if (!authenticated) return;
+    const seedFlag = "__pnptv_pref_wallet_seeded";
+    try { if (sessionStorage.getItem(seedFlag) === "1") return; } catch { /* ignore */ }
+    let cancelled = false;
+    (async () => {
+      try {
+        // Read local first — if the user has already picked on this device,
+        // don't overwrite with the server value (local wins for this session).
+        const localPref = (() => {
+          try { return localStorage.getItem(PREFERRED_WALLET_KEY); } catch { return null; }
+        })();
+        if (localPref) {
+          try { sessionStorage.setItem(seedFlag, "1"); } catch { /* ignore */ }
+          return;
+        }
+        const linked = await getLinkedWallet();
+        if (cancelled) return;
+        if (linked?.preferredWalletAddress) {
+          try { localStorage.setItem(PREFERRED_WALLET_KEY, linked.preferredWalletAddress); } catch { /* ignore */ }
+        }
+        try { sessionStorage.setItem(seedFlag, "1"); } catch { /* ignore */ }
+      } catch {
+        // Non-fatal — device just falls back to the P1/P2 default (embedded
+        // then first external) if the server call errors.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authenticated]);
   return null;
 }
 

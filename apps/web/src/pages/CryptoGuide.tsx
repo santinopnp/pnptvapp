@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePrivy, useWallets, useAddFunds, useConnectWallet } from "@privy-io/react-auth";
-import { getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { getPreferredWallet, setPreferredWallet, WalletTypeIcon } from "@/components/payments/PayInWalletChips";
 
 type Lang = "en" | "es";
 
@@ -215,7 +215,10 @@ export default function CryptoGuide() {
             <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)", color: "#6ee7b7", fontSize: 13, fontWeight: 600 }}>
               {t.step1BadgeSignedIn}
               {isExternalActive && activeWalletLabel && (
-                <span style={{ fontSize: 11, marginLeft: 8, padding: "1px 6px", borderRadius: 6, background: "rgba(16,185,129,0.18)", border: "1px solid rgba(16,185,129,0.35)" }}>{activeWalletLabel}</span>
+                <span style={{ fontSize: 11, marginLeft: 8, padding: "1px 6px", borderRadius: 6, background: "rgba(16,185,129,0.18)", border: "1px solid rgba(16,185,129,0.35)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <WalletTypeIcon clientType={activeWallet?.walletClientType} size={11} />
+                  {activeWalletLabel}
+                </span>
               )}
               {shortAddress && <span style={{ fontFamily: "monospace", opacity: 0.75, marginLeft: 8 }}>{shortAddress}</span>}
             </div>

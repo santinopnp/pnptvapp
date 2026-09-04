@@ -620,28 +620,21 @@ export function WalletPayCard({
           </span>
           {wallets.map((w) => {
             const isActive = activeWallet?.address === w.address;
-            const isPrivy = w.walletClientType === "privy";
-            const walletLabel = isPrivy
-              ? "PNPtv"
-              : w.walletClientType === "metamask"
-                ? "MetaMask"
-                : w.walletClientType === "coinbase_wallet"
-                  ? "Coinbase"
-                  : w.walletClientType === "walletconnect"
-                    ? "WalletConnect"
-                    : "External";
+            const walletLabel = walletTypeLabel(w.walletClientType);
             return (
               <button
                 key={w.address}
                 type="button"
                 onClick={() => setPreferred(w.address)}
-                className={`text-[10px] font-semibold px-2 py-1 rounded-md transition ${
+                className={`text-[10px] font-semibold px-2 py-1 rounded-md transition inline-flex items-center gap-1 ${
                   isActive
                     ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
                     : "bg-white/[0.04] text-white/60 border border-white/10 hover:bg-white/[0.08]"
                 }`}
               >
-                {isActive ? "✓ " : ""}{walletLabel}
+                {isActive && <span className="text-emerald-300">✓</span>}
+                <WalletTypeIcon clientType={w.walletClientType} size={10} />
+                <span>{walletLabel}</span>
               </button>
             );
           })}
@@ -806,7 +799,9 @@ const _LazyBuyTokensModal = _lazy(() =>
 // the same wallet they last picked (e.g. Trust) instead of snapping back to the
 // embedded default every reload. Exported so any Privy entry point
 // (WalletHomeSheet, WalletPayCard, Donate, CryptoGuide, …) agrees on which
-// wallet is active.
+// wallet is active. localStorage is the fast local path; setPreferredWalletServer
+// mirrors the choice to the user row so it survives across devices.
+import { setPreferredWalletServer as _setPreferredWalletServer } from "@/lib/api";
 export const PREFERRED_WALLET_KEY = "pnptv.wallet.preferred";
 export const getPreferredWallet = (): string | null => {
   try { return localStorage.getItem(PREFERRED_WALLET_KEY); } catch { return null; }
@@ -816,7 +811,53 @@ export const setPreferredWallet = (addr: string | null) => {
     if (addr) localStorage.setItem(PREFERRED_WALLET_KEY, addr);
     else localStorage.removeItem(PREFERRED_WALLET_KEY);
   } catch { /* storage full / blocked — non-fatal */ }
+  // Fire-and-forget cross-device mirror. If unauthenticated the endpoint 401s;
+  // that's fine because localStorage still holds the preference on this browser.
+  _setPreferredWalletServer(addr);
 };
+
+// ── Wallet-type icons ────────────────────────────────────────────────────────
+// Tiny inline SVGs so users can identify their wallet at a glance without
+// downloading external icon assets. Kept simple (single-color stroke/fill)
+// so they render clean on both light and dark chip backgrounds.
+export function walletTypeLabel(clientType?: string | null): string {
+  if (!clientType) return "External";
+  if (clientType === "privy") return "PNPtv";
+  if (clientType === "metamask") return "MetaMask";
+  if (clientType === "coinbase_wallet") return "Coinbase";
+  if (clientType === "walletconnect") return "WalletConnect";
+  return clientType;
+}
+export function WalletTypeIcon({ clientType, size = 12 }: { clientType?: string | null; size?: number }) {
+  const s = { width: size, height: size, display: "inline-block", verticalAlign: "-1px" } as const;
+  if (clientType === "privy") {
+    // PNPtv diamond — matches the FAB 💎 idiom.
+    return (
+      <svg viewBox="0 0 12 12" style={s} aria-hidden="true"><path d="M6 1l3 3-3 7-3-7 3-3z" fill="#10b981" /></svg>
+    );
+  }
+  if (clientType === "metamask") {
+    // Simplified fox head silhouette (not the official logo — inline art).
+    return (
+      <svg viewBox="0 0 12 12" style={s} aria-hidden="true"><path d="M2 3l1.5 2.5L2 8l2 1 2-.8L8 9l2-1-1.5-2.5L10 3 7.5 4 6 3.5 4.5 4 2 3z" fill="#f6851b" /></svg>
+    );
+  }
+  if (clientType === "coinbase_wallet") {
+    return (
+      <svg viewBox="0 0 12 12" style={s} aria-hidden="true"><circle cx="6" cy="6" r="5" fill="#0052ff" /><rect x="4.5" y="4.5" width="3" height="3" rx="0.5" fill="#fff" /></svg>
+    );
+  }
+  if (clientType === "walletconnect") {
+    return (
+      <svg viewBox="0 0 12 12" style={s} aria-hidden="true"><path d="M3 5c1.5-1.5 4.5-1.5 6 0M4 6.3c1-1 3-1 4 0M5 7.5c.5-.5 1.5-.5 2 0" fill="none" stroke="#3b99fc" strokeWidth="1" strokeLinecap="round" /></svg>
+    );
+  }
+  // Generic external
+  return (
+    <svg viewBox="0 0 12 12" style={s} aria-hidden="true"><rect x="1.5" y="3" width="9" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1" /><circle cx="8.5" cy="6" r="0.8" fill="currentColor" /></svg>
+  );
+}
+
 // Aliases kept so the existing WalletHomeSheet / WalletPayCard usages below
 // don't churn — same functions, different name at the call sites.
 const _getPreferredWallet = getPreferredWallet;
@@ -1736,15 +1777,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                     const isActive = w.address === activeAddress;
                     const isEmbedded = w.walletClientType === "privy";
                     const isUnlinking = unlinkingAddress === w.address;
-                    const label = isEmbedded
-                      ? "PNPtv"
-                      : w.walletClientType === "metamask"
-                        ? "MetaMask"
-                        : w.walletClientType === "coinbase_wallet"
-                          ? "Coinbase"
-                          : w.walletClientType === "walletconnect"
-                            ? "WalletConnect"
-                            : w.walletClientType || "External";
+                    const label = walletTypeLabel(w.walletClientType);
                     return (
                       <div
                         key={w.address}
@@ -1757,12 +1790,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                         <button
                           type="button"
                           onClick={() => handleSelectWallet(w.address)}
-                          className={`text-[11px] font-semibold px-2.5 py-1.5 transition ${
+                          className={`text-[11px] font-semibold px-2.5 py-1.5 transition flex items-center gap-1.5 ${
                             isActive ? "text-emerald-200" : "text-white/70"
                           }`}
                           title={isActive ? "Active wallet" : "Use this wallet"}
                         >
-                          {isActive ? "✓ " : ""}{label} · {w.address.slice(0, 5)}…{w.address.slice(-3)}
+                          {isActive && <span className="text-emerald-300">✓</span>}
+                          <WalletTypeIcon clientType={w.walletClientType} size={12} />
+                          <span>{label} · {w.address.slice(0, 5)}…{w.address.slice(-3)}</span>
                         </button>
                         {!isEmbedded && (
                           <button
