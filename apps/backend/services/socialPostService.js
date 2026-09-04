@@ -106,6 +106,75 @@ const isValidPhotoUrl = (photo) => normalizeImageUrl(photo) != null;
  *    was deleted (used by the community feed, NOT by profile feeds — a
  *    profile keeps the row with an "eliminated by author" placeholder).
  */
+/**
+ * Batch-hydrate `resolved_mentions` onto a list of posts. Each post gets an
+ * array of `{ username: string, user_id: string | null }`. Sources are:
+ *   1. `post_mentions` rows LEFT JOIN users — canonical, ordered by created_at
+ *   2. Any `@username` still visible in `content` that has no row in (1) —
+ *      appended as `{ username, user_id: null }` so the frontend renders it as
+ *      plain text (the mention row could be missing if create/edit failed
+ *      partway, or if the mentioned account was renamed).
+ *
+ * One SQL round-trip regardless of how many posts are passed in.
+ */
+const _hydrateResolvedMentions = async (posts) => {
+  if (!Array.isArray(posts) || posts.length === 0) return posts;
+
+  const ids = posts.map(p => p?.id).filter(Number.isFinite);
+  if (ids.length === 0) {
+    for (const p of posts) if (p) p.resolved_mentions = [];
+    return posts;
+  }
+
+  let rows = [];
+  try {
+    const res = await query(
+      `SELECT pm.post_id,
+              LOWER(u.username) AS username,
+              u.id::text AS user_id,
+              pm.created_at
+         FROM post_mentions pm
+         JOIN users u ON u.id = pm.mentioned_user_id
+        WHERE pm.post_id = ANY($1::int[])
+          AND pm.mention_type IN ('mention', 'tag')
+        ORDER BY pm.post_id, pm.created_at ASC`,
+      [ids]
+    );
+    rows = res.rows;
+  } catch (err) {
+    logger.warn('_hydrateResolvedMentions: DB fetch failed, falling back to content-only parse', { error: err.message });
+  }
+
+  const byPost = new Map();
+  for (const r of rows) {
+    if (!byPost.has(r.post_id)) byPost.set(r.post_id, []);
+    byPost.get(r.post_id).push({ username: r.username, user_id: String(r.user_id) });
+  }
+
+  // Content-parse fallback so unresolved / deleted / renamed mentions still
+  // surface to the frontend (rendered as plain text, not clickable).
+  const usernameRe = /@([a-zA-Z0-9_]{2,32})/g;
+  for (const p of posts) {
+    if (!p) continue;
+    const fromRows = byPost.get(p.id) || [];
+    const seen = new Set(fromRows.map(m => m.username));
+    const merged = [...fromRows];
+    const content = typeof p.content === 'string' ? p.content : '';
+    if (content) {
+      const parsed = content.match(usernameRe) || [];
+      for (const m of parsed) {
+        const uname = m.slice(1).toLowerCase();
+        if (!seen.has(uname)) {
+          seen.add(uname);
+          merged.push({ username: uname, user_id: null });
+        }
+      }
+    }
+    p.resolved_mentions = merged;
+  }
+  return posts;
+};
+
 const sanitizePostRows = async (rows, opts = {}) => {
   const { hideDeletedHypeOriginals = false } = opts;
   const base = rows.map(row => ({
@@ -188,6 +257,9 @@ const sanitizePostRows = async (rows, opts = {}) => {
     }
     hydrated.push(r);
   }
+  // Attach resolved_mentions so every feed-shaped endpoint returns the
+  // frontend-agreed contract without each caller re-hydrating separately.
+  await _hydrateResolvedMentions(hydrated);
   return hydrated;
 };
 
@@ -1624,6 +1696,26 @@ class SocialPostService {
       cursorClause = `AND sp.id < $${params.length}`;
     }
 
+    // FIX 1 (audit 2026-09-04): the profile wall is strictly posts authored
+    // by the profile owner. The previous OR-branch on channel_id leaked ANY
+    // user's posts into the wall if they had posted into a channel the owner
+    // happens to own. Channel-detail lives at its own endpoint.
+    //
+    // FIX 5: also apply the bidirectional block filter for authenticated
+    // viewers — if the viewer blocked the owner OR the owner blocked the
+    // viewer we return zero posts (403 is handled at the controller level,
+    // but the SQL still needs to be safe for the anonymous / same-person
+    // paths where the outer 403 doesn't fire).
+    let blockClause = '';
+    if (viewerId && String(viewerId) !== String(userId)) {
+      params.push(String(viewerId));
+      const viewerIdx = params.length;
+      blockClause = `AND NOT EXISTS (
+        SELECT 1 FROM blocked_users bu
+         WHERE (bu.user_id = $${viewerIdx} AND bu.blocked_user_id = sp.user_id)
+            OR (bu.user_id = sp.user_id AND bu.blocked_user_id = $${viewerIdx})
+      )`;
+    }
     const [postsRes, profileRes, postCountRes, performerRes, exclusiveCountRes] = await Promise.all([
       query(
         `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
@@ -1642,12 +1734,10 @@ class SocialPostService {
          JOIN users u ON sp.user_id = u.id
          LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
          WHERE sp.is_deleted = false
-           AND (
-             sp.user_id = $1
-             OR (sp.channel_id IS NOT NULL AND sp.channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $1::varchar))
-           )
+           AND sp.user_id = $1
            AND sp.reply_to_id IS NULL
            ${cursorClause}
+           ${blockClause}
          ORDER BY sp.id DESC LIMIT $2`,
         params
       ),
@@ -1664,9 +1754,12 @@ class SocialPostService {
         [userId]
       ),
       query(
+        // FIX 1: count only posts authored by the profile owner — the OR-branch
+        // on channel ownership over-counted anyone who ever posted in a channel
+        // this user owns.
         `SELECT COUNT(*)::int as count FROM social_posts
           WHERE is_deleted = false AND reply_to_id IS NULL
-            AND (user_id = $1 OR (channel_id IS NOT NULL AND channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $1::varchar)))`,
+            AND user_id = $1`,
         [userId]
       ),
       query(
@@ -1965,3 +2058,7 @@ class SocialPostService {
 
 module.exports = SocialPostService;
 module.exports.generateBlurredPreviewGif = generateBlurredPreviewGif;
+// Exported for controllers that build post responses OUTSIDE sanitizePostRows
+// (e.g. getPost single-post handler) so the resolved_mentions contract is
+// applied everywhere the frontend expects it.
+module.exports.hydrateResolvedMentions = _hydrateResolvedMentions;

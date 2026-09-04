@@ -64,10 +64,45 @@ async function resolveUsernames(usernames) {
 }
 
 /**
+ * Look up bidirectional block state between two users. Returns true if
+ * either A blocks B or B blocks A. One SQL call per pair.
+ * FIX 5 (audit 2026-09-04): mention notifications must respect blocks.
+ * We still write the `post_mentions` row (data integrity) — only the
+ * user-facing notification is suppressed.
+ */
+async function _isBlockedEitherWay(userA, userB) {
+  if (!userA || !userB || String(userA) === String(userB)) return false;
+  try {
+    const { rows } = await query(
+      `SELECT 1 FROM blocked_users
+        WHERE (user_id = $1 AND blocked_user_id = $2)
+           OR (user_id = $2 AND blocked_user_id = $1)
+        LIMIT 1`,
+      [String(userA), String(userB)]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    // Fail-open on infra errors: better to over-notify than to silently
+    // drop a legitimate mention alert. We already write the row above.
+    logger.warn('mentionService: block-check failed, allowing notify', { err: err.message });
+    return false;
+  }
+}
+
+/**
  * Save mention records for a social post and fire notifications.
  * Call after post is saved to DB.
+ *
+ * @param {number} postId
+ * @param {string} mentionerId
+ * @param {string} content
+ * @param {Object} [opts]
+ * @param {Set<string>} [opts.notifySkipUserIds]  usernames (lower) OR user ids to
+ *        skip when firing notifications — used by editPost so re-parsing a
+ *        post doesn't re-notify users who were already mentioned in the
+ *        prior version. Row inserts still happen (ON CONFLICT DO NOTHING).
  */
-async function createPostMentions(postId, mentionerId, content) {
+async function createPostMentions(postId, mentionerId, content, opts = {}) {
   const usernames = parseMentions(content);
   if (!usernames.length) return;
 
@@ -83,6 +118,8 @@ async function createPostMentions(postId, mentionerId, content) {
   // can link back to the real content, not just the derived mention wrapper.
   const origin = await _resolvePostOrigin(postId);
 
+  const skipNotify = opts.notifySkipUserIds instanceof Set ? opts.notifySkipUserIds : null;
+
   for (const user of users) {
     if (String(user.id) === String(mentionerId)) continue; // skip self-mention
     try {
@@ -90,6 +127,13 @@ async function createPostMentions(postId, mentionerId, content) {
         'INSERT INTO post_mentions (post_id, mentioned_user_id, mentioner_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
         [postId, user.id, mentionerId]
       );
+      // Suppress notify if this user was already mentioned in a prior version
+      // (edit re-parse) — they got the alert the first time around.
+      if (skipNotify && (skipNotify.has(String(user.id)) || skipNotify.has(String(user.username || '').toLowerCase()))) {
+        continue;
+      }
+      // FIX 5: skip notify (not the DB row) when either party blocks the other.
+      if (await _isBlockedEitherWay(mentionerId, user.id)) continue;
       await NotificationEmitter.emit({
         type: 'mention_post',
         category: 'social',
@@ -111,6 +155,43 @@ async function createPostMentions(postId, mentionerId, content) {
       logger.warn('mentionService: post mention failed', { err: err.message, user: user.id });
     }
   }
+}
+
+/**
+ * Re-parse mentions for an existing post (used after editPost).
+ *
+ * 1. Snapshot the current mentioned_user_ids (mention_type='mention') — these
+ *    are the "already-notified" set that we won't re-alert.
+ * 2. Delete existing mention-type rows for the post (leaves 'tag' rows alone —
+ *    performer tags are managed by createPostTags/UI, not by text parsing).
+ * 3. Re-insert from the new content via createPostMentions, passing the
+ *    snapshot as `notifySkipUserIds` so only NEW mentions fire notifications.
+ */
+async function syncPostMentions(postId, mentionerId, newContent) {
+  if (!postId) return;
+  let previouslyMentioned = new Set();
+  try {
+    const { rows } = await query(
+      `SELECT mentioned_user_id::text AS uid FROM post_mentions
+        WHERE post_id = $1 AND mention_type = 'mention'`,
+      [postId]
+    );
+    previouslyMentioned = new Set(rows.map(r => String(r.uid)));
+  } catch (err) {
+    logger.warn('syncPostMentions: snapshot failed, will still re-parse', { postId, err: err.message });
+  }
+
+  try {
+    await query(
+      `DELETE FROM post_mentions WHERE post_id = $1 AND mention_type = 'mention'`,
+      [postId]
+    );
+  } catch (err) {
+    logger.warn('syncPostMentions: delete failed', { postId, err: err.message });
+    return;
+  }
+
+  await createPostMentions(postId, mentionerId, newContent, { notifySkipUserIds: previouslyMentioned });
 }
 
 /**
@@ -163,6 +244,8 @@ async function createChatMentions(messageId, mentionerId, content, room) {
         'INSERT INTO chat_message_mentions (message_id, mentioned_user_id, mentioner_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
         [messageId, user.id, mentionerId]
       );
+      // FIX 5: skip notify (row still written) when either party blocks the other.
+      if (await _isBlockedEitherWay(mentionerId, user.id)) continue;
       await NotificationEmitter.emit({
         type: 'mention_chat',
         category: 'social',
@@ -223,6 +306,8 @@ async function createPostTags(postId, taggerId, performerIds) {
         'INSERT INTO post_mentions (post_id, mentioned_user_id, mentioner_id, mention_type) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
         [postId, performer.id, taggerId, 'tag']
       );
+      // FIX 5: skip notify (row still written) when either party blocks the other.
+      if (await _isBlockedEitherWay(taggerId, performer.id)) continue;
       await NotificationEmitter.emit({
         type: 'tag_post',
         category: 'social',
@@ -264,6 +349,7 @@ module.exports = {
   parseMentions,
   resolveUsernames,
   createPostMentions,
+  syncPostMentions,
   createChatMentions,
   createPostTags,
   searchUsersForMention,
