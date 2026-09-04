@@ -44,3 +44,9 @@ backup/
 
 # Operator-local setup notes / device provisioning docs
 *.pdf
+
+
+# Rendered marketing videos (scripts/render-marketing-videos.mjs).
+# Large binaries that vite copies into dist on every build - regenerate,
+# never commit.
+apps/web/public/marketing/*.mp4

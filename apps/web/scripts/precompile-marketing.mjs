@@ -101,8 +101,11 @@ if (!fs.existsSync(SRC_DIR)) fail(`source not found: ${SRC_DIR}`);
 // (local verification) that has not happened, so seed the output ourselves.
 if (!fs.existsSync(OUT_DIR)) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  for (const f of fs.readdirSync(SRC_DIR)) {
-    fs.copyFileSync(path.join(SRC_DIR, f), path.join(OUT_DIR, f));
+  for (const e of fs.readdirSync(SRC_DIR, { withFileTypes: true })) {
+    // Skip directories: public/marketing/video/ holds rendered MP4s, which
+    // copyFileSync cannot handle and which the page bundle does not need.
+    if (!e.isFile()) continue;
+    fs.copyFileSync(path.join(SRC_DIR, e.name), path.join(OUT_DIR, e.name));
   }
   log(`seeded ${OUT_DIR} from public/marketing`);
 }
