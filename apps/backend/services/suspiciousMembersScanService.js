@@ -336,7 +336,13 @@ async function _slackChatPostMessage(payload) {
  */
 function start() {
   if (!BOT_TOKEN || !CHANNEL_ID) {
-    logger.warn('[suspicious] scheduler NOT started — SLACK_BOT_TOKEN or SLACK_CHANNEL_SUSPICIOUS_REVIEW missing');
+    // Optional feature: only complain if partially configured (one var set,
+    // the other missing). Fully unset is a valid choice — skip silently.
+    if (BOT_TOKEN || CHANNEL_ID) {
+      logger.warn('[suspicious] scheduler NOT started — set BOTH SLACK_BOT_TOKEN and SLACK_CHANNEL_SUSPICIOUS_REVIEW');
+    } else {
+      logger.info('[suspicious] scheduler disabled (SLACK_CHANNEL_SUSPICIOUS_REVIEW not set)');
+    }
     return;
   }
   cron.schedule('0 13 * * *', async () => {
