@@ -35,7 +35,7 @@ const TICK_JITTER_MS = 60_000;      // ± 60 s
 const MIN_VIEWERS    = 3;
 const MAX_HUMAN_MSGS_60S = 5;
 
-const WEIGHTS = { tip: 0.70, booking: 0.15, wellness: 0.15 };
+const WEIGHTS = { tip: 0.55, booking: 0.30, wellness: 0.15 };
 
 // ─── Message pools ──────────────────────────────────────────────────────────
 
@@ -91,6 +91,16 @@ const BOOKING_TEMPLATES = [
   { es: '🔒 {name} está aceptando llamadas. Agenda ahora.', en: '🔒 {name} is accepting calls right now. Book one.' },
   { es: '🎯 Una llamada 1-a-1 con {name} — reserva tu slot', en: '🎯 A 1-on-1 with {name} — grab your slot' },
   { es: '💗 Momento privado con {name}? 15 min es un buen inicio.', en: '💗 Private time with {name}? 15 min is a great start.' },
+];
+
+// On-stage crystal booking prompts — mention duration + price so users see the
+// concrete offer at a glance ("Book a 30 min call with @Dejesusof22 for $60").
+// Only fired when a Crystal Creator on the Main Stage right now sells calls.
+const ONSTAGE_BOOKING_TEMPLATES = [
+  { es: '❖ {name} está en vivo AHORA — reserva {duration} min por ${price}', en: '❖ {name} is on stage RIGHT NOW — book {duration} min for ${price}' },
+  { es: '💎 {name} acepta privados. {duration} min · ${price}', en: '💎 {name} takes private calls. {duration} min · ${price}' },
+  { es: '🔥 Reserva un privado con {name} ({duration} min · ${price})', en: '🔥 Book a private with {name} ({duration} min · ${price})' },
+  { es: '📞 1-a-1 con {name} en vivo — {duration} min por ${price}', en: '📞 1-on-1 with {name} live now — {duration} min for ${price}' },
 ];
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -194,6 +204,48 @@ async function pickBookableCreator() {
   }
 }
 
+// Pick a Crystal Creator who is currently on the Main Stage AND sells call
+// packages. Preferred over the generic pickBookableCreator because it lets
+// the host bot pitch a concrete offer (duration + price) tied to someone the
+// viewer can see live right now, matching the "book calls with crystal users
+// online" surface Santino asked for.
+async function pickOnStageCrystalWithPackages() {
+  try {
+    const MainStageService = require('./mainStageService');
+    const state = await MainStageService.getState();
+    const onStage = state?.spotlight?.onStage || [];
+    const crystalIds = onStage
+      .filter((x) => x && x.isCrystal && x.userId)
+      .map((x) => String(x.userId));
+    if (crystalIds.length === 0) return null;
+
+    const r = await query(
+      `SELECT u.id::text AS user_id, u.first_name, u.username,
+              cp.duration_minutes, cp.price_usd
+         FROM users u
+         JOIN call_packages cp ON cp.creator_id = u.id::text
+        WHERE u.id::text = ANY($1::text[])
+          AND cp.is_active = true
+          AND u.username IS NOT NULL
+        ORDER BY random()
+        LIMIT 1`,
+      [crystalIds]
+    );
+    const row = r.rows && r.rows[0];
+    if (!row) return null;
+    const price = typeof row.price_usd === 'number' ? row.price_usd : Number(row.price_usd) || 0;
+    return {
+      name: row.first_name || row.username,
+      username: row.username,
+      userId: row.user_id,
+      duration: row.duration_minutes,
+      price: Math.round(price),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function pickWeighted() {
   const n = Math.random();
   if (n < WEIGHTS.tip) return 'tip';
@@ -234,6 +286,24 @@ async function composeTipMsg() {
 }
 
 async function composeBookingMsg() {
+  // Prefer an on-stage Crystal Creator with an active call package — lets us
+  // pitch a concrete offer tied to someone the viewer can see live now.
+  const onStage = await pickOnStageCrystalWithPackages();
+  if (onStage) {
+    const t = pickLangPair(ONSTAGE_BOOKING_TEMPLATES);
+    return {
+      text: bilingual({
+        es: t.es.replace('{name}', onStage.name).replace('{duration}', String(onStage.duration)).replace('{price}', String(onStage.price)),
+        en: t.en.replace('{name}', onStage.name).replace('{duration}', String(onStage.duration)).replace('{price}', String(onStage.price)),
+      }),
+      cta: {
+        label: `Book ${onStage.duration}m · $${onStage.price}`,
+        href: `/c/${onStage.username}?action=book&duration=${onStage.duration}&utm_source=mainstage_hostbot`,
+      },
+    };
+  }
+
+  // Fallback: any active performer, generic 15-min pitch.
   const creator = await pickBookableCreator();
   if (!creator) return null;
   const t = pickLangPair(BOOKING_TEMPLATES);
