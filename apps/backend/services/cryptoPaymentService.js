@@ -154,6 +154,35 @@ class CryptoPaymentService {
 
     const payment = rows[0];
 
+    // New-style intents (call/tip/rush/crystal_*/donation/channel/hangout/creator_sub)
+    // set `surface` and carry an `entitlement_spec`. Legacy plan intents leave
+    // `surface` NULL and rely on `plan_id`. Delegate the new-style ones to
+    // walletCheckoutService which has the per-surface fulfill dispatch — the
+    // legacy grantEntitlementsForPlan path below only understands plan_add_ons
+    // and would silently drop these as NO_PLAN_ADDONS (production incident
+    // 2026-09-04: $180 call payment confirmed on-chain but no booking/credit).
+    // Alchemy Notify only subscribes for USDC Transfer logs to our receiving
+    // address, so ETH-native events don't reach this handler; the wallet
+    // intent reconciler covers ETH orphans.
+    if (asset === 'USDC' && (payment.surface || !payment.plan_id)) {
+      const walletCheckoutService = require('./walletCheckoutService');
+      const result = await walletCheckoutService.verifyAndFulfillUsdc({
+        txHash: hash,
+        fromAddress: from,
+        amountReceived,
+      });
+      if (!result?.ok) {
+        logger.warn('CryptoPayment: walletCheckout delegate returned not-ok', {
+          paymentId: payment.id, surface: payment.surface, reason: result?.reason,
+        });
+      } else {
+        logger.info('CryptoPayment: delegated to walletCheckout', {
+          paymentId: payment.id, surface: payment.surface, intentId: result.intentId,
+        });
+      }
+      return;
+    }
+
     // Amount validation — enforced on BOTH primary (tx_hash) and fallback paths.
     // Without this, a user could pay $0.01 against a $9.99 intent and receive
     // the plan grant. Fallback already filters by tolerance in the WHERE clause;
