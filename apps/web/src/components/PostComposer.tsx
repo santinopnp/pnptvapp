@@ -24,6 +24,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { getCreatorEligibilityStatus, getXStatus, sharePostToX, getOwnChannels, getProfile, searchCreators, createXEmbedPost, getSocialMuxUploadUrl, finalizeSocialMuxPost, generateAiVideoMetadata, type SocialPostItem, type CreatorChannel, type MentionUser } from "@/lib/api";
+import { MentionInput } from "@/components/MentionInput";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -935,19 +936,22 @@ export function PostComposer({
             tabIndex={-1}
           />
 
-          {/* Textarea */}
+          {/* Textarea — MentionInput adds @-autocomplete dropdown on top of a
+              plain textarea. We keep the same visual chrome, sizing, and
+              maxLength cap (MAX_CHARS + 50 for the soft overflow) as before. */}
           <label htmlFor={textareaId} className="sr-only">
             {resolvedPlaceholder}
           </label>
-          <textarea
-            ref={textareaRef}
+          <MentionInput
             id={textareaId}
+            textareaRef={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS + 50))}
+            onChange={(v) => setText(v.slice(0, MAX_CHARS + 50))}
             onKeyDown={handleKeyDown}
             placeholder={resolvedPlaceholder}
             rows={compact ? 2 : 3}
             disabled={isPosting}
+            maxLength={MAX_CHARS + 50}
             className="w-full bg-transparent text-white py-2 border-b border-white/10 mb-2 resize-none outline-none placeholder:text-white/40 disabled:opacity-60 overflow-hidden"
             style={{ minHeight: "44px", fontSize: "16px" }}
             aria-describedby={error ? `${baseId}-error` : undefined}

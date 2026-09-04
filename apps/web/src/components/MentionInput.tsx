@@ -33,6 +33,10 @@ interface MentionInputProps {
   /** Exposes the underlying textarea DOM node, e.g. for auto-grow sizing. */
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
   style?: React.CSSProperties;
+  /** Forwarded to the underlying textarea — enables `<label htmlFor>` pairing. */
+  id?: string;
+  /** Forwarded to the underlying textarea for a11y (error message association). */
+  "aria-describedby"?: string;
 }
 
 interface ActiveMention {
@@ -75,6 +79,8 @@ export function MentionInput({
   onPaste,
   textareaRef: externalTextareaRef,
   style,
+  id,
+  "aria-describedby": ariaDescribedBy,
 }: MentionInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -295,6 +301,8 @@ export function MentionInput({
             (externalTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el;
           }
         }}
+        id={id}
+        aria-describedby={ariaDescribedBy}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
