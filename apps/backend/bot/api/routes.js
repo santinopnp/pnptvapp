@@ -17065,6 +17065,23 @@ app.post('/api/wallet/client-error', walletStatusLimiter, requireSessionAuth, as
     ? JSON.stringify(context).slice(0, 1000)
     : null;
 
+  // User-cancel patterns are not errors — Privy throws "User exited flow" /
+  // "User rejected" when the user closes the modal or declines the prompt.
+  // Log at info + skip persistence + skip Slack so oncall isn't paged for
+  // a user changing their mind.
+  const cancelRe = /user\s*(exited|rejected|declined|denied|cancelled|canceled)|action.?(rejected|cancelled)|user\s*closed/i;
+  const isUserCancel = cancelRe.test(safeMessage || '') || cancelRe.test(safeError || '');
+
+  if (isUserCancel) {
+    logger.info('[wallet/client-error] user cancelled', {
+      userId: String(user?.id || 'anon'),
+      username: user?.username || null,
+      step: safeStep,
+      context: safeContext,
+    });
+    return res.json({ ok: true, cancelled: true });
+  }
+
   logger.warn('[wallet/client-error]', {
     userId: String(user?.id || 'anon'),
     username: user?.username || null,
@@ -21810,12 +21827,15 @@ const mainStageTokenLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Public state — IP-rate-limited so a pre-cache-warm burst doesn't stampede Redis.
-// The controller keeps a 2-second in-process cache on top of this.
+// Public state — per-user (falls back to IP for anon) so a NAT full of PNP
+// users doesn't share a single IP quota. Cheap read endpoint: the controller
+// keeps a 2-second in-process cache so raising the ceiling doesn't stampede
+// Redis. 480/min ≈ 8/sec handles socket reconnect cascades that fire
+// state+cammers+pin+join-check in tight bursts.
 const mainStageStateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
-  keyGenerator: (req) => req.ip,
+  max: 480,
+  keyGenerator: (req) => req.session?.user?.id || req.user?.id || req.ip,
   handler: (_req, res) =>
     res.status(429).json({ success: false, error: 'Too many state requests.' }),
   standardHeaders: true,
