@@ -11264,20 +11264,32 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
     // We validate against the same source: a Directus items/performers lookup.
     // Fall back to a local DB lookup if Directus is unreachable.
     let performerValidated = false;
-    try {
-      const performerResp = await axios.get(`${DIRECTUS_INTERNAL_URL}/items/performers`, {
-        params: {
-          'filter[id][_eq]': resolvedPerformerId,
-          'filter[status][_eq]': 'published',
-          'fields[]': ['id', 'name'],
-          limit: 1,
-        },
-        timeout: 5000,
-      });
-      const found = performerResp.data?.data;
-      performerValidated = Array.isArray(found) && found.length > 0;
-    } catch (validationErr) {
-      logger.warn(`Tips: Directus validation failed for id=${resolvedPerformerId}: ${validationErr.message}`);
+
+    // Donation-allowlist bypass: platform donation accounts (Santino + Lex)
+    // have no performers row but ARE valid tip/donation recipients on the
+    // Main Stage. Same list as GIFTED_ALLOWED_PERFORMER_USER_IDS.
+    const { GIFTED_ALLOWED_PERFORMER_USER_IDS: _DONATION_ALLOWLIST } =
+      require('../../config/monetizationConfig');
+    if (_DONATION_ALLOWLIST.includes(String(resolvedPerformerId))) {
+      performerValidated = true;
+    }
+
+    if (!performerValidated) {
+      try {
+        const performerResp = await axios.get(`${DIRECTUS_INTERNAL_URL}/items/performers`, {
+          params: {
+            'filter[id][_eq]': resolvedPerformerId,
+            'filter[status][_eq]': 'published',
+            'fields[]': ['id', 'name'],
+            limit: 1,
+          },
+          timeout: 5000,
+        });
+        const found = performerResp.data?.data;
+        performerValidated = Array.isArray(found) && found.length > 0;
+      } catch (validationErr) {
+        logger.warn(`Tips: Directus validation failed for id=${resolvedPerformerId}: ${validationErr.message}`);
+      }
     }
 
     // Fallback: check local performers table if Directus validation failed
@@ -11318,10 +11330,10 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
 
     // CRIT-04: Main Stage crystal-creator gate.
     // Only Crystal Creators may receive tips on the Main Stage.
-    // Santino (platform donation account) is allowlisted so that the "Support
-    // the Main Stage" donation flow works even when no crystal creator is on stage.
-    const PLATFORM_DONATION_USER_ID = '8599671840';
-    if (String(resolvedPerformerUserId) !== PLATFORM_DONATION_USER_ID) {
+    // Santino + Lex (platform donation accounts) are allowlisted so that the
+    // "Support the Main Stage" donation flow works even when no crystal
+    // creator is on stage. Same list as gifted-token allowlist.
+    if (!_DONATION_ALLOWLIST.includes(String(resolvedPerformerUserId))) {
       const CreatorService = require('../../services/creatorService');
       const isCrystal = await CreatorService.isCrystalCreator(resolvedPerformerUserId);
       if (!isCrystal) {

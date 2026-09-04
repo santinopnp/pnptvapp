@@ -18,12 +18,23 @@ const logger = require('../utils/logger');
 
 const SLACK_API = 'https://slack.com/api';
 
+// Channels the Slack API reported as unreachable. Memoized per process so we
+// don't hammer Slack for the same dead channel on every notification.
+const _deadChannels = new Set();
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 function _botToken() {
   return process.env.SLACK_BOT_TOKEN || null;
+}
+
+async function _clearStaleChannel(channelId) {
+  if (!channelId) return;
+  try {
+    await query('UPDATE users SET slack_channel_id = NULL WHERE slack_channel_id = $1', [channelId]);
+  } catch (_) {}
 }
 
 /**
@@ -38,6 +49,9 @@ async function _slackPost(body) {
     logger.warn('[slackCreatorNotifyService] SLACK_BOT_TOKEN not set — skipping post');
     return {};
   }
+  if (body?.channel && _deadChannels.has(body.channel)) {
+    return { ok: false, error: 'dead_channel_cached' };
+  }
   try {
     const res = await fetch(`${SLACK_API}/chat.postMessage`, {
       method: 'POST',
@@ -49,11 +63,23 @@ async function _slackPost(body) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      logger.warn('[slackCreatorNotifyService] Slack chat.postMessage failed', {
-        error: data.error,
-        warning: data.warning,
-        channel: body.channel,
-      });
+      if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
+        const alreadyLogged = _deadChannels.has(body.channel);
+        _deadChannels.add(body.channel);
+        if (!alreadyLogged) {
+          _clearStaleChannel(body.channel);
+          logger.warn('[slackCreatorNotifyService] creator channel dead — nulled slack_channel_id + cached', {
+            channel: body.channel,
+            error: data.error,
+          });
+        }
+      } else {
+        logger.warn('[slackCreatorNotifyService] Slack chat.postMessage failed', {
+          error: data.error,
+          warning: data.warning,
+          channel: body.channel,
+        });
+      }
     }
     return data;
   } catch (err) {

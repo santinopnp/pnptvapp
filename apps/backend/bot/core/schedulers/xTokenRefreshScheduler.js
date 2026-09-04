@@ -9,12 +9,15 @@ const REFRESH_BUFFER_MS = 30 * 60 * 1000;
 // Check every 10 minutes
 const CHECK_INTERVAL = 10 * 60 * 1000;
 
+const MAX_CONSECUTIVE_FAILURES = 5;
+
 class XTokenRefreshScheduler {
   constructor(bot = null) {
     this.interval = null;
     this.isRunning = false;
     this.isProcessing = false;
     this.bot = bot;
+    this.failureCounts = new Map();
   }
 
   start() {
@@ -56,17 +59,41 @@ class XTokenRefreshScheduler {
       for (const account of accounts) {
         try {
           await refreshAccountTokens(account);
+          this.failureCounts.delete(account.account_id);
           logger.info('Proactive X token refresh succeeded', {
             handle: account.handle,
             accountId: account.account_id,
           });
         } catch (err) {
-          logger.error('Proactive X token refresh failed', {
-            handle: account.handle,
-            accountId: account.account_id,
-            error: err.message,
-          });
-          // Don't deactivate here — getValidAccessToken will handle that on next post attempt
+          const nextCount = (this.failureCounts.get(account.account_id) || 0) + 1;
+          this.failureCounts.set(account.account_id, nextCount);
+          if (nextCount >= MAX_CONSECUTIVE_FAILURES) {
+            try {
+              await db.query(
+                'UPDATE x_accounts SET is_active = FALSE, updated_at = NOW() WHERE account_id = $1',
+                [account.account_id]
+              );
+              this.failureCounts.delete(account.account_id);
+              logger.warn('X account auto-deactivated after consecutive refresh failures — owner must reconnect', {
+                handle: account.handle,
+                accountId: account.account_id,
+                failures: nextCount,
+              });
+            } catch (dbErr) {
+              logger.error('Failed to auto-deactivate X account after refresh failures', {
+                handle: account.handle,
+                accountId: account.account_id,
+                error: dbErr.message,
+              });
+            }
+          } else {
+            logger.warn('Proactive X token refresh failed', {
+              handle: account.handle,
+              accountId: account.account_id,
+              consecutiveFailures: nextCount,
+              error: err.message,
+            });
+          }
         }
       }
     } catch (err) {

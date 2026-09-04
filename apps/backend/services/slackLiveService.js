@@ -17,6 +17,11 @@ const SLACK_API = 'https://slack.com/api';
 // Channel can be overridden by tests or future config injection.
 let _opsLiveChannel = process.env.SLACK_OPS_LIVE_CHANNEL || '';
 
+// Channels the Slack API has reported as unreachable (deleted, archived, or
+// bot not a member). Memoized for the process lifetime so we stop flooding
+// the log with the same failure every 2 minutes.
+const _deadChannels = new Set();
+
 /**
  * Override the ops-live channel — useful for tests or runtime injection.
  * @param {string} channelId
@@ -46,6 +51,9 @@ async function _slackPost(method, body) {
     logger.warn('[slackLiveService] SLACK_BOT_TOKEN not set — skipping post');
     return {};
   }
+  if (body?.channel && _deadChannels.has(body.channel)) {
+    return { ok: false, error: 'dead_channel_cached' };
+  }
   try {
     const res = await fetch(`${SLACK_API}/${method}`, {
       method: 'POST',
@@ -58,10 +66,21 @@ async function _slackPost(method, body) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      logger.warn(`[slackLiveService] Slack ${method} failed`, {
-        error: data.error,
-        warning: data.warning,
-      });
+      if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
+        const alreadyLogged = _deadChannels.has(body.channel);
+        _deadChannels.add(body.channel);
+        if (!alreadyLogged) {
+          logger.warn(`[slackLiveService] channel ${data.error} — caching as dead for process lifetime`, {
+            channel: body.channel,
+            error: data.error,
+          });
+        }
+      } else {
+        logger.warn(`[slackLiveService] Slack ${method} failed`, {
+          error: data.error,
+          warning: data.warning,
+        });
+      }
     }
     return data;
   } catch (err) {

@@ -6,17 +6,26 @@ const logger = require('../utils/logger');
 /**
  * Insert a DM from senderId to recipientId directly into the DB.
  * Used for system/Cristina automated messages.
+ *
+ * Optional 5th arg `opts` — { mediaUrl, mediaType, mediaThumbUrl } to attach
+ * a hero image. Broadcasts should use this for visual polish.
  */
-async function sendSystemDM(senderId, recipientId, content, pgQuery) {
+async function sendSystemDM(senderId, recipientId, content, pgQuery, opts = {}) {
   const text = String(content || '').trim().slice(0, 4000);
   if (!text) return;
+  // Self-send guard: dm_threads has a CHECK constraint (user_a < user_b) that
+  // 500s any thread INSERT where sender === recipient. Skip silently.
+  if (String(senderId) === String(recipientId)) return;
+  const mediaUrl = opts.mediaUrl || null;
+  const mediaType = opts.mediaType || (mediaUrl ? 'image' : null);
+  const mediaThumbUrl = opts.mediaThumbUrl || null;
 
   try {
     const { rows } = await pgQuery(
-      `INSERT INTO direct_messages (sender_id, recipient_id, content)
-       VALUES ($1, $2, $3)
+      `INSERT INTO direct_messages (sender_id, recipient_id, content, media_url, media_type, media_thumb_url)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, sender_id, recipient_id, content, created_at`,
-      [senderId, recipientId, text]
+      [senderId, recipientId, text, mediaUrl, mediaType, mediaThumbUrl]
     );
 
     const message = rows[0];

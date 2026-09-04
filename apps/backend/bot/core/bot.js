@@ -326,6 +326,29 @@ const startBot = async () => {
     } catch (error) {
       logger.warn(`Sentry initialization failed, continuing without monitoring: ${error.message}`);
     }
+    // Event loop lag monitor — logs every 30s so we can correlate PG "slow
+    // query" warnings with actual event-loop stalls in this process.
+    try {
+      const { monitorEventLoopDelay } = require('perf_hooks');
+      const _elHist = monitorEventLoopDelay({ resolution: 20 });
+      _elHist.enable();
+      setInterval(() => {
+        const p50 = Math.round(_elHist.percentile(50) / 1e6);
+        const p95 = Math.round(_elHist.percentile(95) / 1e6);
+        const p99 = Math.round(_elHist.percentile(99) / 1e6);
+        const max = Math.round(_elHist.max / 1e6);
+        _elHist.reset();
+        const payload = { p50_ms: p50, p95_ms: p95, p99_ms: p99, max_ms: max };
+        if (p95 > 100 || max > 500) {
+          logger.warn('[event-loop-lag] stall detected', payload);
+        } else {
+          logger.info('[event-loop-lag] healthy', payload);
+        }
+      }, 30_000).unref();
+      logger.info('✓ Event loop lag monitor started (30s interval)');
+    } catch (error) {
+      logger.warn(`Event loop monitor failed to start: ${error.message}`);
+    }
     // Initialize PostgreSQL
     try {
       initializePostgres();

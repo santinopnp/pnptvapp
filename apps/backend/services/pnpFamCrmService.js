@@ -38,6 +38,7 @@ const VALID_EVENT_TYPES = new Set([
   'feed_toggle', 'shortcut_click', 'shortcut_added', 'shortcut_removed',
   'content_view', 'creator_gift', 'crystal_upsell_view', 'crystal_upsell_click',
   'dwell_ms', 'dm_open',
+  'featured_view', 'featured_dismiss', 'featured_cta_click',
 ]);
 
 // ── Small internal helpers ─────────────────────────────────────────────────
