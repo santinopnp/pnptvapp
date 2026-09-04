@@ -260,7 +260,106 @@ const sanitizePostRows = async (rows, opts = {}) => {
   // Attach resolved_mentions so every feed-shaped endpoint returns the
   // frontend-agreed contract without each caller re-hydrating separately.
   await _hydrateResolvedMentions(hydrated);
+  // Refresh channel_promo media URLs from the live channel_videos row so
+  // stale Mux playback IDs (baked into metadata at post-creation time) don't
+  // break the card when Mux ingest later errors out or the asset is deleted.
+  await _hydrateChannelPromoMedia(hydrated);
   return hydrated;
+};
+
+/**
+ * For channel_promo posts, the metadata snapshotted at post creation can go
+ * stale when the underlying Mux asset is regenerated, deleted, or the ingest
+ * errors after publish. Symptom: thumbnail 404, video player 404, card shows
+ * "unavailable". Fix: on every read, look up the current channel_videos row
+ * and override the media URLs with either fresh Mux (when playback_id is
+ * usable) or Directus (when Mux is dead).
+ *
+ * One SQL round-trip regardless of how many posts.
+ */
+const _hydrateChannelPromoMedia = async (posts) => {
+  if (!Array.isArray(posts) || posts.length === 0) return posts;
+
+  const videoIds = [];
+  const promos = [];
+  for (const p of posts) {
+    if (!p) continue;
+    const md = typeof p.metadata === 'string'
+      ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })()
+      : p.metadata;
+    if (!md || md.kind !== 'channel_promo') continue;
+    const vid = md.video_id != null ? parseInt(md.video_id, 10) : NaN;
+    if (!Number.isFinite(vid)) continue;
+    p.__promoMeta = md;
+    p.__promoVideoId = vid;
+    promos.push(p);
+    videoIds.push(vid);
+  }
+  if (promos.length === 0) return posts;
+
+  let rows = [];
+  try {
+    const res = await query(
+      `SELECT id, mux_playback_id, mux_status, directus_file_id, thumbnail_url
+         FROM channel_videos
+        WHERE id = ANY($1::int[])`,
+      [videoIds]
+    );
+    rows = res.rows;
+  } catch (err) {
+    logger.warn('_hydrateChannelPromoMedia: DB fetch failed, leaving stale URLs', { error: err.message });
+    for (const p of promos) { delete p.__promoMeta; delete p.__promoVideoId; }
+    return posts;
+  }
+
+  const byId = new Map();
+  for (const r of rows) byId.set(Number(r.id), r);
+
+  for (const p of promos) {
+    const live = byId.get(p.__promoVideoId);
+    delete p.__promoMeta;
+    delete p.__promoVideoId;
+    if (!live) continue;
+
+    const muxUsable = !!live.mux_playback_id
+      && live.mux_status !== 'errored'
+      && live.mux_status !== 'cancelled';
+    const directusId = live.directus_file_id || null;
+
+    // Playback URL — prefer working Mux HLS, else Directus asset.
+    let freshVideoUrl = null;
+    if (muxUsable) {
+      freshVideoUrl = `https://stream.mux.com/${live.mux_playback_id}.m3u8`;
+    } else if (directusId) {
+      freshVideoUrl = `https://cms.pnptv.app/assets/${directusId}`;
+    }
+
+    // Thumbnail URL — prefer working Mux thumbnail, else Directus asset
+    // (which returns the raw file; frontend <video preload> uses first frame).
+    let freshThumbUrl = null;
+    if (muxUsable) {
+      freshThumbUrl = `https://image.mux.com/${live.mux_playback_id}/thumbnail.jpg?width=640&fit_mode=smartcrop&percentage=25`;
+    } else if (directusId) {
+      // Directus thumbnail transformation is available; still points to the
+      // asset UUID which is world-readable. Falls through to the raw asset
+      // if the transformation isn't cached.
+      freshThumbUrl = `https://cms.pnptv.app/assets/${directusId}?width=640&height=360&fit=cover&format=jpg`;
+    }
+
+    if (freshThumbUrl) {
+      p.media_url = freshThumbUrl;
+      p.video_thumbnail_url = freshThumbUrl;
+    }
+    if (freshVideoUrl) {
+      const md = typeof p.metadata === 'string'
+        ? (() => { try { return JSON.parse(p.metadata); } catch { return {}; } })()
+        : (p.metadata || {});
+      md.video_url = freshVideoUrl;
+      if (directusId && !md.video_directus_id) md.video_directus_id = directusId;
+      p.metadata = md;
+    }
+  }
+  return posts;
 };
 
 class SocialPostService {
@@ -2177,3 +2276,4 @@ module.exports.generateBlurredPreviewGif = generateBlurredPreviewGif;
 // (e.g. getPost single-post handler) so the resolved_mentions contract is
 // applied everywhere the frontend expects it.
 module.exports.hydrateResolvedMentions = _hydrateResolvedMentions;
+module.exports.hydrateChannelPromoMedia = _hydrateChannelPromoMedia;

@@ -2142,11 +2142,13 @@ const getPost = async (req, res) => {
     // FIX 4: attach resolved_mentions so the single-post detail view renders
     // clickable @usernames matching the feed/wall contract.
     try {
-      const { hydrateResolvedMentions } = require('../../../services/socialPostService');
+      const { hydrateResolvedMentions, hydrateChannelPromoMedia } = require('../../../services/socialPostService');
       await hydrateResolvedMentions([post]);
+      // Refresh stale Mux URLs on channel_promo posts (matches feed hydrator).
+      await hydrateChannelPromoMedia([post]);
     } catch (hyErr) {
-      logger.warn('getPost: resolved_mentions hydrate failed', { postId: id, err: hyErr.message });
-      post.resolved_mentions = [];
+      logger.warn('getPost: hydrate failed', { postId: id, err: hyErr.message });
+      post.resolved_mentions = post.resolved_mentions || [];
     }
     return res.json({ success: true, post });
   } catch (err) {
