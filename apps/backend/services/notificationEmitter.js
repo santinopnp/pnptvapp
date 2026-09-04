@@ -63,8 +63,11 @@ const UNREAD_COUNT_TTL = 300; // 5 minutes
 const MAX_FANOUT = 500;
 
 // Types that should NOT trigger a bot DM.
-// Empty — all types now deliver to Telegram bot when the user has bot channel enabled.
-const SKIP_BOT_TYPES = new Set();
+// group_message fires per hangout chat message × per offline member; a busy
+// hangout with hundreds of offline members instantly saturates Telegram's
+// bot-wide 30 msg/sec limit and cascades 429s onto payments/follows/DMs.
+// Web push + in-app + socket cover the channel already.
+const SKIP_BOT_TYPES = new Set(['group_message']);
 
 // Notification types that originate from a specific user action toward another user.
 // These must be suppressed when a block relationship exists between actor and target.
