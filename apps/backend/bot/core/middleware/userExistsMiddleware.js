@@ -84,14 +84,35 @@ const userExistsMiddleware = () => async (ctx, next) => {
         logger.error('Error creating user record:', createError);
       }
     } else {
-      // User exists — sync username and first_name from Telegram if changed
+      // User exists — sync username and first_name from Telegram if changed.
+      // Username is guarded by a case-insensitive partial unique index; skip
+      // the write when another row already claims the handle so first_name
+      // can still update cleanly and we don't spam warn logs each message.
       const tgUsername = ctx.from.username || null;
       const tgFirstName = ctx.from.first_name || null;
-      if (tgUsername !== user.username || (tgFirstName && tgFirstName !== user.first_name)) {
+      if (tgUsername !== user.username) {
+        // Predicate matches idx_users_username_unique so the planner uses the
+        // partial index (cost ~16 vs ~170 for a seq scan).
         query(
-          `UPDATE users SET username = $1, first_name = COALESCE($2, first_name), updated_at = NOW() WHERE id = $3`,
-          [tgUsername, tgFirstName, userId]
+          `UPDATE users u SET username = $1, updated_at = NOW()
+             WHERE u.id = $2
+               AND ($1::text IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM users u2
+                  WHERE u2.username IS NOT NULL
+                    AND u2.username::text <> ''
+                    AND upper(u2.username::text) <> 'ANONYMOUS'
+                    AND u2.is_deleted IS NOT TRUE
+                    AND upper(u2.username::text) = upper($1::text)
+                    AND u2.id <> u.id
+               ))`,
+          [tgUsername, userId]
         ).catch(err => logger.warn('Username sync failed (non-blocking)', { userId, error: err.message }));
+      }
+      if (tgFirstName && tgFirstName !== user.first_name) {
+        query(
+          `UPDATE users SET first_name = $1, updated_at = NOW() WHERE id = $2`,
+          [tgFirstName, userId]
+        ).catch(err => logger.warn('First name sync failed (non-blocking)', { userId, error: err.message }));
       }
 
       if (!user.onboardingComplete) {
