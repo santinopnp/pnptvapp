@@ -257,7 +257,10 @@ async function getBooking(req, res) {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a JaaS token and room URL for joining a booked private call.
+ * Generate a LiveKit access token for joining a booked private call.
+ * Returns { token, livekitUrl, roomName, isModerator, ttlSeconds } matching
+ * the shape /api/creator/services/bookings/:bookingId/livekit-token uses so
+ * the frontend renders through <LiveKitRoom> (same as PrivateCall.tsx).
  * :bookingId accepts call_credits.id (integer) or bookings.id (UUID).
  */
 async function joinBooking(req, res) {
@@ -333,18 +336,25 @@ async function joinBooking(req, res) {
     // TTL = booking duration + 30 min buffer so the token outlasts the call
     const ttlSeconds = (credit.duration_minutes || 60) * 60 + 30 * 60;
 
-    let jaasUrl;
+    const livekitService = require('../../../services/livekitService');
+    let token;
     try {
-      const jaasToken = jaasService.generateJaasToken(roomName, userId, displayName, isModerator, ttlSeconds);
-      jaasUrl = jaasService.getJaasRoomUrl(roomName, jaasToken);
-    } catch (jaasErr) {
-      if (jaasErr.code === 'JAAS_NOT_CONFIGURED') {
-        return res.status(503).json({ success: false, error: 'Video call service is not configured' });
-      }
-      throw jaasErr;
+      // Both host and guest need publish grants in a 1:1 call — guest joining
+      // as canPublish=false (the SDK default for isModerator=false) is what
+      // caused JaaS-era lobby kicks. Force both sides publishable here.
+      token = await livekitService.generateToken(roomName, userId, displayName, isModerator, {
+        ttlSeconds,
+        canPublishAudio: true,
+        canPublishVideo: true,
+      });
+    } catch (lkErr) {
+      logger.error('[callBookingController] joinBooking livekit token generation failed', {
+        creditId: credit.id, userId, roomName, error: lkErr.message,
+      });
+      return res.status(503).json({ success: false, error: 'Video call service is not configured' });
     }
 
-    logger.info('[callBookingController] joinBooking JaaS URL issued', {
+    logger.info('[callBookingController] joinBooking LiveKit token issued', {
       creditId: credit.id,
       userId,
       roomName,
@@ -364,7 +374,13 @@ async function joinBooking(req, res) {
       logger.warn('[callBookingController] could not start session on join (non-fatal)', { error: sessErr.message });
     }
 
-    return res.json({ jaasUrl, roomName, ttlSeconds });
+    return res.json({
+      token,
+      livekitUrl: livekitService.LIVEKIT_WS_URL,
+      roomName,
+      isModerator,
+      ttlSeconds,
+    });
   } catch (err) {
     logger.error('[callBookingController] joinBooking error', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to join call' });

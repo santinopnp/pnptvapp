@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import {
+  LiveKitRoom,
+  VideoConference,
+  RoomAudioRenderer,
+  ControlBar,
+} from "@livekit/components-react";
+import "@livekit/components-styles";
 import { getCallBooking } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
@@ -250,7 +257,8 @@ function WaitingRoom({
 // ── CallRoom ─────────────────────────────────────────────────────────────────
 
 interface JoinData {
-  jaasUrl: string;
+  token: string;
+  livekitUrl: string;
   roomName: string;
   creatorUsername: string;
   startAt: string;
@@ -268,6 +276,7 @@ export default function CallRoom() {
   const [waitingRoom, setWaitingRoom] = useState<{ startAt: string; creatorUsername: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [ended, setEnded] = useState(false);
 
   const hasFetched = useRef(false);
   const mountedRef = useRef(true);
@@ -344,9 +353,11 @@ export default function CallRoom() {
               });
             }
             return r.json() as Promise<{
-              jaasUrl?: string;
+              token?: string;
+              livekitUrl?: string;
               roomName?: string;
               ttlSeconds?: number;
+              isModerator?: boolean;
               waiting?: boolean;
               startAt?: string;
               creatorUsername?: string;
@@ -362,13 +373,14 @@ export default function CallRoom() {
               setLoading(false);
               return;
             }
-            if (!data.jaasUrl) {
+            if (!data.token || !data.livekitUrl) {
               setError(cs.couldNotJoin);
               setLoading(false);
               return;
             }
             setJoinData({
-              jaasUrl: data.jaasUrl,
+              token: data.token,
+              livekitUrl: data.livekitUrl,
               roomName: data.roomName ?? "",
               creatorUsername: booking.creator_username,
               startAt: booking.start_at,
@@ -445,11 +457,31 @@ export default function CallRoom() {
     );
   }
 
+  if (ended) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center" style={{ background: "#000" }}>
+        <p className="text-lg font-bold text-white">{i18n.lang === "es" ? "Llamada terminada" : "Call ended"}</p>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="min-h-[44px] px-6 rounded-2xl text-sm font-semibold transition-opacity hover:opacity-80"
+          style={{
+            background: "rgba(255,255,255,0.08)",
+            color: "var(--pnp-text-secondary, #8E8E93)",
+            border: "1px solid rgba(255,255,255,0.10)",
+          }}
+        >
+          {cs.goBack}
+        </button>
+      </div>
+    );
+  }
+
   if (!joinData) return <CallRoomSkeleton />;
 
   return (
-    <div className="fixed inset-0" style={{ background: "#000" }}>
-      {/* Leave button — positioned over the iframe */}
+    <div className="fixed inset-0" style={{ background: "#000" }} data-lk-theme="default">
+      {/* Leave button — positioned over the room */}
       <button
         type="button"
         onClick={() => navigate(-1)}
@@ -475,13 +507,19 @@ export default function CallRoom() {
         </svg>
       </button>
 
-      <iframe
-        src={joinData.jaasUrl}
-        allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *; speaker-selection *; clipboard-write *; hid *"
-        allowFullScreen
-        style={{ width: "100%", height: "100dvh", border: "none" }}
-        title="Private call"
-      />
+      <LiveKitRoom
+        token={joinData.token}
+        serverUrl={joinData.livekitUrl}
+        connect
+        audio
+        video
+        onDisconnected={() => setEnded(true)}
+        style={{ height: "100dvh" }}
+      >
+        <VideoConference />
+        <RoomAudioRenderer />
+        <ControlBar variation="minimal" />
+      </LiveKitRoom>
     </div>
   );
 }
