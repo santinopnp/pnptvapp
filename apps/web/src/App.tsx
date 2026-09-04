@@ -496,7 +496,13 @@ export default function App() {
                       // or install MetaMask. The wallet UI still defaults to Base.
                       supportedChains: [base, mainnet],
                       loginMethods: ["email", "google", "telegram", "twitter", "wallet"],
-                      embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+                      // "all-users" ensures every user gets a PNPtv embedded wallet
+                      // regardless of login method. Previously "users-without-wallets"
+                      // meant a user who signed up by connecting Trust/MetaMask via
+                      // WalletConnect never got an embedded wallet — leaving them
+                      // stuck on the external wallet with no PNPtv rail to switch to.
+                      // Existing wallet-only users get an embedded wallet on next login.
+                      embeddedWallets: { ethereum: { createOnLogin: "all-users" } },
                       // Own WalletConnect Cloud project id — dedicated rate-limit +
                       // reliable Trust/Rainbow/etc handshake. Falls back to Privy's
                       // shared id if unset (works but with silent throttling).

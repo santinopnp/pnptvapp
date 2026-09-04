@@ -197,7 +197,7 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
 import { useEffect as _useEffect, useState as _useState } from "react";
-import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -887,6 +887,13 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     },
   });
   const { unlink: unlinkWallet } = useUnlinkWallet();
+  // Provision a PNPtv embedded wallet on demand — for users who signed up by
+  // connecting Trust/MetaMask (wallet login) and therefore never got an embedded
+  // wallet auto-provisioned. The Privy config now defaults to "all-users" for new
+  // signups, but this hook covers the migration case for anyone who signed up
+  // before that config change.
+  const { createWallet } = useCreateWallet();
+  const [creatingWallet, setCreatingWallet] = _useState<boolean>(false);
   // Privy's own tx sender — handles chain switching + fee estimation on the
   // embedded wallet correctly (unlike viem's walletClient which was ignoring
   // wallet_switchEthereumChain when we tried it, defaulting to Base and
@@ -950,6 +957,31 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setConnectError(null);
     setActiveAddress(embeddedWallet.address);
     _setPreferredWallet(embeddedWallet.address);
+  };
+
+  // Provision a fresh PNPtv embedded wallet for a user who never got one
+  // (signed up via wallet-only login before the "all-users" config change).
+  // On success, the new wallet auto-becomes active + preferred so the user
+  // moves from "stuck on external Trust" to "PNPtv wallet" in one tap.
+  const handleCreateEmbeddedWallet = async () => {
+    if (creatingWallet || embeddedWallet) return;
+    setError(null);
+    setConnectError(null);
+    setCreatingWallet(true);
+    try {
+      const created = await createWallet();
+      const addr = (created as { address?: string } | null)?.address;
+      if (addr) {
+        setActiveAddress(addr);
+        _setPreferredWallet(addr);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setConnectError(`Could not create PNPtv Wallet: ${msg}. Please try again.`);
+      reportWalletClientError("createWallet", err, { source: "WalletHomeSheet" });
+    } finally {
+      setCreatingWallet(false);
+    }
   };
 
   const activeWallet = wallets.find((w) => w.address === activeAddress) || null;
@@ -1826,6 +1858,23 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                 >
                   <WalletTypeIcon clientType="privy" size={14} />
                   <span>Use PNPtv Wallet</span>
+                </button>
+              )}
+              {/* On-demand PNPtv embedded wallet provisioning — for users who
+                  signed up via wallet-login (Trust/MetaMask/WalletConnect) and
+                  therefore never got an embedded wallet auto-provisioned. Only
+                  visible when NO embedded wallet exists AND at least one external
+                  wallet is connected (so the user clearly wants a PNPtv rail). */}
+              {!embeddedWallet && externalWallets.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleCreateEmbeddedWallet}
+                  disabled={creatingWallet}
+                  className="w-full mb-2 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold text-white min-h-[44px] active:scale-95 transition-all border border-emerald-500/40 disabled:opacity-60"
+                  style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.20), rgba(16,185,129,0.08))" }}
+                >
+                  <WalletTypeIcon clientType="privy" size={14} />
+                  <span>{creatingWallet ? "Creating PNPtv Wallet…" : "Create PNPtv Wallet"}</span>
                 </button>
               )}
               {/* Wallet selector — always visible so a PNPtv-embedded user can
