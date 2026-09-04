@@ -327,13 +327,7 @@ export function PostComposer({
         setAiError("Could not generate metadata");
       }
     } catch {
-      const clean = promptText.charAt(0).toUpperCase() + promptText.slice(1);
-      setVideoTitle(`🔥 ${clean}`);
-      setVideoDescription(`${promptText}\n\nExclusive content on PNPtv! Subscribe to PRIME to access full videos, exclusive channels, and 2 private hangouts: https://pnptv.app/subscribe`);
-      const fallbackTags = "#PNPtv #Exclusive #VIP #PRIME #Hangouts";
-      setText((prev) => (prev ? `${prev}\n\n${fallbackTags}` : fallbackTags));
-      setAiPrompt("");
-      setShowAiBox(false);
+      setAiError("Could not generate metadata — please try again in a moment");
     } finally {
       setIsGeneratingAi(false);
     }
