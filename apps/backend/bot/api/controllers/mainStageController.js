@@ -40,10 +40,17 @@ const BLOCKED_CIDR_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)
 // Only Directus CMS assets are valid media sources. Prevents an admin (or
 // a compromised admin account) from broadcasting arbitrary third-party URLs
 // to all room viewers.
-const ALLOWED_MEDIA_DOMAINS = new Set(['cms.pnptv.app', 'cdn.pnptv.app']);
+const ALLOWED_MEDIA_DOMAINS = new Set(['cms.pnptv.app', 'cdn.pnptv.app', 'pnptv.app']);
 
 function validateMediaSrc(src) {
   if (!src) return null; // null / undefined = no src, allowed
+
+  // Same-origin relative URLs like /uploads/... are always safe — they
+  // resolve to pnptv.app itself and can't SSRF anywhere else.
+  if (typeof src === 'string' && src.startsWith('/') && !src.startsWith('//')) {
+    if (/[`$;&|><\n\r\t\\]/.test(src)) return 'Disallowed characters in URL';
+    return null;
+  }
 
   let parsed;
   try {

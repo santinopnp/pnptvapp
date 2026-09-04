@@ -261,6 +261,17 @@ function bilingual(pair) {
   return `${pair.es}  ·  ${pair.en}`;
 }
 
+// When emitting Cristina chat messages, we send Spanish and English as two
+// SEPARATE chat entries back-to-back rather than a single concatenated line.
+// The concatenated ` · ` format collided with `·` used inside templates like
+// "30 min · $60", making the English half easy to miss.
+function splitBilingual(pair) {
+  return [
+    { text: pair.es, lang: 'es' },
+    { text: pair.en, lang: 'en' },
+  ];
+}
+
 async function composeTipMsg() {
   const cammer = await getCurrentCammerName();
   if (cammer && cammer.name) {
@@ -271,16 +282,16 @@ async function composeTipMsg() {
     // leave the field out so the client falls back to its own picker.
     if (cammer.userId) cta.recipientUserId = String(cammer.userId);
     return {
-      text: bilingual({
+      pair: {
         es: t.es.replace('{name}', cammer.name),
         en: t.en.replace('{name}', cammer.name),
-      }),
+      },
       cta,
     };
   }
   const t = pickLangPair(TIP_TEMPLATES_CINEMA);
   return {
-    text: bilingual(t),
+    pair: t,
     cta: { label: 'Send tip · Enviar tip', action: 'open-tip' },
   };
 }
@@ -292,10 +303,10 @@ async function composeBookingMsg() {
   if (onStage) {
     const t = pickLangPair(ONSTAGE_BOOKING_TEMPLATES);
     return {
-      text: bilingual({
+      pair: {
         es: t.es.replace('{name}', onStage.name).replace('{duration}', String(onStage.duration)).replace('{price}', String(onStage.price)),
         en: t.en.replace('{name}', onStage.name).replace('{duration}', String(onStage.duration)).replace('{price}', String(onStage.price)),
-      }),
+      },
       cta: {
         label: `Book ${onStage.duration}m · $${onStage.price}`,
         href: `/c/${onStage.username}?action=book&duration=${onStage.duration}&utm_source=mainstage_hostbot`,
@@ -308,10 +319,10 @@ async function composeBookingMsg() {
   if (!creator) return null;
   const t = pickLangPair(BOOKING_TEMPLATES);
   return {
-    text: bilingual({
+    pair: {
       es: t.es.replace('{name}', creator.name),
       en: t.en.replace('{name}', creator.name),
-    }),
+    },
     cta: {
       label: 'Book · Reservar',
       href: `/c/${creator.username}?action=book&duration=15&utm_source=mainstage_hostbot`,
@@ -321,7 +332,7 @@ async function composeBookingMsg() {
 
 function composeWellnessMsg() {
   const t = pickLangPair(WELLNESS_POOL);
-  return { text: bilingual(t) };
+  return { pair: t };
 }
 
 // ─── Tick ──────────────────────────────────────────────────────────────────
@@ -359,18 +370,38 @@ async function tick(opts = {}) {
       return;
     }
 
-    const msg = {
+    // Emit Spanish then English as two SEPARATE chat entries so English
+    // readers can't miss it (the old ` · ` concatenation collided with
+    // in-template bullets like "30 min · $60" and read as monolingual).
+    // Only attach the CTA to the English message so tapping it doesn't
+    // double-fire; on Spanish the message stands alone.
+    const pair = payload.pair || { es: payload.text, en: null };
+    const now = Date.now();
+    const msgEs = {
       id: crypto.randomUUID(),
       userId: CRISTINA_USER_ID,
       displayName: CRISTINA_DISPLAY_NAME,
-      text: payload.text,
-      timestamp: Date.now(),
+      text: pair.es,
+      timestamp: now,
       kind: 'auto',
-      cta: payload.cta || null,
+      lang: 'es',
+      cta: null,
     };
-
-    _io.to('mainstage:hostbot').emit('mainstage:chat-message', msg);
-    logger.info('[HostBot] emitted', { kind, viewers, humans, hasCta: !!msg.cta });
+    _io.to('mainstage:hostbot').emit('mainstage:chat-message', msgEs);
+    if (pair.en) {
+      const msgEn = {
+        id: crypto.randomUUID(),
+        userId: CRISTINA_USER_ID,
+        displayName: CRISTINA_DISPLAY_NAME,
+        text: pair.en,
+        timestamp: now + 1,
+        kind: 'auto',
+        lang: 'en',
+        cta: payload.cta || null,
+      };
+      _io.to('mainstage:hostbot').emit('mainstage:chat-message', msgEn);
+    }
+    logger.info('[HostBot] emitted', { kind, viewers, humans, bilingual: !!pair.en, hasCta: !!payload.cta });
   } catch (err) {
     logger.error('[HostBot] tick error', { error: err.message });
   } finally {

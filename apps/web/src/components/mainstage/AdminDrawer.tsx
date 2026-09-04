@@ -181,7 +181,11 @@ export function AdminPanelContent({
 
   const handlePlayMedia = useCallback(() => {
     if (!mediaUrl.trim()) return;
-    admin.setMedia({ kind: "video", src: mediaUrl.trim(), playing: true });
+    // Auto-detect audio vs video from extension so mp3 URLs render via
+    // <audio> instead of <video> (which would show a blank video frame).
+    const src = mediaUrl.trim();
+    const isAudio = /\.(mp3|m4a|aac|ogg|opus|wav|flac)(\?|$)/i.test(src);
+    admin.setMedia({ kind: isAudio ? "music" : "video", src, playing: true });
   }, [admin, mediaUrl]);
 
   const handleStopMedia = useCallback(() => {

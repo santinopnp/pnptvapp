@@ -20,7 +20,7 @@ import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
 import { SpotlightGrid } from "@/components/mainstage/SpotlightGrid";
 import { CinemaGrid } from "@/components/mainstage/CinemaGrid";
 import { EqualGrid } from "@/components/mainstage/EqualGrid";
-import { MEDIA_IDENTITY } from "@/components/mainstage/CinemaGrid";
+import { MEDIA_IDENTITY, UrlMediaPlayer } from "@/components/mainstage/CinemaGrid";
 import { useI18n } from "@/lib/i18n";
 import { GUEST_SESSION_KEY } from "@/pages/MainStageGuestJoin";
 
@@ -413,6 +413,37 @@ function MainStageInner({
         )}
         {mode === "grid3x3" && <EqualGrid />}
         {mode === "hotpicks" && <HotPicksView />}
+
+        {/* Music overlay — CinemaGrid mounts UrlMediaPlayer inline, but the
+            spotlight / grid / hotpicks modes don't. Without this, admin-set
+            music (state.media.kind === 'music') never actually plays because
+            the <audio> element is never created. Renders as a small vinyl
+            widget bottom-right; user still needs to tap play once (Chrome
+            autoplay policy). Only shows when there's actually a music src. */}
+        {mode !== "cinema" && mediaKind === "music" && mediaSrc && (
+          <div
+            className="absolute z-20"
+            style={{
+              bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px) + 5rem)",
+              right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+              width: 260,
+              maxHeight: 340,
+              background: "rgba(15,15,20,0.85)",
+              backdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: "1.25rem",
+              padding: "1rem",
+            }}
+          >
+            <UrlMediaPlayer
+              src={mediaSrc}
+              kind="music"
+              playing={mediaPlaying}
+              volume={mediaVolume}
+              startedAt={mediaStartedAt}
+            />
+          </div>
+        )}
       </div>
 
       {/* Slim positive-tips ribbon — sits between cam grid and bottom bar

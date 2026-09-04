@@ -84,7 +84,7 @@ function IconVolumeUp({ size = 16 }: { size?: number }) {
 
 // ── UrlMediaPlayer ────────────────────────────────────────────────────────────
 
-function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMediaPlayerProps) {
+export function UrlMediaPlayer({ src, kind, playing, volume, startedAt }: UrlMediaPlayerProps) {
   const t = useI18n().live;
   const { userMusicPlaying: userOptedIn, userMusicMuted: muted, setUserMusicPlaying: setUserOptedIn, setUserMusicMuted: setMuted } = useMainStageRoom();
   const videoRef = useRef<HTMLVideoElement>(null);
