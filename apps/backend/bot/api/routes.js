@@ -12133,13 +12133,26 @@ const DashTokenService = require('../../services/dashTokenService');
 app.get('/api/wallet/balance', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const userId = String(user.telegram_id || user.id);
-  const { rows } = await getPool().query(
-    `INSERT INTO user_token_wallets (user_id)
-     VALUES ($1)
-     ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
-     RETURNING balance_tokens, gifted_balance, creator_gifts, dash_dpns`,
+  // Read-first, only INSERT if missing. The previous UPSERT with a NOW()-
+  // touching UPDATE fired on every balance poll (frontend polls this from
+  // every wallet-widget-carrying page), producing hot-row WAL churn on
+  // user_token_wallets with zero informational value.
+  let { rows } = await getPool().query(
+    `SELECT balance_tokens, gifted_balance, creator_gifts, dash_dpns
+       FROM user_token_wallets WHERE user_id = $1`,
     [userId]
   );
+  if (!rows.length) {
+    await getPool().query(
+      `INSERT INTO user_token_wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+    ({ rows } = await getPool().query(
+      `SELECT balance_tokens, gifted_balance, creator_gifts, dash_dpns
+         FROM user_token_wallets WHERE user_id = $1`,
+      [userId]
+    ));
+  }
   const row = rows[0] || { balance_tokens: 0, gifted_balance: 0, creator_gifts: {}, dash_dpns: null };
   const regular = Number(row.balance_tokens) || 0;
   const gifted  = Number(row.gifted_balance)  || 0;
@@ -12401,11 +12414,21 @@ app.get('/api/wallet/np-status/:orderId', walletStatusLimiter, requireSessionAut
 }));
 
 // POST /api/wallet/link-dpns — link a Dash DPNS handle
-app.post('/api/wallet/link-dpns', requireSessionAuth, asyncHandler(async (req, res) => {
+// Rate-limited: DPNS link is a rare user action (typically once). Cap at 5
+// per 10 minutes per user to close an unbounded-write gap flagged in audit.
+const walletLinkDpnsLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/api/wallet/link-dpns', walletLinkDpnsLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
 
   const { dpnsHandle } = req.body;
   if (!dpnsHandle) return res.status(400).json({ success: false, error: 'dpnsHandle is required' });
+  if (typeof dpnsHandle !== 'string') return res.status(400).json({ success: false, error: 'dpnsHandle must be a string' });
 
   const userId = String(user.telegram_id || user.id);
   try {
@@ -12831,10 +12854,22 @@ app.post('/api/wallet/pay-creator-sub', walletSpendLimiter, requireSessionAuth, 
 app.post('/api/wallet/pay-call', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const memberId = String(user.telegram_id || user.id);
-  const { packageId, startTimeUtc, endTimeUtc, clientNotes } = req.body;
-  if (!packageId) return res.status(400).json({ success: false, error: 'packageId is required' });
+  const { packageId: rawPackageId, startTimeUtc, endTimeUtc, clientNotes } = req.body;
+  // Validate as a positive integer. Previous `Number(packageId)` silently
+  // coerced arrays to NaN, which Postgres then rejected as a 500.
+  const packageId = typeof rawPackageId === 'number' || typeof rawPackageId === 'string'
+    ? parseInt(String(rawPackageId), 10)
+    : NaN;
+  if (!Number.isInteger(packageId) || packageId <= 0) {
+    return res.status(400).json({ success: false, error: 'invalid_packageId' });
+  }
   const { query: dbQuery } = require('../../config/postgres');
-  const pkgResult = await dbQuery('SELECT * FROM call_packages WHERE id = $1 AND is_active = true', [Number(packageId)]);
+  // Project only the fields we consume — was SELECT * which returned internal
+  // columns (creator_id, notes, etc.) that this handler never reads.
+  const pkgResult = await dbQuery(
+    'SELECT id, sku, price_usd, is_active FROM call_packages WHERE id = $1 AND is_active = true',
+    [packageId]
+  );
   const pkg = pkgResult.rows[0];
   if (!pkg) return res.status(404).json({ success: false, error: 'Call package not found or inactive' });
   const priceUsd = parseFloat(pkg.price_usd);
@@ -16366,9 +16401,20 @@ async function _shouldAllowGifted(userId, surface, spec, dbQuery) {
 // Body: { intentId, txHash }
 app.post('/api/wallet/checkout/verify-tx', walletSpendLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const walletCheckoutService = require('../../services/walletCheckoutService');
-  const { intentId, txHash } = req.body || {};
+  const rawIntent = req.body?.intentId;
+  const rawHash = req.body?.txHash;
   const userId = req.session?.user?.id;
-  if (!intentId || !txHash) return res.status(400).json({ error: 'intentId + txHash required' });
+  // Explicit integer + hex-string validation. The previous `Number(intentId)`
+  // silently coerced arrays / "1e2" / floats; malformed txHash then made it
+  // into the DB via a raw UPDATE. Reject at the boundary instead.
+  const intentId = typeof rawIntent === 'number' || typeof rawIntent === 'string' ? parseInt(String(rawIntent), 10) : NaN;
+  if (!Number.isInteger(intentId) || intentId <= 0) {
+    return res.status(400).json({ error: 'invalid_intentId' });
+  }
+  const txHash = typeof rawHash === 'string' ? rawHash.trim() : '';
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return res.status(400).json({ error: 'invalid_txHash' });
+  }
 
   // Load the intent to get expected amount + receiving address for RPC verification.
   const { query: dbQuery } = require('../../config/postgres');
@@ -16502,9 +16548,10 @@ app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncH
 }));
 
 // GET /api/wallet/gas-topup/status — admin/debug snapshot: treasury address,
-// balance, last-24h stats. Auth-required to avoid leaking treasury address to
-// unauthenticated callers (still not sensitive, but no reason to broadcast).
-app.get('/api/wallet/gas-topup/status', requireSessionAuth, asyncHandler(async (_req, res) => {
+// balance, per-user + daily caps, thresholds. Admin-only: previously any
+// authed user could read the exact topup/threshold config, letting an
+// attacker calibrate the minimum draining strategy under the daily cap.
+app.get('/api/wallet/gas-topup/status', requireSessionAuth, adminGuard, asyncHandler(async (_req, res) => {
   const gasTopupService = require('../../services/gasTopupService');
   const status = await gasTopupService.getStatus();
   return res.json(status);
@@ -16512,7 +16559,9 @@ app.get('/api/wallet/gas-topup/status', requireSessionAuth, asyncHandler(async (
 
 // GET /api/wallet/eth-price — spot ETH/USD used to compute expected_amount_native
 // for ETH-rail intents. 60s Redis-cached, Coinbase spot (no API key needed).
-app.get('/api/wallet/eth-price', asyncHandler(async (_req, res) => {
+// Auth-required: was previously public, which meant a cache miss during a
+// Redis outage would fan out unauth requests to Coinbase without any bound.
+app.get('/api/wallet/eth-price', requireSessionAuth, asyncHandler(async (_req, res) => {
   const price = await _getEthUsdPrice();
   if (!price) return res.status(503).json({ error: 'eth_price_unavailable' });
   return res.json({ ok: true, priceUsd: price, source: 'coinbase' });
@@ -16634,12 +16683,49 @@ async function _fetchUsdcTransferReceipt(txHash, expectedRecipient) {
   return { ok: true, amount, from };
 }
 
+// Returns true if `addr` is one of the session user's own wallets — checked
+// against users.wallet_address (embedded) and Privy linkedAccounts (external).
+// Result is cached in Redis for 5 min per user to avoid a Privy API roundtrip
+// on every balance poll. Callers pass the already-lowercased normalized addr.
+async function _addressBelongsToUser(userId, normalizedAddr) {
+  if (!userId || !normalizedAddr) return false;
+  const { query: dbQuery } = require('../../config/postgres');
+  const { cache } = require('../../config/redis');
+  const cacheKey = `wallet:owned:${userId}`;
+  let addrs = null;
+  try {
+    const cached = await cache.get(cacheKey).catch(() => null);
+    if (cached) {
+      try { addrs = JSON.parse(cached); } catch { /* corrupt cache */ }
+    }
+  } catch { /* redis optional */ }
+  if (!addrs) {
+    const { rows } = await dbQuery(
+      `SELECT lower(wallet_address) AS wa, privy_id FROM users WHERE id = $1 LIMIT 1`,
+      [String(userId)]
+    );
+    const own = rows[0] || {};
+    addrs = [];
+    if (own.wa) addrs.push(own.wa);
+    if (own.privy_id) {
+      try {
+        const { listWalletAddresses } = require('../../services/privyLinkService');
+        const privyAddrs = await listWalletAddresses(own.privy_id);
+        for (const a of privyAddrs) if (!addrs.includes(a)) addrs.push(a);
+      } catch { /* privy unreachable — fall back to just users.wallet_address */ }
+    }
+    try { await cache.set(cacheKey, JSON.stringify(addrs), 300).catch(() => {}); } catch { /* ignore */ }
+  }
+  return addrs.includes(normalizedAddr);
+}
+
 // GET /api/wallet/balance/usdc — on-chain USDC balance for the session user's
 // linked wallet. 30s Redis cache. Used by BuyTokensModal to conditionally show
 // the "Pay from wallet" option.
 // Optional ?address=0x… lets an external (Trust/MetaMask) wallet query its own
 // balance without waiting for the backend to know about it. Address must be a
-// valid 40-hex EVM address.
+// valid 40-hex EVM address AND owned by the session user (blocks arbitrary
+// on-chain probing via our Alchemy key).
 app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req, res) => {
   const userId = req.session?.user?.id;
   const { query: dbQuery } = require('../../config/postgres');
@@ -16650,6 +16736,10 @@ app.get('/api/wallet/balance/usdc', requireSessionAuth, asyncHandler(async (req,
   if (overrideAddr) {
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    const normalized = overrideAddr.toLowerCase();
+    if (!(await _addressBelongsToUser(userId, normalized))) {
+      return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
     address = overrideAddr;
   } else {
@@ -16703,6 +16793,9 @@ app.get('/api/wallet/balance/usdc-mainnet', requireSessionAuth, asyncHandler(asy
   if (overrideAddr) {
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+      return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
     address = overrideAddr;
   } else {
@@ -16835,6 +16928,9 @@ app.get('/api/wallet/balance/eth-mainnet', requireSessionAuth, asyncHandler(asyn
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
     }
+    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+      return res.status(403).json({ ok: false, error: 'address_not_owned' });
+    }
     address = overrideAddr;
   } else {
     const { rows } = await dbQuery(
@@ -16889,6 +16985,9 @@ app.get('/api/wallet/balance/eth', requireSessionAuth, asyncHandler(async (req, 
   if (overrideAddr) {
     if (!/^0x[a-fA-F0-9]{40}$/.test(overrideAddr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    if (!(await _addressBelongsToUser(userId, overrideAddr.toLowerCase()))) {
+      return res.status(403).json({ ok: false, error: 'address_not_owned' });
     }
     address = overrideAddr;
   } else {

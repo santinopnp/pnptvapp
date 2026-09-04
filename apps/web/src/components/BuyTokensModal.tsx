@@ -18,7 +18,7 @@ import {
 import { usePrivy, useWallets, useAddFunds, useSendTransaction } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from "viem";
 import { base } from "viem/chains";
-import { WalletCheckoutHero, grossUpForOnramp } from "@/components/payments/PayInWalletChips";
+import { WalletCheckoutHero, grossUpForOnramp, getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
 
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -44,17 +44,28 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const { addFunds } = useAddFunds();
   const { sendTransaction: privySendTransaction } = useSendTransaction();
 
-  // Active-wallet picker — same pattern as WalletHomeSheet so a user with an
-  // external Trust/MetaMask that holds their ETH doesn't see "no balance"
-  // because the modal picked the empty embedded wallet by default.
+  // Active-wallet picker — honors the user's preferred wallet (shared with
+  // WalletHomeSheet / WalletPayCard / Donate / CryptoGuide via the
+  // pnptv.wallet.preferred localStorage key + users.preferred_wallet_address
+  // DB column). Falls back to embedded → first external when no preference.
   const embeddedWalletDefault = wallets.find((w) => w.walletClientType === "privy") || null;
   const externalWallets = wallets.filter((w) => w.walletClientType !== "privy");
   const [activeAddress, setActiveAddress] = useState<string | null>(null);
   useEffect(() => {
     if (activeAddress && wallets.some((w) => w.address === activeAddress)) return;
-    const fallback = embeddedWalletDefault?.address || externalWallets[0]?.address || null;
+    const preferred = getPreferredWallet();
+    const preferredStillConnected = preferred && wallets.some((w) => w.address === preferred);
+    const fallback = preferredStillConnected
+      ? preferred
+      : (embeddedWalletDefault?.address || externalWallets[0]?.address || null);
     setActiveAddress(fallback);
   }, [wallets.map((w) => w.address).join(","), embeddedWalletDefault?.address]);
+  // Switching wallets inside the modal now propagates the choice to the shared
+  // preference so tips/subs/Donate stay in sync — was previously modal-local.
+  const selectActiveWallet = (addr: string) => {
+    setActiveAddress(addr);
+    setPreferredWallet(addr);
+  };
   const activeWallet = wallets.find((w) => w.address === activeAddress) || null;
   const isEmbedded = activeWallet?.walletClientType === "privy";
 
@@ -543,7 +554,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                     <button
                       key={w.address}
                       type="button"
-                      onClick={() => setActiveAddress(w.address)}
+                      onClick={() => selectActiveWallet(w.address)}
                       className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition ${
                         isActive
                           ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
