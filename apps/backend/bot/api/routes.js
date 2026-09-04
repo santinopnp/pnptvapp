@@ -14056,20 +14056,26 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     ? rawMessage.trim().slice(0, 140) || null
     : null;
 
-  // Lookup recipient — must be an active performer and a non-deleted user
+  // Lookup recipient — must be a non-deleted user who is EITHER an active
+  // performer (Main Stage cammer) OR an active Crystal Creator (creator with
+  // a permanent/active pass). Crystal Creators like Dejesusof22 don't have
+  // a performers row but ARE tippable per the crystal-gate below.
   const { query: dbQuery } = require('../../config/postgres');
   const { rows: recipientRows } = await dbQuery(
     `SELECT u.id::text AS id, u.username
      FROM users u
-     JOIN performers p ON p.user_id = u.id::text
+     LEFT JOIN performers p ON p.user_id = u.id::text
      WHERE (u.id::text = $1 OR u.username ILIKE $1)
-       AND p.status = 'active'
        AND u.is_deleted = false
+       AND (
+         p.status = 'active'
+         OR (u.creator_status = 'active' AND u.crystal_creator_active_until > NOW())
+       )
      LIMIT 1`,
     [recipientId.trim()]
   );
   if (!recipientRows.length) {
-    return res.status(404).json({ success: false, error: 'Recipient not found or is not an active performer.' });
+    return res.status(404).json({ success: false, error: 'Recipient not found or not eligible to receive tips.' });
   }
   const recipient = recipientRows[0];
   const recipientUserId = recipient.id;
