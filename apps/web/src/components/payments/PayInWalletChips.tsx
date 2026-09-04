@@ -804,18 +804,23 @@ const _LazyBuyTokensModal = _lazy(() =>
 
 // Preferred wallet address is stored per-Privy-app so a returning user lands on
 // the same wallet they last picked (e.g. Trust) instead of snapping back to the
-// embedded default every reload. Shared with WalletPayCard so both surfaces
-// agree on which wallet is active.
-const _PREFERRED_WALLET_KEY = "pnptv.wallet.preferred";
-const _getPreferredWallet = (): string | null => {
-  try { return localStorage.getItem(_PREFERRED_WALLET_KEY); } catch { return null; }
+// embedded default every reload. Exported so any Privy entry point
+// (WalletHomeSheet, WalletPayCard, Donate, CryptoGuide, …) agrees on which
+// wallet is active.
+export const PREFERRED_WALLET_KEY = "pnptv.wallet.preferred";
+export const getPreferredWallet = (): string | null => {
+  try { return localStorage.getItem(PREFERRED_WALLET_KEY); } catch { return null; }
 };
-const _setPreferredWallet = (addr: string | null) => {
+export const setPreferredWallet = (addr: string | null) => {
   try {
-    if (addr) localStorage.setItem(_PREFERRED_WALLET_KEY, addr);
-    else localStorage.removeItem(_PREFERRED_WALLET_KEY);
+    if (addr) localStorage.setItem(PREFERRED_WALLET_KEY, addr);
+    else localStorage.removeItem(PREFERRED_WALLET_KEY);
   } catch { /* storage full / blocked — non-fatal */ }
 };
+// Aliases kept so the existing WalletHomeSheet / WalletPayCard usages below
+// don't churn — same functions, different name at the call sites.
+const _getPreferredWallet = getPreferredWallet;
+const _setPreferredWallet = setPreferredWallet;
 
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const { authenticated, login, exportWallet } = usePrivy();

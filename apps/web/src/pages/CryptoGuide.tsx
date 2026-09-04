@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet } from "@privy-io/react-auth";
+import { getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
 
 type Lang = "en" | "es";
 
@@ -42,6 +43,10 @@ const T = {
     step2Button: "💳 Fund with card →",
     step2ButtonSignIn: "Sign in to fund your wallet",
     step2Fine: "Minimum $20. Most transactions settle in under 2 minutes. Fees vary by provider — you'll see the exact amount before confirming.",
+    connectExternal: "Or connect Trust / MetaMask",
+    connectExternalHint: "Already have crypto? Use your existing wallet instead.",
+    connectErrorFallback: "Could not connect wallet. Please try again.",
+    walletActiveLabel: "Paying from",
     step3Eyebrow: "STEP 3",
     step3Title: "Spend it anywhere",
     step3Body: "Once your wallet has a balance, every paid feature in PNPtv works with one tap. No re-entering payment info, no waiting for crypto confirmations, no separate wallet apps.",
@@ -81,6 +86,10 @@ const T = {
     step2Button: "💳 Cargar con tarjeta →",
     step2ButtonSignIn: "Inicia sesión para cargar tu billetera",
     step2Fine: "Mínimo $20. La mayoría de transacciones se procesan en menos de 2 minutos. Las comisiones varían según el proveedor — verás el monto exacto antes de confirmar.",
+    connectExternal: "O conecta Trust / MetaMask",
+    connectExternalHint: "¿Ya tienes cripto? Usa tu wallet existente en su lugar.",
+    connectErrorFallback: "No se pudo conectar la wallet. Intenta de nuevo.",
+    walletActiveLabel: "Pagando desde",
     step3Eyebrow: "PASO 3",
     step3Title: "Úsala en toda la app",
     step3Body: "Una vez que tu billetera tenga saldo, cada función paga en PNPtv funciona con un solo toque. Sin volver a ingresar datos de pago, sin esperar confirmaciones cripto, sin apps de wallet separadas.",
@@ -111,11 +120,34 @@ export default function CryptoGuide() {
   const [lang, setLang] = useState<Lang>(getInitialLang);
   const [funding, setFunding] = useState(false);
   const [fundError, setFundError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
   const t = T[lang];
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => {
+      setConnectError(null);
+      if (wallet?.address) {
+        setPreferredWallet(wallet.address);
+        setPreferredAddr(wallet.address);
+      }
+    },
+    onError: (err) => {
+      const msg = typeof err === "string" ? err : String(err);
+      if (/exited|closed|cancel|reject/i.test(msg)) return;
+      setConnectError(t.connectErrorFallback);
+    },
+  });
+  // Preferred wallet: honor the choice made in the 💎 FAB / WalletHomeSheet so
+  // card top-ups here fund the wallet the user is actually paying from.
+  const [preferredAddr, setPreferredAddr] = useState<string | null>(() => getPreferredWallet());
+  const preferredWallet = preferredAddr ? wallets.find((w) => w.address === preferredAddr) : null;
+  const activeWallet = preferredWallet
+    || wallets.find((w) => w.walletClientType === "privy")
+    || wallets[0]
+    || null;
+  const isExternalActive = !!activeWallet && activeWallet.walletClientType !== "privy";
 
   useEffect(() => { document.title = t.pageTitle; }, [lang, t.pageTitle]);
 
@@ -126,11 +158,11 @@ export default function CryptoGuide() {
 
   const handleFund = async () => {
     if (!authenticated) { login(); return; }
-    if (!embeddedWallet) { setFundError("Wallet not ready. Please refresh."); return; }
+    if (!activeWallet) { setFundError("Wallet not ready. Please refresh."); return; }
     setFundError(null); setFunding(true);
     try {
       await addFunds({
-        destination: { address: embeddedWallet.address, chain: BASE_CAIP2, asset: USDC_BASE },
+        destination: { address: activeWallet.address, chain: BASE_CAIP2, asset: USDC_BASE },
         fiat: { defaultAmount: "30" },
       });
     } catch (err: unknown) {
@@ -139,9 +171,25 @@ export default function CryptoGuide() {
     } finally { setFunding(false); }
   };
 
-  const shortAddress = embeddedWallet?.address
-    ? `${embeddedWallet.address.slice(0, 6)}…${embeddedWallet.address.slice(-4)}`
+  const handleConnectExternal = () => {
+    setConnectError(null);
+    try { connectWallet(); } catch { /* swallow — onError handles UI */ }
+  };
+
+  const shortAddress = activeWallet?.address
+    ? `${activeWallet.address.slice(0, 6)}…${activeWallet.address.slice(-4)}`
     : null;
+  const activeWalletLabel = !activeWallet
+    ? null
+    : activeWallet.walletClientType === "privy"
+      ? "PNPtv"
+      : activeWallet.walletClientType === "metamask"
+        ? "MetaMask"
+        : activeWallet.walletClientType === "coinbase_wallet"
+          ? "Coinbase"
+          : activeWallet.walletClientType === "walletconnect"
+            ? "WalletConnect"
+            : "External";
 
   return (
     <div style={{ minHeight: "100dvh", background: "var(--pnp-background, #121212)", color: "#ffffff", overflowX: "hidden" }}>
@@ -163,9 +211,13 @@ export default function CryptoGuide() {
           <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#34d399", margin: 0 }}>{t.step1Eyebrow}</p>
           <h2 style={{ fontSize: 20, fontWeight: 700, margin: "6px 0 10px" }}>{t.step1Title}</h2>
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.75)", lineHeight: 1.55, margin: "0 0 16px" }}>{t.step1Body}</p>
-          {authenticated && embeddedWallet ? (
+          {authenticated && activeWallet ? (
             <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.35)", color: "#6ee7b7", fontSize: 13, fontWeight: 600 }}>
-              {t.step1BadgeSignedIn} {shortAddress && <span style={{ fontFamily: "monospace", opacity: 0.75, marginLeft: 8 }}>{shortAddress}</span>}
+              {t.step1BadgeSignedIn}
+              {isExternalActive && activeWalletLabel && (
+                <span style={{ fontSize: 11, marginLeft: 8, padding: "1px 6px", borderRadius: 6, background: "rgba(16,185,129,0.18)", border: "1px solid rgba(16,185,129,0.35)" }}>{activeWalletLabel}</span>
+              )}
+              {shortAddress && <span style={{ fontFamily: "monospace", opacity: 0.75, marginLeft: 8 }}>{shortAddress}</span>}
             </div>
           ) : (
             <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.6)", fontSize: 13 }}>
@@ -195,6 +247,28 @@ export default function CryptoGuide() {
           {fundError && (
             <p style={{ fontSize: 12, color: "#fca5a5", marginTop: 10, textAlign: "center" }}>{fundError}</p>
           )}
+
+          {/* Alt path — bring your own wallet. Same handshake used by the FAB
+              and Onboarding step 7 so a user landing on this guide with Trust
+              already installed can skip the card onramp. */}
+          <button
+            type="button"
+            onClick={handleConnectExternal}
+            style={{
+              marginTop: 10, minHeight: 44, width: "100%", padding: "0 24px", borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(255,255,255,0.04)",
+              color: "rgba(255,255,255,0.85)",
+              fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            🔗 {t.connectExternal}
+          </button>
+          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 6, lineHeight: 1.5, textAlign: "center" }}>{t.connectExternalHint}</p>
+          {connectError && (
+            <p style={{ fontSize: 11, color: "#fca5a5", marginTop: 8, textAlign: "center" }}>{connectError}</p>
+          )}
+
           <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 12, lineHeight: 1.5 }}>{t.step2Fine}</p>
         </section>
 

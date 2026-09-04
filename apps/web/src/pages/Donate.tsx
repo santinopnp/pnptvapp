@@ -4,9 +4,10 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n } from "@/lib/i18n";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
-import { usePrivy, useWallets, useAddFunds } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useAddFunds, useConnectWallet } from "@privy-io/react-auth";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base } from "viem/chains";
+import { getPreferredWallet, setPreferredWallet } from "@/components/payments/PayInWalletChips";
 
 // CAIP-2 chain id for Base — used by Privy's useAddFunds destination.
 const BASE_CAIP2 = "eip155:8453" as const;
@@ -71,8 +72,37 @@ export default function Donate() {
   const { ready: privyReady, authenticated: privyAuthed, login: privyLogin } = usePrivy();
   const { wallets } = useWallets();
   const { addFunds } = useAddFunds();
-  const embeddedWallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0] || null;
-  const walletAddress = embeddedWallet?.address || null;
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const { connectWallet } = useConnectWallet({
+    onSuccess: ({ wallet }) => {
+      setConnectError(null);
+      if (wallet?.address) {
+        setPreferredWallet(wallet.address);
+        setPreferredAddr(wallet.address);
+      }
+    },
+    onError: (err) => {
+      const msg = typeof err === "string" ? err : String(err);
+      if (/exited|closed|cancel|reject/i.test(msg)) return;
+      setConnectError(es
+        ? "No se pudo conectar la wallet. Intenta de nuevo."
+        : "Could not connect wallet. Please try again.");
+    },
+  });
+  // Preferred wallet: user's explicit choice (WalletHomeSheet writes this).
+  // Fallback = embedded then first external. Never silently override.
+  const [preferredAddr, setPreferredAddr] = useState<string | null>(() => getPreferredWallet());
+  const setPreferred = (addr: string) => {
+    setPreferredWallet(addr);
+    setPreferredAddr(addr);
+  };
+  const preferredWallet = preferredAddr ? wallets.find((w) => w.address === preferredAddr) : null;
+  const activeWallet = preferredWallet
+    || wallets.find((w) => w.walletClientType === "privy")
+    || wallets[0]
+    || null;
+  const isEmbedded = activeWallet?.walletClientType === "privy";
+  const walletAddress = activeWallet?.address || null;
 
   // Guard state setters after unmount (poller runs on interval).
   const mountedRef = useRef(true);
@@ -119,7 +149,7 @@ export default function Donate() {
   // ── Wallet pay (USDC or ETH via Privy) ──────────────────────────────────
   const handleWalletPay = useCallback(async (plan: SubscriptionPlan, token: "USDC" | "ETH") => {
     // If not connected to Privy at all, open login flow
-    if (!privyAuthed || !embeddedWallet) {
+    if (!privyAuthed || !activeWallet) {
       privyLogin();
       return;
     }
@@ -137,14 +167,16 @@ export default function Donate() {
       const intent = await createCryptoPaymentIntent({ planId: plan.id, token });
       setPayStatus("signing");
 
-      const provider = await embeddedWallet.getEthereumProvider();
-      const walletAddr = embeddedWallet.address as `0x${string}`;
+      const provider = await activeWallet.getEthereumProvider();
+      const walletAddr = activeWallet.address as `0x${string}`;
       const client = createWalletClient({ account: walletAddr, chain: base, transport: custom(provider as any) });
 
-      // Seed ~$0.20 Base ETH into the embedded wallet if it's empty, so the
-      // sendTransaction below has gas to spend. Best-effort — we still try the
-      // tx if the topup skipped (already funded / capped) or errored.
-      await requestGasTopup(walletAddr);
+      // Gas topup only makes sense for Privy embedded wallets (external wallets
+      // like Trust/MetaMask already have their own ETH balance). External also
+      // skips the treasury cap entirely.
+      if (isEmbedded) {
+        await requestGasTopup(walletAddr);
+      }
 
       let hash: string;
       if (token === "USDC") {
@@ -164,7 +196,7 @@ export default function Donate() {
       // failure so the user knows to contact support rather than silently
       // ending up unconfirmable.
       try {
-        await recordCryptoTx(intent.paymentId, hash, embeddedWallet.address);
+        await recordCryptoTx(intent.paymentId, hash, activeWallet.address);
       } catch (recErr: any) {
         stopPoll(); setPayStatus("error");
         setPayError(
@@ -173,7 +205,8 @@ export default function Donate() {
         );
         reportWalletClientError("donateRecordTxFailed", recErr, {
           surface: "donate", planId: plan.id, token, txHash: hash,
-          paymentId: intent.paymentId, address: embeddedWallet?.address,
+          paymentId: intent.paymentId, address: activeWallet?.address,
+          walletType: activeWallet?.walletClientType,
         });
         return;
       }
@@ -219,11 +252,11 @@ export default function Donate() {
       if (!isCancel) {
         reportWalletClientError("donateWalletPay", err, {
           surface: "donate", planId: plan.id, token,
-          address: embeddedWallet?.address, walletType: embeddedWallet?.walletClientType,
+          address: activeWallet?.address, walletType: activeWallet?.walletClientType,
         });
       }
     }
-  }, [privyAuthed, embeddedWallet, privyLogin, stopPoll, es, refreshUser]);
+  }, [privyAuthed, activeWallet, isEmbedded, privyLogin, stopPoll, es, refreshUser]);
 
   const resetPay = useCallback(() => {
     stopPoll(); setPayStatus("idle"); setActivePlanId(null); setActiveToken(null); setPayError(null); setTxHash(null);
@@ -330,6 +363,57 @@ export default function Donate() {
               ) : null}
             </div>
 
+            {/* Wallet picker + connect-external — parity with 💎 FAB so a
+                subscriber can pay from Trust/MetaMask instead of the embedded
+                PNPtv wallet. Choice persists across pages via preferred key. */}
+            {privyAuthed && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-white/5">
+                {wallets.length > 1 && (
+                  <span className="text-[9px] uppercase tracking-wide text-white/50 font-semibold pr-1">
+                    {es ? "Pagar desde:" : "Pay from:"}
+                  </span>
+                )}
+                {wallets.map((w) => {
+                  const isActive = activeWallet?.address === w.address;
+                  const label = w.walletClientType === "privy"
+                    ? "PNPtv"
+                    : w.walletClientType === "metamask"
+                      ? "MetaMask"
+                      : w.walletClientType === "coinbase_wallet"
+                        ? "Coinbase"
+                        : w.walletClientType === "walletconnect"
+                          ? "WalletConnect"
+                          : "External";
+                  return (
+                    <button
+                      key={w.address}
+                      type="button"
+                      onClick={() => setPreferred(w.address)}
+                      className={`text-[10px] font-semibold px-2 py-1 rounded-md transition ${
+                        isActive
+                          ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
+                          : "bg-white/[0.04] text-white/60 border border-white/10 hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      {isActive ? "✓ " : ""}{label}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => { setConnectError(null); try { connectWallet(); } catch { /* swallow — onError handles surface */ } }}
+                  className="text-[10px] font-semibold px-2 py-1 rounded-md border border-dashed border-white/20 text-white/60 hover:bg-white/[0.06] hover:text-white/90 transition"
+                >
+                  + {es ? "Conectar Trust / MetaMask" : "Connect Trust / MetaMask"}
+                </button>
+              </div>
+            )}
+            {connectError && (
+              <p className="text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2 py-1.5">
+                {connectError}
+              </p>
+            )}
+
             {ethPrice && (
               <p className="text-[10px] text-pnp-textSecondary/60">
                 ETH ≈ {fmtPrice(ethPrice)} · Base network · 1 Ru$h = $0.17 USD
@@ -353,7 +437,7 @@ export default function Donate() {
                   const ethCost = ethPrice ? (price / ethPrice).toFixed(5) : null;
                   const isThisPlan = activePlanId === plan.id;
                   const busy = isThisPlan && (payStatus === "creating" || payStatus === "signing" || payStatus === "waiting");
-                  const notConnected = !privyAuthed || !embeddedWallet;
+                  const notConnected = !privyAuthed || !activeWallet;
 
                   return (
                     <div key={plan.id} className="rounded-2xl border border-white/10 bg-pnp-surface overflow-hidden">
