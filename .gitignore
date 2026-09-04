@@ -50,3 +50,6 @@ backup/
 # Large binaries that vite copies into dist on every build - regenerate,
 # never commit.
 apps/web/public/marketing/*.mp4
+
+# Broadcast campaign videos - large binaries served from public/, not source.
+apps/web/public/broadcast/*.mp4
