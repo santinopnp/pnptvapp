@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Helmet } from "react-helmet-async";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { blog } from "@/lib/i18n/blog";
 
@@ -31,8 +31,24 @@ export default function BlogPage() {
   const { t } = getStrings();
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
+
+  // Deep-link support: /blog?open=<slug> opens that article on mount.
+  // Used by the AnnouncementStrip so a strip tap lands the user directly on
+  // the referenced article instead of the general blog index.
+  useEffect(() => {
+    const openParam = searchParams.get("open");
+    if (openParam && t.articles.some((a) => a.slug === openParam)) {
+      setExpandedSlug(openParam);
+      // Scroll the article into view once the DOM has painted.
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`article-${openParam}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [searchParams, t.articles]);
 
   const categories = [
     { key: "all", label: t.categories.all },
@@ -146,7 +162,8 @@ export default function BlogPage() {
             return (
               <article
                 key={article.slug}
-                className="rounded-2xl border transition-all duration-300"
+                id={`article-${article.slug}`}
+                className="rounded-2xl border transition-all duration-300 scroll-mt-16"
                 style={{
                   background: isExpanded
                     ? "rgba(255,255,255,0.06)"

@@ -48,9 +48,21 @@ const MARQUEE_END_PAD_PX = 12; // ensure the last character clears the edge
 const UPDATE_MESSAGES: RawMessage[] = [
   {
     category: "UPDATE",
-    en: "🔥 TONIGHT 9:30 PM COL — Party on Main Stage: Santino · SOTUME · Deus 💊 →",
-    es: "🔥 HOY 9:30 PM COL — Party en Main Stage: Santino · SOTUME · Deus 💊 →",
-    href: "/main-stage",
+    en: "💎 Your PNPtv Wallet is live and interactive — top up, tip, pay, connect Trust or MetaMask. Explore →",
+    es: "💎 Tu Billetera PNPtv ya está lista e interactiva — recarga, tipea, paga, conecta Trust o MetaMask. Explora →",
+    href: "/blog?open=pnptv-wallet-is-live",
+  },
+  {
+    category: "UPDATE",
+    en: "❖ Crystal Performers now front-and-center on Main Stage — meet the roster →",
+    es: "❖ Los Performers Crystal ahora al frente del Main Stage — conoce el roster →",
+    href: "/blog?open=crystal-performers-main-stage",
+  },
+  {
+    category: "UPDATE",
+    en: "🎬 Creators — the Crystal Creator program is coming. Get ready →",
+    es: "🎬 Creadores — el programa Crystal Creator viene en camino. Prepárense →",
+    href: "/blog?open=crystal-creator-program",
   },
   {
     category: "UPDATE",
@@ -92,18 +104,6 @@ const UPDATE_MESSAGES: RawMessage[] = [
     category: "UPDATE",
     en: "Apple Pay & Google Pay are back — subscribe in two taps, no card details needed.",
     es: "Apple Pay y Google Pay están de vuelta — suscríbete en dos toques, sin datos de tarjeta.",
-    href: "/subscribe",
-  },
-  {
-    category: "UPDATE",
-    en: "PNP Live launches June 1st — live cams, real-time tips, and the community all in one place.",
-    es: "PNP Live arranca el 1 de junio — cams en vivo, tips en tiempo real y la comunidad reunida.",
-    href: "/live",
-  },
-  {
-    category: "UPDATE",
-    en: "Payments are faster and more reliable — Dash and USDC flows rebuilt from the ground up.",
-    es: "Los pagos son más rápidos y confiables — flujos de Dash y USDC reconstruidos desde cero.",
     href: "/subscribe",
   },
   {

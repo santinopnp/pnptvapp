@@ -16,6 +16,50 @@ const strings = {
     },
     articles: [
       {
+        slug: "pnptv-wallet-is-live",
+        title: "The PNPtv Wallet — Card, Crypto, and Everything Between",
+        date: "September 4, 2026",
+        category: "platform",
+        summary: "PNPtv now has a built-in wallet. Top up with your card in 30 seconds, tip creators, unlock PRIME, buy Ru$h 💎, book calls — all from one balance. Prefer to use your own Trust or MetaMask wallet? Connect it and pay from there instead. Your choice syncs across devices.",
+        content: `PNPtv now comes with its own wallet — built into your account, ready the moment you sign in. Top it up with your card, Apple Pay, or Google Pay through our regulated partners (Stripe, MoonPay, Ramp), and use the balance to tip creators, unlock PRIME, book 1:1 video calls, or buy Ru$h 💎 to spend everywhere on the platform. No seed phrase to memorize, no separate app to install, no crypto knowledge required.
+
+Under the hood the wallet holds USDC on the Base blockchain — 1 USDC always equals 1 USD. If you never want to touch crypto, you never have to; the experience feels like any prepaid balance. If you do want to send USDC to another address, you can, any time, from the wallet screen.
+
+Already have a crypto wallet you love? Tap the 💎 icon at the bottom of any page, hit "+ Connect Trust / MetaMask" and complete the handshake — Trust, MetaMask, Coinbase Wallet, and any WalletConnect wallet work. Once connected, every paid feature on PNPtv can sign from that wallet instead. Want to switch back to the built-in one? Tap it in the picker and it swaps instantly. Want to disconnect an external wallet entirely? There's an × next to it in the picker — one tap and it's gone.
+
+Your choice follows you. Pick Trust on your phone tonight, open PNPtv on your desktop tomorrow, and Trust is still selected — no re-linking every session. The 💎 button in the bottom-right corner shows a small badge for whichever wallet is currently signing, so you always know before you tap Pay.
+
+If you're new to crypto and want the plain-language version, our Crypto Guide walks through the basics. And if you get stuck anywhere, Cristina is in the Self-Care Center 24/7 to help you set up.`,
+      },
+      {
+        slug: "crystal-performers-main-stage",
+        title: "Crystal Performers Are Now Front-and-Center on Main Stage",
+        date: "September 4, 2026",
+        category: "community",
+        summary: "❖ Crystal Performers are our verified, top-tier live performers — the ones who show up consistently, engage with the room, and deliver the experience that made you fall for PNPtv in the first place. Main Stage now spotlights them heavily so you can find them without hunting.",
+        content: `We introduced Crystal Performers earlier this year as an invite-only tier for the performers who consistently deliver the kind of live experience PNPtv is known for — verified, warm, in-the-moment, and genuinely there for the room. They wear the ❖ Crystal glyph on their profile — obsidian and platinum with an iridescent shimmer — so you can spot them at a glance across the platform.
+
+Starting now, Main Stage puts them front and center. When you open the Live tab, Crystal Performers get priority placement in the featured row, dedicated spotlight slots in the rotation, and clear visual differentiation from the general roster. You do not have to hunt for the best cams anymore — they surface first, every time.
+
+For viewers this means: shorter path to the streams you actually want, more consistent quality when you tap in cold, and a clearer sense of who the platform's regulars are. Tips and subscription flows work exactly the same — Crystal is a discovery signal, not a paywall. Anyone can watch, tip, and DM Crystal Performers under the same rules as any live cammer.
+
+If you have a favorite Crystal Performer already, tapping their name from Main Stage takes you straight to their profile where you can subscribe, book a private 1:1 call, or send a tip during their next stream. If you're new to the roster, just open Main Stage and start scrolling — the front row is now the whole point.`,
+      },
+      {
+        slug: "crystal-creator-program",
+        title: "Coming Soon: The Crystal Creator Program",
+        date: "September 4, 2026",
+        category: "creators",
+        summary: "We're opening applications soon for our premium creator tier — Crystal Creator. Dedicated Main Stage promotion, higher revenue share, direct support, and the ❖ Crystal badge that puts you at the top of every discovery surface. Here's what it is and how to get on our radar before invites go out.",
+        content: `Crystal Creator is the top tier of the PNPtv performer program — invite-only, curated, and designed for the performers who treat this platform like a real career. If you already show up consistently, engage genuinely with your room, and build the kind of audience that comes back week after week, this program is being built for you.
+
+What Crystal Creators get: dedicated Main Stage spotlight rotation (the front-row placement launching this week), the ❖ Crystal glyph on your profile in obsidian/platinum with an iridescent shimmer, priority discovery placement everywhere across the platform, higher revenue share on tips and subs, and direct support from the PNPtv team when you need something moved fast. Two membership tiers at launch — one for individual performers at $100/mo and a duo/couple tier at $150/mo — with more benefits stacking as the program grows.
+
+Applications are not open yet. We're seeding the program with a hand-picked first cohort so the standard is set from day one. If you want to be on our radar when the second wave opens, three things move the needle: (1) a consistent live schedule — even one strong stream a week beats sporadic bursts; (2) genuine engagement in your DMs and chat, not just broadcasting at people; (3) a profile that actually tells us who you are — bio, cover, at least a few posts on your wall.
+
+Everything else — application form, review timeline, onboarding — will land on your creator dashboard when we open the door. In the meantime, keep doing what you do. We're watching, and the people showing up now are exactly who we want.`,
+      },
+      {
         slug: "building-a-different-kind-of-community",
         title: "Building a Different Kind of Community: Why PNPtv Exists",
         date: "April 23, 2026",
@@ -147,6 +191,50 @@ Community events on PNPtv are organized by members and creators in the social fe
       platform: "Plataforma",
     },
     articles: [
+      {
+        slug: "la-billetera-pnptv-ya-esta-lista",
+        title: "La Billetera PNPtv — Tarjeta, Cripto y Todo lo del Medio",
+        date: "4 de septiembre de 2026",
+        category: "platform",
+        summary: "PNPtv ahora tiene billetera integrada. Recárgala con tu tarjeta en 30 segundos, dale propina a los creadores, activa PRIME, compra Ru$h 💎, agenda videollamadas — todo desde un solo saldo. ¿Prefieres usar tu Trust o MetaMask? Conéctala y paga desde ahí. Tu elección se sincroniza entre dispositivos.",
+        content: `PNPtv ahora incluye su propia billetera — integrada en tu cuenta, lista desde el momento en que inicias sesión. Recárgala con tarjeta, Apple Pay o Google Pay a través de nuestros socios regulados (Stripe, MoonPay, Ramp), y usa el saldo para dar propinas, activar PRIME, agendar videollamadas 1:1 o comprar Ru$h 💎 para gastar donde quieras en la plataforma. Sin frase semilla que memorizar, sin app aparte que instalar, sin conocimiento cripto necesario.
+
+Por dentro la billetera guarda USDC en la red Base — 1 USDC siempre equivale a 1 USD. Si nunca quieres tocar cripto, no tienes que hacerlo; la experiencia se siente como cualquier saldo prepagado. Si quieres enviar USDC a otra dirección, puedes, cuando quieras, desde la pantalla de la billetera.
+
+¿Ya tienes una wallet cripto que te gusta? Toca el ícono 💎 abajo en cualquier página, dale a "+ Conectar Trust / MetaMask" y completa el pareo — Trust, MetaMask, Coinbase Wallet, y cualquier wallet compatible con WalletConnect funcionan. Una vez conectada, cada función paga de PNPtv puede firmar desde esa wallet. ¿Quieres volver a la integrada? Tócala en el selector y cambia al instante. ¿Quieres desconectar una wallet externa? Hay una × junto a ella en el selector — un toque y listo.
+
+Tu elección te sigue. Elige Trust en tu celular esta noche, abre PNPtv en tu computador mañana, y Trust seguirá seleccionada — sin re-conectar cada sesión. El botón 💎 en la esquina inferior derecha muestra un pequeño indicador con la wallet que está firmando en ese momento, para que sepas antes de tocar Pagar.
+
+Si eres nuevo en cripto y quieres la versión en lenguaje simple, nuestra Guía Cripto explica lo básico. Y si te trabas en algún paso, Cristina está en el Centro de Autocuidado 24/7 para ayudarte a configurar todo.`,
+      },
+      {
+        slug: "performers-crystal-en-el-main-stage",
+        title: "Los Performers Crystal Ahora Están al Frente del Main Stage",
+        date: "4 de septiembre de 2026",
+        category: "community",
+        summary: "Los ❖ Performers Crystal son nuestros performers verificados de nivel superior — los que aparecen consistentemente, se conectan con la sala y entregan la experiencia que te hizo enamorarte de PNPtv en primer lugar. El Main Stage ahora los destaca para que los encuentres sin buscar.",
+        content: `Introducimos los Performers Crystal a principios de este año como un tier por invitación para los performers que entregan consistentemente el tipo de experiencia en vivo por la que se conoce a PNPtv — verificados, cálidos, presentes en el momento, y genuinamente ahí para la sala. Llevan el glifo ❖ Crystal en su perfil — obsidiana y platino con un brillo iridiscente — para que los distingas al instante en toda la plataforma.
+
+Desde ahora, el Main Stage los pone al frente y al centro. Cuando abres la pestaña En Vivo, los Performers Crystal reciben posicionamiento prioritario en la fila destacada, slots dedicados de spotlight en la rotación, y una clara diferenciación visual del resto del roster. Ya no tienes que buscar las mejores cams — aparecen primero, siempre.
+
+Para los espectadores esto significa: camino más corto a los streams que realmente quieres ver, más consistencia cuando entras en frío, y una idea más clara de quiénes son los habituales de la plataforma. Las propinas y flujos de suscripción funcionan exactamente igual — Crystal es una señal de descubrimiento, no un muro de pago. Cualquiera puede ver, dar propinas y mandar DM a los Performers Crystal bajo las mismas reglas que a cualquier cammer en vivo.
+
+Si ya tienes un Performer Crystal favorito, tocar su nombre desde el Main Stage te lleva directo a su perfil donde puedes suscribirte, agendar una llamada privada 1:1 o mandar una propina durante su próximo stream. Si eres nuevo en el roster, solo abre el Main Stage y empieza a scrollear — la primera fila ahora es el punto.`,
+      },
+      {
+        slug: "programa-crystal-creator",
+        title: "Próximamente: El Programa Crystal Creator",
+        date: "4 de septiembre de 2026",
+        category: "creators",
+        summary: "Pronto abrimos aplicaciones para nuestro tier premium de creadores — Crystal Creator. Promoción dedicada en el Main Stage, mayor participación en ingresos, soporte directo, y el badge ❖ Crystal que te pone arriba en cada superficie de descubrimiento. Esto es qué es y cómo entrar en nuestro radar antes de que salgan las invitaciones.",
+        content: `Crystal Creator es el tier superior del programa de performers de PNPtv — por invitación, curado, y diseñado para los performers que tratan esta plataforma como una carrera real. Si ya apareces consistentemente, te conectas genuinamente con tu sala, y construyes el tipo de audiencia que vuelve semana tras semana, este programa se está construyendo para ti.
+
+Qué reciben los Crystal Creators: rotación dedicada de spotlight en el Main Stage (el posicionamiento de primera fila que lanza esta semana), el glifo ❖ Crystal en tu perfil en obsidiana/platino con brillo iridiscente, posicionamiento prioritario en toda la plataforma, mayor participación en propinas y suscripciones, y soporte directo del equipo PNPtv cuando necesites mover algo rápido. Dos tiers de membresía al lanzamiento — uno para performers individuales a $100/mes y un tier de dúo/pareja a $150/mes — con más beneficios acumulándose a medida que el programa crece.
+
+Las aplicaciones aún no están abiertas. Estamos sembrando el programa con una primera cohorte hand-picked para que el estándar quede claro desde el día uno. Si quieres estar en nuestro radar cuando abra la segunda ola, tres cosas mueven la aguja: (1) un horario en vivo consistente — hasta un stream fuerte por semana vence a ráfagas esporádicas; (2) conexión genuina en tus DMs y chat, no solo transmitir a la gente; (3) un perfil que realmente cuente quién eres — bio, portada, al menos algunos posts en tu muro.
+
+Todo lo demás — formulario de aplicación, cronograma de revisión, onboarding — aparecerá en tu dashboard de creador cuando abramos la puerta. Mientras tanto, sigue haciendo lo que haces. Estamos mirando, y las personas que aparecen ahora son exactamente a quien queremos.`,
+      },
       {
         slug: "construyendo-una-comunidad-diferente",
         title: "Construyendo una Comunidad Diferente: Por Qué Existe PNPtv",
