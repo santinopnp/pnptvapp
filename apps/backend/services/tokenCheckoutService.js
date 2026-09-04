@@ -564,7 +564,6 @@ class TokenCheckoutService {
         price_amount: usdAmount,
         price_currency: 'usd',
         pay_currency: validPayCurrency,
-        pay_currencies: ['eth', 'usdcerc20'],
         order_id: orderId,
         order_description: `${pkg.tokens} PNP Tokens`,
         ipn_callback_url: `${WEB_APP_URL}/api/webhooks/nowpayments`,
