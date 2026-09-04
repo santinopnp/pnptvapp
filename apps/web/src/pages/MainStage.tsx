@@ -321,139 +321,6 @@ function HotPicksView() {
   );
 }
 
-// ── Draggable music overlay ──────────────────────────────────────────────────
-// Bottom-right by default, drag to move, position persists per browser.
-// Auto-shrinks to a slim bar once the audio is actually playing so it doesn't
-// crowd the stage. Clamped to viewport bounds so it can never end up off-screen.
-const MUSIC_POS_KEY = "pnptv:mainstage:musicPos";
-
-function DraggableMusicOverlay({
-  src,
-  playing,
-  volume,
-  startedAt,
-}: {
-  src: string;
-  playing: boolean;
-  volume: number;
-  startedAt: number | null;
-}) {
-  const compact = playing;
-  const width = compact ? 232 : 260;
-  const height = compact ? 64 : 240;
-
-  const nodeRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ startX: number; startY: number; origLeft: number; origTop: number } | null>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(() => {
-    try {
-      const raw = localStorage.getItem(MUSIC_POS_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (typeof parsed?.left === "number" && typeof parsed?.top === "number") return parsed;
-    } catch { /* ignore */ }
-    return null;
-  });
-  const [dragging, setDragging] = useState(false);
-
-  // Clamp on viewport resize so the widget can't get stranded off-screen.
-  useEffect(() => {
-    if (!pos) return;
-    const clamp = () => {
-      setPos((p) => {
-        if (!p) return p;
-        const maxL = Math.max(0, window.innerWidth - width - 8);
-        const maxT = Math.max(0, window.innerHeight - height - 8);
-        const next = { left: Math.min(Math.max(0, p.left), maxL), top: Math.min(Math.max(0, p.top), maxT) };
-        return next.left === p.left && next.top === p.top ? p : next;
-      });
-    };
-    window.addEventListener("resize", clamp);
-    clamp();
-    return () => window.removeEventListener("resize", clamp);
-  }, [pos, width, height]);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    // Ignore drags starting on interactive controls (buttons, inputs).
-    const el = e.target as HTMLElement;
-    if (el.closest("button, input, a, [role='button']")) return;
-    e.preventDefault();
-    const rect = nodeRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origLeft: rect.left,
-      origTop: rect.top,
-    };
-    setDragging(true);
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-  };
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
-    const maxL = Math.max(0, window.innerWidth - width - 8);
-    const maxT = Math.max(0, window.innerHeight - height - 8);
-    const next = {
-      left: Math.min(Math.max(0, dragRef.current.origLeft + dx), maxL),
-      top: Math.min(Math.max(0, dragRef.current.origTop + dy), maxT),
-    };
-    setPos(next);
-  };
-
-  const onPointerUp = (e: React.PointerEvent) => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    setDragging(false);
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
-    if (pos) {
-      try { localStorage.setItem(MUSIC_POS_KEY, JSON.stringify(pos)); } catch { /* ignore */ }
-    }
-  };
-
-  const style: React.CSSProperties = pos
-    ? { left: pos.left, top: pos.top }
-    : {
-        bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px) + 5rem)",
-        right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
-      };
-
-  return (
-    <div
-      ref={nodeRef}
-      className="absolute z-20 select-none"
-      style={{
-        ...style,
-        width,
-        maxHeight: height,
-        background: "rgba(15,15,20,0.85)",
-        backdropFilter: "blur(20px)",
-        border: "1px solid rgba(255,255,255,0.10)",
-        borderRadius: compact ? "999px" : "1.25rem",
-        padding: compact ? "0.5rem 0.75rem" : "1rem",
-        cursor: dragging ? "grabbing" : "grab",
-        touchAction: "none",
-        transition: dragging ? "none" : "width 0.2s, max-height 0.2s, border-radius 0.2s",
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      title="Drag to move"
-    >
-      <UrlMediaPlayer
-        src={src}
-        kind="music"
-        playing={playing}
-        volume={volume}
-        startedAt={startedAt}
-        compact={compact}
-      />
-    </div>
-  );
-}
-
 interface MainStageInnerProps {
   mode: ModeId;
   spotlightCammer: string | null;
@@ -547,19 +414,11 @@ function MainStageInner({
         {mode === "grid3x3" && <EqualGrid />}
         {mode === "hotpicks" && <HotPicksView />}
 
-        {/* Music overlay — CinemaGrid mounts UrlMediaPlayer inline, but the
-            spotlight / grid / hotpicks modes don't. Without this, admin-set
-            music (state.media.kind === 'music') never actually plays because
-            the <audio> element is never created. Draggable; auto-shrinks to a
-            slim bar once audio is playing. Position persists in localStorage. */}
-        {mode !== "cinema" && mediaKind === "music" && mediaSrc && (
-          <DraggableMusicOverlay
-            src={mediaSrc}
-            playing={mediaPlaying}
-            volume={mediaVolume}
-            startedAt={mediaStartedAt}
-          />
-        )}
+        {/* Admin-set music in non-cinema modes intentionally has no widget
+            here — Cristina's radio (useMusicPlayer, auto-starts on page
+            mount) is the single music source outside cinema mode. Avoids
+            double audio and simplifies the surface. Admin music still plays
+            in cinema mode via CinemaGrid's inline UrlMediaPlayer. */}
       </div>
 
       {/* Slim positive-tips ribbon — sits between cam grid and bottom bar
@@ -1137,6 +996,14 @@ export default function MainStage() {
   useEffect(() => {
     if (cammerInfos.length > 0 && musicIsPlaying) pauseMusic();
   }, [cammerInfos.length, musicIsPlaying, pauseMusic]);
+
+  // Background radio also yields to admin-set music (cinema mode's inline
+  // player). Prevents Cristina + admin-music playing at once mid-session.
+  useEffect(() => {
+    if (state?.media?.kind === "music" && state?.media?.playing && musicIsPlaying) {
+      pauseMusic();
+    }
+  }, [state?.media?.kind, state?.media?.playing, musicIsPlaying, pauseMusic]);
 
   const handleCammersChange = useCallback((infos: CammerInfo[]) => {
     setCammerInfos(infos);
