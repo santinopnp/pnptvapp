@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspens
 // ── Feature flag — set to false to re-enable live streaming ──────────────────
 const STREAMS_DEPRECATED = false;
 import { createPortal } from "react-dom";
-import { Outlet, NavLink, useNavigate, useLocation, Navigate, Link } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation, useMatch, Navigate, Link } from "react-router-dom";
 import { BottomNav } from "./BottomNav";
 import { AnnouncementStrip } from "./AnnouncementStrip";
 import { VerificationGate } from "./VerificationGate";
@@ -18,7 +18,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -2390,6 +2390,12 @@ function QuickTipSheet({
 
 function WalletFloater() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { isAuthenticated, user } = useAuth();
+  // Creator profile route match — drives the /c/:username contextual stack.
+  // useMatch returns null when the current path isn't a creator profile.
+  const creatorMatch = useMatch("/c/:username");
+  const creatorUsername = creatorMatch?.params?.username ?? null;
   const [open, setOpen] = useState(false);
   // Active wallet detection — used to badge the FAB so users see which wallet
   // is signing without having to open the sheet. Mirrors WalletHomeSheet's
@@ -2421,8 +2427,13 @@ function WalletFloater() {
     platformDonationUserId: string;
   } | null>(null);
   const [tipRecipient, setTipRecipient] = useState<QuickTipRecipient | null>(null);
+  // Creator profile context: fetched profile + expanded stack state. Reuses
+  // the same visual pattern (fan-out sub-buttons) as the Main Stage stack.
+  const [creatorProfile, setCreatorProfile] = useState<CreatorPublicProfile | null>(null);
+  const [creatorStackOpen, setCreatorStackOpen] = useState(false);
   const path = location.pathname;
   const isMainStage = path === "/main-stage";
+  const isCreatorProfile = !!creatorUsername;
 
   // Auto-open on ?openWallet=1 so /wallet deep-links (push notifications,
   // broadcast emails, etc.) that redirect here actually surface the sheet.
@@ -2477,6 +2488,28 @@ function WalletFloater() {
   useEffect(() => {
     if (!isMainStage) setStackOpen(false);
   }, [isMainStage]);
+
+  // Fetch the creator profile when on /c/:username. Reuses the same endpoint
+  // the profile page already calls (backend response is cached by fetch → the
+  // second call is served from the browser HTTP cache when the user is already
+  // on the profile page). Silently falls back to default FAB on error.
+  useEffect(() => {
+    if (!creatorUsername || !isAuthenticated) {
+      setCreatorProfile(null);
+      setCreatorStackOpen(false);
+      return;
+    }
+    let cancelled = false;
+    getPublicCreatorProfile(creatorUsername)
+      .then((profile) => { if (!cancelled) setCreatorProfile(profile); })
+      .catch(() => { if (!cancelled) setCreatorProfile(null); });
+    return () => { cancelled = true; };
+  }, [creatorUsername, isAuthenticated]);
+
+  // Collapse creator stack when navigating away.
+  useEffect(() => {
+    if (!isCreatorProfile) setCreatorStackOpen(false);
+  }, [isCreatorProfile]);
 
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
@@ -2587,6 +2620,158 @@ function WalletFloater() {
         )}
       </>
     );
+  }
+
+  // ── Creator profile mode: contextual sub-buttons for /c/:username ────────
+  // Only kicks in for authenticated non-self viewers when the profile is
+  // loaded AND at least one capability is available. Otherwise falls through
+  // to the default WalletHomeSheet FAB so the widget is never a dead-end.
+  if (isCreatorProfile && isAuthenticated && creatorProfile) {
+    const c = creatorProfile.creator;
+    // Own-profile detection mirrors CreatorProfilePage: match by dbId/id OR
+    // username (case-insensitive). Suppress the stack on self-view.
+    const viewerId = String(user?.dbId || user?.id || "");
+    const isOwnProfile = (viewerId && viewerId === String(c.id))
+      || (!!user?.username && !!c.username && c.username.toLowerCase() === user.username.toLowerCase());
+
+    if (!isOwnProfile) {
+      const channels = creatorProfile.channels || [];
+      const callPackages = creatorProfile.callPackages || [];
+      const hasChannel = channels.length > 0;
+      // PRIME-gated creators (e.g. Santino) unlock via platform PRIME, not a
+      // per-creator sub — the profile subscribe CTA already routes to /subscribe
+      // in that case. We suppress the FAB Subscribe sub-button for those so it
+      // doesn't offer a broken CreatorSubscribeWizard flow.
+      const isPrimeCreator = channels[0]?.access_type === "prime";
+      const viewerHasPrime = ((user?.tier as string) || "").toLowerCase() === "prime";
+      const viewerUnlocked = creatorProfile.isSubscribed || (isPrimeCreator && viewerHasPrime);
+
+      const canSubscribe = hasChannel && !creatorProfile.isSubscribed && !isPrimeCreator;
+      // Tip: Crystal Creator flag (SQL-computed, Infinity-safe) AND the
+      // creator actually goes live (matches the profile-page tip button rule).
+      const canTip = !!c.crystalCreator
+        && (c.creator_role === "live" || c.creator_role === "both");
+      // Book a call: creator has at least one active call package. If they
+      // don't sell calls, don't offer a broken button.
+      const canBook = callPackages.length > 0;
+      // DM: profile page gates DM behind subscription/PRIME unlock. Mirror that
+      // exactly so the FAB doesn't route to a paywall.
+      const canDm = viewerUnlocked;
+
+      type CreatorSubButton =
+        | { kind: "subscribe"; label: string }
+        | { kind: "tip"; label: string }
+        | { kind: "book"; label: string }
+        | { kind: "dm"; label: string };
+
+      const creatorSubButtons: CreatorSubButton[] = [];
+      if (canSubscribe) creatorSubButtons.push({ kind: "subscribe", label: "Subscribe" });
+      if (canTip) creatorSubButtons.push({ kind: "tip", label: `Tip @${c.username}` });
+      if (canBook) creatorSubButtons.push({ kind: "book", label: "Book a call" });
+      if (canDm) creatorSubButtons.push({ kind: "dm", label: "Message" });
+      // Cap at 4 (spec: max 4 sub-buttons).
+      const capped = creatorSubButtons.slice(0, 4);
+
+      // Only render the contextual stack if there's at least one capability.
+      // Otherwise fall through to the default WalletHomeSheet FAB below.
+      if (capped.length > 0) {
+        function handleCreatorSub(btn: CreatorSubButton) {
+          setCreatorStackOpen(false);
+          switch (btn.kind) {
+            case "subscribe":
+              // Profile page auto-opens CreatorSubscribeWizard on ?action=subscribe.
+              navigate(`/c/${c.username}?action=subscribe`);
+              return;
+            case "tip":
+              // Open the shared QuickTipSheet with this creator pre-selected —
+              // same component the Main Stage stack uses. Isn't a donation.
+              setTipRecipient({
+                userId: String(c.id),
+                label: c.username ? `@${c.username}` : String(c.id),
+                isDonation: false,
+              });
+              return;
+            case "book":
+              // Profile page auto-opens BookCallModal on ?action=book.
+              navigate(`/c/${c.username}?action=book`);
+              return;
+            case "dm":
+              navigate(`/dm/${c.id}`);
+              return;
+          }
+        }
+
+        return (
+          <>
+            {/* Sub-buttons — fan upward above the FAB, visible when stack open */}
+            <div
+              className="fixed z-[45] flex flex-col-reverse items-end gap-2.5"
+              style={{
+                bottom: "calc(5rem + env(safe-area-inset-bottom, 0px) + 60px)",
+                right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+                pointerEvents: creatorStackOpen ? "auto" : "none",
+              }}
+            >
+              {capped.map((btn) => (
+                <button
+                  key={btn.kind}
+                  type="button"
+                  onClick={() => handleCreatorSub(btn)}
+                  aria-label={btn.label}
+                  className={`flex items-center gap-2 pl-3 pr-4 rounded-full text-xs font-bold text-white shadow-lg border border-white/15 backdrop-blur-md transition-all duration-200 ${
+                    creatorStackOpen ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+                  }`}
+                  style={{
+                    height: 40,
+                    minHeight: 44 - 4, // 40px height + 4px padding baked into hit area via flex — keeps ≥44px touch target
+                    background: "linear-gradient(135deg,#D4007A,#E69138)",
+                  }}
+                >
+                  <span aria-hidden>💎</span>
+                  <span>{btn.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Backdrop — tap outside to collapse stack */}
+            {creatorStackOpen && (
+              <div
+                className="fixed inset-0 z-[44]"
+                onClick={() => setCreatorStackOpen(false)}
+                aria-hidden
+              />
+            )}
+
+            {/* Primary FAB — identical style/size/position as the default FAB */}
+            <button
+              type="button"
+              onClick={() => setCreatorStackOpen((v) => !v)}
+              aria-label={creatorStackOpen ? "Close creator actions" : "Open creator actions"}
+              aria-expanded={creatorStackOpen}
+              className="fixed z-[46] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+              style={{
+                bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+                right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+                width: 52, height: 52,
+                background: "linear-gradient(135deg,#10b981,#059669)",
+                color: "white",
+                fontSize: 22,
+              }}
+            >
+              💎
+            </button>
+
+            {/* Quick-tip sheet — mounted when the tip sub-button is tapped */}
+            {tipRecipient && (
+              <QuickTipSheet
+                recipient={tipRecipient}
+                onClose={() => setTipRecipient(null)}
+              />
+            )}
+          </>
+        );
+      }
+    }
   }
 
   // ── Default mode: open WalletHomeSheet ────────────────────────────────────
