@@ -2643,34 +2643,40 @@ function WalletFloater() {
       // in that case. We suppress the FAB Subscribe sub-button for those so it
       // doesn't offer a broken CreatorSubscribeWizard flow.
       const isPrimeCreator = channels[0]?.access_type === "prime";
-      const viewerHasPrime = ((user?.tier as string) || "").toLowerCase() === "prime";
-      const viewerUnlocked = creatorProfile.isSubscribed || (isPrimeCreator && viewerHasPrime);
 
       const canSubscribe = hasChannel && !creatorProfile.isSubscribed && !isPrimeCreator;
       // Tip: Crystal Creator flag (SQL-computed, Infinity-safe) AND the
       // creator actually goes live (matches the profile-page tip button rule).
       const canTip = !!c.crystalCreator
         && (c.creator_role === "live" || c.creator_role === "both");
-      // Book a call: creator has at least one active call package. If they
-      // don't sell calls, don't offer a broken button.
-      const canBook = callPackages.length > 0;
-      // DM: profile page gates DM behind subscription/PRIME unlock. Mirror that
-      // exactly so the FAB doesn't route to a paywall.
-      const canDm = viewerUnlocked;
+      // Book-a-call: expand into one sub-button per call package so users see
+      // duration + price at a glance (e.g. "30 min · $60", "60 min · $150")
+      // instead of a generic "Book a call" that hides the variety.
+      // Filter to active packages, sort shortest→longest so cheapest is nearest
+      // the primary FAB. Wallet FAB is payment-focused so DM was intentionally
+      // removed (free comms belong elsewhere; profile page still has DM CTA).
+      const activePackages = callPackages
+        .filter((p) => p.is_active)
+        .slice()
+        .sort((a, b) => a.duration_minutes - b.duration_minutes);
 
       type CreatorSubButton =
         | { kind: "subscribe"; label: string }
         | { kind: "tip"; label: string }
-        | { kind: "book"; label: string }
-        | { kind: "dm"; label: string };
+        | { kind: "book"; label: string; duration: number; packageId: number };
 
       const creatorSubButtons: CreatorSubButton[] = [];
       if (canSubscribe) creatorSubButtons.push({ kind: "subscribe", label: "Subscribe" });
       if (canTip) creatorSubButtons.push({ kind: "tip", label: `Tip @${c.username}` });
-      if (canBook) creatorSubButtons.push({ kind: "book", label: "Book a call" });
-      if (canDm) creatorSubButtons.push({ kind: "dm", label: "Message" });
-      // Cap at 4 (spec: max 4 sub-buttons).
-      const capped = creatorSubButtons.slice(0, 4);
+      for (const pkg of activePackages) {
+        const price = typeof pkg.price_usd === "number" ? pkg.price_usd : Number(pkg.price_usd) || 0;
+        const label = `${pkg.duration_minutes} min · $${Math.round(price)}`;
+        creatorSubButtons.push({ kind: "book", label, duration: pkg.duration_minutes, packageId: pkg.id });
+      }
+      // Cap generous — subscribe + tip + up to ~4 call packages covers every
+      // creator we've seen. Extra packages beyond the cap are still bookable
+      // from the profile page.
+      const capped = creatorSubButtons.slice(0, 6);
 
       // Only render the contextual stack if there's at least one capability.
       // Otherwise fall through to the default WalletHomeSheet FAB below.
@@ -2692,11 +2698,10 @@ function WalletFloater() {
               });
               return;
             case "book":
-              // Profile page auto-opens BookCallModal on ?action=book.
-              navigate(`/c/${c.username}?action=book`);
-              return;
-            case "dm":
-              navigate(`/dm/${c.id}`);
+              // Profile page reads ?action=book&duration=<min> and auto-opens
+              // BookCallModal with that duration pre-selected. duration=15
+              // triggers the free intro-call flow; 30 and 60 are paid packages.
+              navigate(`/c/${c.username}?action=book&duration=${btn.duration}`);
               return;
           }
         }
