@@ -159,7 +159,55 @@ const resourceMap = Object.fromEntries(VENDOR.map((v) => [v.cdn, `./${v.to}`]));
 // Assigned before support.js runs so cdnScriptFor() sees it at lookup time.
 const OVERRIDE = `<script>window.__resources=${JSON.stringify(resourceMap)};</script>`;
 
-// ---- 3. rewrite the HTML ---------------------------------------------------
+// ---- 3. repair the runtime's componentDidUpdate arity ----------------------
+// React calls componentDidUpdate(prevProps, prevState). The dc-runtime's
+// wrapper forwards only the first argument:
+//
+//     this.logic.componentDidUpdate(prevProps);
+//
+// so any page whose logic reads prevState throws on every update. The Wallet
+// Tour does exactly that (`if (prevState.index !== this.state.index)`), and
+// the throw is swallowed by the wrapper's try/catch — playback looks fine
+// while every screen_view analytics event is silently lost across all 38
+// screens.
+//
+// The wrapper already has the value: __setLogicState captures the logic's
+// previous state as `prev` and then discards it. Stash it and pass it on.
+// It is consumed (set back to null) on read, so a props-only update reports
+// prevState === current state — i.e. "state did not change", which is
+// exactly right and keeps the equality checks in page logic honest.
+{
+  const p = path.join(OUT_DIR, 'support.js');
+  let js = fs.readFileSync(p, 'utf8');
+
+  const captureFrom = '      __setLogicState(update, cb) {\n        const prev = this.logic.state;';
+  const captureTo =
+    '      __setLogicState(update, cb) {\n        const prev = this.logic.state;\n' +
+    '        this.__prevLogicState = prev;';
+
+  const callFrom = '            this.logic.componentDidUpdate(prevProps);';
+  const callTo =
+    '            const prevLogicState = this.__prevLogicState ?? this.logic.state;\n' +
+    '            this.__prevLogicState = null;\n' +
+    '            this.logic.componentDidUpdate(prevProps, prevLogicState);';
+
+  // Fail loudly rather than shipping a half-patched runtime: a support.js
+  // whose shape changed must be re-examined, not silently passed through.
+  if (!js.includes(captureFrom)) fail('support.js: __setLogicState shape changed');
+  if (!js.includes(callFrom)) fail('support.js: componentDidUpdate call shape changed');
+  if (js.includes('__prevLogicState')) fail('support.js: already patched?');
+
+  js = js.split(captureFrom).join(captureTo);
+  js = js.split(callFrom).join(callTo);
+
+  if (!js.includes('componentDidUpdate(prevProps, prevLogicState)')) {
+    fail('support.js: lifecycle patch did not apply');
+  }
+  fs.writeFileSync(p, js, 'utf8');
+  log('patched support.js componentDidUpdate to forward prevState');
+}
+
+// ---- 4. rewrite the HTML ---------------------------------------------------
 const htmlFiles = fs.readdirSync(OUT_DIR).filter((f) => f.endsWith('.html'));
 let rewritten = 0;
 for (const file of htmlFiles) {
@@ -171,6 +219,19 @@ for (const file of htmlFiles) {
   html = html.replace(/from="([^"]*)"/g, (m, list) =>
     /\.jsx(\s|$)/.test(list) ? `from="${list.replace(/\.jsx(?=\s|$)/g, '.js')}"` : m
   );
+
+  // index.html carries noindex from source, but the exported pages cannot --
+  // Claude Design owns their <head> and a re-export would drop anything added
+  // there by hand. Inject it at build time so the whole directory is
+  // consistent: these are bare animation players with no crawlable copy, and
+  // indexing them would put contentless pages in search results ahead of the
+  // real marketing surface. Delete this block to let them be indexed.
+  if (!/<meta name="robots"/i.test(html)) {
+    html = html.replace(
+      /<meta charset="utf-8">/i,
+      '<meta charset="utf-8">\n<meta name="robots" content="noindex, nofollow">'
+    );
+  }
 
   if (!html.includes('window.__resources')) {
     const tag = '<script src="./support.js"></script>';
@@ -184,7 +245,7 @@ for (const file of htmlFiles) {
 }
 log(`rewrote ${rewritten} html file(s)`);
 
-// ---- 4. verify -------------------------------------------------------------
+// ---- 5. verify -------------------------------------------------------------
 const problems = [];
 for (const file of fs.readdirSync(OUT_DIR).filter((f) => f.endsWith('.html'))) {
   const html = fs.readFileSync(path.join(OUT_DIR, file), 'utf8');
@@ -204,6 +265,12 @@ if (fs.readdirSync(OUT_DIR).some((f) => f.endsWith('.jsx'))) {
 }
 for (const v of VENDOR) {
   if (!fs.existsSync(path.join(OUT_DIR, v.to))) problems.push(`missing ${v.to}`);
+}
+{
+  const js = fs.readFileSync(path.join(OUT_DIR, 'support.js'), 'utf8');
+  if (!js.includes('componentDidUpdate(prevProps, prevLogicState)')) {
+    problems.push('support.js: prevState fix missing -- page analytics would break');
+  }
 }
 if (problems.length) fail(problems.join('\n  '));
 
