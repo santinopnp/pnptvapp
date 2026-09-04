@@ -374,6 +374,7 @@ services:
       STORAGE_CLOUD_REGION: ${S3_REGION}
       STORAGE_CLOUD_ENDPOINT: ${S3_ENDPOINT}
       STORAGE_CLOUD_FORCE_PATH_STYLE: "true"
+      NODE_OPTIONS: "--max-old-space-size=3584"
     networks:
       - pnptvapp_net
     depends_on:
@@ -383,7 +384,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 2g
+          memory: 4g
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8055/server/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
       interval: 30s
