@@ -102,7 +102,39 @@ async function verifyAndLink({ pnptvUserId, privyToken }) {
   return { privyId, walletAddress };
 }
 
+/**
+ * Return every wallet address linked to the given Privy user id.
+ * Used by the wallet-preference endpoint to verify a submitted address
+ * actually belongs to the caller before writing it to their DB row.
+ *
+ * All returned addresses are lowercased for case-insensitive comparison.
+ * On failure (missing Privy user, network error) returns an empty array —
+ * callers should treat that as "cannot confirm ownership" and reject.
+ *
+ * @param {string} privyId
+ * @returns {Promise<string[]>}
+ */
+async function listWalletAddresses(privyId) {
+  if (!privyId) return [];
+  try {
+    const client = getPrivyClient();
+    const privyUser = await client.getUserById(privyId);
+    if (!privyUser) return [];
+    const linked = Array.isArray(privyUser.linkedAccounts) ? privyUser.linkedAccounts : [];
+    return linked
+      .filter((a) => a?.type === 'wallet' && a.address)
+      .map((a) => String(a.address).toLowerCase());
+  } catch (err) {
+    logger.warn('[privy-link] listWalletAddresses failed', {
+      privyId,
+      err: err.message,
+    });
+    return [];
+  }
+}
+
 module.exports = {
   verifyAndLink,
   extractWalletAddress,
+  listWalletAddresses,
 };

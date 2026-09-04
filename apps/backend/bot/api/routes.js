@@ -12189,7 +12189,20 @@ app.get('/api/wallet/linked', requireSessionAuth, asyncHandler(async (req, res) 
 // devices. localStorage is still the fast path (single-device), but this row
 // is authoritative so switching wallets on phone reflects on desktop next
 // login. Body: { address: string|null } — pass null to clear the preference.
-app.put('/api/wallet/preferred', requireSessionAuth, asyncHandler(async (req, res) => {
+//
+// Rate-limited (20/min/user) to prevent hot-row WAL churn if the client re-
+// fires on every state tick. Ownership-checked: the submitted address must
+// match users.wallet_address (embedded) OR one of the caller's Privy-linked
+// wallets. This blocks spoofing an address the user does not control (they'd
+// still fail at Privy signing, but a wrong balance would confuse them first).
+const walletPreferLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => String(req.session?.user?.id || req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.put('/api/wallet/preferred', walletPreferLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session?.user;
   const userId = String(user.telegram_id || user.id);
   const raw = req.body && Object.prototype.hasOwnProperty.call(req.body, 'address')
@@ -12198,14 +12211,38 @@ app.put('/api/wallet/preferred', requireSessionAuth, asyncHandler(async (req, re
   if (raw === undefined) {
     return res.status(400).json({ ok: false, error: 'address_required' });
   }
-  // Accept null / empty string to clear; else must look like an EVM address.
+  // Accept null / empty string to clear; else must be a plain string EVM address.
   let normalized = null;
   if (raw !== null && raw !== '') {
-    const asStr = String(raw).trim();
+    if (typeof raw !== 'string') {
+      // Rejects `{"address": ["0x…"]}` — String() would coerce silently.
+      return res.status(400).json({ ok: false, error: 'invalid_address' });
+    }
+    const asStr = raw.trim();
     if (!/^0x[a-fA-F0-9]{40}$/.test(asStr)) {
       return res.status(400).json({ ok: false, error: 'invalid_address' });
     }
     normalized = asStr.toLowerCase();
+
+    // Ownership check: allow the embedded wallet fast-path (already on this row)
+    // else confirm against Privy's linked-accounts list. Fetching the Privy user
+    // adds ~200ms once per switch — acceptable for a rare action.
+    const { rows: ownRows } = await getPool().query(
+      `SELECT lower(wallet_address) AS wa, privy_id FROM users WHERE id = $1 LIMIT 1`,
+      [userId]
+    );
+    const own = ownRows[0] || {};
+    let owns = own.wa && own.wa === normalized;
+    if (!owns && own.privy_id) {
+      try {
+        const { listWalletAddresses } = require('../../services/privyLinkService');
+        const addrs = await listWalletAddresses(own.privy_id);
+        owns = addrs.includes(normalized);
+      } catch { /* fall through to reject */ }
+    }
+    if (!owns) {
+      return res.status(403).json({ ok: false, error: 'address_not_owned' });
+    }
   }
   await getPool().query(
     `UPDATE users SET preferred_wallet_address = $1 WHERE id = $2`,

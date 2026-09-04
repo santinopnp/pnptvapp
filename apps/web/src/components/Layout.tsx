@@ -23,7 +23,7 @@ import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
-import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet, PREFERRED_WALLET_EVENT } from "@/components/payments/PayInWalletChips";
 import { useWallets } from "@privy-io/react-auth";
 import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
@@ -2392,13 +2392,16 @@ function WalletFloater() {
   const { wallets } = useWallets();
   const [preferredAddr, setPreferredAddr] = useState<string | null>(() => getPreferredWallet());
   useEffect(() => {
-    // Keep in sync with other surfaces that write the preference.
+    // storage event = cross-tab writes; PREFERRED_WALLET_EVENT = same-tab
+    // writes (setPreferredWallet dispatches it). Replaces the previous 2s
+    // poll so the FAB badge updates instantly instead of after up to 2s.
     const sync = () => setPreferredAddr(getPreferredWallet());
     window.addEventListener("storage", sync);
-    // Poll infrequently — WalletHomeSheet writes via setPreferredWallet in the
-    // same tab (no storage event) so the FAB needs to notice too.
-    const iv = window.setInterval(sync, 2000);
-    return () => { window.removeEventListener("storage", sync); window.clearInterval(iv); };
+    window.addEventListener(PREFERRED_WALLET_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener(PREFERRED_WALLET_EVENT, sync);
+    };
   }, []);
   const preferredWallet = preferredAddr ? wallets.find((w) => w.address === preferredAddr) : null;
   const activeFabWallet = preferredWallet

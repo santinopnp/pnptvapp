@@ -803,6 +803,10 @@ const _LazyBuyTokensModal = _lazy(() =>
 // mirrors the choice to the user row so it survives across devices.
 import { setPreferredWalletServer as _setPreferredWalletServer } from "@/lib/api";
 export const PREFERRED_WALLET_KEY = "pnptv.wallet.preferred";
+// Same-tab event so surfaces that don't re-render on localStorage writes (the
+// FAB in Layout.tsx) can update immediately instead of polling. The native
+// `storage` event only fires on OTHER tabs — this fills the same-tab gap.
+export const PREFERRED_WALLET_EVENT = "pnptv:preferred-wallet-changed";
 export const getPreferredWallet = (): string | null => {
   try { return localStorage.getItem(PREFERRED_WALLET_KEY); } catch { return null; }
 };
@@ -811,6 +815,9 @@ export const setPreferredWallet = (addr: string | null) => {
     if (addr) localStorage.setItem(PREFERRED_WALLET_KEY, addr);
     else localStorage.removeItem(PREFERRED_WALLET_KEY);
   } catch { /* storage full / blocked — non-fatal */ }
+  try {
+    window.dispatchEvent(new CustomEvent(PREFERRED_WALLET_EVENT, { detail: { address: addr } }));
+  } catch { /* SSR / older browsers — non-fatal */ }
   // Fire-and-forget cross-device mirror. If unauthenticated the endpoint 401s;
   // that's fine because localStorage still holds the preference on this browser.
   _setPreferredWalletServer(addr);
@@ -920,31 +927,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     setActiveAddress(fallback);
   }, [wallets.map((w) => w.address).join(","), embeddedWallet?.address]);
 
-  // Hydrate localStorage preference from the server row once on mount. Ensures
-  // "my preferred wallet" survives clearing the browser cache or switching
-  // devices — the DB column preferred_wallet_address was being WRITTEN but
-  // never READ, so a fresh browser always snapped back to embedded until the
-  // user manually re-picked their wallet.
-  _useEffect(() => {
-    if (_getPreferredWallet()) return; // localStorage already has a value; trust it.
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/wallet/linked", { credentials: "include" });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-        const serverPref = data?.preferredWalletAddress;
-        if (serverPref && wallets.some((w) => w.address === serverPref)) {
-          setActiveAddress(serverPref);
-          _setPreferredWallet(serverPref);
-        }
-      } catch { /* offline / unauth — non-fatal, localStorage stays empty */ }
-    })();
-    return () => { cancelled = true; };
-  // Only run once per wallet-list-change; do not depend on activeAddress to avoid a loop.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallets.map((w) => w.address).join(",")]);
+  // Server → localStorage hydration lives in App.tsx PrivyIdentitySync so it
+  // runs once per auth cycle regardless of whether the wallet sheet is ever
+  // opened. Do NOT re-fetch here — a duplicate racing effect used to fire in
+  // parallel and could clobber a fresh setPreferred call.
 
   // One-tap reset to the PNPtv embedded wallet. Explicit + forceful — bypasses
   // any lingering "preferred=external" state and always ends with the embedded
@@ -1168,7 +1154,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
     if (wasActive || _getPreferredWallet() === addr) {
       const fallback = embeddedWallet?.address || wallets.find((w) => w.address !== addr)?.address || null;
       setActiveAddress(fallback);
-      _setPreferredWallet(fallback);
+      // Only mirror to preference storage when we have a real fallback. Writing
+      // null used to spam the server with clear-then-reset PUTs and left the
+      // DB row empty for users whose only wallet was the one they just unlinked.
+      if (fallback) _setPreferredWallet(fallback);
     }
     try {
       await unlinkWallet({ address: addr });
