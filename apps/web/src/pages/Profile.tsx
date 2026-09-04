@@ -8,7 +8,7 @@ import { formatBio } from "@/lib/feedI18n";
 import { BadgeRow } from "@/components/badges/UserBadges";
 import { useTutorial, resetAllTutorials } from "@/hooks/useTutorial";
 import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
-import { useParams, useNavigate, useSearchParams, Navigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, useLocation, Navigate } from "react-router-dom";
 import { Button, Badge, Skeleton } from "@pnptv/ui-kit";
 import { PostComposer } from "@/components/PostComposer";
 import {
@@ -121,6 +121,7 @@ export default function Profile() {
   const { userId: paramUserId, username: paramUsername } = useParams<{ userId?: string; username?: string }>();
   const effectiveParamId = paramUserId || paramUsername || undefined;
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
 
   const t = useI18n();
@@ -147,7 +148,7 @@ export default function Profile() {
   const authUserCreatorStatus = (user as (typeof user & { creator_status?: string }) | null)?.creator_status;
   useEffect(() => {
     if (isOwnProfile && authUserCreatorStatus === "active" && user?.username) {
-      navigate(`/c/${user.username}`, { replace: true });
+      navigate(`/c/${user.username}${location.search}${location.hash}`, { replace: true });
     }
   }, [isOwnProfile, authUserCreatorStatus, user?.username, navigate]);
 
@@ -462,7 +463,7 @@ export default function Profile() {
           // where a member views another user by numeric ID and that user turns
           // out to be a creator.
           if (res.profile.creatorStatus === "active" && res.profile.username) {
-            navigate(`/c/${res.profile.username}`, { replace: true });
+            navigate(`/c/${res.profile.username}${location.search}${location.hash}`, { replace: true });
             return;
           }
           setProfile(res.profile);
@@ -991,7 +992,7 @@ export default function Profile() {
   // Creators — including the creator themselves — always land on /c/:username.
   // Edit affordances live in Creator Studio → Settings.
   if (profile.creatorStatus === "active" && profile.username) {
-    return <Navigate to={`/c/${profile.username}`} replace />;
+    return <Navigate to={`/c/${profile.username}${location.search}${location.hash}`} replace />;
   }
 
   const photoUrl = resolvePhotoUrl(profile.photoUrl);

@@ -1,5 +1,5 @@
 import React, { lazy, useEffect, useState } from "react";
-import { createBrowserRouter, Navigate, useNavigate, useParams, useRouteError } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams, useRouteError } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
 import { joinHangoutByInvite, ApiError, getEvent, type EventItem } from "@/lib/api";
 import { EventDetailModal } from "@/components/events/EventDetailModal";
@@ -101,12 +101,16 @@ function PreLiveConsentGate({ children }: { children: React.ReactNode }) {
 
 function HangoutToChatRedirect() {
   const { groupId } = useParams();
-  return <Navigate to={`/chat/${groupId}`} replace />;
+  // Preserve search + hash: a redirect that rebuilds only the path silently
+  // drops deep-link intent such as ?action=book.
+  const { search, hash } = useLocation();
+  return <Navigate to={`/chat/${groupId}${search}${hash}`} replace />;
 }
 
 function CreatorUsernameRedirect() {
   const { username } = useParams<{ username: string }>();
-  return <Navigate to={`/c/${username}`} replace />;
+  const { search, hash } = useLocation();
+  return <Navigate to={`/c/${username}${search}${hash}`} replace />;
 }
 
 function RouteErrorFallback() {

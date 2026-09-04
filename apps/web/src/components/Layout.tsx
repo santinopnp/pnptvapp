@@ -1130,8 +1130,8 @@ export function Layout() {
       <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-72 lg:flex-col border-r border-pnp-border glass-nav">
         {/* Sidebar header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-pnp-border">
-          <div className="flex items-center gap-2">
-            <img src="/logo-lockup.webp" alt="PNPtv!" className="h-9 w-auto" />
+          <div className="flex items-center gap-2 shrink-0">
+            <img src="/logo-lockup.webp" alt="PNPtv!" className="h-9 w-auto shrink-0 object-contain" />
           </div>
           <div className="flex items-center gap-1">
             {/* Search */}
