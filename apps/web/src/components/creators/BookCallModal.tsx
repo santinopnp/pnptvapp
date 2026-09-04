@@ -1032,68 +1032,45 @@ export function BookCallModal({
         </>
       )}
 
-      {/* Existing paid credit — skip payment, book directly */}
-      {existingCredit && (
-        <div
-          className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
-          style={{ background: "rgba(52,199,89,0.08)", border: "1px solid rgba(52,199,89,0.30)" }}
-        >
-          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#34C759" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-xs" style={{ color: "#34C759" }}>
-            You have a paid {existingCredit.duration_minutes}-min session credit — no payment needed. Select a time and confirm.
-          </p>
-        </div>
-      )}
-
-      {/* Nudge: credit exists but for the OTHER duration — offer one-click switch */}
-      {!existingCredit && otherDurationCredit && (
-        <div
-          className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
-          style={{ background: "rgba(255,204,0,0.10)", border: "1px solid rgba(255,204,0,0.35)" }}
-        >
-          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FFCC00" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-          </svg>
-          <div className="flex-1 flex flex-col gap-2">
-            <p className="text-xs" style={{ color: "#FFCC00" }}>
-              You already paid for a <b>{otherDurationCredit.duration_minutes}-min</b> credit with this creator — don't buy again.
-            </p>
-            <button
-              type="button"
-              onClick={() => setDuration(otherDurationCredit.duration_minutes as 30 | 60)}
-              className="self-start text-xs font-bold px-3 py-1.5 rounded-lg transition-opacity hover:opacity-90"
-              style={{ background: "#FFCC00", color: "#0A0A0A" }}
-            >
-              Switch to {otherDurationCredit.duration_minutes} min and use it →
-            </button>
-          </div>
-        </div>
-      )}
       {creditBookingError && (
         <p className="text-xs px-1" style={{ color: "#FF453A" }}>{creditBookingError}</p>
       )}
 
-      {existingCredit ? (
+      <button
+        type="button"
+        disabled={!selectedSlot && !isOnline}
+        onClick={handleNextFromSlot}
+        className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+        style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
+      >
+        {isOnline && !selectedSlot ? t.creator.callNowBtn : t.creator.nextBtn}
+      </button>
+
+      {(existingCredit || otherDurationCredit) && (
         <button
           type="button"
           disabled={!selectedSlot || creditBookingLoading}
-          onClick={handleBookWithCredit}
-          className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 flex items-center justify-center gap-2"
-          style={{ background: "linear-gradient(90deg, #34C759, #30D158)" }}
+          onClick={() => {
+            if (existingCredit) {
+              handleBookWithCredit();
+            } else if (otherDurationCredit) {
+              setDuration(otherDurationCredit.duration_minutes as 30 | 60);
+            }
+          }}
+          className="w-full text-xs px-2 py-2 rounded-lg transition-opacity disabled:opacity-40 disabled:cursor-not-allowed underline-offset-2 hover:underline"
+          style={{ background: "transparent", color: "var(--pnp-text-secondary, #8E8E93)" }}
         >
-          {creditBookingLoading ? <Spinner size={18} /> : "✓ Confirm Booking (Credit Applied)"}
-        </button>
-      ) : (
-        <button
-          type="button"
-          disabled={!selectedSlot && !isOnline}
-          onClick={handleNextFromSlot}
-          className="w-full min-h-[48px] rounded-2xl text-base font-bold text-white transition-opacity disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-          style={{ background: "linear-gradient(90deg, #D4007A, #E69138)" }}
-        >
-          {isOnline && !selectedSlot ? t.creator.callNowBtn : t.creator.nextBtn}
+          {creditBookingLoading ? (
+            <Spinner size={14} />
+          ) : existingCredit ? (
+            t.lang === "es"
+              ? `O usa tu crédito guardado de ${existingCredit.duration_minutes} min`
+              : `Or use your saved ${existingCredit.duration_minutes}-min credit`
+          ) : (
+            t.lang === "es"
+              ? `O cambia a ${otherDurationCredit!.duration_minutes} min y usa tu crédito guardado`
+              : `Or switch to ${otherDurationCredit!.duration_minutes} min and use your saved credit`
+          )}
         </button>
       )}
     </div>
