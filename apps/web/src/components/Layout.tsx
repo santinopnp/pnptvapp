@@ -23,7 +23,12 @@ import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
-import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet, PREFERRED_WALLET_EVENT } from "@/components/payments/PayInWalletChips";
+import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet } from "@/components/payments/PayInWalletChips";
+
+// Duplicated string (not imported) to keep the FAB in the main bundle without
+// pulling in the lazy PayInWalletChips chunk. Keep in sync with the export in
+// PayInWalletChips.tsx — the dispatcher and listener must agree on the name.
+const PREFERRED_WALLET_EVENT = "pnptv:preferred-wallet-changed";
 import { useWallets } from "@privy-io/react-auth";
 import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
