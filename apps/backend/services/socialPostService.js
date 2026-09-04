@@ -1412,9 +1412,9 @@ class SocialPostService {
     const EntitlementAccessService = require('./entitlementAccessService');
     const actorIsSuperGod = EntitlementAccessService.isSuperGod(userId);
 
-    if (replyToId && !actorIsSuperGod) {
-      await query('UPDATE social_posts SET replies_count = replies_count + 1 WHERE id = $1 AND is_deleted = false', [replyToId]);
-    }
+    // replies_count is now trigger-maintained (migration 388) — trigger fires
+    // on INSERT/UPDATE/DELETE and covers cases the app-side +1 missed (bulk
+    // SQL deletes, admin cascades). Do not increment here or count doubles.
     if (repostOfId && !actorIsSuperGod) {
       await query('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
     }
@@ -1822,9 +1822,8 @@ class SocialPostService {
         await MediaCleanupService.deletePostMedia(postId);
         await SocialPostService._cascadeDeleteDependents(postId);
         const { reply_to_id, repost_of_id, channel_id } = rows[0];
-        if (reply_to_id) {
-          await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);
-        }
+        // replies_count trigger (migration 388) auto-decrements on soft-delete.
+        if (reply_to_id) { /* handled by trigger */ }
         if (repost_of_id) {
           await query('UPDATE social_posts SET reposts_count = GREATEST(reposts_count - 1, 0) WHERE id = $1', [repost_of_id]);
         }
