@@ -49,6 +49,13 @@ interface TipRushRailProps {
    * work.
    */
   allowGifted?: boolean;
+  /**
+   * Initial preset amount (Ru$h). When set, the rail opens with that chip
+   * already selected so the parent's picker choice is respected. Callers like
+   * QuickTipSheet pass the user's picked amount here so the Send button is
+   * immediately enabled (otherwise `amount` starts null and Send stays disabled).
+   */
+  selectedPreset?: number | null;
   /** Called after a successful tip. */
   onSuccess?: (newBalance: number | null) => void;
   onClose?: () => void;
@@ -75,13 +82,16 @@ export function TipRushRail({
   showMessage = true,
   showBalance = true,
   allowGifted = false,
+  selectedPreset = null,
   onSuccess,
   onClose,
   className,
 }: TipRushRailProps) {
   const t = useI18n();
   const lang = t.lang === "es" ? "es" : "en";
-  const [amount, setAmount] = useState<number | null>(null);
+  const [amount, setAmount] = useState<number | null>(selectedPreset);
+  // Keep amount in sync when the parent picker changes preset.
+  useEffect(() => { if (selectedPreset !== null) setAmount(selectedPreset); }, [selectedPreset]);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<"success" | "error" | null>(null);
