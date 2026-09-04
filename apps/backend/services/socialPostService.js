@@ -646,6 +646,7 @@ class SocialPostService {
          LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
          WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
            AND sp.user_id = ANY($2::text[])
+           AND sp.created_at > NOW() - INTERVAL '7 days'
            AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
            AND sp.user_id != ALL($3::text[])
          ORDER BY sp.user_id, sp.id DESC`,
@@ -2227,8 +2228,13 @@ class SocialPostService {
        ${orderBy}
        LIMIT $2`;
 
-    // Fire live/online pin fetch alongside the main query (first page only)
-    const pinsPromise = cursorId
+    // Fire live/online pin fetch alongside the main query (first page only).
+    // Skip pins on tabs whose contract is an explicit sort — pins used to
+    // prepend ancient posts from live-but-inactive creators above real recent
+    // content, making "Latest" show month-old items. Latest/hot/slam are
+    // meant to be pure by their sort key.
+    const skipPins = cursorId || f === 'latest' || f === 'hot' || f === 'slam';
+    const pinsPromise = skipPins
       ? Promise.resolve([])
       : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
 
