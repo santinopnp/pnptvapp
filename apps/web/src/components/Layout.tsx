@@ -29,6 +29,10 @@ import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet }
 // pulling in the lazy PayInWalletChips chunk. Keep in sync with the export in
 // PayInWalletChips.tsx — the dispatcher and listener must agree on the name.
 const PREFERRED_WALLET_EVENT = "pnptv:preferred-wallet-changed";
+// Dispatched by desktop-sidebar + mobile-drawer "Wallet" nav items so any
+// surface can pop the WalletHomeSheet without changing routes. WalletFloater
+// listens and calls setOpen(true).
+const OPEN_WALLET_EVENT = "pnptv:open-wallet";
 import { useWallets } from "@privy-io/react-auth";
 import { SelfCamFloater } from "@/components/mainstage/SelfCamFloater";
 import { ThreadListView, DmChatView } from "@/pages/DirectMessages";
@@ -870,6 +874,12 @@ export function Layout() {
       label: "YOU",
       items: [
         {
+          to: "/wallet",
+          isWallet: true,
+          label: "Wallet",
+          icon: <span className="text-base leading-none shrink-0" aria-hidden="true">💎</span>,
+        },
+        {
           to: "/profile",
           label: "My Profile",
           icon: <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>,
@@ -1253,6 +1263,19 @@ export function Layout() {
                     );
                   }
 
+                  if ((item as any).isWallet) {
+                    return (
+                      <button
+                        key={item.to}
+                        onClick={() => window.dispatchEvent(new CustomEvent(OPEN_WALLET_EVENT))}
+                        className={`${baseClasses} ${inactiveClasses}`}
+                      >
+                        {item.icon}
+                        <span className="flex-1 text-left">{item.label}</span>
+                      </button>
+                    );
+                  }
+
                   return (
                     <NavLink
                       key={item.to}
@@ -1571,6 +1594,18 @@ export function Layout() {
                     <svg className="w-3.5 h-3.5 text-pnp-textSecondary/50 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                   </summary>
                   <div className="mt-1 space-y-0.5">
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        window.dispatchEvent(new CustomEvent(OPEN_WALLET_EVENT));
+                      }}
+                      className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span aria-hidden="true">💎</span>
+                        Wallet
+                      </span>
+                    </button>
                     <button
                       onClick={() => { setMobileMenuOpen(false); setDmPartnerId(null); setIsDmPanelOpen(true); }}
                       className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-pnp-textSecondary hover:text-pnp-textPrimary hover:bg-pnp-surface"
@@ -2434,6 +2469,15 @@ function WalletFloater() {
   const path = location.pathname;
   const isMainStage = path === "/main-stage";
   const isCreatorProfile = !!creatorUsername;
+
+  // Listen for OPEN_WALLET_EVENT so the desktop sidebar and mobile drawer
+  // "Wallet" nav items can pop the sheet from any surface without a route
+  // change. Same-tab CustomEvent dispatched by the nav buttons.
+  useEffect(() => {
+    const openHandler = () => setOpen(true);
+    window.addEventListener(OPEN_WALLET_EVENT, openHandler);
+    return () => window.removeEventListener(OPEN_WALLET_EVENT, openHandler);
+  }, []);
 
   // Auto-open on ?openWallet=1 so /wallet deep-links (push notifications,
   // broadcast emails, etc.) that redirect here actually surface the sheet.
