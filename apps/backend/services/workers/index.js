@@ -533,6 +533,32 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'notifications-group-message-prune': {
+      // FIX 7 (audit 2026-09-04): drop stale group_message notifications in
+      // 10k-row batches so the index lock never held longer than a few ms per
+      // pass. Loop until a batch comes back empty.
+      let totalDeleted = 0;
+      let iterations = 0;
+      // Hard cap: never spin forever if the table balloons — 200 iterations
+      // = up to 2M rows per nightly run, which is well past any real load.
+      const MAX_ITER = 200;
+      while (iterations < MAX_ITER) {
+        const { rowCount } = await pgQuery(`
+          DELETE FROM notifications
+           WHERE id IN (
+             SELECT id FROM notifications
+              WHERE type = 'group_message'
+                AND created_at < NOW() - INTERVAL '14 days'
+              LIMIT 10000
+           )`);
+        if (!rowCount) break;
+        totalDeleted += rowCount;
+        iterations++;
+      }
+      logger.info('Notifications group_message prune completed', { deleted: totalDeleted, batches: iterations });
+      return;
+    }
+
     case 'featured-creator-promo': {
       const svc = _safeRequire('../featuredCreatorPromoService');
       if (!svc) { logger.warn('[BullMQ] featured-creator-promo: service not found'); return; }

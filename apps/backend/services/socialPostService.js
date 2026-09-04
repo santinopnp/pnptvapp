@@ -1680,6 +1680,39 @@ class SocialPostService {
 
   // ── Delete Post ───────────────────────────────────────────────────────────
 
+  /**
+   * FIX 8 (audit 2026-09-04): cascade notifications + post_mentions cleanup
+   * on soft-delete. Notifications are hard-deleted so the user's inbox
+   * doesn't keep pointing at gone content. post_mentions rows are also
+   * removed so future reads don't need to join on posts.is_deleted=false
+   * to filter them out.
+   */
+  static async _cascadeDeleteDependents(postId) {
+    let notifDeleted = 0;
+    let mentionsDeleted = 0;
+    try {
+      const nr = await query(
+        `DELETE FROM notifications WHERE entity_type = 'post' AND entity_id = $1::text`,
+        [String(postId)]
+      );
+      notifDeleted = nr.rowCount || 0;
+    } catch (err) {
+      logger.warn('deletePost: notifications cascade failed', { postId, err: err.message });
+    }
+    try {
+      const mr = await query(
+        `DELETE FROM post_mentions WHERE post_id = $1`,
+        [postId]
+      );
+      mentionsDeleted = mr.rowCount || 0;
+    } catch (err) {
+      logger.warn('deletePost: post_mentions cascade failed', { postId, err: err.message });
+    }
+    if (notifDeleted || mentionsDeleted) {
+      logger.info('deletePost cascade', { postId, notifDeleted, mentionsDeleted });
+    }
+  }
+
   static async deletePost(postId, userId, isAdmin = false) {
     if (isAdmin) {
       const { rows, rowCount } = await query(
@@ -1688,6 +1721,7 @@ class SocialPostService {
       );
       if (rowCount > 0) {
         await MediaCleanupService.deletePostMedia(postId);
+        await SocialPostService._cascadeDeleteDependents(postId);
         const { reply_to_id, repost_of_id, channel_id } = rows[0];
         if (reply_to_id) {
           await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);
@@ -1707,6 +1741,7 @@ class SocialPostService {
     );
     if (rowCount > 0) {
       await MediaCleanupService.deletePostMedia(postId);
+      await SocialPostService._cascadeDeleteDependents(postId);
       const { reply_to_id, repost_of_id, channel_id } = rows[0];
       if (reply_to_id) {
         await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);

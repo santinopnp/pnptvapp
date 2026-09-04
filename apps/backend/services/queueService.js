@@ -235,6 +235,16 @@ async function initializeQueues() {
     jobId: 'cron-video-log-cleanup',
   });
 
+  // FIX 7 (audit 2026-09-04): stale group_message notifications prune —
+  // daily at 02:00 UTC. group_message rows pile up quickly (every hangout
+  // message spawns one for each ping'd member) and the >14-day slice is
+  // pure clutter that also inflates the notifications index.
+  await cronQueue.add('notifications-group-message-prune', {}, {
+    repeat: { pattern: '0 2 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-notifications-group-message-prune',
+  });
+
   // Featured Model of the Day promo (X + Telegram) — daily at 15:00 UTC
   // (10am ET / 12pm Bogota, peak-lunch engagement window).
   await cronQueue.add('featured-creator-promo', {}, {
