@@ -93,7 +93,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // chain), BTC, or ETH outside our Base wallet flow. Must live before the
   // `if (!isOpen) return null` early return — hook order must be identical on
   // every render or React #310 fires when the modal opens/closes.
-  const [npCoin, setNpCoin] = useState<'usdcerc20' | 'btc' | 'eth'>('usdcerc20');
+  const [npCoin, setNpCoin] = useState<'usdcerc20' | 'btc' | 'eth'>('btc');
   const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via

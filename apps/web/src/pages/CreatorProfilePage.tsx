@@ -415,7 +415,7 @@ export default function CreatorProfilePage() {
   const channelPassPanelRef = useRef<HTMLDivElement>(null);
   // Crypto sub-state
   const [cryptoMethod, setCryptoMethod] = useState<"usdc_base" | "any_crypto">("usdc_base");
-  const [cryptoCoin, setCryptoCoin] = useState<string>("usdcerc20");
+  const [cryptoCoin, setCryptoCoin] = useState<string>("btc");
   const channelPassPopupRef = useRef<Window | null>(null);
   const channelPassPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
