@@ -10926,9 +10926,21 @@ export interface VideoPurchaseResult {
 
 export interface ChannelPassCheckoutResult {
   success: boolean;
-  expires_at: string | null;
-  new_balance: number;
+  // rush shape
+  expires_at?: string | null;
+  new_balance?: number;
   subscription_id?: string;
+  // wallet_usdc shape
+  payment_url?: string;
+  checkout_intent_id?: string;
+  // nowpayments shape
+  order_id?: string;
+  pay_currency?: string;
+  // error shapes
+  code?: string;
+  error?: string;
+  available?: number;
+  required?: number;
 }
 
 export async function getVideoAccess(videoId: string | number): Promise<VideoAccessInfo> {
@@ -10947,11 +10959,14 @@ export async function purchaseVideoAccess(
 
 export async function checkoutChannelPass(
   creatorId: string,
-  provider: "rush" = "rush"
+  provider: "rush" | "wallet_usdc" | "nowpayments" | "stripe" | "moonpay" = "rush",
+  payCurrency?: string,
 ): Promise<ChannelPassCheckoutResult> {
+  const body: { provider: string; payCurrency?: string } = { provider };
+  if (payCurrency) body.payCurrency = payCurrency;
   return request(`/api/creators/${encodeURIComponent(creatorId)}/channel-pass/checkout`, {
     method: "POST",
-    body: { provider },
+    body,
   });
 }
 

@@ -48,15 +48,25 @@ router.get('/creators/:creatorId/channel-pass', async (req, res) => {
 });
 
 // POST /api/subscriptions/creators/:creatorId/channel-pass/checkout
-// Body: { provider: 'rush'|'stripe'|'moonpay'|'wallet_usdc'|'nowpayments' }
+// Body: { provider: 'rush'|'wallet_usdc'|'nowpayments'|'stripe'|'moonpay', payCurrency?: string }
+//
+// Response shapes by provider:
+//   rush         → { success, data: { expires_at, new_balance, subscription_id } }
+//   wallet_usdc  → { success, data: { payment_id, receiving_address, amount_native,
+//                                     amount_usdc, chain, token, contract_address, expires_at } }
+//   nowpayments  → { success, data: { payment_url, order_id, nowpayments_invoice_id, pay_currency } }
+//   stripe/moonpay → { success: false, error: { code: 'NOT_IMPLEMENTED_YET' } } (HTTP 501)
 router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req, res) => {
   const userId = req.session?.user?.id;
   const { creatorId } = req.params;
-  const { provider } = req.body || {};
+  const { provider, payCurrency } = req.body || {};
 
   const VALID_PROVIDERS = ['rush', 'stripe', 'moonpay', 'wallet_usdc', 'nowpayments'];
   if (!provider || !VALID_PROVIDERS.includes(provider)) {
-    return res.status(400).json({ success: false, error: { code: 'INVALID_PROVIDER', message: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` } });
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_PROVIDER', message: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` },
+    });
   }
 
   try {
@@ -65,6 +75,22 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
       return res.json({ success: true, data: result });
     }
 
+    if (provider === 'wallet_usdc') {
+      const result = await channelPassService.purchaseWithFiat({ userId, creatorId, provider: 'wallet_usdc' });
+      return res.json({ success: true, data: result });
+    }
+
+    if (provider === 'nowpayments') {
+      const result = await channelPassService.purchaseWithFiat({
+        userId,
+        creatorId,
+        provider: 'nowpayments',
+        payCurrency: payCurrency || null,
+      });
+      return res.json({ success: true, data: result });
+    }
+
+    // stripe / moonpay — not yet implemented
     const result = await channelPassService.purchaseWithFiat({ userId, creatorId, provider });
     return res.status(501).json({ success: false, error: result });
   } catch (err) {
@@ -76,6 +102,15 @@ router.post('/creators/:creatorId/channel-pass/checkout', authGuard, async (req,
     }
     if (err && err.code === 'INSUFFICIENT_FUNDS') {
       return res.status(402).json({ success: false, error: { code: 'INSUFFICIENT_FUNDS', message: 'Not enough Ru$h. Top up your wallet and try again.' } });
+    }
+    if (err && err.code === 'CRYPTO_INIT_FAILED') {
+      return res.status(502).json({ success: false, error: { code: 'CRYPTO_INIT_FAILED', message: err.message } });
+    }
+    if (err && err.code === 'NOWPAYMENTS_ERROR') {
+      return res.status(502).json({ success: false, error: { code: 'NOWPAYMENTS_ERROR', message: err.message } });
+    }
+    if (err && err.code === 'NOWPAYMENTS_NOT_CONFIGURED') {
+      return res.status(503).json({ success: false, error: { code: 'NOWPAYMENTS_NOT_CONFIGURED', message: err.message } });
     }
     logger.error('[channelPassRoute] checkout error', { userId, creatorId, provider, error: err.message });
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Purchase failed. Please try again.' } });

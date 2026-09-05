@@ -38,6 +38,7 @@ const VALID_SURFACES = new Set([
   'crystal_self',    // Crystal Creator pass — invited creator self-purchase ($100/30d)
   'crystal_gift',    // Crystal Creator pass — fan gifts to a creator ($150/30d)
   'crystal_service', // Crystal Creator premium service booking (private call / custom content / etc.)
+  'channel_pass',    // Channel Pass — fan monthly sub to a creator ($5-$50/30d)
 ]);
 
 // ── Ru$h rail ──────────────────────────────────────────────────────────────
@@ -623,6 +624,8 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
     fulfillResult = await _fulfillCrystalPass(client, { userId, entitlementSpec, provider, intentId, isGift: true });
   } else if (surface === 'crystal_service') {
     fulfillResult = await _fulfillCrystalService(client, { userId, entitlementSpec, provider, intentId, amountUsd });
+  } else if (surface === 'channel_pass') {
+    fulfillResult = await _fulfillChannelPass(client, { userId, entitlementSpec, provider, intentId, amountUsd });
   } else {
     fulfillResult = await _fulfillEntitlement(client, { userId, entitlementSpec, surface, provider, intentId, amountUsd });
   }
@@ -646,6 +649,7 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
         crystal_self:    'Crystal Creator Pass — Self',
         crystal_gift:    'Crystal Creator Pass — Gift',
         crystal_service: `Crystal service — ${spec.serviceType || 'unknown'}`,
+        channel_pass:    `Channel Pass${spec.creatorId ? ` — ${String(spec.creatorId).slice(0, 12)}` : ''}`,
         prime:           `PRIME — ${spec.add_on_id || spec.plan_id || 'plan'}`,
         membership:      `Membership — ${spec.add_on_id || spec.plan_id || 'plan'}`,
         creator_sub:     `Creator sub${spec.creator_id || spec.creatorId ? ` — ${String(spec.creator_id || spec.creatorId).slice(0, 12)}` : ''}`,
@@ -686,6 +690,53 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   });
 
   return fulfillResult;
+}
+
+/**
+ * Fulfill a Channel Pass wallet-USDC purchase. Delegates to
+ * channelPassService.fulfillChannelPassFromPayment with the caller's client
+ * so both writes commit atomically with the intent status flip.
+ *
+ * entitlementSpec: { creatorId, type:'channel_pass' }
+ * Server re-loads creator's authoritative price and validates against amountUsd.
+ */
+async function _fulfillChannelPass(client, { userId, entitlementSpec, provider, intentId, amountUsd }) {
+  const { creatorId } = entitlementSpec || {};
+  if (!creatorId) {
+    throw new Error(`_fulfillChannelPass: creatorId required (intentId=${intentId})`);
+  }
+
+  const { rows: crRows } = await client.query(
+    `SELECT channel_pass_enabled, channel_pass_price_usd
+       FROM users WHERE id = $1::text LIMIT 1`,
+    [String(creatorId)]
+  );
+  const cr = crRows[0];
+  if (!cr || !cr.channel_pass_enabled || cr.channel_pass_price_usd == null) {
+    throw new Error(`_fulfillChannelPass: creator ${creatorId} has no active pass (intentId=${intentId})`);
+  }
+
+  const authPriceCents = Math.round(Number(cr.channel_pass_price_usd) * 100);
+  const declaredCents  = Math.round((Number(amountUsd) || 0) * 100);
+  if (Math.abs(authPriceCents - declaredCents) > 1) {
+    throw new Error(`_fulfillChannelPass: price mismatch (intent=${declaredCents}¢ expected=${authPriceCents}¢)`);
+  }
+
+  const channelPassService = require('./channelPassService');
+  const result = await channelPassService.fulfillChannelPassFromPayment({
+    userId:          String(userId),
+    creatorId:       String(creatorId),
+    priceUsd:        Number(cr.channel_pass_price_usd),
+    sourceProvider:  `wallet_${provider || 'usdc'}`,
+    sourceRef:       `checkout_intent:${intentId}`,
+    externalClient:  client,
+  });
+
+  logger.info('[walletCheckout] _fulfillChannelPass: fulfilled', {
+    intentId, userId, creatorId, priceUsd: cr.channel_pass_price_usd,
+    subscriptionId: result.subscription_id, alreadyFulfilled: result.already_fulfilled,
+  });
+  return { subscriptionId: result.subscription_id, alreadyApplied: !!result.already_fulfilled };
 }
 
 /**

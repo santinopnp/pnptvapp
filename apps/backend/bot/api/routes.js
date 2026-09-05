@@ -15582,6 +15582,48 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     return res.json({ received: true });
   }
 
+  // channel_pass: grant creator channel subscription via channelPassService.
+  // Detected by meta.flow = 'channel_pass' (set at invoice creation).
+  // Must run BEFORE token_purchase to prevent fall-through on unrecognised plan_id.
+  {
+    const cpMeta = typeof order.metadata === 'string' ? JSON.parse(order.metadata) : (order.metadata || {});
+    if (cpMeta.flow === 'channel_pass') {
+      try {
+        const channelPassService = require('../../services/channelPassService');
+        await channelPassService.fulfillChannelPassFromPayment({
+          userId: order.user_id,
+          creatorId: cpMeta.creatorId,
+          priceUsd: Number(cpMeta.priceUsd || order.usd_amount),
+          sourceProvider: 'nowpayments',
+          sourceRef: order_id,
+        });
+        // Atomic status flip — AND status='processing' guard prevents double-flip
+        // on replay (idempotency: fulfillChannelPassFromPayment is safe to re-enter,
+        // but the DSO flip must be atomic so the outer lock gate stays consistent).
+        await dbQuery(
+          `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2
+           WHERE btcpay_invoice_id = $1 AND status = 'processing'`,
+          [order_id, `nowpayments:channel_pass:${payment_id}`]
+        );
+        logger.info('[NOWPayments] IPN: channel_pass fulfilled', {
+          order_id, userId: order.user_id, creatorId: cpMeta.creatorId, payment_id,
+        });
+      } catch (cpErr) {
+        logger.error('[NOWPayments] IPN: channel_pass fulfillment failed', {
+          order_id, error: cpErr.message,
+        });
+        await dbQuery(
+          `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+          [order_id, `channel_pass:grant_failed:${cpErr.message}`.slice(0, 500)]
+        ).catch(() => {});
+        // Return 500 so NowPayments retries — fulfillChannelPassFromPayment is idempotent.
+        return res.status(500).json({ error: 'channel_pass_fulfillment_failed' });
+      }
+      _npLogRevenueAndSync(order, payment_id);
+      return res.json({ received: true, type: 'channel_pass' });
+    }
+  }
+
   // token_purchase orders: credit tokens directly, do not call grantEntitlementsForPlan
   if (order.plan_id === 'token_purchase') {
     const tokenMeta = order.metadata || {};
@@ -15949,6 +15991,56 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     } catch (_) { /* non-fatal */ }
     maybeGrantFirstHourCryptoBonus(order.user_id).catch(() => {});
     return res.json({ received: true });
+  }
+
+  // channel_pass: creator Channel Pass via NowPayments.
+  // Fulfillment delegates to channelPassService.fulfillChannelPassFromPayment() which
+  // runs the subscription+entitlement+earnings upsert and is idempotent on sourceRef.
+  if (order.plan_id === 'channel_pass') {
+    const cpMeta = order.metadata || {};
+    const cpCreatorId    = String(cpMeta.creatorId    || order.creator_id || '');
+    const cpSubscriberId = String(cpMeta.subscriberId || order.user_id    || '');
+
+    if (!cpCreatorId || !cpSubscriberId) {
+      logger.error('[NOWPayments] IPN: channel_pass missing creatorId or subscriberId', { order_id, cpMeta });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, 'channel_pass:missing_ids']
+      ).catch(() => {});
+      return res.status(422).json({ error: 'channel_pass:missing_ids' });
+    }
+
+    try {
+      const ChannelPassSvc = require('../../services/channelPassService');
+      const cpResult = await ChannelPassSvc.fulfillChannelPassFromPayment({
+        userId:         cpSubscriberId,
+        creatorId:      cpCreatorId,
+        priceUsd:       parseFloat(order.usd_amount) || parseFloat(cpMeta.priceUsd) || 0,
+        sourceProvider: 'nowpayments',
+        sourceRef:      order_id,
+      });
+
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'completed', completed_at = NOW(), notes = $2
+         WHERE btcpay_invoice_id = $1`,
+        [order_id, `nowpayments:channel_pass:${payment_id}${cpResult.already_fulfilled ? ':dup' : ''}`]
+      );
+
+      logger.info('[NOWPayments] IPN: channel_pass fulfilled', {
+        order_id, cpCreatorId, cpSubscriberId,
+        alreadyFulfilled: cpResult.already_fulfilled, payment_id,
+      });
+    } catch (cpErr) {
+      logger.error('[NOWPayments] IPN: channel_pass fulfillment failed', { order_id, error: cpErr.message });
+      await dbQuery(
+        `UPDATE dash_subscription_orders SET status = 'pending', notes = $2 WHERE btcpay_invoice_id = $1`,
+        [order_id, `channel_pass:fulfill_failed:${cpErr.message}`.slice(0, 500)]
+      ).catch(() => {});
+      return res.status(500).json({ error: 'channel_pass:fulfill_failed' });
+    }
+
+    _npLogRevenueAndSync(order, payment_id);
+    return res.json({ received: true, type: 'channel_pass' });
   }
 
   // Scoped resource purchase (channel_access / hangout_access via NowPayments)
