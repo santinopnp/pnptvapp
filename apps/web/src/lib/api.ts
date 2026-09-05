@@ -4402,6 +4402,14 @@ export interface CreatorDashboard {
   crystalActiveUntil?: string | null;
   /** True once the creator has ever been invited to (or granted) a Crystal pass. */
   crystalInvited?: boolean;
+  /** True when the creator has their monthly Channel Pass activated. */
+  channelPassEnabled?: boolean;
+  /** Monthly USD price the creator charges for Channel Pass ($5–$50), or null if not set. */
+  channelPassPriceUsd?: number | null;
+  /** Count of published videos this creator has that don't have rent/buy prices set. */
+  videosUnpricedCount?: number;
+  /** True when the creator is currently live-broadcasting (REGLA B: this drives call availability). */
+  isLiveNow?: boolean;
 }
 
 export interface CreatorSubscriptionStatus {
@@ -8286,14 +8294,13 @@ export function setNextShowDate(
 export interface AcceptingCallsStatus {
   accepting: boolean;
   online: boolean;
-  /** ISO string — only present when accepting=true */
-  acceptingUntil?: string;
+  /** REGLA B: creator is currently live-broadcasting. Bookable = accepting && online && isLive. */
+  isLive?: boolean;
 }
 
 export interface SetAcceptingCallsResponse {
   success: boolean;
-  /** ISO string — only present when accepting=true */
-  acceptingUntil?: string;
+  accepting?: boolean;
 }
 
 /** Creator: read own accepting-calls state (use own userId). */
