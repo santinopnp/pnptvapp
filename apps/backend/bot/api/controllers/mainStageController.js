@@ -18,6 +18,7 @@ const livekitService    = require('../../../services/livekitService');
 const mainStageConsentService = require('../../../services/mainStageConsentService');
 const EntitlementAccessService = require('../../../services/entitlementAccessService');
 const mainStageGateService = require('../../../services/mainStageGateService');
+const adUnlockService      = require('../../../services/adUnlockService');
 // RoomServiceClient is accessed via livekitService.getRoomClient() — no local import needed.
 
 // ── Media source allowlist / SSRF guard ───────────────────────────────────────
@@ -676,12 +677,64 @@ const viewerToken = asyncHandler(async (req, res) => {
 /**
  * GET /api/main-stage/free-viewer-token
  * Session-auth only. Issues a short-TTL Main Stage viewer token to free-tier
- * users during a currently-open gating window. TTL is clamped to the window
- * close so the token can't outlive the 1h teaser. When the gate is disabled
- * or closed, returns 403 with {code, gateState} so the frontend can render
- * a countdown + upgrade CTA.
+ * users. Two paths:
+ *
+ * 1. Ad-unlock bypass (checked first): user has an active rewarded-ad unlock
+ *    for 'mainstage_extend'. Token TTL is clamped to the unlock expiry so it
+ *    can't outlive the 30-min ad grant. Returns { viaAdUnlock: true,
+ *    unlockExpiresAt }.
+ *
+ * 2. Gate window: falls through to the existing mainStageGateService check.
+ *    Returns 403 MAIN_STAGE_GATED when the gate is disabled or outside a
+ *    window so the frontend can render a countdown + upgrade CTA.
+ *
+ * If an ad-unlock is < 5 min from expiry we still issue the token — a short
+ * session is better than an abrupt 403 mid-watch.
  */
 const freeViewerToken = asyncHandler(async (req, res) => {
+  const userId = req.user?.id;
+
+  // ── Path 1: ad-unlock bypass ────────────────────────────────────────────
+  try {
+    const adUnlockExpiresAt = await adUnlockService.getActiveUnlockExpiresAt(
+      userId,
+      'mainstage_extend',
+    );
+    if (adUnlockExpiresAt) {
+      const expiresMs   = new Date(adUnlockExpiresAt).getTime();
+      const remainingMs = expiresMs - Date.now();
+      // Even < 5 min remaining is worth a token (better UX than instant 403).
+      const ttlSeconds  = Math.max(30, Math.floor(remainingMs / 1000));
+      const viewerId    = `free_${crypto.randomBytes(6).toString('hex')}`;
+      const lkToken     = await livekitService.generateToken(
+        ROOM_NAME,
+        viewerId,
+        'Viewer (Free)',
+        false,
+        { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds },
+      );
+      logger.info('[MainStage] free-viewer token issued via ad-unlock', {
+        ip: req.ip, userId, ttlSeconds, unlockExpiresAt: adUnlockExpiresAt,
+      });
+      return res.json({
+        success:         true,
+        token:           lkToken,
+        livekitUrl:      livekitService.LIVEKIT_WS_URL,
+        roomName:        ROOM_NAME,
+        identity:        viewerId,
+        viaAdUnlock:     true,
+        unlockExpiresAt: new Date(adUnlockExpiresAt).toISOString(),
+      });
+    }
+  } catch (adErr) {
+    // Non-fatal — if adUnlockService is down, fall through to gate check so
+    // the gate window still works normally.
+    logger.warn('[MainStage] free-viewer-token: adUnlockService check failed', {
+      error: adErr.message, userId,
+    });
+  }
+
+  // ── Path 2: scheduled gate window ───────────────────────────────────────
   const gateState = await mainStageGateService.getState();
   if (!gateState.enabled || !gateState.isOpen) {
     return res.status(403).json({
@@ -699,27 +752,28 @@ const freeViewerToken = asyncHandler(async (req, res) => {
   }
 
   const ttlSeconds = await mainStageGateService.freeViewerTokenTtlSec();
-  const viewerId = `free_${crypto.randomBytes(6).toString('hex')}`;
-  const lkToken = await livekitService.generateToken(
+  const viewerId   = `free_${crypto.randomBytes(6).toString('hex')}`;
+  const lkToken    = await livekitService.generateToken(
     ROOM_NAME,
     viewerId,
     'Viewer (Free)',
     false,
-    { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds }
+    { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds },
   );
-  logger.info('[MainStage] free-viewer token issued', {
-    ip: req.ip, userId: req.user?.id, ttlSeconds, closeAt: gateState.currentCloseAt,
+  logger.info('[MainStage] free-viewer token issued via gate window', {
+    ip: req.ip, userId, ttlSeconds, closeAt: gateState.currentCloseAt,
   });
   return res.json({
-    success: true,
-    token: lkToken,
-    livekitUrl: livekitService.LIVEKIT_WS_URL,
-    roomName: ROOM_NAME,
-    identity: viewerId,
-    gateState: {
-      isOpen: true,
+    success:     true,
+    token:       lkToken,
+    livekitUrl:  livekitService.LIVEKIT_WS_URL,
+    roomName:    ROOM_NAME,
+    identity:    viewerId,
+    viaAdUnlock: false,
+    gateState:   {
+      isOpen:         true,
       currentCloseAt: gateState.currentCloseAt,
-      nextOpenAt: gateState.nextOpenAt,
+      nextOpenAt:     gateState.nextOpenAt,
     },
   });
 });

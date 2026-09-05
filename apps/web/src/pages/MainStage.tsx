@@ -33,6 +33,8 @@ import { WellnessTipsOverlay } from "@/components/mainstage/WellnessTipsOverlay"
 import { NowPlayingChip } from "@/components/mainstage/NowPlayingChip";
 import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
+import { FreeTierEntryCard } from "@/components/mainstage/FreeTierEntryCard";
+import { AdUnlockButton } from "@/components/mainstage/AdUnlockButton";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
 import { TipRushRail } from "@/components/payments/TipRushRail";
@@ -1204,16 +1206,20 @@ export default function MainStage() {
           </svg>
         </div>
         <div>
-          <p className="text-white font-bold text-xl mb-1">Preview over — great session!</p>
+          <p className="text-white font-bold text-xl mb-1">Loved having you on stage 💎</p>
           <p className="text-white/70 text-sm max-w-xs mx-auto">
-            Your free 1-hour preview ended. Come back in{" "}
+            Come back in{" "}
             <span className="text-pink-400 font-bold tabular-nums">
               {cooldownLeft !== null ? fmtMmSs(cooldownLeft) : `${mins} min`}
             </span>
-            , or become a Member to stay on cam all day.
+            , or skip the wait and become a Member — cam + mic all day.
           </p>
           <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
-            Tu hora de cámara gratuita terminó. Vuelve en {mins} min o únete como Miembro.
+            Nos encantó tenerte 💎 Vuelve en{" "}
+            <span className="tabular-nums">
+              {cooldownLeft !== null ? fmtMmSs(cooldownLeft) : `${mins} min`}
+            </span>
+            {" "}o únete como Miembro — cámara + mic todo el día.
           </p>
         </div>
         <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -1273,53 +1279,33 @@ export default function MainStage() {
     );
   }
 
-  // Free-tier gated view — logged-in free-tier user, gate enabled, window
-  // currently closed. Shows countdown to next open + PRIME upgrade CTA.
-  if (isFreeTierViewer && !viewerLkToken && gateState?.enabled && !gateState?.isOpen) {
-    const nextOpen = gateState.nextOpenAt ? new Date(gateState.nextOpenAt) : null;
-    const secondsUntil = nextOpen ? Math.max(0, Math.floor((nextOpen.getTime() - Date.now()) / 1000)) : null;
-    const hrs = secondsUntil !== null ? Math.floor(secondsUntil / 3600) : 0;
-    const mins = secondsUntil !== null ? Math.floor((secondsUntil % 3600) / 60) : 0;
+  // Free-tier entry card — logged-in free-tier user with no viewer token.
+  // Covers all 3 states (window open, upcoming, gate disabled) + null gateState
+  // fallback + ad-unlock slot. Replaced the old "Main Stage is closed" screen
+  // 2026-09-05 to fix the broken UX free users hit when the gate is disabled.
+  if (isFreeTierViewer && !viewerLkToken) {
+    const uiLang: "es" | "en" = t.lang === "es" ? "es" : "en";
     return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
-        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
-        <div className="w-20 h-20 rounded-3xl flex items-center justify-center"
-             style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}>
-          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <div className="max-w-sm">
-          <p className="text-white font-bold text-2xl mb-2">Main Stage is closed</p>
-          <p className="text-white/70 text-sm mb-4">
-            Free access opens twice daily for one hour. Next window in:
-          </p>
-          <p className="text-4xl font-bold text-transparent bg-clip-text mb-6"
-             style={{ backgroundImage: "linear-gradient(135deg,#D4007A,#7B61FF)" }}>
-            {secondsUntil !== null ? `${hrs}h ${mins}m` : "—"}
-          </p>
-        </div>
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-          <button
-            type="button"
-            onClick={() => navigate('/subscribe')}
-            className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
-            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
-          >
-            Skip the wait — go PRIME
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="min-h-[44px] w-full rounded-2xl text-sm font-semibold text-white/70 border border-white/10 bg-white/[0.06]"
-          >
-            Back home
-          </button>
-        </div>
-        <p className="text-[11px] text-white/40 max-w-xs">
-          Windows open at {gateState.windows?.map(w => w.start_utc).join(' + ')} UTC daily.
-          PRIME members always have access.
-        </p>
+      <div className="fixed inset-0 flex items-center justify-center px-4 bg-pnp-background">
+        <FreeTierEntryCard
+          gateState={gateState as unknown as {
+            enabled: boolean;
+            isOpen: boolean;
+            currentCloseAt: number | null;
+            nextOpenAt: number | null;
+            windows?: { start_utc: string; duration_min: number }[];
+          } | null}
+          onWatchLive={handleViewerWatch}
+          connecting={viewerConnecting}
+          lang={uiLang}
+          adUnlockSlot={
+            <AdUnlockButton
+              surface="mainstage_extend"
+              lang={uiLang}
+              onGranted={() => { void handleViewerWatch(); }}
+            />
+          }
+        />
       </div>
     );
   }
