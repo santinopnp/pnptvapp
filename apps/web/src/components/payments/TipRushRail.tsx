@@ -100,6 +100,9 @@ export function TipRushRail({
     if (!Number.isFinite(usd) || usd <= 0) return null;
     return Math.round(usd * 6);
   }, [customUsd]);
+  // Distingue "elegi todo mi saldo" de "elegi un preset que casualmente vale lo
+  // mismo": sin esto se encenderian los dos chips a la vez.
+  const [pickedMax, setPickedMax] = useState(false);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<"success" | "error" | null>(null);
@@ -119,9 +122,9 @@ export function TipRushRail({
     return allowGifted ? reg + gif : reg;
   }, [regularBalance, giftedBalance, allowGifted]);
 
-  // Load current Ru$h balance so users can see what they have before tipping.
+  // El saldo se pide siempre: lo necesitan el chip de "todo" y la comprobacion
+  // de fondos, no solo la linea que lo muestra.
   useEffect(() => {
-    if (!showBalance) return;
     let cancelled = false;
     getWalletBalance()
       .then((r) => {
@@ -131,7 +134,13 @@ export function TipRushRail({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showBalance]);
+  }, []);
+
+  // Solo hay maximo que ofrecer si el saldo se conoce y es mayor que cero.
+  const maxAmount = useMemo(
+    () => (balance !== null && balance > 0 ? balance : null),
+    [balance]
+  );
 
   const insufficient = useMemo(() => {
     if (balance === null || amount === null) return false;
@@ -220,17 +229,17 @@ export function TipRushRail({
         </div>
       )}
 
-      {/* Chip row — 5 presets + Custom */}
+      {/* Chip row — 5 presets + Todo + Custom */}
       <div
         className={
           variant === "compact"
             ? "flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
-            : "grid grid-cols-6 gap-1.5 mb-3"
+            : "grid grid-cols-4 gap-1.5 mb-3"
         }
         style={{ scrollbarWidth: "none" }}
       >
         {TIP_RUSH_PRESETS.map((amt) => {
-          const selected = amount === amt && !customOpen;
+          const selected = amount === amt && !customOpen && !pickedMax;
           return (
             <button
               key={amt}
@@ -238,6 +247,7 @@ export function TipRushRail({
               onClick={() => {
                 setAmount(selected ? null : amt);
                 setCustomOpen(false);
+                setPickedMax(false);
                 setResult(null);
               }}
               disabled={sending || result === "success"}
@@ -261,12 +271,48 @@ export function TipRushRail({
             </button>
           );
         })}
+        {/* Chip de saldo completo. No se pinta si el saldo aun no ha llegado o es
+            cero: un boton que no puede hacer nada es peor que no tenerlo. */}
+        {maxAmount !== null && (
+          <button
+            type="button"
+            onClick={() => {
+              const ya = pickedMax;
+              setPickedMax(!ya);
+              setAmount(ya ? null : maxAmount);
+              setCustomOpen(false);
+              setResult(null);
+            }}
+            disabled={sending || result === "success"}
+            className="min-h-[44px] flex flex-col items-center justify-center rounded-xl px-2 py-1.5 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+            style={
+              pickedMax
+                ? {
+                    background: "linear-gradient(135deg, #D4007A, #E69138)",
+                    color: "#fff",
+                    border: "1px solid transparent",
+                  }
+                : {
+                    background: "rgba(255,255,255,0.06)",
+                    color: "rgba(255,255,255,0.85)",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                  }
+            }
+          >
+            <span className="tabular-nums">{lang === "es" ? "Todo" : "Max"}</span>
+            <span className="text-[9px] font-normal opacity-70 mt-0.5 tabular-nums">
+              {maxAmount.toLocaleString()} 💎
+            </span>
+          </button>
+        )}
+
         {/* Custom chip — opens an inline USD input, live-converts to Ru$h at 6/$1 */}
         <button
           type="button"
           onClick={() => {
             const next = !customOpen;
             setCustomOpen(next);
+            setPickedMax(false);
             if (next) { setAmount(null); setResult(null); }
             else { setCustomUsd(""); setAmount(null); }
           }}
