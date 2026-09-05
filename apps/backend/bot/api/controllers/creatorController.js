@@ -873,6 +873,83 @@ const getStrikes = async (req, res) => {
   }
 };
 
+// GET /api/webapp/creator/moderation-history
+// Self-owned: returns the authenticated user's strikes + active suspension +
+// active anti-leakage mute. User-safe fields only (no evidence_text, no
+// matched_terms, no admin identities).
+const getModerationHistory = async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+
+    const [userRow, strikesRes, muteRaw] = await Promise.all([
+      query(
+        `SELECT creator_status, creator_suspended_until, creator_suspension_reason,
+                creator_content_compliance_status, creator_content_compliance_deadline
+           FROM users WHERE id = $1`,
+        [userId]
+      ),
+      query(
+        `SELECT id, strike_number, category, action_taken, cleared, cleared_at,
+                appeal_status, appeal_submitted_at, created_at
+           FROM anti_leakage_strikes
+          WHERE user_id = $1
+          ORDER BY created_at DESC
+          LIMIT 100`,
+        [userId]
+      ),
+      (async () => {
+        try {
+          const redis = require('../../../config/redis').getRedis();
+          const pttl = await redis.pttl(`antileakage:mute:${userId}`);
+          return pttl && pttl > 0 ? pttl : null;
+        } catch (_) { return null; }
+      })(),
+    ]);
+
+    const user = userRow.rows[0] || {};
+    const suspendedUntil = user.creator_suspended_until || null;
+    const suspensionActive = user.creator_status === 'suspended' ||
+      (suspendedUntil && new Date(suspendedUntil).getTime() > Date.now());
+
+    return res.json({
+      success: true,
+      suspension: {
+        active: !!suspensionActive,
+        creator_status: user.creator_status || null,
+        until_iso: suspendedUntil ? (suspendedUntil instanceof Date ? suspendedUntil.toISOString() : String(suspendedUntil)) : null,
+        reason: user.creator_suspension_reason || null,
+      },
+      contentCompliance: {
+        status: user.creator_content_compliance_status || null,
+        deadline_iso: user.creator_content_compliance_deadline
+          ? (user.creator_content_compliance_deadline instanceof Date
+              ? user.creator_content_compliance_deadline.toISOString()
+              : String(user.creator_content_compliance_deadline))
+          : null,
+      },
+      activeMute: {
+        active: muteRaw !== null,
+        seconds_remaining: muteRaw !== null ? Math.round(muteRaw / 1000) : null,
+        until_iso: muteRaw !== null ? new Date(Date.now() + muteRaw).toISOString() : null,
+      },
+      strikes: strikesRes.rows.map((s) => ({
+        id: s.id,
+        strike_number: s.strike_number,
+        category: s.category,
+        action_taken: s.action_taken,
+        cleared: s.cleared,
+        cleared_at: s.cleared_at,
+        appeal_status: s.appeal_status,
+        appeal_submitted_at: s.appeal_submitted_at,
+        created_at: s.created_at,
+      })),
+    });
+  } catch (err) {
+    logger.error('getModerationHistory error', err);
+    return res.status(500).json({ error: 'Failed to load moderation history' });
+  }
+};
+
 // GET /api/webapp/creator/milestones
 // Returns pending milestone notifications for the authenticated user
 const getMilestones = async (req, res) => {
@@ -2068,6 +2145,7 @@ module.exports = {
   listActiveCreators,
   getStrikes,
   issueStrike,
+  getModerationHistory,
   submitEnrollment,
   getEnrollment,
   listEnrollments,

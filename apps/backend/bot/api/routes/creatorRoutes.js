@@ -217,6 +217,10 @@ router.put('/price', authGuard, creatorGuard, creatorController.setCreatorPrice)
 
 router.get('/dashboard', authGuard, creatorGuard, creatorController.getDashboard);
 
+// Self-owned moderation history. Not creator-gated: any suspended user still
+// needs to see their record + strike history to file appeals.
+router.get('/moderation-history', authGuard, creatorController.getModerationHistory);
+
 // Creator wallet routes
 router.get('/wallet', authGuard, creatorController.getWalletAddress);
 // FIX 5: creatorGuard added — prevents non-creators from writing a wallet address
