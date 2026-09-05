@@ -1088,6 +1088,20 @@ async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, 
     }
   }
 
+  // Compro pero no eligio franja: el creador estaba offline o sin huecos. Sin
+  // esto el credito se queda mudo hasta que el comprador vuelva por su cuenta.
+  if (creditId && !bookingId) {
+    setImmediate(() => {
+      try {
+        require('./callWaitlistService').recordMiss({
+          memberId: String(userId),
+          creatorId: String(pkg.creator_id),
+          durationMinutes: pkg.duration_minutes || null,
+        }).catch(() => {});
+      } catch { /* la espera es un extra, nunca un requisito del pago */ }
+    });
+  }
+
   return {
     entitlementId: null,
     rushCredited: 0,

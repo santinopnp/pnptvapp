@@ -360,6 +360,21 @@ async function onCallPaymentSuccess(paymentId) {
       bookingId: confirmedBookingId,
     });
 
+    // Pago sin franja elegida: el creador estaba offline o sin huecos. Sin esto
+    // el credito queda mudo hasta que el comprador vuelva por su cuenta, que es
+    // como se acumularon meses de creditos sin usar.
+    if (!confirmedBookingId) {
+      setImmediate(() => {
+        try {
+          require('./callWaitlistService').recordMiss({
+            memberId: String(payment.user_id),
+            creatorId: String(creator_id),
+            durationMinutes: pkgResult.rows[0]?.duration_minutes || null,
+          }).catch(() => {});
+        } catch { /* la espera es un extra, nunca un requisito del pago */ }
+      });
+    }
+
     // ── Post-payment notifications (fire-and-forget) ─────────────────────
     // Notify buyer + creator that credits have been granted.
     (async () => {
@@ -1399,8 +1414,9 @@ async function createCallCheckoutTokens({ memberId, packageId, clientNotes = nul
     );
     const credit = creditResult.rows[0];
 
-    // No slot time provided: skip booking row creation. The call_credits grant
-    // is sufficient — user schedules the slot via BookingConfirmation (/booking/:creditId).
+    // No slot time provided: skip booking row creation. El comprador agenda
+    // luego en BookingConfirmation (/booking/:creditId) — y si no vuelve, la
+    // lista de espera de mas abajo le avisa cuando el creador se ponga en vivo.
     const bookingId = null;
 
     // Record 70/30 earnings split (token path — 24-hour hold)
@@ -1415,6 +1431,17 @@ async function createCallCheckoutTokens({ memberId, packageId, clientNotes = nul
     );
 
     await client.query('COMMIT');
+
+    // Esta ruta nunca crea reserva, asi que siempre se anota la espera.
+    setImmediate(() => {
+      try {
+        require('./callWaitlistService').recordMiss({
+          memberId: String(memberId),
+          creatorId: String(pkg.creator_id),
+          durationMinutes: pkg.duration_minutes || null,
+        }).catch(() => {});
+      } catch { /* la espera es un extra, nunca un requisito del pago */ }
+    });
 
     logger.info('[callCheckoutService] token call checkout completed', {
       memberId, packageId, tokenCost, newBalance, creditId: credit?.id, bookingId,
