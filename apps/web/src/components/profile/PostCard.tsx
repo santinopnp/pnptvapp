@@ -1193,12 +1193,13 @@ export default function PostCard({
             return (
               <div className="mt-3">
                 {post.media_url && (
-                  <a href={ctaHref} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group">
+                  <a href={ctaHref} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group aspect-video bg-white/5">
                     <img
                       src={post.media_url}
                       alt={channelName || "Channel promo"}
-                      className="w-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
+                      decoding="async"
                       onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
                     />
                     <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/10 group-hover:bg-black/30 transition-colors">
@@ -1451,12 +1452,13 @@ export default function PostCard({
                   return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => setLightboxSrc(url)} />;
                 }
                 return (
-                  <div style={{ position: "relative" }}>
+                  <div className="relative w-full aspect-square rounded-lg overflow-hidden bg-white/5">
                     <img
                       src={post.media_url}
                       alt="Post image"
-                      className="w-full rounded-lg object-cover"
+                      className="absolute inset-0 w-full h-full object-cover"
                       loading="lazy"
+                      decoding="async"
                       onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
                       style={{ cursor: "zoom-in" }}
                     />
