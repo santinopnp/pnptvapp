@@ -196,6 +196,8 @@ async function debit(opts) {
       const err = new Error('Insufficient Ru$h balance');
       err.code = 'INSUFFICIENT_FUNDS';
       err.available = spendable;
+      err.availableBalance = bal;
+      err.availableGifted = gifted;
       err.required = amount;
       throw err;
     }

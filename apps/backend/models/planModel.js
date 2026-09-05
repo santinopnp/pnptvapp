@@ -90,10 +90,20 @@ class Plan {
   static async getPublicPlans() {
     const plans = await this.getAll();
     const hiddenIds = new Set(this.getPromotionalPlans().map((plan) => plan.id));
+    // Legacy/promo/trial plans that are still active=true in the DB but should
+    // never appear on /subscribe. Mirrors HIDDEN_PLAN_IDS in Subscribe.tsx so a
+    // curl of /api/subscription/plans doesn't leak them either.
+    const HIDDEN_LEGACY_IDS = new Set([
+      'prime-trial-3d',
+      'lifetime100',
+      'monthly-pass-promo-15',
+      'yearly50',
+    ]);
     const SCOPED_ADD_ONS = new Set(['channel-access', 'hangout-access', 'creator-subscription']);
     const EXCLUDED_TIERS = new Set(['creator', 'channel', 'hangout']);
     return plans.filter((plan) => {
       if (hiddenIds.has(plan.id)) return false;
+      if (HIDDEN_LEGACY_IDS.has(plan.id)) return false;
       if (EXCLUDED_TIERS.has(plan.tier)) return false;
       // If the plan has add-ons and every add-on is scoped, it's a per-resource
       // purchase masquerading as a subscription plan — hide it from /subscribe.
