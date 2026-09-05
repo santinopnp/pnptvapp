@@ -30,6 +30,10 @@ import {
   X,
   Video,
   AtSign,
+  Ticket,
+  CreditCard,
+  Bitcoin,
+  Loader2,
 } from "lucide-react";
 import {
   getPublicCreatorProfile,
@@ -52,6 +56,9 @@ import {
   INTRO_CALL_ENABLED,
   bookIntroCall,
   getIntroCallStatus,
+  getCreatorChannelPass,
+  checkoutChannelPass,
+  type ChannelPassViewerInfo,
   type CreatorPublicProfile,
   type SocialPostItem,
   type ReportCategory,
@@ -396,6 +403,17 @@ export default function CreatorProfilePage() {
   const [tipError, setTipError] = useState("");
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
+
+  // ── Channel Pass state ───────────────────────────────────────────────────────
+  const [channelPass, setChannelPass] = useState<ChannelPassViewerInfo | null>(null);
+  const [channelPassLoading, setChannelPassLoading] = useState(false);
+  const [channelPassPanelOpen, setChannelPassPanelOpen] = useState(false);
+  const [channelPassTab, setChannelPassTab] = useState<"rush" | "card" | "crypto">("rush");
+  const [channelPassBuying, setChannelPassBuying] = useState(false);
+  const [channelPassResult, setChannelPassResult] = useState<{ expires_at: string } | null>(null);
+  const [channelPassError, setChannelPassError] = useState<string | null>(null);
+  const channelPassPanelRef = useRef<HTMLDivElement>(null);
+
   // Detect an injected wallet (MetaMask / TrustWallet in-app browser). Missing
   // wallet → prompt with the "install a wallet first" guide before top-up.
   const hasInjectedWallet = useMemo(() => {
@@ -462,6 +480,15 @@ export default function CreatorProfilePage() {
       getWalletBalance()
         .then((r) => { if (r.success) setWalletBalance(r.balance); })
         .catch(() => {});
+    }
+
+    // Channel Pass info — load for all authenticated viewers (not self-view)
+    if (isAuthenticated && String(user?.dbId || user?.id) !== creatorId) {
+      setChannelPassLoading(true);
+      getCreatorChannelPass(creatorId)
+        .then((res) => setChannelPass(res))
+        .catch(() => {/* 404 = not enabled, ignore */})
+        .finally(() => setChannelPassLoading(false));
     }
   }, [data?.creator?.id, isAuthenticated, user?.dbId, user?.id]);
 
@@ -1160,6 +1187,211 @@ export default function CreatorProfilePage() {
           {/* Bio */}
           {creator.bio && (
             <p className="text-[13px] leading-relaxed text-white mb-4 whitespace-pre-wrap break-words">{formatBio(creator.bio)}</p>
+          )}
+
+          {/* ── Channel Pass CTA ────────────────────────────────────────────────
+              Shown when: pass is enabled, viewer is not the creator, and
+              (a) they don't yet hold an active pass, OR
+              (b) they do hold an active pass → show the "active" badge instead. */}
+          {!isOwnProfile && !channelPassLoading && channelPass?.enabled && (
+            channelPass.is_active ? (
+              /* Active pass — small pill + manage link */
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-xl"
+                style={{ background: "rgba(52,199,89,0.1)", border: "1px solid rgba(52,199,89,0.25)" }}>
+                <Check size={13} strokeWidth={3} style={{ color: "#34C759", flexShrink: 0 }} />
+                <span className="text-xs font-semibold" style={{ color: "#34C759" }}>
+                  Channel Pass active until {new Date(channelPass.expires_at!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </span>
+                <Link to="/my-subscriptions" className="ml-auto text-[11px] underline"
+                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  Manage
+                </Link>
+              </div>
+            ) : (
+              /* Inactive — sticky CTA card + expandable inline panel */
+              <div className="mb-3">
+                {/* CTA card */}
+                <div
+                  className="rounded-xl border overflow-hidden"
+                  style={{ borderColor: channelPassPanelOpen ? "rgba(212,0,122,0.4)" : "rgba(212,0,122,0.2)", background: "rgba(212,0,122,0.06)" }}
+                >
+                  <div className="p-3 flex items-center gap-3">
+                    <Ticket size={18} style={{ color: "#D4007A", flexShrink: 0 }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">
+                        Unlock @{creator.username}'s exclusive content
+                      </p>
+                      <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                        Videos, exclusive posts & DMs — one month of full access.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isAuthenticated) { navigate("/login"); return; }
+                        setChannelPassPanelOpen((v) => !v);
+                        setChannelPassError(null);
+                        setChannelPassResult(null);
+                        if (!channelPassPanelOpen) {
+                          setTimeout(() => channelPassPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
+                        }
+                      }}
+                      className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-90 active:scale-[0.97]"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      Get Channel Pass · ${channelPass.price_usd}/mo
+                    </button>
+                  </div>
+
+                  {/* Inline payment panel — expands below the card */}
+                  {channelPassPanelOpen && (
+                    <div
+                      ref={channelPassPanelRef}
+                      className="border-t px-4 pb-4 pt-3"
+                      style={{ borderColor: "rgba(212,0,122,0.2)", background: "rgba(0,0,0,0.25)" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {channelPassResult ? (
+                        /* Success state */
+                        <div className="text-center py-4">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-3"
+                            style={{ background: "rgba(52,199,89,0.15)", border: "1px solid rgba(52,199,89,0.3)" }}>
+                            <Check size={20} strokeWidth={2.5} style={{ color: "#34C759" }} />
+                          </div>
+                          <p className="text-sm font-bold text-white mb-1">You're subscribed!</p>
+                          <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                            Access active until {new Date(channelPassResult.expires_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.
+                          </p>
+                          <Link to="/my-subscriptions"
+                            className="inline-block mt-3 text-xs underline"
+                            style={{ color: "#D4007A" }}>
+                            Manage my subscriptions →
+                          </Link>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-[11px] mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                            One month of full access to @{creator.username}'s videos, exclusive posts, and DMs.
+                          </p>
+
+                          {/* Payment tab strip */}
+                          <div className="flex gap-1 mb-4 p-1 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+                            {(["rush", "card", "crypto"] as const).map((tab) => (
+                              <button
+                                key={tab}
+                                type="button"
+                                onClick={() => setChannelPassTab(tab)}
+                                className="flex-1 py-1.5 rounded-md text-xs font-semibold transition-all"
+                                style={{
+                                  background: channelPassTab === tab ? "rgba(212,0,122,0.3)" : "transparent",
+                                  color: channelPassTab === tab ? "#fff" : "rgba(255,255,255,0.5)",
+                                  border: channelPassTab === tab ? "1px solid rgba(212,0,122,0.4)" : "1px solid transparent",
+                                }}
+                              >
+                                {tab === "rush" ? "Ru$h Wallet" : tab === "card" ? "Pay with card" : "Pay with crypto"}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Ru$h Wallet tab */}
+                          {channelPassTab === "rush" && (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between px-3 py-2 rounded-lg"
+                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                                <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Price</span>
+                                <span className="text-sm font-bold text-white">{channelPass.price_rush} 💎</span>
+                              </div>
+                              {walletBalance !== null && (
+                                <div className="flex items-center justify-between px-3 py-2 rounded-lg"
+                                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                                  <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Your Ru$h balance</span>
+                                  <span className={`text-sm font-bold ${walletBalance >= channelPass.price_rush ? "text-white" : "text-red-400"}`}>
+                                    {walletBalance} 💎
+                                  </span>
+                                </div>
+                              )}
+                              {channelPassError && (
+                                <p className="text-xs text-red-400 px-1">{channelPassError}</p>
+                              )}
+                              {walletBalance !== null && walletBalance < channelPass.price_rush ? (
+                                <div className="space-y-2">
+                                  <p className="text-xs px-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                    You need {channelPass.price_rush - walletBalance} more Ru$h 💎.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowTopUpModal(true)}
+                                    className="w-full py-2.5 rounded-lg text-sm font-bold text-white transition-opacity hover:opacity-90"
+                                    style={{ background: "linear-gradient(135deg, #7B61FF, #D4007A)" }}
+                                  >
+                                    Get more Ru$h 💎
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={channelPassBuying}
+                                  onClick={async () => {
+                                    if (!isAuthenticated) { navigate("/login"); return; }
+                                    setChannelPassBuying(true);
+                                    setChannelPassError(null);
+                                    try {
+                                      const res = await checkoutChannelPass(creator.id, "rush");
+                                      if (res.success && res.expires_at) {
+                                        setChannelPassResult({ expires_at: res.expires_at });
+                                        setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: res.expires_at } : prev);
+                                        setWalletBalance((prev) => prev !== null && res.new_balance != null ? res.new_balance : prev);
+                                      }
+                                    } catch (err) {
+                                      const msg = err instanceof Error ? err.message : "Purchase failed";
+                                      if (msg.includes("INSUFFICIENT_FUNDS") || msg.includes("balance")) {
+                                        setChannelPassError("Insufficient Ru$h 💎. Top up your wallet and try again.");
+                                      } else {
+                                        setChannelPassError(msg);
+                                      }
+                                    } finally {
+                                      setChannelPassBuying(false);
+                                    }
+                                  }}
+                                  className="w-full py-2.5 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
+                                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                                >
+                                  {channelPassBuying ? (
+                                    <><Loader2 size={14} className="animate-spin" /> Processing…</>
+                                  ) : (
+                                    <>Subscribe for {channelPass.price_rush} 💎</>
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Card tab */}
+                          {channelPassTab === "card" && (
+                            <div className="text-center py-4 space-y-3">
+                              <CreditCard size={28} className="mx-auto" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }} />
+                              <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                Card payments coming soon — use Ru$h Wallet for now.
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Crypto tab */}
+                          {channelPassTab === "crypto" && (
+                            <div className="text-center py-4 space-y-3">
+                              <Bitcoin size={28} className="mx-auto" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }} />
+                              <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                Crypto payments coming soon — use Ru$h Wallet for now.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
           )}
 
           {/* Crystal Creator direct-services panel — renders nothing when the

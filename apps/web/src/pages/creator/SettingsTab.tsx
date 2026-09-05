@@ -28,6 +28,8 @@ import {
   saveCreatorManual,
   suggestCreatorManualAI,
   setCreatorPrice,
+  saveChannelPassSettings,
+  updateVideoPricing,
   type CreatorDashboard as DashboardData,
   type CreatorMediaItem,
   type StreamRecording,
@@ -124,6 +126,83 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
   const [priceSaving, setPriceSaving] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [priceSuccess, setPriceSuccess] = useState<string | null>(null);
+
+  // ── Channel Pass settings ─────────────────────────────────────────────────
+  const PASS_PRICE_MIN = 5;
+  const PASS_PRICE_MAX = 50;
+  const PASS_PRICE_STEP = 0.5;
+  const [passEnabled, setPassEnabled] = useState<boolean>(
+    (dashboard as DashboardData & { channel_pass_enabled?: boolean }).channel_pass_enabled ?? false
+  );
+  const [passPriceInput, setPassPriceInput] = useState<string>(
+    (dashboard as DashboardData & { channel_pass_price_usd?: number | null }).channel_pass_price_usd != null
+      ? String((dashboard as DashboardData & { channel_pass_price_usd?: number }).channel_pass_price_usd)
+      : "9.99"
+  );
+  const [passSaving, setPassSaving] = useState(false);
+  const [passError, setPassError] = useState<string | null>(null);
+  const [passSuccess, setPassSuccess] = useState<string | null>(null);
+
+  const handleSaveChannelPass = async () => {
+    setPassError(null);
+    setPassSuccess(null);
+    const price = Number(passPriceInput);
+    if (passEnabled && (!Number.isFinite(price) || price < PASS_PRICE_MIN || price > PASS_PRICE_MAX)) {
+      setPassError(`Price must be between $${PASS_PRICE_MIN} and $${PASS_PRICE_MAX}.`);
+      return;
+    }
+    setPassSaving(true);
+    try {
+      await saveChannelPassSettings({ enabled: passEnabled, price_usd: price });
+      setPassSuccess("Channel Pass settings saved.");
+    } catch (err) {
+      setPassError(err instanceof Error ? err.message : "Failed to save Channel Pass settings.");
+    } finally {
+      setPassSaving(false);
+    }
+  };
+
+  // ── Per-video pricing ─────────────────────────────────────────────────────
+  // Keyed by video id (from recordings). Tracks inline edit state.
+  type VideoPricingState = {
+    rentInput: string;
+    buyInput: string;
+    saving: boolean;
+    error: string | null;
+    success: string | null;
+    open: boolean;
+  };
+  const [videoPricing, setVideoPricing] = useState<Record<string, VideoPricingState>>({});
+
+  const getVideoPricingState = (id: string): VideoPricingState =>
+    videoPricing[id] ?? { rentInput: "", buyInput: "", saving: false, error: null, success: null, open: false };
+
+  const setVideoPricingField = (id: string, patch: Partial<VideoPricingState>) =>
+    setVideoPricing((prev) => ({ ...prev, [id]: { ...getVideoPricingState(id), ...patch } }));
+
+  const handleSaveVideoPricing = async (videoId: string) => {
+    const state = getVideoPricingState(videoId);
+    setVideoPricingField(videoId, { error: null, success: null, saving: true });
+    const rent = state.rentInput === "" ? null : Number(state.rentInput);
+    const buy = state.buyInput === "" ? null : Number(state.buyInput);
+    if (rent !== null && (!Number.isFinite(rent) || rent < 0)) {
+      setVideoPricingField(videoId, { error: "Invalid rent price.", saving: false });
+      return;
+    }
+    if (buy !== null && (!Number.isFinite(buy) || buy < 0)) {
+      setVideoPricingField(videoId, { error: "Invalid buy price.", saving: false });
+      return;
+    }
+    try {
+      await updateVideoPricing(videoId, {
+        rent_price_rush: rent === 0 ? null : rent,
+        buy_price_rush: buy === 0 ? null : buy,
+      });
+      setVideoPricingField(videoId, { success: "Pricing updated.", saving: false });
+    } catch (err) {
+      setVideoPricingField(videoId, { error: err instanceof Error ? err.message : "Failed to update pricing.", saving: false });
+    }
+  };
 
   const handleSavePrice = async () => {
     setPriceError(null);
@@ -1075,6 +1154,103 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         </div>
       )}
 
+      {/* ─── MONETIZATION ────────────────────────────────────────────────────── */}
+      <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>Monetization</p>
+
+      {/* Channel Pass settings */}
+      <div className="glass-card-sm p-5">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-white mb-0.5">Channel Pass</p>
+            <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              Let fans subscribe to your exclusive content, DMs, and videos for a monthly fee. You keep 70%.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPassEnabled((v) => !v)}
+            className="flex-shrink-0 relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none"
+            style={{ background: passEnabled ? "linear-gradient(135deg, #D4007A, #E69138)" : "rgba(255,255,255,0.15)" }}
+            aria-pressed={passEnabled}
+            aria-label="Toggle Channel Pass"
+          >
+            <span
+              className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200"
+              style={{ transform: passEnabled ? "translateX(20px)" : "translateX(0)" }}
+            />
+          </button>
+        </div>
+
+        <div className={`space-y-3 transition-opacity duration-200 ${passEnabled ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+          <div>
+            <label htmlFor="pass-price" className="block text-xs font-medium text-white/70 mb-1">
+              Monthly price (USD)
+            </label>
+            <div className="flex items-stretch gap-2">
+              <div className="flex items-center rounded-lg px-3 flex-1 gap-2 border"
+                style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)" }}>
+                <span className="text-sm font-bold text-white/70">$</span>
+                <input
+                  id="pass-price"
+                  type="number"
+                  inputMode="decimal"
+                  min={PASS_PRICE_MIN}
+                  max={PASS_PRICE_MAX}
+                  step={PASS_PRICE_STEP}
+                  value={passPriceInput}
+                  onChange={(e) => { setPassPriceInput(e.target.value); setPassError(null); setPassSuccess(null); }}
+                  disabled={!passEnabled || passSaving}
+                  className="flex-1 bg-transparent py-2 text-sm text-white outline-none placeholder-white/30 disabled:opacity-50"
+                  placeholder="9.99"
+                />
+                <span className="text-xs shrink-0" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>/ mo</span>
+              </div>
+            </div>
+            <p className="text-[10px] mt-1" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              Subscribers get 30 days of full access. Equivalent in Ru$h: ~{Math.round(Number(passPriceInput) * 6)} 💎.
+            </p>
+          </div>
+
+          {/* Preview card — mimics what viewers see */}
+          <div className="rounded-xl border p-3" style={{ borderColor: "rgba(212,0,122,0.2)", background: "rgba(212,0,122,0.06)" }}>
+            <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(255,255,255,0.4)" }}>Preview — what fans see</p>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-white/50 shrink-0">
+                {authUser?.username?.[0]?.toUpperCase() || "?"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-white truncate">Unlock @{authUser?.username}'s exclusive content</p>
+                <p className="text-[11px] truncate" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Videos, exclusive posts & DMs — one month of full access.</p>
+              </div>
+              <span className="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold text-white"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                ${passPriceInput}/mo
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {passError && (
+          <div className="mt-3 px-3 py-2 rounded-lg text-xs text-red-300" style={{ background: "rgba(239,68,68,0.1)" }}>
+            {passError}
+          </div>
+        )}
+        {passSuccess && (
+          <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(52,199,89,0.14)", color: "#34C759" }}>
+            {passSuccess}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handleSaveChannelPass}
+          disabled={passSaving}
+          className="mt-4 px-5 py-2 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+        >
+          {passSaving ? "Saving…" : "Save Channel Pass settings"}
+        </button>
+      </div>
+
       {/* ─── MI SHOW (performer/both only) ───────────────────────────────────── */}
       {(creatorRole === "performer" || creatorRole === "both") && (
         <p className="text-[10px] font-bold uppercase tracking-widest px-1 pt-2" style={{ color: "rgba(255,255,255,0.3)" }}>{t.settingsSectionMyShow}</p>
@@ -1288,6 +1464,92 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     </div>
                   </div>
                 )}
+
+                {/* Per-video pricing — collapsible */}
+                <div className="border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setVideoPricingField(rec.id, { open: !getVideoPricingState(rec.id).open })}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold transition-colors hover:bg-white/5"
+                    style={{ color: getVideoPricingState(rec.id).open ? "#D4007A" : "rgba(255,255,255,0.4)" }}
+                  >
+                    <span>Edit pricing (rent / buy)</span>
+                    <svg
+                      className="w-3 h-3 transition-transform"
+                      style={{ transform: getVideoPricingState(rec.id).open ? "rotate(180deg)" : "rotate(0deg)" }}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </button>
+
+                  {getVideoPricingState(rec.id).open && (
+                    <div className="px-2.5 pb-2.5 space-y-2.5">
+                      <p className="text-[10px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                        Users can rent for 48 hours or buy permanent access. You keep 70% via the standard split. Leave empty to disable that option.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-medium text-white/60 mb-1">
+                            Rent price (Ru$h 💎)
+                          </label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={6}
+                            max={3000}
+                            step={6}
+                            placeholder="e.g. 30"
+                            value={getVideoPricingState(rec.id).rentInput}
+                            onChange={(e) => setVideoPricingField(rec.id, { rentInput: e.target.value, error: null, success: null })}
+                            className="w-full px-2.5 py-1.5 rounded text-xs text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30"
+                          />
+                          {getVideoPricingState(rec.id).rentInput !== "" && Number(getVideoPricingState(rec.id).rentInput) > 0 && (
+                            <p className="text-[10px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                              ≈ ${(Number(getVideoPricingState(rec.id).rentInput) / 6).toFixed(2)} USD
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-white/60 mb-1">
+                            Buy price (Ru$h 💎)
+                          </label>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={30}
+                            max={6000}
+                            step={6}
+                            placeholder="e.g. 180"
+                            value={getVideoPricingState(rec.id).buyInput}
+                            onChange={(e) => setVideoPricingField(rec.id, { buyInput: e.target.value, error: null, success: null })}
+                            className="w-full px-2.5 py-1.5 rounded text-xs text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30"
+                          />
+                          {getVideoPricingState(rec.id).buyInput !== "" && Number(getVideoPricingState(rec.id).buyInput) > 0 && (
+                            <p className="text-[10px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                              ≈ ${(Number(getVideoPricingState(rec.id).buyInput) / 6).toFixed(2)} USD
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {getVideoPricingState(rec.id).error && (
+                        <p className="text-[10px] text-red-400">{getVideoPricingState(rec.id).error}</p>
+                      )}
+                      {getVideoPricingState(rec.id).success && (
+                        <p className="text-[10px]" style={{ color: "#34C759" }}>{getVideoPricingState(rec.id).success}</p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSaveVideoPricing(rec.id)}
+                        disabled={getVideoPricingState(rec.id).saving}
+                        className="px-3 py-1 rounded text-[10px] font-semibold disabled:opacity-50 transition-colors"
+                        style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A", border: "1px solid rgba(212,0,122,0.3)" }}
+                      >
+                        {getVideoPricingState(rec.id).saving ? "Saving…" : "Save pricing"}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

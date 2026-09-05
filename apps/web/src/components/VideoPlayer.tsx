@@ -11,11 +11,14 @@
  * compliance overlay appears when playback ends, linking to /self-care.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import Hls from "hls.js";
 import { useI18n } from "@/lib/i18n";
 import { IntroPlayer } from "@/components/intro";
+import { VideoPaywallOverlay } from "@/components/VideoPaywallOverlay";
+import { getVideoAccess, type VideoAccessInfo } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 
 /**
  * Metadata burned into the IntroPlayer curtain that plays before qualifying
@@ -40,6 +43,18 @@ type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
    * `null` for videos too short to warrant the intro (< 30s per product spec).
    */
   intro?: VideoIntroData | null;
+  /**
+   * When present, the player fetches `GET /api/videos/:videoId/access` on mount
+   * and renders a paywall overlay if the viewer doesn't have a grant.
+   * Pass `undefined` (or omit) to skip the paywall check entirely (free videos,
+   * non-social-post contexts like admin previews).
+   */
+  videoId?: string | number;
+  /**
+   * The uploader's user ID. When it matches the authenticated user, the paywall
+   * is bypassed even if `has_grant` is false (owners always see their content).
+   */
+  uploaderId?: string;
 };
 
 function isHlsSource(src: string | undefined | null): boolean {
@@ -62,16 +77,90 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       className = "",
       style,
       autoPlay,
+      videoId,
+      uploaderId,
       ...rest
     },
     ref
   ) => {
+    const { user } = useAuth();
     const localRef = useRef<HTMLVideoElement | null>(null);
     const hlsRef = useRef<Hls | null>(null);
     const [showDisclaimer, setShowDisclaimer] = useState(false);
     const [isPortrait, setIsPortrait] = useState(false);
     const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null);
     const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+    // ── Paywall state ──────────────────────────────────────────────────────
+    const [accessLoading, setAccessLoading] = useState(false);
+    const [access, setAccess] = useState<VideoAccessInfo | null>(null);
+    // Tracks the src actually loaded into the <video> element. On grant success
+    // we append a cache-bust param so the browser re-fetches the protected URL.
+    const [activeSrc, setActiveSrc] = useState<string | undefined>(
+      typeof src === "string" ? src : undefined
+    );
+
+    const isOwner =
+      !!uploaderId && !!user?.id && String(user.id) === String(uploaderId);
+
+    // Fetch access info when videoId is provided and viewer is not the owner.
+    useEffect(() => {
+      if (!videoId || isOwner) {
+        setAccess(null);
+        return;
+      }
+      let cancelled = false;
+      setAccessLoading(true);
+      getVideoAccess(videoId)
+        .then((info) => {
+          if (!cancelled) setAccess(info);
+        })
+        .catch(() => {
+          // On error (network, 401 pre-auth) treat as accessible — the video
+          // element's own error handler will surface a playback failure if
+          // the stream is actually protected.
+          if (!cancelled) setAccess(null);
+        })
+        .finally(() => {
+          if (!cancelled) setAccessLoading(false);
+        });
+      return () => { cancelled = true; };
+    }, [videoId, isOwner]);
+
+    // Sync activeSrc whenever src changes (e.g. different video in same mount).
+    useEffect(() => {
+      setActiveSrc(typeof src === "string" ? src : undefined);
+    }, [src]);
+
+    const handleGranted = useCallback(() => {
+      // Refetch access to confirm has_grant=true, then cache-bust the src.
+      if (videoId) {
+        getVideoAccess(videoId)
+          .then((info) => setAccess(info))
+          .catch(() => setAccess(null));
+      }
+      setActiveSrc((prev) => {
+        const base = (typeof src === "string" ? src : prev) ?? "";
+        const sep = base.includes("?") ? "&" : "?";
+        return `${base}${sep}_=${Date.now()}`;
+      });
+    }, [videoId, src]);
+
+    // Determine whether to show the paywall:
+    // - videoId is set AND access has been loaded
+    // - viewer is not the owner
+    // - has_grant is false
+    // - at least one purchase option exists
+    const showPaywall =
+      !isOwner &&
+      !accessLoading &&
+      access !== null &&
+      !access.has_grant &&
+      (
+        (access.prices.rent_price_rush ?? 0) > 0 ||
+        (access.prices.buy_price_rush ?? 0) > 0 ||
+        access.creator.channel_pass_enabled
+      );
     // When an intro is configured, gate playback until the curtain completes
     // (or the user hits Skip). Once dismissed, the intro never re-shows for
     // this mount — replays go straight to video.
@@ -91,13 +180,13 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
 
     useEffect(() => {
       const video = localRef.current;
-      if (!video || !src) return;
+      if (!video || !activeSrc) return;
 
       setPlaybackError(null);
       hlsRef.current?.destroy();
       hlsRef.current = null;
 
-      if (!isHlsSource(src)) {
+      if (!isHlsSource(activeSrc)) {
         return;
       }
 
@@ -107,7 +196,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       video.crossOrigin = "anonymous";
 
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = src;
+        video.src = activeSrc;
         return;
       }
 
@@ -127,11 +216,11 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         let mediaErrorCount = 0;
         let networkErrorCount = 0;
         const MAX_RECOVERY = 3;
-        hls.loadSource(src);
+        hls.loadSource(activeSrc);
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (!data.fatal) return;
-          console.warn("[VideoPlayer] HLS fatal:", data.type, data.details, "src:", src);
+          console.warn("[VideoPlayer] HLS fatal:", data.type, data.details, "src:", activeSrc);
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             networkErrorCount += 1;
             if (networkErrorCount <= MAX_RECOVERY) {
@@ -160,7 +249,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           hlsRef.current = null;
         };
       }
-    }, [src]);
+    }, [activeSrc]);
 
     const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
       const el = e.currentTarget;
@@ -177,7 +266,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       video.play().catch(() => {});
     };
 
-    const passThroughSrc = isHlsSource(src) ? undefined : (src ?? undefined);
+    const passThroughSrc = isHlsSource(activeSrc) ? undefined : (activeSrc ?? undefined);
 
     const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
       const video = e.currentTarget;
@@ -225,7 +314,9 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
 
         {/* Primary Video Element — autoplay is deferred until the intro
             curtain (if any) finishes. When introDone becomes true, we call
-            .play() explicitly so mobile autoplay policies still cooperate. */}
+            .play() explicitly so mobile autoplay policies still cooperate.
+            autoPlay is also blocked while the paywall is shown so the video
+            element stays paused at the poster frame. */}
         <video
           ref={setRefs}
           src={passThroughSrc}
@@ -237,12 +328,41 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           onEnded={handleEnded}
           onPlay={handlePlay}
           onError={handleVideoError}
-          autoPlay={intro ? false : autoPlay}
+          autoPlay={intro || showPaywall ? false : autoPlay}
           {...rest}
         />
 
+        {/* Access-check loading skeleton — shown while fetching grant status */}
+        {accessLoading && videoId && (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.70)" }}
+            aria-label="Checking access…"
+          >
+            <svg
+              className="w-7 h-7 animate-spin text-white/50"
+              fill="none"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        )}
+
+        {/* Paywall overlay — rendered when viewer lacks a grant and prices exist */}
+        {showPaywall && access && (
+          <VideoPaywallOverlay
+            videoId={videoId!}
+            access={access}
+            poster={poster}
+            onGranted={handleGranted}
+          />
+        )}
+
         {/* Playback error overlay with retry */}
-        {playbackError && (
+        {playbackError && !showPaywall && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 p-6 text-center" style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(4px)" }}>
             <svg className="w-10 h-10 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />

@@ -283,6 +283,7 @@ const Profile = lazy(() => import("@/pages/Profile"));
 const CreatorProfilePage = lazy(() => import("@/pages/CreatorProfilePage"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
 const MyAccess = lazy(() => import("@/pages/MyAccess"));
+const MySubscriptions = lazy(() => import("@/pages/MySubscriptions"));
 const DirectMessages = lazy(() => import("@/pages/DirectMessages"));
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
 const Support = lazy(() => import("@/pages/Support"));
@@ -748,6 +749,16 @@ export const router = createBrowserRouter([
           <ModuleLoader>
             <VerificationGate>
               <MyAccess />
+            </VerificationGate>
+          </ModuleLoader>
+        ),
+      },
+      {
+        path: "my-subscriptions",
+        element: (
+          <ModuleLoader>
+            <VerificationGate>
+              <MySubscriptions />
             </VerificationGate>
           </ModuleLoader>
         ),

@@ -1,17 +1,20 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   listMercadoPagoActivations,
   activateMercadoPagoPayment,
   listNequiActivations,
   activateNequiPayment,
+  listAdminVideoGrants,
+  createAdminVideoGrant,
   type MercadoPagoActivation,
   type NequiActivation,
+  type AdminVideoGrant,
 } from "@/lib/api";
 
 // plan_id is being added to the backend type — extend locally until api.ts is updated
 type MercadoPagoActivationWithPlan = MercadoPagoActivation & { plan_id?: string | null };
 
-type Tab = "mercadopago" | "nequi";
+type Tab = "mercadopago" | "nequi" | "video";
 type Filter = "pending" | "activated" | "rejected" | "all";
 
 const PLAN_LABELS: Record<string, string> = {
@@ -121,6 +124,20 @@ export default function ManualActivations() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
+  // Video grants tab state
+  const [videoGrants, setVideoGrants] = useState<AdminVideoGrant[]>([]);
+  const [videoGrantsLoading, setVideoGrantsLoading] = useState(false);
+  const [videoGrantsError, setVideoGrantsError] = useState<string | null>(null);
+  const [vgUserId, setVgUserId] = useState("");
+  const [vgVideoId, setVgVideoId] = useState("");
+  const [vgFilterUserId, setVgFilterUserId] = useState("");
+  const [vgFilterVideoId, setVgFilterVideoId] = useState("");
+  const [vgExpiresAt, setVgExpiresAt] = useState("");
+  const [vgReason, setVgReason] = useState("");
+  const [vgSubmitting, setVgSubmitting] = useState(false);
+  const [vgBanner, setVgBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const vgBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -129,7 +146,7 @@ export default function ManualActivations() {
         const res = await listMercadoPagoActivations(filter);
         if (!res.success) throw new Error("Failed to load MercadoPago activations");
         setMpRows((res.activations || []) as MercadoPagoActivationWithPlan[]);
-      } else {
+      } else if (tab === "nequi") {
         const res = await listNequiActivations(filter);
         if (!res.success) throw new Error("Failed to load Nequi activations");
         setNequiRows(res.activations || []);
@@ -142,6 +159,63 @@ export default function ManualActivations() {
   }, [tab, filter]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadVideoGrants = useCallback(async () => {
+    setVideoGrantsLoading(true);
+    setVideoGrantsError(null);
+    try {
+      const res = await listAdminVideoGrants({
+        userId: vgFilterUserId.trim() || undefined,
+        videoId: vgFilterVideoId.trim() || undefined,
+      });
+      if (!res.success) throw new Error("Failed to load video grants");
+      setVideoGrants(res.grants || []);
+    } catch (e) {
+      setVideoGrantsError((e as Error).message);
+    } finally {
+      setVideoGrantsLoading(false);
+    }
+  }, [vgFilterUserId, vgFilterVideoId]);
+
+  useEffect(() => {
+    if (tab === "video") { void loadVideoGrants(); }
+  }, [tab, loadVideoGrants]);
+
+  const showVgBanner = (kind: "ok" | "err", text: string) => {
+    setVgBanner({ kind, text });
+    if (vgBannerTimer.current) clearTimeout(vgBannerTimer.current);
+    vgBannerTimer.current = setTimeout(() => setVgBanner(null), 5000);
+  };
+
+  const handleVideoGrantSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vgUserId.trim()) { showVgBanner("err", "User ID is required"); return; }
+    if (!vgVideoId.trim()) { showVgBanner("err", "Video ID is required"); return; }
+    if (!vgReason.trim()) { showVgBanner("err", "Reason is required"); return; }
+
+    if (!window.confirm(`Grant video access to user "${vgUserId.trim()}" for video "${vgVideoId.trim()}"?\nReason: ${vgReason.trim()}`)) return;
+
+    setVgSubmitting(true);
+    try {
+      const res = await createAdminVideoGrant({
+        user_id: vgUserId.trim(),
+        video_id: vgVideoId.trim(),
+        expires_at: vgExpiresAt.trim() || null,
+        reason: vgReason.trim(),
+      });
+      if (!res.success) throw new Error(res.error || "Grant failed");
+      showVgBanner("ok", `Video access granted (grant ID: ${res.grant?.id ?? "—"})`);
+      setVgUserId("");
+      setVgVideoId("");
+      setVgExpiresAt("");
+      setVgReason("");
+      await loadVideoGrants();
+    } catch (e) {
+      showVgBanner("err", (e as Error).message);
+    } finally {
+      setVgSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (!banner) return;
@@ -168,6 +242,7 @@ export default function ManualActivations() {
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows: Array<{
     id: number;
     email: string;
@@ -183,7 +258,7 @@ export default function ManualActivations() {
     activatedAt: string | null;
     notes: string | null;
     isMp: boolean;
-  }> = tab === "mercadopago"
+  }> = (tab === "mercadopago"
     ? mpRows.map((r) => ({
         id: r.id,
         email: r.email,
@@ -200,6 +275,8 @@ export default function ManualActivations() {
         notes: r.notes,
         isMp: true,
       }))
+    : tab === "video"
+    ? []
     : nequiRows.map((r) => ({
         id: r.id,
         email: r.email,
@@ -215,7 +292,8 @@ export default function ManualActivations() {
         activatedAt: r.activated_at,
         notes: r.notes,
         isMp: false,
-      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      }))) as any;
 
   const providerLabel = tab === "mercadopago" ? "MercadoPago" : "Nequi Negocios";
   const providerEmoji = tab === "mercadopago" ? "💳" : "📲";
@@ -248,7 +326,7 @@ export default function ManualActivations() {
 
       {/* Tabs */}
       <div className="flex gap-2 mb-4 border-b border-pnp-border">
-        {(["mercadopago", "nequi"] as Tab[]).map((t) => (
+        {(["mercadopago", "nequi", "video"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -258,117 +336,290 @@ export default function ManualActivations() {
                 : "border-transparent text-pnp-textSecondary hover:text-white"
             }`}
           >
-            {t === "mercadopago" ? "💳 MercadoPago" : "📲 Nequi Negocios"}
+            {t === "mercadopago" ? "💳 MercadoPago" : t === "nequi" ? "📲 Nequi Negocios" : "🎬 Video Access"}
           </button>
         ))}
       </div>
 
-      {/* Provider note */}
-      <div className="mb-4 rounded-lg px-4 py-3 text-xs text-pnp-textSecondary border border-pnp-border bg-pnp-surface/50">
-        {providerEmoji} {providerNote}
-      </div>
+      {/* ── Video Access tab ─────────────────────────────────────────────────── */}
+      {tab === "video" && (
+        <div>
+          <div className="mb-4 rounded-lg px-4 py-3 text-xs text-pnp-textSecondary border border-pnp-border bg-pnp-surface/50">
+            Grant individual video access without charging Ru$h — for refunds, comps, and edge cases.
+            No debit, no creator earning. Creates an <code className="font-mono">admin_grant</code> row in <code className="font-mono">video_access_grants</code>.
+          </div>
 
-      {/* Filter + refresh */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        {(["pending", "activated", "rejected", "all"] as Filter[]).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wide transition-colors ${
-              filter === f
-                ? "bg-pnp-accent text-black"
-                : "border border-pnp-border text-pnp-textSecondary hover:text-white"
-            }`}
+          {vgBanner && (
+            <div
+              role="alert"
+              className="mb-4 rounded-lg px-4 py-3 text-sm font-medium"
+              style={{
+                background: vgBanner.kind === "ok" ? "rgba(74,222,128,0.12)" : "rgba(239,68,68,0.12)",
+                color:      vgBanner.kind === "ok" ? "#4ADE80" : "#EF4444",
+                border: `1px solid ${vgBanner.kind === "ok" ? "rgba(74,222,128,0.3)" : "rgba(239,68,68,0.3)"}`,
+              }}
+            >
+              {vgBanner.text}
+            </div>
+          )}
+
+          {/* Grant form */}
+          <form
+            onSubmit={(e) => void handleVideoGrantSubmit(e)}
+            className="mb-6 p-4 rounded-lg border border-pnp-border bg-pnp-surface/40 grid grid-cols-1 sm:grid-cols-2 gap-3"
           >
-            {f}
-          </button>
-        ))}
-        <button
-          onClick={() => void load()}
-          disabled={loading}
-          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold border border-pnp-border text-white hover:bg-pnp-surface disabled:opacity-50"
-        >
-          {loading ? "Loading…" : "Refresh"}
-        </button>
-      </div>
+            <h2 className="sm:col-span-2 text-sm font-bold text-white">Grant video access</h2>
 
-      {error && (
-        <div className="mb-4 rounded-lg px-4 py-3 text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/30">
-          {error}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-pnp-textSecondary font-semibold">User ID (UUID) *</label>
+              <input
+                type="text"
+                value={vgUserId}
+                onChange={(e) => setVgUserId(e.target.value)}
+                placeholder="e.g. 8f5f4dd1-7bdb-…"
+                required
+                className="rounded-lg px-3 py-2 text-sm bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-pnp-textSecondary font-semibold">Video ID (UUID) *</label>
+              <input
+                type="text"
+                value={vgVideoId}
+                onChange={(e) => setVgVideoId(e.target.value)}
+                placeholder="e.g. 3d8c1f22-…"
+                required
+                className="rounded-lg px-3 py-2 text-sm bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-pnp-textSecondary font-semibold">Expiry date (blank = permanent)</label>
+              <input
+                type="datetime-local"
+                value={vgExpiresAt}
+                onChange={(e) => setVgExpiresAt(e.target.value)}
+                className="rounded-lg px-3 py-2 text-sm bg-pnp-background border border-pnp-border text-white focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-pnp-textSecondary font-semibold">Reason *</label>
+              <input
+                type="text"
+                value={vgReason}
+                onChange={(e) => setVgReason(e.target.value)}
+                placeholder="e.g. refund comp — Stripe chargeback #ch_xxx"
+                required
+                className="rounded-lg px-3 py-2 text-sm bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent"
+              />
+            </div>
+
+            <div className="sm:col-span-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={vgSubmitting}
+                className="px-5 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+                style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
+              >
+                {vgSubmitting ? "Granting…" : "Grant Video Access"}
+              </button>
+            </div>
+          </form>
+
+          {/* Recent grants table */}
+          <div className="mb-3 flex flex-wrap items-end gap-2">
+            <h2 className="text-sm font-bold text-white mr-2">Recent admin grants</h2>
+            <input
+              type="text"
+              value={vgFilterUserId}
+              onChange={(e) => setVgFilterUserId(e.target.value)}
+              placeholder="Filter by user ID"
+              className="rounded-lg px-3 py-1.5 text-xs bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent w-48"
+            />
+            <input
+              type="text"
+              value={vgFilterVideoId}
+              onChange={(e) => setVgFilterVideoId(e.target.value)}
+              placeholder="Filter by video ID"
+              className="rounded-lg px-3 py-1.5 text-xs bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent w-48"
+            />
+            <button
+              onClick={() => void loadVideoGrants()}
+              disabled={videoGrantsLoading}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-pnp-border text-white hover:bg-pnp-surface disabled:opacity-50"
+            >
+              {videoGrantsLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          {videoGrantsError && (
+            <div className="mb-3 rounded-lg px-4 py-3 text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/30">
+              {videoGrantsError}
+            </div>
+          )}
+
+          {videoGrantsLoading && videoGrants.length === 0 ? (
+            <div className="py-12 text-center text-sm text-pnp-textSecondary">Loading…</div>
+          ) : videoGrants.length === 0 ? (
+            <div className="py-10 text-center text-sm text-pnp-textSecondary">No admin video grants yet.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-pnp-border">
+              <table className="w-full text-sm">
+                <thead className="bg-pnp-surface text-xs uppercase tracking-wide text-pnp-textSecondary">
+                  <tr>
+                    <th className="text-left px-3 py-2">#</th>
+                    <th className="text-left px-3 py-2">User</th>
+                    <th className="text-left px-3 py-2">Video</th>
+                    <th className="text-left px-3 py-2">Expires</th>
+                    <th className="text-left px-3 py-2">Granted by</th>
+                    <th className="text-left px-3 py-2">Reason</th>
+                    <th className="text-left px-3 py-2">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {videoGrants.map((g) => (
+                    <tr key={g.id} className="border-t border-pnp-border hover:bg-pnp-surface/40">
+                      <td className="px-3 py-2 font-mono text-xs">{g.id}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{g.username ? `@${g.username}` : "—"}</div>
+                        <div className="text-[11px] text-pnp-textSecondary font-mono break-all">{g.user_id}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium max-w-[180px] truncate">{g.video_title || "—"}</div>
+                        <div className="text-[11px] text-pnp-textSecondary font-mono break-all">{g.video_id}</div>
+                      </td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">
+                        {g.expires_at ? formatDate(g.expires_at) : <span className="text-green-400 font-semibold">permanent</span>}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {g.granted_by_username ? `@${g.granted_by_username}` : (g.granted_by_user_id || "—")}
+                      </td>
+                      <td className="px-3 py-2 text-xs max-w-[200px]">
+                        {g.metadata?.reason || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(g.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Table */}
-      {loading && rows.length === 0 ? (
-        <div className="py-12 text-center text-sm text-pnp-textSecondary">Loading…</div>
-      ) : rows.length === 0 ? (
-        <div className="py-12 text-center text-sm text-pnp-textSecondary">
-          No {filter === "all" ? "" : filter} {providerLabel} activations.
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-pnp-border">
-          <table className="w-full text-sm">
-            <thead className="bg-pnp-surface text-xs uppercase tracking-wide text-pnp-textSecondary">
-              <tr>
-                <th className="text-left px-3 py-2">#</th>
-                <th className="text-left px-3 py-2">Email / User</th>
-                <th className="text-left px-3 py-2">Plan</th>
-                <th className="text-left px-3 py-2">Reference</th>
-                <th className="text-left px-3 py-2">Op# / Tx</th>
-                <th className="text-left px-3 py-2">Ext. Status</th>
-                <th className="text-left px-3 py-2">Status</th>
-                <th className="text-left px-3 py-2">Created</th>
-                <th className="text-left px-3 py-2">Activated</th>
-                <th className="text-right px-3 py-2">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t border-pnp-border hover:bg-pnp-surface/40">
-                  <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{r.email}</div>
-                    {(r.username || r.firstName) && (
-                      <div className="text-[11px] text-pnp-textSecondary">
-                        {r.username ? `@${r.username}` : r.firstName}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.isMp
-                      ? <PlanPill planId={r.planId} />
-                      : <span className="text-pnp-textSecondary text-xs">—</span>
-                    }
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[11px] break-all">{r.reference || "—"}</td>
-                  <td className="px-3 py-2">
-                    <CopyCell value={r.transactionId} emphasize={r.isMp} />
-                  </td>
-                  <td className="px-3 py-2 text-xs">{r.externalStatus || "—"}</td>
-                  <td className="px-3 py-2"><StatusPill status={r.status} /></td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(r.createdAt)}</td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(r.activatedAt)}</td>
-                  <td className="px-3 py-2 text-right">
-                    {r.status === "pending" ? (
-                      <button
-                        onClick={() => void handleGrant(r.id, r.planId)}
-                        disabled={busyId === r.id}
-                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
-                        style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
-                      >
-                        {busyId === r.id ? "Granting…" : "Grant Access"}
-                      </button>
-                    ) : r.status === "activated" ? (
-                      <span className="text-xs text-green-400 font-semibold">✓ Activated</span>
-                    ) : (
-                      <span className="text-xs text-pnp-textSecondary">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* ── MercadoPago / Nequi tabs ─────────────────────────────────────────── */}
+      {tab !== "video" && (
+        <>
+          {/* Provider note */}
+          <div className="mb-4 rounded-lg px-4 py-3 text-xs text-pnp-textSecondary border border-pnp-border bg-pnp-surface/50">
+            {providerEmoji} {providerNote}
+          </div>
+
+          {/* Filter + refresh */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {(["pending", "activated", "rejected", "all"] as Filter[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wide transition-colors ${
+                  filter === f
+                    ? "bg-pnp-accent text-black"
+                    : "border border-pnp-border text-pnp-textSecondary hover:text-white"
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold border border-pnp-border text-white hover:bg-pnp-surface disabled:opacity-50"
+            >
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          {error && (
+            <div className="mb-4 rounded-lg px-4 py-3 text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/30">
+              {error}
+            </div>
+          )}
+
+          {/* Table */}
+          {loading && rows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-pnp-textSecondary">Loading…</div>
+          ) : rows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-pnp-textSecondary">
+              No {filter === "all" ? "" : filter} {providerLabel} activations.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-pnp-border">
+              <table className="w-full text-sm">
+                <thead className="bg-pnp-surface text-xs uppercase tracking-wide text-pnp-textSecondary">
+                  <tr>
+                    <th className="text-left px-3 py-2">#</th>
+                    <th className="text-left px-3 py-2">Email / User</th>
+                    <th className="text-left px-3 py-2">Plan</th>
+                    <th className="text-left px-3 py-2">Reference</th>
+                    <th className="text-left px-3 py-2">Op# / Tx</th>
+                    <th className="text-left px-3 py-2">Ext. Status</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Created</th>
+                    <th className="text-left px-3 py-2">Activated</th>
+                    <th className="text-right px-3 py-2">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id} className="border-t border-pnp-border hover:bg-pnp-surface/40">
+                      <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{r.email}</div>
+                        {(r.username || r.firstName) && (
+                          <div className="text-[11px] text-pnp-textSecondary">
+                            {r.username ? `@${r.username}` : r.firstName}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.isMp
+                          ? <PlanPill planId={r.planId} />
+                          : <span className="text-pnp-textSecondary text-xs">—</span>
+                        }
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[11px] break-all">{r.reference || "—"}</td>
+                      <td className="px-3 py-2">
+                        <CopyCell value={r.transactionId} emphasize={r.isMp} />
+                      </td>
+                      <td className="px-3 py-2 text-xs">{r.externalStatus || "—"}</td>
+                      <td className="px-3 py-2"><StatusPill status={r.status} /></td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(r.createdAt)}</td>
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">{formatDate(r.activatedAt)}</td>
+                      <td className="px-3 py-2 text-right">
+                        {r.status === "pending" ? (
+                          <button
+                            onClick={() => void handleGrant(r.id, r.planId)}
+                            disabled={busyId === r.id}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+                            style={{ background: "linear-gradient(90deg,#ff3377,#ff9933)" }}
+                          >
+                            {busyId === r.id ? "Granting…" : "Grant Access"}
+                          </button>
+                        ) : r.status === "activated" ? (
+                          <span className="text-xs text-green-400 font-semibold">✓ Activated</span>
+                        ) : (
+                          <span className="text-xs text-pnp-textSecondary">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -1514,6 +1514,12 @@ export interface SocialPostItem {
   // Populated by the backend on every post payload; may be absent on older
   // responses cached before the resolved-mentions rollout.
   resolved_mentions?: Array<{ username: string; user_id: string | null }>;
+  // Rent/buy paywall fields — present on video posts that have per-video pricing.
+  // May be absent on non-video posts or before the paywall feature is deployed.
+  // Check both top-level and metadata fallback for forward-compat.
+  rent_price_rush?: number | null;
+  buy_price_rush?: number | null;
+  channel_pass_enabled?: boolean | null;
 }
 
 export interface PostCardSnapshot {
@@ -10884,5 +10890,163 @@ export async function getActiveReplaySession(): Promise<ActiveReplaySession | nu
   if (!res.ok) throw new Error(`http_${res.status}`);
   const data = await res.json();
   return data.session ?? null;
+}
+
+// ============================================================================
+// Video Paywall — rent/buy access + channel pass
+// ============================================================================
+
+export interface VideoAccessInfo {
+  prices: {
+    rent_price_rush: number | null;
+    buy_price_rush: number | null;
+    rent_price_usd: number | null;
+    buy_price_usd: number | null;
+  };
+  has_grant: boolean;
+  grant_type: "rent" | "buy" | "admin_grant" | null;
+  expires_at: string | null;
+  creator: {
+    id: string;
+    username: string;
+    avatar_url: string | null;
+    channel_pass_enabled: boolean;
+    channel_pass_price_usd: number | null;
+    channel_pass_active: boolean;
+    channel_pass_expires_at: string | null;
+  };
+}
+
+export interface VideoPurchaseResult {
+  success: boolean;
+  grant_type: "rent" | "buy";
+  expires_at: string | null;
+  new_balance: number;
+}
+
+export interface ChannelPassCheckoutResult {
+  success: boolean;
+  expires_at: string | null;
+  new_balance: number;
+  subscription_id?: string;
+}
+
+export async function getVideoAccess(videoId: string | number): Promise<VideoAccessInfo> {
+  return request(`/api/videos/${encodeURIComponent(videoId)}/access`);
+}
+
+export async function purchaseVideoAccess(
+  videoId: string | number,
+  grantType: "rent" | "buy"
+): Promise<VideoPurchaseResult> {
+  return request(`/api/videos/${encodeURIComponent(videoId)}/purchase`, {
+    method: "POST",
+    body: { grantType },
+  });
+}
+
+export async function checkoutChannelPass(
+  creatorId: string,
+  provider: "rush" = "rush"
+): Promise<ChannelPassCheckoutResult> {
+  return request(`/api/creators/${encodeURIComponent(creatorId)}/channel-pass/checkout`, {
+    method: "POST",
+    body: { provider },
+  });
+}
+
+export interface ChannelPassViewerInfo {
+  enabled: boolean;
+  price_usd: number;
+  price_rush: number;
+  is_active: boolean;
+  expires_at: string | null;
+  started_at: string | null;
+}
+
+export async function getCreatorChannelPass(creatorId: string): Promise<ChannelPassViewerInfo> {
+  return request(`/api/creators/${encodeURIComponent(creatorId)}/channel-pass`);
+}
+
+export async function saveChannelPassSettings(
+  opts: { enabled: boolean; price_usd: number }
+): Promise<{ success: boolean }> {
+  return request("/api/creator/settings/channel-pass", {
+    method: "POST",
+    body: opts,
+  });
+}
+
+export interface UserChannelPass {
+  subscription_id: string;
+  creator_id: string;
+  creator_username: string;
+  creator_avatar: string | null;
+  price_usd: number;
+  started_at: string;
+  expires_at: string;
+  status: "active" | "cancelled" | "expired";
+  days_left: number;
+}
+
+export async function getUserChannelPasses(): Promise<UserChannelPass[]> {
+  const res = await request<UserChannelPass[] | { items: UserChannelPass[] }>("/api/user/channel-passes");
+  return Array.isArray(res) ? res : (res as { items: UserChannelPass[] }).items ?? [];
+}
+
+export async function cancelChannelPass(subscriptionId: string): Promise<{ success: boolean }> {
+  return request(`/api/user/channel-passes/${encodeURIComponent(subscriptionId)}/cancel`, {
+    method: "POST",
+  });
+}
+
+export async function updateVideoPricing(
+  videoId: string,
+  pricing: { rent_price_rush?: number | null; buy_price_rush?: number | null }
+): Promise<{ success: boolean }> {
+  return request(`/api/creator/videos/${encodeURIComponent(videoId)}/pricing`, {
+    method: "PATCH",
+    body: pricing,
+  });
+}
+
+// ─── Admin video-access grants ─────────────────────────────────────────────────
+
+export interface AdminVideoGrant {
+  id: number;
+  user_id: string;
+  username: string | null;
+  first_name: string | null;
+  video_id: string;
+  video_title: string | null;
+  grant_type: string;
+  expires_at: string | null;
+  granted_by_user_id: string | null;
+  granted_by_username: string | null;
+  metadata: { reason?: string } | null;
+  created_at: string;
+}
+
+export function listAdminVideoGrants(opts?: {
+  userId?: string;
+  videoId?: string;
+}): Promise<{ success: boolean; grants: AdminVideoGrant[] }> {
+  const params = new URLSearchParams();
+  if (opts?.userId) params.set("userId", opts.userId);
+  if (opts?.videoId) params.set("videoId", opts.videoId);
+  const qs = params.toString();
+  return request(`/api/webapp/admin/video-access-grants${qs ? `?${qs}` : ""}`);
+}
+
+export function createAdminVideoGrant(opts: {
+  user_id: string;
+  video_id: string;
+  expires_at?: string | null;
+  reason: string;
+}): Promise<{ success: boolean; grant?: AdminVideoGrant; error?: string }> {
+  return request("/api/webapp/admin/video-access-grants", {
+    method: "POST",
+    body: JSON.stringify(opts),
+  });
 }
 
