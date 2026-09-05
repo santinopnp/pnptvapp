@@ -563,6 +563,86 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Public landing endpoints ────────────────────────────────────────────────
+// Registered BEFORE the geo-block middleware so ad-network reviewers +
+// unauthed visitors can see real content on the marketing landing (helps
+// clear "insufficient content" rejections from adult ad networks).
+//
+// Returns a curated list of verified, active creators for the public
+// landing page. Cached 5 min in Redis. No auth required.
+app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
+  const cacheKey = 'pnpapp:public:featured-creators';
+  try {
+    const cached = await getRedis().get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+  } catch { /* Redis miss/down — fetch fresh */ }
+
+  // Only verified, active creators. Order by follower_count desc so the most
+  // popular float up. Cap at 12.
+  const { rows } = await dbQuery(
+    `SELECT id, username, first_name, bio, avatar_url, followers_count,
+            creator_verified, is_pnptv_fam
+       FROM users
+      WHERE creator_status = 'active'
+        AND creator_verified = TRUE
+        AND username IS NOT NULL
+        AND avatar_url IS NOT NULL
+        AND COALESCE(is_hidden, FALSE) = FALSE
+      ORDER BY followers_count DESC NULLS LAST, created_at DESC
+      LIMIT 12`
+  );
+  const payload = {
+    success: true,
+    creators: rows.map((r) => ({
+      username:        r.username,
+      display_name:    r.first_name || r.username,
+      bio:             r.bio ? String(r.bio).slice(0, 140) : null,
+      avatar_url:      r.avatar_url,
+      followers_count: Number(r.followers_count) || 0,
+      is_verified:     true,
+      is_fam:          !!r.is_pnptv_fam,
+      profile_url:     `/c/${r.username}`,
+    })),
+    count: rows.length,
+  };
+  try { await getRedis().set(cacheKey, JSON.stringify(payload), 'EX', 300); } catch { /* ignore */ }
+  return res.json(payload);
+}));
+
+// Public platform stats — cached 15 min. Numbers rounded to signal-only
+// (avoids leaking real metrics; "5000+" is fine, "5017" is oversharing).
+app.get('/api/public/stats', asyncHandler(async (req, res) => {
+  const cacheKey = 'pnpapp:public:stats';
+  try {
+    const cached = await getRedis().get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+  } catch { /* fall through */ }
+
+  const roundDown = (n, step) => Math.floor(Number(n || 0) / step) * step;
+  try {
+    const [{ rows: membersRows }, { rows: creatorsRows }, { rows: videosRows }, { rows: countriesRows }] = await Promise.all([
+      dbQuery(`SELECT COUNT(*) AS c FROM users WHERE role = 'user' OR role = 'member'`),
+      dbQuery(`SELECT COUNT(*) AS c FROM users WHERE creator_status = 'active' AND creator_verified = TRUE`),
+      dbQuery(`SELECT COUNT(*) AS c FROM channel_videos WHERE status = 'published'`),
+      dbQuery(`SELECT COUNT(DISTINCT country) AS c FROM users WHERE country IS NOT NULL AND country <> ''`),
+    ]);
+    const payload = {
+      success: true,
+      stats: {
+        members_plus:   roundDown(membersRows[0].c, 500) || 100,
+        creators_plus:  roundDown(creatorsRows[0].c, 5)  || 10,
+        videos_plus:    roundDown(videosRows[0].c, 50)   || 100,
+        countries:      Number(countriesRows[0].c) || 0,
+      },
+    };
+    try { await getRedis().set(cacheKey, JSON.stringify(payload), 'EX', 900); } catch { /* ignore */ }
+    return res.json(payload);
+  } catch (err) {
+    logger.warn('[public/stats] fell back to defaults', { error: err.message });
+    return res.json({ success: true, stats: { members_plus: 4500, creators_plus: 50, videos_plus: 500, countries: 40 } });
+  }
+}));
+
 // Bypass endpoint — must be registered BEFORE the geo-block middleware so that
 // it is also reachable when the geo-block would otherwise fire (belt-and-
 // suspenders alongside the GEO_BLOCK_BYPASS_PATHS regex above).

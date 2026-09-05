@@ -3,6 +3,14 @@ import { Link } from "react-router-dom";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { magicLinkStart, passkeyBegin, passkeyFinish, checkAuthStatus, passkeyRegisterBegin, passkeyRegisterFinish, addRecoveryEmail } from "@/lib/api";
 import { sanitizeReturnTo } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
+import { StickyHeader } from "@/components/landing/StickyHeader";
+import { PublicHero, type PublicStats } from "@/components/landing/PublicHero";
+import { FeaturedCreators, type PublicCreator } from "@/components/landing/FeaturedCreators";
+import { HowItWorks } from "@/components/landing/HowItWorks";
+import { Testimonials } from "@/components/landing/Testimonials";
+import { SafeSaneCommunity } from "@/components/landing/SafeSaneCommunity";
+import { PublicFooter } from "@/components/landing/PublicFooter";
 
 // ── WebAuthn helpers ──────────────────────────────────────────────────────────
 // Authentik's flow executor returns binary fields as base64url strings; the
@@ -372,6 +380,54 @@ export function LandingPage() {
   const params = new URLSearchParams(window.location.search);
   const performerFocus = params.get("focus") === "performer";
   const performerCountry = params.get("country") || null;
+
+  // ── i18n ─────────────────────────────────────────────────────────────────
+  const t = useI18n();
+
+  // ── Public data — no auth required ───────────────────────────────────────
+  const [stats, setStats] = useState<PublicStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [creators, setCreators] = useState<PublicCreator[]>([]);
+  const [creatorsLoading, setCreatorsLoading] = useState(true);
+  const [creatorsError, setCreatorsError] = useState(false);
+
+  // Scroll targets
+  const authRef = useRef<HTMLDivElement>(null);
+  const creatorsRef = useRef<HTMLElement>(null);
+
+  const fetchStats = useCallback(() => {
+    fetch("/api/public/stats")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.stats) setStats(data.stats);
+      })
+      .catch(() => { /* silently fail — stat pills just show fallback */ })
+      .finally(() => setStatsLoading(false));
+  }, []);
+
+  const fetchCreators = useCallback(() => {
+    setCreatorsError(false);
+    setCreatorsLoading(true);
+    fetch("/api/public/featured-creators")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.creators)) setCreators(data.creators);
+        else setCreatorsError(true);
+      })
+      .catch(() => setCreatorsError(true))
+      .finally(() => setCreatorsLoading(false));
+  }, []);
+
+  const scrollToAuth = useCallback(() => {
+    authRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  const scrollToCreators = useCallback(() => {
+    creatorsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+  useEffect(() => { fetchCreators(); }, [fetchCreators]);
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
@@ -921,15 +977,56 @@ export function LandingPage() {
   const tgButtonLabel = lastTgUsername ? `Log in as ${lastTgUsername}` : "Continue with Telegram";
 
   return (
-    <div className="app-shell bg-pnp-background">
+    <div className="bg-pnp-background min-h-screen">
 
-      {/* ── HEADER ──────────────────────────────────────────────────────────── */}
-      <header className="glass-nav border-b border-pnp-border flex items-center justify-end px-4 h-14 flex-shrink-0">
-        <LanguageSelector />
-      </header>
+      {/* ── STICKY HEADER — transparent-to-solid on scroll ───────────────── */}
+      <StickyHeader lang={t.lang} onSignIn={scrollToAuth} />
 
-      {/* ── HERO ────────────────────────────────────────────────────────────── */}
-      <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center px-4 overflow-y-auto py-4">
+      {/* ── PUBLIC LANDING SECTIONS ──────────────────────────────────────── */}
+      <PublicHero
+        lang={t.lang}
+        stats={stats}
+        statsLoading={statsLoading}
+        onJoinFree={scrollToAuth}
+        onExploreClick={scrollToCreators}
+      />
+      <HowItWorks lang={t.lang} />
+      <FeaturedCreators
+        lang={t.lang}
+        creators={creators}
+        loading={creatorsLoading}
+        error={creatorsError}
+        onRetry={fetchCreators}
+        ref={creatorsRef}
+      />
+      <Testimonials lang={t.lang} />
+      <SafeSaneCommunity lang={t.lang} />
+
+      {/* ── AUTH SECTION — anchor for "Join free" / "Sign in" CTAs ──────── */}
+      <div ref={authRef} id="auth">
+        <div
+          className="flex flex-col items-center px-4 py-16"
+          style={{ background: "linear-gradient(180deg, #0A0A0F 0%, #0D0A14 100%)" }}
+        >
+          <div className="w-full max-w-xs text-center mb-8">
+            <p
+              className="text-[10px] font-bold uppercase tracking-[0.3em] mb-2"
+              style={{ fontFamily: "'Roboto Mono', monospace", color: "#D4007A" }}
+            >
+              {t.lang === "es" ? "//únete" : "//join"}
+            </p>
+            <h2
+              className="text-xl font-bold text-white"
+              style={{ fontFamily: "'Ethnocentric Rg', 'Roboto Mono', monospace" }}
+            >
+              {t.lang === "es" ? "Grab a spot" : "Grab a spot"}
+            </h2>
+          </div>
+        </div>
+      </div>
+
+      {/* ── AUTH WIDGET (existing — untouched) ──────────────────────────── */}
+      <main className="flex flex-col items-center justify-center text-center px-4 pb-16">
         <div className="w-full max-w-xs flex flex-col items-center gap-4">
 
           {/* ── Post-magic-link passkey prompt ────────────────────────────────
@@ -1502,6 +1599,9 @@ export function LandingPage() {
           </div>
         </>
       )}
+
+      {/* ── PUBLIC FOOTER ────────────────────────────────────────────────── */}
+      <PublicFooter lang={t.lang} />
     </div>
   );
 }
