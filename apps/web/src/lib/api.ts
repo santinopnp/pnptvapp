@@ -4873,6 +4873,44 @@ export function getCreatorDashboard(): Promise<{
   return request("/api/webapp/creator/dashboard");
 }
 
+// ─── Moderation history (self-owned) ─────────────────────────────────────────
+
+export interface CreatorModerationStrike {
+  id: number;
+  strike_number: number;
+  category: string;
+  action_taken: "warn" | "mute_24h" | "ban" | "strip_only";
+  cleared: boolean;
+  cleared_at: string | null;
+  appeal_status: "pending" | "approved" | "rejected" | null;
+  appeal_submitted_at: string | null;
+  created_at: string;
+}
+
+export interface CreatorModerationHistory {
+  success: boolean;
+  suspension: {
+    active: boolean;
+    creator_status: string | null;
+    until_iso: string | null;
+    reason: string | null;
+  };
+  contentCompliance: {
+    status: string | null;
+    deadline_iso: string | null;
+  };
+  activeMute: {
+    active: boolean;
+    seconds_remaining: number | null;
+    until_iso: string | null;
+  };
+  strikes: CreatorModerationStrike[];
+}
+
+export function getCreatorModerationHistory(): Promise<CreatorModerationHistory> {
+  return request("/api/webapp/creator/moderation-history");
+}
+
 // Payout destinations are stored as a per-lane jsonb blob. Lane payloads:
 //   meru      → { handle: string }
 //   bre_b     → { key: string, key_type: "phone" | "cedula" | "email" }  (Colombia only)
