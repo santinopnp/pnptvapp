@@ -14,6 +14,16 @@ async function listPackages(req, res) {
   try {
     const { creatorId } = req.params;
     const packages = await callPackageService.getPackages(creatorId);
+    // Sin huecos: anotar el intento para avisar cuando vuelva a estar disponible.
+    if (!slots.length && !nearTermSlots.length) {
+      const viewerId = String(req.user?.id || req.user?.userId || '');
+      if (viewerId) {
+        require('../../../services/callWaitlistService')
+          .recordMiss({ memberId: viewerId, creatorId, durationMinutes })
+          .catch(() => {});
+      }
+    }
+
     res.json({ success: true, packages });
   } catch (err) {
     logger.error('listPackages error', { error: err.message });
@@ -138,9 +148,9 @@ async function getBookingOptions(req, res) {
     // REGLA B — la disponibilidad es presencia, no calendario: sin directo no
     // se ofrece ningún hueco. Las reservas YA confirmadas no se tocan (viven en
     // bookings y se honran); esto solo controla lo que se ofrece de nuevo.
-    const slots = isAcceptingCalls
-      ? await CallBookingService.getAvailableSlots(creatorId, fromDate, toDate, durationMinutes)
-      : [];
+    // Dos vias: en vivo da huecos inmediatos (los near-term de abajo) y el
+    // horario semanal sigue captando reservas cuando el creador no emite.
+    const slots = await CallBookingService.getAvailableSlots(creatorId, fromDate, toDate, durationMinutes);
 
     // ── Near-term slot injection (only when accepting_calls is active) ────────
     let nearTermSlots = [];

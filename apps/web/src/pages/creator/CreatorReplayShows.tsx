@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n";
+import * as tus from "tus-js-client";
+import { WalletPayCard } from "@/components/payments/PayInWalletChips";
 import { useCreatorData } from "@/hooks/useCreatorData";
 import {
   listMyReplayShows,
@@ -57,15 +59,59 @@ function UploadModal({ onClose, onCreated }: UploadModalProps) {
     setError(null);
     setBusy(true);
     try {
-      // 1. Upload the video using the existing chunked uploader
-      const result = await uploadCreatorVideoChunked(file, {
-        caption: title.trim(),
-        isPremium: false,
-        onProgress: (p) => setProgress(p),
+      // 1. Crear el video en Bunny y obtener la firma de subida. La API key no
+      //    sale del servidor: aqui solo llega una firma con caducidad.
+      const initRes = await fetch("/api/webapp/creators/me/replay/bunny-upload", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title.trim() }),
       });
-      // 2. Register the show against the replay endpoint
+      const init = await initRes.json();
+      if (!initRes.ok || !init.success) throw new Error(init.error || "No se pudo iniciar la subida");
+
+      // 2. Subir los bytes directos a Bunny. TUS es reanudable, que a 2 GB desde
+      //    una conexion domestica no es opcional.
+      await new Promise<void>((resolve, reject) => {
+        const upload = new tus.Upload(file, {
+          endpoint: init.upload.endpoint,
+          headers: init.upload.headers,
+          chunkSize: 25 * 1024 * 1024,
+          retryDelays: [0, 3000, 10000, 30000, 60000],
+          metadata: { filetype: file.type, title: title.trim() },
+          // La barra espera ChunkUploadProgress; TUS no tiene trozos, asi que se
+          // reporta uno solo y el porcentaje real.
+          onProgress: (sent, total) => setProgress({
+            pct: Math.round((sent / total) * 100),
+            doneChunks: sent >= total ? 1 : 0,
+            totalChunks: 1,
+            uploadId: init.videoId,
+          }),
+          onError: reject,
+          onSuccess: () => resolve(),
+        });
+        upload.start();
+      });
+
+      // 3. Esperar al transcodificado. Registrar la URL antes de que este lista
+      //    daria un ingest fallido al emitir.
+      let playbackUrl = "";
+      for (let i = 0; i < 120; i++) {
+        const st = await fetch("/api/webapp/creators/me/replay/bunny-finish", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoId: init.videoId }),
+        }).then((r) => r.json());
+        if (st.status === "ready" && st.playbackUrl) { playbackUrl = st.playbackUrl; break; }
+        if (st.status === "failed") throw new Error("Bunny no pudo procesar el video");
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      if (!playbackUrl) throw new Error("El video sigue procesandose. Vuelve en unos minutos.");
+
+      // 4. Registrar el show con la URL de Bunny.
       const { show } = await createReplayShow({
-        videoUrl: result.item.url ?? "",
+        videoUrl: playbackUrl,
         title: title.trim(),
       });
       onCreated(show);
@@ -401,7 +447,68 @@ const ShowRow = React.memo(function ShowRow({
 
 // ── Crystal-only gate card ────────────────────────────────────────────────────
 
-function CrystalOnlyCard({ t }: { t: ReturnType<typeof useI18n>["creator"] }) {
+// Precio de etiqueta. La tarifa real la impone el servidor (CRYSTAL_PRICES);
+// esto solo se muestra.
+const CRYSTAL_PRICE_USD = 100;
+
+function CrystalUpgradeModal({ open, onClose, onPaid, lang }: {
+  open: boolean; onClose: () => void; onPaid: () => void; lang: "es" | "en";
+}) {
+  if (!open) return null;
+  const isEs = lang === "es";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={isEs ? "Comprar Crystal Creator Pass" : "Buy Crystal Creator Pass"}
+    >
+      <div
+        className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5"
+        style={{ background: "var(--pnp-background, #121212)", border: "1px solid var(--pnp-border, #2A2A2A)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="text-base font-bold text-white">Crystal Creator Pass</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              {isEs ? "1 mes · se acumula si compras varios" : "1 month · stacks if you buy several"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={isEs ? "Cerrar" : "Close"}
+            className="text-xl leading-none px-2"
+            style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+          >
+            ×
+          </button>
+        </div>
+
+        <WalletPayCard
+          surface="crystal_self"
+          amountUsd={CRYSTAL_PRICE_USD}
+          entitlementSpec={{}}
+          metadata={{ context: "replay_shows_gate" }}
+          label={isEs ? `Pagar $${CRYSTAL_PRICE_USD}` : `Pay $${CRYSTAL_PRICE_USD}`}
+          lang={lang}
+          onSuccess={onPaid}
+        />
+
+        <p className="text-[11px] mt-3 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+          {isEs
+            ? "Se paga con tu wallet. Si ya tienes un pase activo, este se suma al final del actual."
+            : "Paid from your wallet. If you already have an active pass, this one stacks onto it."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CrystalOnlyCard({ t, onUpgrade }: { t: ReturnType<typeof useI18n>["creator"]; onUpgrade: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
       <div
@@ -420,8 +527,9 @@ function CrystalOnlyCard({ t }: { t: ReturnType<typeof useI18n>["creator"] }) {
       <p className="text-sm text-pnp-textSecondary max-w-sm leading-relaxed mb-6">
         {t.replayShowsCrystalOnlyDesc}
       </p>
-      <Link
-        to="/subscribe"
+      <button
+        type="button"
+        onClick={onUpgrade}
         className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-[0.98]"
         style={{
           background: "linear-gradient(135deg, #0a0612 0%, #3c1a4d 50%, #6b4c7f 100%)",
@@ -429,7 +537,7 @@ function CrystalOnlyCard({ t }: { t: ReturnType<typeof useI18n>["creator"] }) {
         }}
       >
         ❖ {t.replayShowsUpgradeCta}
-      </Link>
+      </button>
     </div>
   );
 }
@@ -437,8 +545,10 @@ function CrystalOnlyCard({ t }: { t: ReturnType<typeof useI18n>["creator"] }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function CreatorReplayShows() {
-  const { creator: t } = useI18n();
+  // lang sale del objeto raiz: t son solo las cadenas de creador y no lo lleva.
+  const { creator: t, lang } = useI18n();
   const { crystalCreator } = useCreatorData();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   const [shows, setShows] = useState<ReplayShow[]>([]);
   const [session, setSession] = useState<ActiveReplaySession | null>(null);
@@ -550,7 +660,16 @@ export default function CreatorReplayShows() {
   if (!crystalCreator) {
     return (
       <div className="max-w-2xl mx-auto">
-        <CrystalOnlyCard t={t} />
+        <>
+          <CrystalOnlyCard t={t} onUpgrade={() => setUpgradeOpen(true)} />
+          <CrystalUpgradeModal
+            open={upgradeOpen}
+            onClose={() => setUpgradeOpen(false)}
+            // Tras pagar se recarga: el pase ya esta activo y el gate cae.
+            onPaid={() => { setUpgradeOpen(false); load(); }}
+            lang={lang === "es" ? "es" : "en"}
+          />
+        </>
       </div>
     );
   }

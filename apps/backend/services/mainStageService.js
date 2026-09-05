@@ -419,29 +419,23 @@ async function getState() {
       // Step 2: fetch username + crystal status for all resolved user_ids in one query.
       const uniqueUserIds = [...new Set(resolvedIds.values())];
       const usersResult = await getPool().query(
-        `SELECT id::text AS id, username, crystal_creator_active_until
-           FROM users
-          WHERE id::text = ANY($1)`,
+        `SELECT u.id::text AS id, u.username,
+                COALESCE(ce.is_active, false) AS is_crystal
+           FROM users u
+           LEFT JOIN crystal_entitlements ce ON ce.creator_id::text = u.id::text
+          WHERE u.id::text = ANY($1)`,
         [uniqueUserIds]
       );
       const userMap = new Map(); // userId → { username, isCrystal }
-      const nowMs = Date.now();
       for (const row of usersResult.rows) {
-        // crystal_creator_active_until can be Postgres 'infinity' (permanent
-        // grants: Santino, Lex, Dejesusof22...). node-pg parses timestamptz
-        // 'infinity' as the JS Number `Infinity`, NOT the string 'infinity',
-        // so `new Date(Infinity)` → Invalid Date. Handle all three shapes.
-        const raw = row.crystal_creator_active_until;
-        let isCrystal = false;
-        if (raw != null) {
-          if (raw === Infinity || raw === 'infinity') {
-            isCrystal = true;
-          } else {
-            const asDate = raw instanceof Date ? raw : new Date(raw);
-            isCrystal = !isNaN(asDate.getTime()) && asDate.getTime() > nowMs;
-          }
-        }
-        userMap.set(row.id, { username: row.username || null, isCrystal });
+        // La vista crystal_entitlements ya resuelve vigencia y gracia, así que
+        // aquí no hace falta interpretar fechas. Esto sustituye al bloque que
+        // desenredaba el 'infinity' de Postgres (node-pg lo entrega como el
+        // número Infinity, y `new Date(Infinity)` daba Invalid Date).
+        userMap.set(row.id, {
+          username: row.username || null,
+          isCrystal: row.is_crystal === true,
+        });
       }
 
       // Build onStage, preserving queue order, deduplicating by resolved userId.
@@ -677,7 +671,8 @@ async function fetchPnptvModeGrant(identity) {
          LEFT JOIN performers p ON p.user_id = u.id::text
         WHERE (u.id::text = $1 OR p.id::text = $1)
           AND (
-            (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW())
+            EXISTS (SELECT 1 FROM crystal_entitlements ce
+                     WHERE ce.creator_id::text = u.id::text AND ce.is_active)
             OR (u.pnptv_mode_expires_at IS NOT NULL AND u.pnptv_mode_expires_at > NOW())
           )
         LIMIT 1`,

@@ -169,18 +169,11 @@ async function initiateUsdcPurchase(opts) {
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
 
-  // crystal_self is invite-only. Verify before creating any intent row.
-  if (surface === 'crystal_self') {
-    const { rows: invRows } = await query(
-      `SELECT crystal_creator_invited_at FROM users WHERE id = $1 LIMIT 1`,
-      [String(userId)]
-    );
-    if (!invRows[0] || !invRows[0].crystal_creator_invited_at) {
-      const err = new Error('walletCheckout: crystal_self — user has not been invited to Crystal Creator');
-      err.statusCode = 403;
-      err.code = 'not_invited';
-      throw err;
-    }
+  // Crystal Pass es de compra abierta desde 2026-09-05 (antes invite-only).
+  // El precio lo impone el servidor: llegaba como amountUsd desde el cliente,
+  // así que se podía pedir un pase de $1.
+  if (surface === 'crystal_self' || surface === 'crystal_gift') {
+    amountUsd = CRYSTAL_PRICES[surface];
   }
 
   const receivingAddress = RECEIVING_ADDRESS();
@@ -921,21 +914,7 @@ async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, 
   } else {
     targetCreatorId = String(userId);
     giftedBy = null;
-    // Invite-only guard for self-purchase. initiateUsdcPurchase already checked
-    // this before the intent was created, but the fulfill path may be called
-    // from the Alchemy webhook (verifyAndFulfillUsdc) so we re-verify here.
-    const { rows: invRows } = await query(
-      `SELECT crystal_creator_invited_at FROM users WHERE id = $1 LIMIT 1`,
-      [String(userId)]
-    );
-    if (!invRows[0] || !invRows[0].crystal_creator_invited_at) {
-      logger.error('[walletCheckout] _fulfillCrystalPass: self-purchase on uninvited user — refusing grant', {
-        userId, intentId,
-      });
-      // Return without granting; the outer transaction will still mark the
-      // intent confirmed so the funds are not lost — ops team resolves manually.
-      return { entitlementId: null, rushCredited: 0, giftedCredited: 0, crystalCreatorActivated: false };
-    }
+    // Compra abierta desde 2026-09-05: sin verificación de invitación.
   }
 
   const giftNote = typeof entitlementSpec?.giftNote === 'string'
@@ -960,6 +939,27 @@ async function _fulfillCrystalPass(client, { userId, entitlementSpec, provider, 
     ref: `checkout_intent:${intentId}`,
     priceCents,
   });
+
+  // Ademas del camino antiguo, anotar la compra en el libro de concesiones.
+  // Va despues a proposito: si esto fallara, el pase ya esta concedido por la
+  // via de arriba y el cliente no se queda sin lo que pago.
+  try {
+    const entitlement = require('./crystalEntitlementService');
+    await entitlement.purchaseMonths({
+      creatorId: String(targetCreatorId),
+      months: Number(months) || 1,
+      grantType: isGift ? 'gift' : 'purchase',
+      source: provider === 'wallet' ? 'wallet' : 'nowpayments',
+      // Quien paga, que no siempre es quien recibe: en un regalo es el cliente.
+      grantedBy: String(giftedBy || targetCreatorId),
+      amountUsd: priceCents != null ? Number(priceCents) / 100 : null,
+      externalRef: `checkout_intent:${intentId}`,
+    });
+  } catch (err) {
+    logger.error('[walletCheckout] no se pudo anotar la compra en crystal_grants', {
+      targetCreatorId: String(targetCreatorId), intentId, error: err.message,
+    });
+  }
 
   // Fire-and-forget in-app notification to target creator.
   setImmediate(() => {
@@ -1430,6 +1430,13 @@ async function _resolvePlanNameForNotify(surface, entitlementSpec) {
  */
 function requireWalletForSurface(surface) {
   const flags = require('../config/checkoutFlags');
+
+// Tarifa del Crystal Creator Pass, en dólares. Vive en el servidor a propósito:
+// es un producto de precio fijo y el importe no puede depender del cliente.
+const CRYSTAL_PRICES = {
+  crystal_self: 100,   // lo compra el creador
+  crystal_gift: 150,   // se lo regala un cliente
+};
   return async function requireWalletMw(req, res, next) {
     if (!flags.isSurfaceWalletEnabled(surface)) return next();  // legacy path
     const userId = req.session?.user?.id;

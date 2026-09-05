@@ -44,11 +44,11 @@ function clientAudience(a) {
 async function getViewerAudience(userId) {
   if (!userId) return 'public';
   const { rows } = await getPool().query(
-    `SELECT is_pnptv_fam, is_whale_pig,
-            (crystal_creator_active_until IS NOT NULL
-             AND (crystal_creator_active_until = 'infinity'::timestamptz
-                  OR crystal_creator_active_until > NOW())) AS is_crystal
-       FROM users WHERE id = $1 LIMIT 1`,
+    `SELECT u.is_pnptv_fam, u.is_whale_pig,
+            COALESCE(ce.is_active, false) AS is_crystal
+       FROM users u
+       LEFT JOIN crystal_entitlements ce ON ce.creator_id::text = u.id::text
+      WHERE u.id = $1 LIMIT 1`,
     [String(userId)]
   );
   const r = rows[0];
@@ -71,11 +71,11 @@ async function listServicesForCreator(creatorId, viewerAudience = 'public') {
             s.description_en, s.description_es, s.min_audience
        FROM creator_services s
        JOIN users u ON u.id = s.creator_user_id
+       LEFT JOIN crystal_entitlements ce ON ce.creator_id::text = u.id::text
       WHERE s.creator_user_id = $1
         AND s.is_active = TRUE
-        AND u.crystal_creator_active_until IS NOT NULL
-        AND (u.crystal_creator_active_until = 'infinity'::timestamptz
-             OR u.crystal_creator_active_until > NOW())
+        AND EXISTS (SELECT 1 FROM crystal_entitlements ce
+                     WHERE ce.creator_id::text = u.id::text AND ce.is_active)
       ORDER BY s.price_cents ASC`,
     [String(creatorId)]
   );
@@ -110,16 +110,15 @@ async function getShowcase(viewerAudience = 'public') {
   const { rows } = await getPool().query(
     `SELECT u.id, u.username, u.first_name, u.photo_file_id AS photo_url,
             u.bio, u.creator_price_usd, u.creator_verified,
-            u.crystal_creator_active_until,
+            ce.entitled_until,
             (SELECT COUNT(*) FROM creator_services s
               WHERE s.creator_user_id = u.id AND s.is_active = TRUE)::int AS total_services
        FROM users u
-      WHERE u.crystal_creator_active_until IS NOT NULL
-        AND (u.crystal_creator_active_until = 'infinity'::timestamptz
-             OR u.crystal_creator_active_until > NOW())
+       JOIN crystal_entitlements ce ON ce.creator_id::text = u.id::text
+      WHERE ce.is_active
         AND u.creator_status = 'active'
         AND u.is_active = TRUE
-      ORDER BY u.crystal_creator_active_until DESC, LOWER(COALESCE(u.username, u.first_name, u.id))`
+      ORDER BY ce.entitled_until DESC, LOWER(COALESCE(u.username, u.first_name, u.id))`
   );
 
   // Compute unlocked service count per creator for the viewer.
@@ -163,18 +162,20 @@ async function getShowcase(viewerAudience = 'public') {
  */
 async function loadServiceForBooking(serviceId, viewerAudience) {
   const { rows } = await getPool().query(
-    `SELECT s.*, u.crystal_creator_active_until, u.username, u.first_name
+    `SELECT s.*, COALESCE(ce.is_active, false) AS creator_is_crystal, u.username, u.first_name
        FROM creator_services s
        JOIN users u ON u.id = s.creator_user_id
+       LEFT JOIN crystal_entitlements ce ON ce.creator_id::text = u.id::text
       WHERE s.id = $1 LIMIT 1`,
     [String(serviceId)]
   );
   if (!rows[0]) return { gate: 'not_found' };
   const s = rows[0];
   if (!s.is_active) return { gate: 'inactive' };
-  const u = s.crystal_creator_active_until;
-  const isCrystalActive = u && (String(u) === 'infinity' || new Date(u) > new Date());
-  if (!isCrystalActive) return { gate: 'creator_not_crystal' };
+  // Resuelto ya por la vista (incluye gracia). Antes se calculaba aquí con
+  // new Date(), que con el Infinity que entrega node-pg daba Invalid Date y
+  // denegaba la reserva de un creador permanente.
+  if (s.creator_is_crystal !== true) return { gate: 'creator_not_crystal' };
   if (rank(viewerAudience) < rank(s.min_audience)) return { gate: 'audience_too_low' };
   return {
     gate: 'ok',

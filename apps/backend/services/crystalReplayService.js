@@ -67,22 +67,16 @@ async function isFeatureEnabled() {
  * Mirrors the query in crystalServiceService.js getViewerAudience().
  */
 async function isCrystalActive(userId) {
+  // Delegado al punto único de decisión (crystalEntitlementService): resuelve
+  // desde el libro crystal_grants y aplica el periodo de gracia. Antes esto
+  // leía users.crystal_creator_active_until por su cuenta, que es lo que
+  // permitía que un beneficio dijera sí y otro no para la misma persona.
   try {
-    const { rows } = await getPool().query(
-      `SELECT crystal_creator_active_until
-         FROM users
-        WHERE id = $1::text
-        LIMIT 1`,
-      [String(userId)]
-    );
-    if (!rows.length) return false;
-    const raw = rows[0].crystal_creator_active_until;
-    if (raw == null) return false;
-    if (raw === Infinity || raw === 'infinity') return true;
-    const asDate = raw instanceof Date ? raw : new Date(raw);
-    return !isNaN(asDate.getTime()) && asDate.getTime() > Date.now();
+    const entitlement = require('./crystalEntitlementService');
+    return await entitlement.hasBenefit(userId, 'replay_shows');
   } catch (err) {
-    logger.error('[CrystalReplay] isCrystalActive DB error', { userId, error: err.message });
+    // Fail-closed: ante un fallo no se regala un beneficio de pago.
+    logger.error('[CrystalReplay] isCrystalActive delegación falló', { userId, error: err.message });
     return false;
   }
 }

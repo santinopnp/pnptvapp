@@ -157,9 +157,9 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       access !== null &&
       !access.has_grant &&
       (
-        (access.prices.rent_price_rush ?? 0) > 0 ||
-        (access.prices.buy_price_rush ?? 0) > 0 ||
-        access.creator.channel_pass_enabled
+        (access.prices?.rent_price_rush ?? 0) > 0 ||
+        (access.prices?.buy_price_rush ?? 0) > 0 ||
+        access.creator?.channel_pass_enabled
       );
     // When an intro is configured, gate playback until the curtain completes
     // (or the user hits Skip). Once dismissed, the intro never re-shows for

@@ -582,8 +582,9 @@ app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT id, username, first_name, bio,
             CASE
-              WHEN photo_file_id IS NULL THEN NULL
-              WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+              WHEN photo_file_id IS NULL           THEN NULL
+              WHEN photo_file_id LIKE 'http%'      THEN photo_file_id
+              WHEN photo_file_id LIKE '/uploads/%' THEN photo_file_id
               ELSE '/uploads/avatars/' || photo_file_id
             END AS avatar_url,
             followers_count, creator_verified
@@ -23619,6 +23620,56 @@ app.post('/api/webapp/admin/partner-groups/:id/backfill-badge', requireSessionAu
 }));
 
 // ── End PNP Partners Network ──────────────────────────────────────────────────
+
+// ── Subida de shows de replay a Bunny ────────────────────────────────────────
+// El creador sube directo a Bunny por TUS; el servidor solo crea el objeto y
+// firma. Asi 2 GB de video no atraviesan el disco de la maquina.
+app.post('/api/webapp/creators/me/replay/bunny-upload', authenticateUser, asyncHandler(async (req, res) => {
+  const creatorId = getActorId(req);
+  if (!creatorId) return res.status(401).json({ success: false, error: 'No autenticado' });
+  try {
+    const bunny = require('../../services/bunnyStreamService');
+    if (!bunny.isConfigured()) {
+      return res.status(503).json({ success: false, error: 'Bunny Stream no está configurado', code: 'BUNNY_NOT_CONFIGURED' });
+    }
+    const entitlement = require('../../services/crystalEntitlementService');
+    if (!(await entitlement.hasBenefit(creatorId, 'replay_shows'))) {
+      return res.status(403).json({ success: false, error: 'Requiere Crystal Creator Pass activo', code: 'CRYSTAL_ONLY' });
+    }
+    const title = String(req.body?.title || 'Replay show').slice(0, 200);
+    const video = await bunny.createVideo(`${creatorId} — ${title}`);
+    res.json({ success: true, videoId: video.guid, upload: bunny.createTusUpload(video.guid) });
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code });
+  }
+}));
+
+// Se llama al terminar de subir. Bunny transcodifica en segundo plano, asi que
+// el cliente sondea esto hasta que status sea 'ready'.
+app.post('/api/webapp/creators/me/replay/bunny-finish', authenticateUser, asyncHandler(async (req, res) => {
+  const creatorId = getActorId(req);
+  if (!creatorId) return res.status(401).json({ success: false, error: 'No autenticado' });
+  try {
+    const bunny = require('../../services/bunnyStreamService');
+    const guid = String(req.body?.videoId || '');
+    if (!guid) return res.status(400).json({ success: false, error: 'videoId requerido' });
+    const video = await bunny.getVideo(guid);
+    const ready = bunny.isReady(video);
+    res.json({
+      success: true,
+      status: bunny.hasFailed(video) ? 'failed' : (ready ? 'ready' : 'processing'),
+      durationSeconds: Number(video.length) || null,
+      // LiveKit ingesta esta URL por URL_INPUT. Va firmada si la libreria tiene
+      // Token Authentication activado.
+      playbackUrl: ready ? bunny.getPlaybackUrl(guid) : null,
+      thumbnailUrl: ready ? bunny.getThumbnailUrl(guid) : null,
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, error: e.message, code: e.code });
+  }
+}));
+
+// ── Fin subida a Bunny ───────────────────────────────────────────────────────
 
 // Export app WITHOUT 404/error handlers
 // These will be added in bot.js AFTER the webhook callback

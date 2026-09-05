@@ -46,7 +46,8 @@ async function resolveTodaysFeatured(today) {
        JOIN users u ON u.id = f.creator_id
       WHERE f.date = $1
         AND u.deleted_at IS NULL
-        AND u.crystal_creator_active_until > NOW()
+        AND EXISTS (SELECT 1 FROM crystal_entitlements ce
+                     WHERE ce.creator_id::text = u.id::text AND ce.is_active)
       LIMIT 1`,
     [today]
   );
@@ -56,14 +57,16 @@ async function resolveTodaysFeatured(today) {
   const fallback = await pool.query(
     `SELECT id AS creator_id, username, first_name, cover_url
        FROM users
-      WHERE crystal_creator_active_until > NOW()
+      WHERE EXISTS (SELECT 1 FROM crystal_entitlements ce
+                     WHERE ce.creator_id::text = users.id::text AND ce.is_active)
         AND deleted_at IS NULL
       ORDER BY id
       OFFSET (
         SELECT (EXTRACT(EPOCH FROM $1::date)::bigint / 86400)
                % GREATEST((
                  SELECT COUNT(*) FROM users
-                  WHERE crystal_creator_active_until > NOW()
+                  WHERE EXISTS (SELECT 1 FROM crystal_entitlements ce
+                                 WHERE ce.creator_id::text = users.id::text AND ce.is_active)
                     AND deleted_at IS NULL
                ), 1)
       )

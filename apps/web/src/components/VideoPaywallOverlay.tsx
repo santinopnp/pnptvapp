@@ -81,9 +81,9 @@ export function VideoPaywallOverlay({
     }
   }, [attempt]);
 
-  const hasRent = prices.rent_price_rush != null && prices.rent_price_rush > 0;
-  const hasBuy = prices.buy_price_rush != null && prices.buy_price_rush > 0;
-  const hasPass = creator.channel_pass_enabled && (creator.channel_pass_price_usd ?? 0) > 0;
+  const hasRent = prices?.rent_price_rush != null && prices.rent_price_rush > 0;
+  const hasBuy = prices?.buy_price_rush != null && prices.buy_price_rush > 0;
+  const hasPass = creator?.channel_pass_enabled && (creator?.channel_pass_price_usd ?? 0) > 0;
 
   const isAnyLoading = loading !== null;
 
