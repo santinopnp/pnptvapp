@@ -4912,20 +4912,21 @@ export function getCreatorModerationHistory(): Promise<CreatorModerationHistory>
 }
 
 // Payout destinations are stored as a per-lane jsonb blob. Lane payloads:
-//   meru      → { handle: string }
-//   bre_b     → { key: string, key_type: "phone" | "cedula" | "email" }  (Colombia only)
-//   others    → { address: string }
-export type PayoutLane = "meru" | "btc" | "dash" | "usdt_tron" | "usdt_base" | "bre_b";
-
-export type BreBKeyType = "phone" | "cedula" | "email";
+// Active cashout lanes (aligned with backend cashoutService.js, migration 364).
+// Retired 2026-08-08: meru, btc, dash, usdt_tron, usdt_base.
+//   usdc_erc20 → { address: string }  (EVM 0x… on Ethereum mainnet)
+//   eth        → { address: string }  (EVM 0x… on Ethereum mainnet)
+//   bre_b      → { handle:  string }  (Colombia bre_b handle or phone)
+//   cashapp    → { handle:  string }  ($cashtag or phone)
+//   wise       → { email:   string }  (Wise registered email)
+export type PayoutLane = "usdc_erc20" | "eth" | "bre_b" | "cashapp" | "wise";
 
 export type PayoutDestinations = Partial<{
-  meru:      { handle:  string };
-  btc:       { address: string };
-  dash:      { address: string };
-  usdt_tron: { address: string };
-  usdt_base: { address: string };
-  bre_b:     { key: string; key_type: BreBKeyType };
+  usdc_erc20: { address: string };
+  eth:        { address: string };
+  bre_b:      { handle:  string };
+  cashapp:    { handle:  string };
+  wise:       { email:   string };
 }>;
 
 export function getCreatorWallet(): Promise<{
@@ -11162,4 +11163,48 @@ export function verifyRewardedAdCompletion(
     body: { surface, nonce, elapsed_ms: elapsedMs },
   });
 }
+
+export type AdSlotFormat =
+  | "banner"
+  | "sticky_banner"
+  | "mobile_banner"
+  | "in_content_banner"
+  | "popunder"
+  | "mobile_popunder"
+  | "vast"
+  | "video_slider"
+  | "outstream_video"
+  | "vertical_video"
+  | "push_inpage"
+  | "recommendation_widget"
+  | "multi_format"
+  | "instant_message";
+
+export interface AdSlotConfig {
+  zoneId: string;
+  format: AdSlotFormat;
+  size: string | null;
+  vastUrl: string | null;
+  capPerSession: number;
+}
+
+export interface AdsConfigResponse {
+  ok: boolean;
+  showAds: boolean;
+  slots: Record<string, AdSlotConfig>;
+  scriptUrl: string | null;
+}
+
+let adsConfigCache: Promise<AdsConfigResponse> | null = null;
+
+export function getAdsConfig(): Promise<AdsConfigResponse> {
+  if (!adsConfigCache) {
+    adsConfigCache = request<AdsConfigResponse>(`/api/ads/config`).catch(() => ({
+      ok: false, showAds: false, slots: {}, scriptUrl: null,
+    }));
+  }
+  return adsConfigCache;
+}
+
+export function invalidateAdsConfig() { adsConfigCache = null; }
 

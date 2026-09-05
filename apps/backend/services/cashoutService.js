@@ -124,9 +124,10 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   // what the client says is saved on their profile.
   validateLaneDestination(lane, destination);
 
-  // Minimum cashout floor — raised from $5 to $50 on 2026-08-03 per operator direction.
-  // Override via MIN_CASHOUT_USD_PER_REQUEST env var if a specific creator needs a lower floor.
-  const MIN_CASHOUT_USD = parseFloat(process.env.MIN_CASHOUT_USD_PER_REQUEST || '50');
+  // Minimum cashout floor — lowered from $50 to $25 on 2026-09-05 after audit
+  // showed 8 of 10 creators with earnings were locked out by the $50 floor.
+  // Override via MIN_CASHOUT_USD_PER_REQUEST env var if a specific need arises.
+  const MIN_CASHOUT_USD = parseFloat(process.env.MIN_CASHOUT_USD_PER_REQUEST || '25');
   if (amountUsd < MIN_CASHOUT_USD) {
     throw err('BELOW_MINIMUM', `Minimum cashout is $${MIN_CASHOUT_USD.toFixed(2)}.`, 400);
   }

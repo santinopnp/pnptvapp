@@ -14588,14 +14588,32 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     // Weekly-payout linkage — mirror pnpLiveTipsService earnings insert so the
     // payout batcher can see these Ru$h tips. Without this row, tokens tips
     // credit the creator's Ru$h wallet but never generate a USD earnings
-    // record, so the creator can't cash out. Split matches CREATOR_REVENUE_RATE
-    // (70/30) with the standard 7-day hold used for live-tip earnings.
+    // record, so the creator can't cash out.
+    //
+    // Split uses TIP_CREATOR_RATE (1.0 = 100 % to creator) per monetization
+    // policy — tips are commission-free. The previous 70/30 usage was a bug
+    // introduced when the legacy pnpLiveTipsService pattern was copied here
+    // without checking the config's is_tip carve-out (fixed 2026-09-05).
+    // When a tip lands during an active PNPtv! Mode session, the config
+    // overrides to 70/30 (PNPTV_MODE_*_TIP_RATE) — mirrored below.
     const {
-      CREATOR_REVENUE_RATE,
+      TIP_CREATOR_RATE,
+      PNPTV_MODE_CREATOR_TIP_RATE,
       EARNINGS_HOLD_HOURS,
     } = require('../../config/monetizationConfig');
     const grossUsd = Number(amountUsd);
-    const amountCreatorUsd = Math.round(grossUsd * CREATOR_REVENUE_RATE * 100) / 100;
+    // Detect an active PNPtv! Mode session for the recipient at the time of
+    // the tip. Single indexed lookup — no impact on the hot path.
+    const { rows: modeRows } = await pgClient.query(
+      `SELECT 1 FROM pnptv_mode_sessions
+        WHERE holder_user_id = $1
+          AND started_at <= NOW()
+          AND (ended_at IS NULL OR ended_at > NOW())
+        LIMIT 1`,
+      [recipientUserId]
+    );
+    const tipRate = modeRows.length > 0 ? PNPTV_MODE_CREATOR_TIP_RATE : TIP_CREATOR_RATE;
+    const amountCreatorUsd = Math.round(grossUsd * tipRate * 100) / 100;
     const amountPlatformUsd = Math.round((grossUsd - amountCreatorUsd) * 100) / 100;
     const sourcePaymentId = `rush_tip:${creatorTipRowId || orderId}`;
     await pgClient.query(
@@ -17957,13 +17975,18 @@ app.get('/api/ads/rewarded/active', requireSessionAuth, adCallbackLimiter, async
 
 // GET /api/ads/config — public tier-aware config. Returns:
 //   showAds     true iff user is free-tier AND feature flag is on
-//   surfaces    metadata about each unlock (TTL etc) for the client to render
-//   networks    zone IDs by network (empty until TrafficJunky approves)
-app.get('/api/ads/config', requireSessionAuth, asyncHandler(async (req, res) => {
+//   surfaces    metadata about each unlock (rewarded) for the client to render
+//   networks    zone IDs by network (rewarded surfaces)
+//   slots       display/popunder/push zones keyed by slot id (ExoClick)
+app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const adUnlockService = require('../../services/adUnlockService');
   const enabled = await adUnlockService.isFeatureEnabled();
   const user = req.session?.user;
-  const eligible = adUnlockService.isTierEligibleForAds(user?.tier, user?.role);
+  // Anonymous visitors (no session) are treated as free-tier for ad eligibility —
+  // LandingPage / public routes still monetize when the flag is on.
+  const eligible = user
+    ? adUnlockService.isTierEligibleForAds(user.tier, user.role)
+    : true;
   const showAds = enabled && eligible;
 
   const surfaces = adUnlockService.ALLOWED_SURFACES.map(s => ({
@@ -17971,8 +17994,6 @@ app.get('/api/ads/config', requireSessionAuth, asyncHandler(async (req, res) => 
     ttlSec: adUnlockService.SURFACE_TTL_SEC[s],
   }));
 
-  // Zone IDs live in env so operator can rotate without deploy. Empty
-  // strings until TrafficJunky approves and we get real zone IDs.
   const networks = {
     trafficjunky: {
       publisherId: process.env.TRAFFICJUNKY_PUBLISHER_ID || null,
@@ -17983,7 +18004,59 @@ app.get('/api/ads/config', requireSessionAuth, asyncHandler(async (req, res) => 
         dm_extra:           process.env.TJ_ZONE_DM_EXTRA || null,
       },
     },
+    exoclick: {
+      siteId: process.env.EXO_SITE_ID || null,
+    },
   };
+
+  // ExoClick display / popunder / push / video slots.
+  // Each entry describes ONE placement the frontend can mount via AdSlot.
+  // format values consumed by AdSlot: 'banner' | 'sticky_banner' | 'mobile_banner'
+  //   | 'in_content_banner' | 'popunder' | 'mobile_popunder' | 'vast'
+  //   | 'video_slider' | 'outstream_video' | 'vertical_video' | 'push_inpage'
+  //   | 'recommendation_widget' | 'multi_format' | 'instant_message'
+  const EXO_PROVIDER = process.env.EXO_AD_PROVIDER_URL || 'https://a.magsrv.com/ad-provider.js';
+  const buildVast = (zoneId) => zoneId ? `https://s.magsrv.com/splash.php?idzone=${zoneId}` : null;
+  const slotDefs = [
+    { id: 'video_preroll',         format: 'vast',                  zone: process.env.EXO_ZONE_VIDEO_PREROLL,         vastEnv: 'EXO_VAST_URL_VIDEO_PREROLL',    capPerSession: 0 },
+    { id: 'video_slider',          format: 'video_slider',          zone: process.env.EXO_ZONE_VIDEO_SLIDER,          vastEnv: 'EXO_VAST_URL_VIDEO_SLIDER',     capPerSession: 0 },
+    { id: 'vertical_video',        format: 'vertical_video',        zone: process.env.EXO_ZONE_VERTICAL_VIDEO,        vastEnv: 'EXO_VAST_URL_VERTICAL_VIDEO',   capPerSession: 0 },
+    { id: 'outstream_video',       format: 'outstream_video',       zone: process.env.EXO_ZONE_OUTSTREAM_VIDEO,       vastEnv: 'EXO_VAST_URL_OUTSTREAM_VIDEO',  capPerSession: 0 },
+    { id: 'sidebar_desktop',       format: 'banner',                zone: process.env.EXO_ZONE_SIDEBAR_DESKTOP,       size: '300x250',  capPerSession: 0 },
+    { id: 'landing_hero',          format: 'banner',                zone: process.env.EXO_ZONE_LANDING_HERO,          size: '728x90',   capPerSession: 0 },
+    { id: 'sticky_footer_desktop', format: 'sticky_banner',         zone: process.env.EXO_ZONE_STICKY_FOOTER_DESKTOP, size: '728x90',   capPerSession: 0 },
+    { id: 'sticky_footer_mobile',  format: 'mobile_banner',         zone: process.env.EXO_ZONE_STICKY_FOOTER_MOBILE,  size: '300x50',   capPerSession: 0 },
+    { id: 'feed_native',           format: 'in_content_banner',     zone: process.env.EXO_ZONE_FEED_NATIVE,           size: '300x100',  capPerSession: 0 },
+    { id: 'feed_recommendation',   format: 'recommendation_widget', zone: process.env.EXO_ZONE_FEED_RECOMMENDATION,   capPerSession: 0 },
+    { id: 'multi_format',          format: 'multi_format',          zone: process.env.EXO_ZONE_MULTI_FORMAT,          capPerSession: 0 },
+    { id: 'instant_message',       format: 'instant_message',       zone: process.env.EXO_ZONE_INSTANT_MESSAGE,       size: '300x250',  capPerSession: 0 },
+    { id: 'popunder_desktop',      format: 'popunder',              zone: process.env.EXO_ZONE_POPUNDER_DESKTOP,      capPerSession: 1 },
+    { id: 'popunder_mobile',       format: 'mobile_popunder',       zone: process.env.EXO_ZONE_POPUNDER_MOBILE,       capPerSession: 1 },
+    { id: 'push_inpage',           format: 'push_inpage',           zone: process.env.EXO_ZONE_PUSH_INPAGE,           size: '192x192',  capPerSession: 1 },
+    { id: 'inpage_push_v2',        format: 'push_inpage',           zone: process.env.EXO_ZONE_INPAGE_PUSH_V2,        capPerSession: 1 },
+  ];
+  // Per-slot granular kill switch. Redis key: pnpapp:ads:slot:<id>:enabled = '0' disables just that slot.
+  let perSlotDisabled = {};
+  try {
+    const { cache } = require('../../config/redis');
+    await Promise.all(slotDefs.map(async (s) => {
+      const v = await cache.get(`ads:slot:${s.id}:enabled`);
+      if (String(v) === '0') perSlotDisabled[s.id] = true;
+    }));
+  } catch { /* fail open — global flag is authoritative */ }
+
+  const slots = {};
+  for (const s of slotDefs) {
+    if (!s.zone) continue;
+    if (perSlotDisabled[s.id]) continue;
+    slots[s.id] = {
+      zoneId: s.zone,
+      format: s.format,
+      size: s.size || null,
+      vastUrl: s.vastEnv ? (process.env[s.vastEnv] || buildVast(s.zone)) : null,
+      capPerSession: s.capPerSession,
+    };
+  }
 
   return res.json({
     ok: true,
@@ -17991,6 +18064,8 @@ app.get('/api/ads/config', requireSessionAuth, asyncHandler(async (req, res) => 
     capPerDay: adUnlockService.ALLOWED_GRANTS_PER_DAY,
     surfaces,
     networks: showAds ? networks : null,
+    slots: showAds ? slots : {},
+    scriptUrl: showAds ? EXO_PROVIDER : null,
   });
 }));
 

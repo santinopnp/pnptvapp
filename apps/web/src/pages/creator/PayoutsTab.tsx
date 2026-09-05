@@ -24,12 +24,16 @@ type CashoutLane = PayoutLane; // re-export for local readability
 type PayoutMethod = "bank_transfer" | "dash";
 
 // Display metadata for each cashout lane. Order here drives the lane picker.
-const LANE_META: { id: PayoutLane; label: string; icon: string; destField: "address" | "handle" }[] = [
-  { id: "meru",      label: "Meru",            icon: "📱", destField: "handle"  },
-  { id: "btc",       label: "Bitcoin",         icon: "₿",  destField: "address" },
-  { id: "dash",      label: "Dash",            icon: "🥷", destField: "address" },
-  { id: "usdt_tron", label: "USDT — TRON",     icon: "💵", destField: "address" },
-  { id: "usdt_base", label: "USDT — Base",     icon: "💵", destField: "address" },
+// Aligned with backend cashoutService.js (migration 364, 2026-08-08). The
+// previous lanes (meru/btc/dash/usdt_*) are permanently retired — the backend
+// rejects them with 400 INVALID_LANE, which is why cashout requests were
+// silently failing in the wild before this fix.
+const LANE_META: { id: PayoutLane; label: string; icon: string; destField: "address" | "handle" | "email" }[] = [
+  { id: "usdc_erc20", label: "USDC — Ethereum",  icon: "💵", destField: "address" },
+  { id: "eth",        label: "ETH — Ethereum",   icon: "⟠",  destField: "address" },
+  { id: "bre_b",      label: "Bre-B (Colombia)", icon: "🇨🇴", destField: "handle"  },
+  { id: "cashapp",    label: "Cash App",         icon: "💰", destField: "handle"  },
+  { id: "wise",       label: "Wise",             icon: "🌍", destField: "email"   },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -54,16 +58,19 @@ function laneLabelKey(lane: CashoutLane, _t: CreatorStrings): string {
   return meta?.label ?? lane;
 }
 
-// Pull the destination payload (e.g. {address: "..."} or {handle: "..."}) for a
+// Pull the destination payload (e.g. {address}, {handle}, or {email}) for a
 // lane from the saved destinations blob. Returns null when the creator has not
 // saved this lane yet — the modal disables that lane in the picker.
 function destForLane(lane: PayoutLane, destinations: PayoutDestinations): Record<string, string> | null {
   const meta = LANE_META.find((l) => l.id === lane);
   if (!meta) return null;
-  const entry = (destinations as Record<string, { handle?: string; address?: string } | undefined>)[lane];
+  const entry = (destinations as Record<string, { handle?: string; address?: string; email?: string } | undefined>)[lane];
   if (!entry) return null;
   if (meta.destField === "handle") {
     return entry.handle ? { handle: entry.handle } : null;
+  }
+  if (meta.destField === "email") {
+    return entry.email ? { email: entry.email } : null;
   }
   return entry.address ? { address: entry.address } : null;
 }

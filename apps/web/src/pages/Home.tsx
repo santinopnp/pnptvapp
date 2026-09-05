@@ -13,6 +13,7 @@ import { useI18n } from "@/lib/i18n";
 import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHintCard, useForYou } from "@/components/Layout";
 import { PnpFamHomeStrip } from "@/components/badges/PnpFamHomeStrip";
 import { CrystalCreatorsRow } from "@/components/crystal/CrystalCreatorsRow";
+import { AdSlot } from "@/components/AdSlot";
 import { CRYSTAL_UI_ENABLED, getCryptoGuideStatus } from "@/lib/api";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
@@ -444,7 +445,9 @@ export default function Home() {
 
       {/* View content */}
       {viewMode === "feed" ? (
-        hangoutFilter ? (
+        <>
+        <div className="my-2 flex justify-center"><AdSlot slot="feed_native" /></div>
+        {hangoutFilter ? (
           /* Hangout-scoped feed */
           <SocialFeedTabs
             currentUserId={user?.dbId ? String(user.dbId) : ""}
@@ -473,7 +476,10 @@ export default function Home() {
             showComposer={!hashtagFilter}
             hashtagFilter={hashtagFilter}
           />
-        )
+        )}
+        <div className="my-4 flex justify-center"><AdSlot slot="feed_recommendation" /></div>
+        <div className="my-2 flex justify-center"><AdSlot slot="multi_format" /></div>
+        </>
       ) : (
         <Suspense
           fallback={
