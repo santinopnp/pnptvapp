@@ -17670,15 +17670,21 @@ app.get('/api/ads/rewarded/config', requireSessionAuth, adCallbackLimiter, async
   const eligible    = adUnlockService.isTierEligibleForAds(user?.tier, user?.role);
 
   // Determine active ad network + zone for this surface.
-  // TJ_ZONE_<SURFACE_UPPER> env vars — absent means network not wired yet.
-  const SURFACE_ZONE_ENV = {
-    mainstage_extend:   'TJ_ZONE_MAINSTAGE_EXTEND',
-    prime_video_single: 'TJ_ZONE_PRIME_VIDEO_SINGLE',
-    nearby_premium:     'TJ_ZONE_NEARBY_PREMIUM',
-    dm_extra:           'TJ_ZONE_DM_EXTRA',
-  };
-  const zoneId   = process.env[SURFACE_ZONE_ENV[surface]] || null;
-  const adNetwork = zoneId ? 'trafficjunky' : null;
+  // Preference order: ExoClick → TrafficJunky (TJ retained for legacy compat
+  // even though TJ is advertiser-side only in practice). Any provider works
+  // as long as its `<NET>_ZONE_<SURFACE_UPPER>` env var is set + a matching
+  // `AD_SECRET_<NET_UPPER>` secret exists for HMAC verification.
+  const SURFACE_UPPER = String(surface).toUpperCase();
+  const NETWORK_PREFERENCE = [
+    { network: 'exoclick',     envVar: `EXO_ZONE_${SURFACE_UPPER}` },
+    { network: 'trafficjunky', envVar: `TJ_ZONE_${SURFACE_UPPER}` },
+  ];
+  let zoneId = null;
+  let adNetwork = null;
+  for (const cand of NETWORK_PREFERENCE) {
+    const val = process.env[cand.envVar];
+    if (val) { zoneId = val; adNetwork = cand.network; break; }
+  }
 
   // enabled only when: feature flag on AND user is free-tier AND zone configured
   const enabled = featureOn && eligible && !!adNetwork;
