@@ -1812,10 +1812,13 @@ export function Layout() {
         // own top-right controls (LIVE badge, viewer count, close, tip alerts)
         // occupying the same corner the widget FAB defaults to — hide it there,
         // same as the existing /chat/ video-call carve-out above.
+        // El reproductor móvil (Stream.tsx) ocupa la esquina derecha con sus
+        // propios controles. Antes esto hacía `return null` y se perdía el
+        // widget entero justo en la pantalla donde más se propina; ahora se
+        // reubica al borde izquierdo en vez de desaparecer.
         const inMobileLiveStream = isMobile && /^\/live\/[^/]+/.test(location.pathname);
-        if (inMobileLiveStream) return null;
         return (
-          <FloatingWidgets showCompact={showCompact} />
+          <FloatingWidgets showCompact={showCompact} avoidRightEdge={inMobileLiveStream} />
         );
       })()}
 
@@ -2213,14 +2216,21 @@ export function Layout() {
  * Hangout card and /main-stage). SelfCamFloater stays so users who joined
  * the stage and navigated away still see their live cam preview.
  */
-function FloatingWidgets({ showCompact }: { showCompact: boolean }) {
+function FloatingWidgets({
+  showCompact,
+  avoidRightEdge = false,
+}: {
+  showCompact: boolean;
+  /** Mueve el FAB al borde izquierdo donde la esquina derecha ya está ocupada. */
+  avoidRightEdge?: boolean;
+}) {
   return (
     <>
       <SelfCamFloater />
       <Suspense fallback={null}>
         <CristinaWidget compact={showCompact} />
       </Suspense>
-      <WalletFloater />
+      <WalletFloater avoidRightEdge={avoidRightEdge} />
     </>
   );
 }
@@ -2423,7 +2433,7 @@ function QuickTipSheet({
 
 // ── WalletFloater ─────────────────────────────────────────────────────────────
 
-function WalletFloater() {
+function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } = {}) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
@@ -2833,7 +2843,11 @@ function WalletFloater() {
         className="fixed z-40 flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
         style={{
           bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
-          right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+          // Mismo offset, lado opuesto: en el reproductor móvil la derecha la
+          // ocupan los controles del directo.
+          ...(avoidRightEdge
+            ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
+            : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
           width: 52, height: 52,
           background: "linear-gradient(135deg,#10b981,#059669)",
           color: "white",
