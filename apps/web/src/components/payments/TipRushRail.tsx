@@ -92,6 +92,14 @@ export function TipRushRail({
   const [amount, setAmount] = useState<number | null>(selectedPreset);
   // Keep amount in sync when the parent picker changes preset.
   useEffect(() => { if (selectedPreset !== null) setAmount(selectedPreset); }, [selectedPreset]);
+  // Custom-amount UI state — user picks a USD amount, we convert to Ru$h at 6/$1.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customUsd, setCustomUsd] = useState<string>("");
+  const customRush = useMemo(() => {
+    const usd = parseFloat(customUsd);
+    if (!Number.isFinite(usd) || usd <= 0) return null;
+    return Math.round(usd * 6);
+  }, [customUsd]);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<"success" | "error" | null>(null);
@@ -212,22 +220,26 @@ export function TipRushRail({
         </div>
       )}
 
-      {/* Chip row */}
+      {/* Chip row — 5 presets + Custom */}
       <div
         className={
           variant === "compact"
             ? "flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
-            : "grid grid-cols-5 gap-1.5 mb-3"
+            : "grid grid-cols-6 gap-1.5 mb-3"
         }
         style={{ scrollbarWidth: "none" }}
       >
         {TIP_RUSH_PRESETS.map((amt) => {
-          const selected = amount === amt;
+          const selected = amount === amt && !customOpen;
           return (
             <button
               key={amt}
               type="button"
-              onClick={() => { setAmount(selected ? null : amt); setResult(null); }}
+              onClick={() => {
+                setAmount(selected ? null : amt);
+                setCustomOpen(false);
+                setResult(null);
+              }}
               disabled={sending || result === "success"}
               className="min-h-[44px] flex flex-col items-center justify-center rounded-xl px-2 py-1.5 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
               style={
@@ -249,7 +261,91 @@ export function TipRushRail({
             </button>
           );
         })}
+        {/* Custom chip — opens an inline USD input, live-converts to Ru$h at 6/$1 */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = !customOpen;
+            setCustomOpen(next);
+            if (next) { setAmount(null); setResult(null); }
+            else { setCustomUsd(""); setAmount(null); }
+          }}
+          disabled={sending || result === "success"}
+          className="min-h-[44px] flex flex-col items-center justify-center rounded-xl px-2 py-1.5 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+          style={
+            customOpen
+              ? {
+                  background: "linear-gradient(135deg, #D4007A, #E69138)",
+                  color: "#fff",
+                  border: "1px solid transparent",
+                }
+              : {
+                  background: "rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.85)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                }
+          }
+        >
+          <span className="tabular-nums">{lang === "es" ? "Otro" : "Custom"}</span>
+          <span className="text-[9px] font-normal opacity-70 mt-0.5">💎</span>
+        </button>
       </div>
+
+      {/* Custom-amount input — inline below the chip row when Custom is active */}
+      {customOpen && (
+        <div
+          className="rounded-xl p-3 mb-3"
+          style={{
+            background: "rgba(212,0,122,0.06)",
+            border: "1px solid rgba(212,0,122,0.25)",
+          }}
+        >
+          <label className="block text-[11px] font-semibold text-white/70 mb-1.5 uppercase tracking-wider">
+            {lang === "es" ? "Monto en USD" : "Amount in USD"}
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-bold text-white/60">$</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={1}
+              max={500}
+              step={1}
+              value={customUsd}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setCustomUsd(raw);
+                const usd = parseFloat(raw);
+                if (Number.isFinite(usd) && usd >= 1 && usd <= 500) {
+                  setAmount(Math.round(usd * 6));
+                  setResult(null);
+                } else {
+                  setAmount(null);
+                }
+              }}
+              placeholder={lang === "es" ? "Ej. 15" : "e.g. 15"}
+              disabled={sending || result === "success"}
+              autoFocus
+              className="flex-1 min-w-0 rounded-lg px-3 py-2 text-base font-bold text-white outline-none tabular-nums"
+              style={{
+                background: "rgba(0,0,0,0.35)",
+                border: "1px solid rgba(255,255,255,0.10)",
+              }}
+            />
+            <span
+              className="tabular-nums text-sm font-bold whitespace-nowrap"
+              style={{ color: customRush ? "#E69138" : "rgba(255,255,255,0.35)" }}
+            >
+              = {customRush !== null ? `${customRush} 💎` : "— 💎"}
+            </span>
+          </div>
+          <p className="text-[10px] text-white/40 mt-1.5">
+            {lang === "es"
+              ? "Mínimo $1 · Máximo $500 · 1 USD = 6 Ru$h"
+              : "Min $1 · Max $500 · 1 USD = 6 Ru$h"}
+          </p>
+        </div>
+      )}
 
       {/* Message input */}
       {variant === "full" && showMessage && (
