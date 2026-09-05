@@ -225,6 +225,28 @@ class CryptoPaymentService {
     };
 
     try {
+      // channel_pass:<creatorId> plan_ids are fulfilled by channelPassService,
+      // not grantEntitlementsForPlan. Idempotent by sourceRef (checkout_intents.id).
+      if (payment.plan_id && String(payment.plan_id).startsWith('channel_pass:')) {
+        const [, creatorId] = String(payment.plan_id).split(':');
+        const channelPassService = require('./channelPassService');
+        const grantResult = await channelPassService.fulfillChannelPassFromPayment({
+          userId: payment.user_id,
+          creatorId,
+          priceUsd: Number(payment.amount_usd),
+          sourceProvider: 'wallet_usdc',
+          sourceRef: String(payment.id),
+        });
+        await query(
+          `UPDATE checkout_intents SET grant_result = $1 WHERE id = $2`,
+          [JSON.stringify(grantResult), payment.id]
+        );
+        logger.info('CryptoPayment: channel_pass fulfilled', {
+          paymentId: payment.id, userId: payment.user_id, creatorId, planId: payment.plan_id,
+        });
+        return;
+      }
+
       const grantResult = await PaymentService.grantEntitlementsForPlan(
         payment.user_id,
         payment.plan_id,

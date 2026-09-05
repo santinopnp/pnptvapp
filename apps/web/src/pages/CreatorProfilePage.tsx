@@ -31,7 +31,6 @@ import {
   Video,
   AtSign,
   Ticket,
-  CreditCard,
   Bitcoin,
   Loader2,
 } from "lucide-react";
@@ -58,6 +57,7 @@ import {
   getIntroCallStatus,
   getCreatorChannelPass,
   checkoutChannelPass,
+  getUserChannelPasses,
   type ChannelPassViewerInfo,
   type CreatorPublicProfile,
   type SocialPostItem,
@@ -408,11 +408,16 @@ export default function CreatorProfilePage() {
   const [channelPass, setChannelPass] = useState<ChannelPassViewerInfo | null>(null);
   const [channelPassLoading, setChannelPassLoading] = useState(false);
   const [channelPassPanelOpen, setChannelPassPanelOpen] = useState(false);
-  const [channelPassTab, setChannelPassTab] = useState<"rush" | "card" | "crypto">("rush");
+  const [channelPassTab, setChannelPassTab] = useState<"rush" | "crypto">("rush");
   const [channelPassBuying, setChannelPassBuying] = useState(false);
   const [channelPassResult, setChannelPassResult] = useState<{ expires_at: string } | null>(null);
   const [channelPassError, setChannelPassError] = useState<string | null>(null);
   const channelPassPanelRef = useRef<HTMLDivElement>(null);
+  // Crypto sub-state
+  const [cryptoMethod, setCryptoMethod] = useState<"usdc_base" | "any_crypto">("usdc_base");
+  const [cryptoCoin, setCryptoCoin] = useState<string>("usdcerc20");
+  const channelPassPopupRef = useRef<Window | null>(null);
+  const channelPassPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Detect an injected wallet (MetaMask / TrustWallet in-app browser). Missing
   // wallet → prompt with the "install a wallet first" guide before top-up.
@@ -560,6 +565,14 @@ export default function CreatorProfilePage() {
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [tipPanelOpen]);
+
+  // Clean up crypto checkout poll + popup on unmount
+  useEffect(() => {
+    return () => {
+      if (channelPassPollRef.current) clearInterval(channelPassPollRef.current);
+      channelPassPopupRef.current?.close();
+    };
+  }, []);
 
   const isOwnProfile = useMemo(() => {
     if (!data || !user) return false;
@@ -1274,13 +1287,16 @@ export default function CreatorProfilePage() {
                             One month of full access to @{creator.username}'s videos, exclusive posts, and DMs.
                           </p>
 
-                          {/* Payment tab strip */}
+                          {/* Payment tab strip — 2 tabs only */}
                           <div className="flex gap-1 mb-4 p-1 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-                            {(["rush", "card", "crypto"] as const).map((tab) => (
+                            {(["rush", "crypto"] as const).map((tab) => (
                               <button
                                 key={tab}
                                 type="button"
-                                onClick={() => setChannelPassTab(tab)}
+                                onClick={() => {
+                                  setChannelPassTab(tab);
+                                  setChannelPassError(null);
+                                }}
                                 className="flex-1 py-1.5 rounded-md text-xs font-semibold transition-all"
                                 style={{
                                   background: channelPassTab === tab ? "rgba(212,0,122,0.3)" : "transparent",
@@ -1288,7 +1304,7 @@ export default function CreatorProfilePage() {
                                   border: channelPassTab === tab ? "1px solid rgba(212,0,122,0.4)" : "1px solid transparent",
                                 }}
                               >
-                                {tab === "rush" ? "Ru$h Wallet" : tab === "card" ? "Pay with card" : "Pay with crypto"}
+                                {tab === "rush" ? "Ru$h Wallet" : "Pay with crypto"}
                               </button>
                             ))}
                           </div>
@@ -1338,8 +1354,9 @@ export default function CreatorProfilePage() {
                                     try {
                                       const res = await checkoutChannelPass(creator.id, "rush");
                                       if (res.success && res.expires_at) {
-                                        setChannelPassResult({ expires_at: res.expires_at });
-                                        setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: res.expires_at } : prev);
+                                        const expiresAt = res.expires_at as string;
+                                        setChannelPassResult({ expires_at: expiresAt });
+                                        setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: expiresAt } : prev);
                                         setWalletBalance((prev) => prev !== null && res.new_balance != null ? res.new_balance : prev);
                                       }
                                     } catch (err) {
@@ -1366,23 +1383,226 @@ export default function CreatorProfilePage() {
                             </div>
                           )}
 
-                          {/* Card tab */}
-                          {channelPassTab === "card" && (
-                            <div className="text-center py-4 space-y-3">
-                              <CreditCard size={28} className="mx-auto" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }} />
-                              <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                                Card payments coming soon — use Ru$h Wallet for now.
-                              </p>
-                            </div>
-                          )}
-
                           {/* Crypto tab */}
                           {channelPassTab === "crypto" && (
-                            <div className="text-center py-4 space-y-3">
-                              <Bitcoin size={28} className="mx-auto" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }} />
-                              <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
-                                Crypto payments coming soon — use Ru$h Wallet for now.
-                              </p>
+                            <div className="space-y-4">
+                              {/* Method selector — two radio cards */}
+                              <div className="space-y-2">
+                                {/* USDC on Base */}
+                                <button
+                                  type="button"
+                                  onClick={() => { setCryptoMethod("usdc_base"); setChannelPassError(null); }}
+                                  className="w-full text-left px-3 py-2.5 rounded-lg transition-all"
+                                  style={{
+                                    background: cryptoMethod === "usdc_base" ? "rgba(212,0,122,0.12)" : "rgba(255,255,255,0.04)",
+                                    border: cryptoMethod === "usdc_base" ? "1px solid rgba(212,0,122,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                                  }}
+                                >
+                                  <div className="flex items-start gap-2.5">
+                                    <span
+                                      className="mt-0.5 w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center"
+                                      style={{
+                                        borderColor: cryptoMethod === "usdc_base" ? "#D4007A" : "rgba(255,255,255,0.25)",
+                                        background: cryptoMethod === "usdc_base" ? "#D4007A" : "transparent",
+                                      }}
+                                    >
+                                      {cryptoMethod === "usdc_base" && (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-white block" />
+                                      )}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-semibold text-white leading-tight">
+                                        USDC on Base
+                                        <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded-full"
+                                          style={{ background: "rgba(52,199,89,0.15)", color: "#34C759" }}>
+                                          Recommended
+                                        </span>
+                                      </p>
+                                      <p className="text-[11px] mt-0.5 leading-tight" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                        Fast, low fees. Requires a wallet with USDC on Base network.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </button>
+
+                                {/* Any crypto */}
+                                <button
+                                  type="button"
+                                  onClick={() => { setCryptoMethod("any_crypto"); setChannelPassError(null); }}
+                                  className="w-full text-left px-3 py-2.5 rounded-lg transition-all"
+                                  style={{
+                                    background: cryptoMethod === "any_crypto" ? "rgba(212,0,122,0.12)" : "rgba(255,255,255,0.04)",
+                                    border: cryptoMethod === "any_crypto" ? "1px solid rgba(212,0,122,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                                  }}
+                                >
+                                  <div className="flex items-start gap-2.5">
+                                    <span
+                                      className="mt-0.5 w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center"
+                                      style={{
+                                        borderColor: cryptoMethod === "any_crypto" ? "#D4007A" : "rgba(255,255,255,0.25)",
+                                        background: cryptoMethod === "any_crypto" ? "#D4007A" : "transparent",
+                                      }}
+                                    >
+                                      {cryptoMethod === "any_crypto" && (
+                                        <span className="w-1.5 h-1.5 rounded-full bg-white block" />
+                                      )}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-semibold text-white leading-tight">
+                                        Any crypto
+                                      </p>
+                                      <p className="text-[11px] mt-0.5 leading-tight" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                                        BTC, ETH, USDT, LTC, SOL, XMR, DOGE, TRX, MATIC, BNB &amp; more — pay via hosted invoice.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </button>
+                              </div>
+
+                              {/* Coin picker — only shown for "any_crypto" */}
+                              {cryptoMethod === "any_crypto" && (() => {
+                                const COINS: { value: string; label: string }[] = [
+                                  { value: "usdcerc20", label: "USDC on Ethereum" },
+                                  { value: "btc",       label: "BTC" },
+                                  { value: "eth",       label: "ETH" },
+                                  { value: "usdcsol",   label: "USDC on Solana" },
+                                  { value: "usdttrc20", label: "USDT on Tron" },
+                                  { value: "usdtbsc",   label: "USDT on BSC" },
+                                  { value: "usdterc20", label: "USDT on Ethereum" },
+                                  { value: "ltc",       label: "LTC" },
+                                  { value: "sol",       label: "SOL" },
+                                  { value: "trx",       label: "TRX" },
+                                  { value: "matic",     label: "MATIC (Polygon)" },
+                                  { value: "xmr",       label: "Monero (XMR)" },
+                                  { value: "doge",      label: "DOGE" },
+                                  { value: "bnbbsc",    label: "BNB (BSC)" },
+                                ];
+                                return (
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    {COINS.map((coin) => (
+                                      <button
+                                        key={coin.value}
+                                        type="button"
+                                        onClick={() => setCryptoCoin(coin.value)}
+                                        className="px-2 py-1.5 rounded-lg text-[11px] font-medium text-left transition-all truncate"
+                                        style={{
+                                          background: cryptoCoin === coin.value ? "rgba(212,0,122,0.2)" : "rgba(255,255,255,0.04)",
+                                          border: cryptoCoin === coin.value ? "1px solid rgba(212,0,122,0.5)" : "1px solid rgba(255,255,255,0.08)",
+                                          color: cryptoCoin === coin.value ? "#fff" : "rgba(255,255,255,0.6)",
+                                        }}
+                                      >
+                                        {coin.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Error */}
+                              {channelPassError && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+                                  style={{ background: "rgba(255,69,58,0.1)", border: "1px solid rgba(255,69,58,0.25)" }}>
+                                  <p className="text-xs" style={{ color: "#FF453A" }}>{channelPassError}</p>
+                                </div>
+                              )}
+
+                              {/* USDC on Base — inline WalletPayCard drives the wallet-connect + send.
+                                  Alchemy webhook fulfills asynchronously; onSuccess fires when
+                                  the intent status flips to 'completed'. */}
+                              {cryptoMethod === "usdc_base" && isAuthenticated && (
+                                <WalletPayCard
+                                  surface="channel_pass"
+                                  amountUsd={Number(channelPass.price_usd) || 0}
+                                  entitlementSpec={{ creatorId: creator.id, type: "channel_pass" }}
+                                  metadata={{ source: "creator_profile_channel_pass", creatorId: creator.id }}
+                                  label={`Subscribe to @${creator.username || creator.first_name || "creator"} · $${channelPass.price_usd}/mo`}
+                                  lang={(user?.language as "es" | "en") || "en"}
+                                  onSuccess={() => {
+                                    setChannelPassResult({
+                                      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                                    });
+                                    setChannelPass((prev) => prev ? { ...prev, is_active: true } : prev);
+                                  }}
+                                  compact
+                                />
+                              )}
+
+                              {/* Any-crypto — popup + polling via NowPayments */}
+                              {cryptoMethod === "any_crypto" && (
+                              <button
+                                type="button"
+                                disabled={channelPassBuying}
+                                onClick={async () => {
+                                  if (!isAuthenticated) { navigate("/login"); return; }
+                                  setChannelPassBuying(true);
+                                  setChannelPassError(null);
+                                  try {
+                                    {
+                                      const res = await checkoutChannelPass(creator.id, "nowpayments", cryptoCoin);
+                                      if (!res.payment_url) throw new Error(res.error || "No checkout URL returned");
+
+                                      const w = 480;
+                                      const h = 720;
+                                      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+                                      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+                                      const popup = window.open(
+                                        res.payment_url,
+                                        "pnp_np_channel_pass",
+                                        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+                                      );
+
+                                      if (!popup) {
+                                        // Popup blocked — show fallback link
+                                        setChannelPassError(
+                                          `Your browser blocked the checkout window. Open it manually: ${res.payment_url}`
+                                        );
+                                        setChannelPassBuying(false);
+                                        return;
+                                      }
+
+                                      channelPassPopupRef.current = popup;
+                                      setChannelPassBuying(false);
+
+                                      // Poll getUserChannelPasses every 5s for up to 15 minutes
+                                      const deadline = Date.now() + 15 * 60 * 1000;
+                                      const currentCreatorId = creator.id;
+                                      channelPassPollRef.current = setInterval(async () => {
+                                        if (Date.now() > deadline) {
+                                          if (channelPassPollRef.current) clearInterval(channelPassPollRef.current);
+                                          return;
+                                        }
+                                        try {
+                                          const passes = await getUserChannelPasses();
+                                          const active = passes.find(
+                                            (p) => p.creator_id === currentCreatorId && p.status === "active"
+                                          );
+                                          if (active) {
+                                            if (channelPassPollRef.current) clearInterval(channelPassPollRef.current);
+                                            channelPassPopupRef.current?.close();
+                                            channelPassPopupRef.current = null;
+                                            setChannelPassResult({ expires_at: active.expires_at });
+                                            setChannelPass((prev) => prev ? { ...prev, is_active: true, expires_at: active.expires_at } : prev);
+                                          }
+                                        } catch {
+                                          // ignore transient polling errors
+                                        }
+                                      }, 5000);
+                                    }
+                                  } catch (err) {
+                                    setChannelPassError(err instanceof Error ? err.message : "Checkout failed. Please try again.");
+                                    setChannelPassBuying(false);
+                                  }
+                                }}
+                                className="w-full py-2.5 rounded-lg text-sm font-bold text-white flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
+                                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                              >
+                                {channelPassBuying ? (
+                                  <><Loader2 size={14} className="animate-spin" /> Processing…</>
+                                ) : (
+                                  <>Subscribe · ${channelPass.price_usd}/mo</>
+                                )}
+                              </button>
+                              )}
                             </div>
                           )}
                         </>
