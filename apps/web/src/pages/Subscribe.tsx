@@ -40,7 +40,7 @@ const HIDDEN_PLAN_IDS = new Set(["prime-trial-3d", "lifetime100", "lifetime80", 
 
 const RECURRING_PLANS = new Set(["prime-week-pass-7d", "monthly-pass", "prime-diamond-pass-365d"]);
 
-const RECOMMENDED_PLAN = "prime-diamond-pass-365d";
+const RECOMMENDED_PLAN_FALLBACK = "prime-diamond-pass-365d";
 
 function formatPrice(amount: number, currency: string): string {
   if (currency === "COP") {
@@ -149,6 +149,7 @@ export default function Subscribe() {
   const [activationSubmitting, setActivationSubmitting] = useState(false);
   const [activationSuccess, setActivationSuccess] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
+  const [recommendedPlanId, setRecommendedPlanId] = useState<string>(RECOMMENDED_PLAN_FALLBACK);
   // NowPayments hook retired 2026-08-09 — Wallet (USDC on Base) is the only
   // crypto path now. Any resumed NP order from sessionStorage is ignored.
 
@@ -157,6 +158,8 @@ export default function Subscribe() {
       .then((res) => {
         if (res.success && res.plans.length > 0) {
           setPlans(res.plans);
+          if (res.recommendedPlanId) setRecommendedPlanId(res.recommendedPlanId);
+          const activeRec = res.recommendedPlanId || RECOMMENDED_PLAN_FALLBACK;
           const requestedPlanId = searchParams.get("plan");
           const requestedPlan = requestedPlanId
             ? res.plans.find((p) => p.id === requestedPlanId)
@@ -171,7 +174,7 @@ export default function Subscribe() {
               setWalletPanelPlanId(requestedPlan.id);
             }
           } else {
-            const rec = res.plans.find((p) => p.id === RECOMMENDED_PLAN || p.sku === RECOMMENDED_PLAN);
+            const rec = res.plans.find((p) => p.id === activeRec || p.sku === activeRec);
             setSelectedPlan(rec?.id || res.plans[0].id);
           }
         } else {
@@ -282,7 +285,6 @@ export default function Subscribe() {
   // Auto-apply promo from URL once plans load — need plans first so we can lock selection
   const autoAppliedRef = useRef(false);
   const orderPanelRef = useRef<HTMLDivElement>(null);
-  const inFlightRef = useRef(false);
   useEffect(() => {
     if (autoAppliedRef.current) return;
     const urlPromo = searchParams.get("promo");
@@ -343,8 +345,9 @@ export default function Subscribe() {
 
     let cancelled = false;
     let attempts = 0;
+    let consecutive5xx = 0;
     const maxAttempts = 120; // 10 minutes at 5s intervals
-    const interval = 5000;
+    const baseInterval = 5000;
     let timerId: ReturnType<typeof setTimeout> | null = null;
     pollingStartRef.current = Date.now();
     setPollingOverFiveMin(false);
@@ -366,6 +369,7 @@ export default function Subscribe() {
       }
       try {
         const data = await getPaymentStatus(pollingPaymentId);
+        consecutive5xx = 0;
         if (cancelled) return;
         if (data.status === "completed" || data.status === "paid" || data.status === "success" || data.status === "confirmed") {
           setPollingPaymentId(null);
@@ -383,9 +387,33 @@ export default function Subscribe() {
           failWithNudge(data.message || s.paymentNotSuccessful);
           return;
         }
-        if (!cancelled) timerId = setTimeout(poll, interval);
-      } catch {
-        if (!cancelled) timerId = setTimeout(poll, interval);
+        if (!cancelled) timerId = setTimeout(poll, baseInterval);
+      } catch (err: unknown) {
+        // 404/410 = order not found or gone forever → stop retrying.
+        // 5xx = transient; exponential backoff and cap at 3 consecutive.
+        const status = (err as { status?: number })?.status;
+        if (status === 404 || status === 410) {
+          setPollingPaymentId(null);
+          setPollingOverFiveMin(false);
+          try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
+          failWithNudge(s.paymentNotSuccessful);
+          return;
+        }
+        if (status && status >= 500 && status < 600) {
+          consecutive5xx++;
+          if (consecutive5xx > 3) {
+            setPollingPaymentId(null);
+            setPollingOverFiveMin(false);
+            try { sessionStorage.removeItem("pnp_pending_payment"); } catch {}
+            failWithNudge(s.paymentNotSuccessful);
+            return;
+          }
+          const backoffMs = Math.min(30000, baseInterval * Math.pow(2, consecutive5xx));
+          if (!cancelled) timerId = setTimeout(poll, backoffMs);
+          return;
+        }
+        // Transient network / unknown → normal cadence
+        if (!cancelled) timerId = setTimeout(poll, baseInterval);
       }
     };
 
@@ -418,7 +446,18 @@ export default function Subscribe() {
       const result = await paySubscriptionWithTokens(planId);
       if (!result.success) {
         if (result.code === "INSUFFICIENT_TOKENS") {
-          setError(t.lang === "es" ? `Ru$h ⚡💲 insuficiente. Necesitas ${result.required?.toLocaleString()} Ru$h — tienes ${result.current?.toLocaleString()} Ru$h.` : `Not enough Ru$h ⚡💲. Need ${(result.required ?? 0).toLocaleString()} Ru$h — you have ${(result.current ?? 0).toLocaleString()} Ru$h.`);
+          // Server returns currentBalance + currentGifted separately so we can
+          // show both when relevant (e.g. "you have 50 Ru$h + 30 gifted").
+          const req = (result.required ?? 0).toLocaleString();
+          const regBal = (result.currentBalance ?? result.current ?? 0);
+          const giftBal = (result.currentGifted ?? 0);
+          const showGifted = isPlatformTier && giftBal > 0;
+          const balanceStr = showGifted
+            ? `${regBal.toLocaleString()} Ru$h + ${giftBal.toLocaleString()} bonus`
+            : `${regBal.toLocaleString()} Ru$h`;
+          setError(t.lang === "es"
+            ? `Ru$h ⚡💲 insuficiente. Necesitas ${req} Ru$h — tienes ${balanceStr}.`
+            : `Not enough Ru$h ⚡💲. Need ${req} Ru$h — you have ${balanceStr}.`);
         } else {
           setError(result.error || (t.lang === "es" ? "No se pudo activar el plan." : "Failed to activate plan."));
         }
@@ -916,7 +955,7 @@ export default function Subscribe() {
 
         {primePlans.map((plan) => {
           const isSelected = selectedPlan === plan.id;
-          const isRecommended = plan.id === RECOMMENDED_PLAN || plan.sku === RECOMMENDED_PLAN;
+          const isRecommended = plan.id === recommendedPlanId || plan.sku === recommendedPlanId;
           const features = getPlanFeatures(plan, false);
           const displayPrice = formatPrice(plan.price, "USD");
           const planLabel = getPlanLabel(plan, false);
@@ -1172,16 +1211,25 @@ export default function Subscribe() {
               <div className="text-center">
                 <p className="text-sm text-green-400 mb-3">
                   {t.lang === "es"
-                    ? "✅ ¡Acceso activado! Recarga para ver tu nuevo plan."
-                    : "✅ Access activated! Refresh to see your new plan."}
+                    ? "✅ ¡Acceso activado! Tu nuevo plan ya está listo."
+                    : "✅ Access activated! Your new plan is ready to go."}
                 </p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors"
-                  style={{ background: "rgba(255,255,255,0.12)" }}
-                >
-                  {t.lang === "es" ? "Recargar" : "Refresh"}
-                </button>
+                <div className="flex gap-2 justify-center">
+                  <button
+                    onClick={() => { window.location.href = "/"; }}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold text-white transition-all"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                  >
+                    {t.lang === "es" ? "Ir a PNPtv" : "Go to PNPtv"}
+                  </button>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="px-4 py-2 rounded-lg text-xs font-semibold text-white transition-colors"
+                    style={{ background: "rgba(255,255,255,0.12)" }}
+                  >
+                    {t.lang === "es" ? "Recargar" : "Refresh"}
+                  </button>
+                </div>
               </div>
             ) : (
               <>

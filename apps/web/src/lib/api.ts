@@ -1098,7 +1098,7 @@ export function linkDPNS(dpnsHandle: string): Promise<{ success: boolean; dpnsHa
   return request("/api/wallet/link-dpns", { method: "POST", body: { dpnsHandle } });
 }
 
-export function paySubscriptionWithTokens(planId: string): Promise<{ success: boolean; newBalance: number; planName?: string; error?: string; code?: string; required?: number; current?: number }> {
+export function paySubscriptionWithTokens(planId: string): Promise<{ success: boolean; newBalance: number; planName?: string; error?: string; code?: string; required?: number; current?: number; currentBalance?: number; currentGifted?: number }> {
   return request("/api/wallet/pay-subscription", { method: "POST", body: { planId } });
 }
 
@@ -3830,6 +3830,9 @@ export interface SubscriptionPlan {
 export function getSubscriptionPlans(): Promise<{
   success: boolean;
   plans: SubscriptionPlan[];
+  country?: string | null;
+  isColombia?: boolean;
+  recommendedPlanId?: string;
 }> {
   return request("/api/subscription/plans");
 }

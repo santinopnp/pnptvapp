@@ -12709,6 +12709,14 @@ app.post('/api/wallet/buy-nowpayments', walletBuyLimiter, requireSessionAuth, as
     if (err.code === 'NOWPAYMENTS_NOT_CONFIGURED') {
       return res.status(503).json({ success: false, error: err.message });
     }
+    if (err.code === 'NOWPAYMENTS_INVALID' || err.code === 'INVALID_REQUEST_PARAMS') {
+      return res.status(400).json({
+        success: false,
+        error: err.message,
+        code: 'NOWPAYMENTS_INVALID',
+        coin: err.npCoin || payCurrency || null,
+      });
+    }
     return res.status(500).json({ success: false, error: 'Failed to create crypto invoice.' });
   }
 }));
@@ -12968,7 +12976,15 @@ app.post('/api/wallet/pay-subscription', walletSpendLimiter, requireSessionAuth,
     newBalance = dbRes.balance_after + dbRes.gifted_after;
   } catch (err) {
     if (err.code === 'INSUFFICIENT_FUNDS') {
-      return res.status(402).json({ success: false, error: 'Insufficient Ru$h balance', code: 'INSUFFICIENT_TOKENS', required: tokenCost, current: err.available || 0 });
+      return res.status(402).json({
+        success: false,
+        error: 'Insufficient Ru$h balance',
+        code: 'INSUFFICIENT_TOKENS',
+        required: tokenCost,
+        current: err.available || 0,
+        currentBalance: err.availableBalance ?? err.available ?? 0,
+        currentGifted: err.availableGifted ?? 0,
+      });
     }
     throw err;
   }

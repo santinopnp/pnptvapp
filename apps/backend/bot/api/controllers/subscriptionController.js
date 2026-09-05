@@ -27,11 +27,18 @@ class SubscriptionController {
       // Colombia gate lifted 2026-05-24 — all users see the full catalog
       const plans = allPlans.filter((p) => p.tier !== 'pnp-col');
 
+      // Recommended plan is server-configurable via SUBSCRIBE_RECOMMENDED_PLAN_ID
+      // env var so admin can A/B-test without a deploy. Frontend falls back to
+      // its hardcoded default if this is missing.
+      const recommendedPlanId = process.env.SUBSCRIBE_RECOMMENDED_PLAN_ID
+        || 'prime-diamond-pass-365d';
+
       res.json({
         success: true,
         plans,
         country,
         isColombia,
+        recommendedPlanId,
       });
     } catch (error) {
       logger.error('Error getting subscription plans:', error);

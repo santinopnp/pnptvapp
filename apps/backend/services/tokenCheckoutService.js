@@ -601,6 +601,19 @@ class TokenCheckoutService {
       logger.error('TokenCheckoutService.createNowPaymentsCheckout: NowPayments error', {
         userId, packageId, payCurrency, error: invoiceErr.response?.data || invoiceErr.message,
       });
+      const npData = invoiceErr.response?.data;
+      const npStatus = invoiceErr.response?.status;
+      // NP-specific 4xx (currency temporarily disabled, invalid amount, etc.) get their
+      // real message surfaced. Only truly transient/network failures fall back to the
+      // generic "please try again" copy.
+      if (npStatus && npStatus >= 400 && npStatus < 500 && npData?.message) {
+        const err = Object.assign(new Error(String(npData.message)), {
+          code: npData.code || 'NOWPAYMENTS_INVALID',
+          status: 400,
+          npCoin: validPayCurrency,
+        });
+        throw err;
+      }
       const err = Object.assign(new Error('Could not reach NowPayments. Please try again.'), { code: 'NOWPAYMENTS_ERROR', status: 502 });
       throw err;
     }
