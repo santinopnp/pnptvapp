@@ -579,14 +579,15 @@ app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
 
   // Only verified, active creators. Order by follower_count desc so the most
   // popular float up. Cap at 12.
-  const { rows } = await dbQuery(
+  const { rows } = await query(
     `SELECT id, username, first_name, bio,
             CASE
               WHEN photo_file_id IS NULL THEN NULL
               WHEN photo_file_id LIKE 'http%' THEN photo_file_id
               ELSE '/uploads/avatars/' || photo_file_id
             END AS avatar_url,
-            followers_count, creator_verified, is_pnptv_fam
+            followers_count, creator_verified,
+            COALESCE(is_pnptv_fam, FALSE) AS is_pnptv_fam
        FROM users
       WHERE creator_status = 'active'
         AND creator_verified = TRUE
@@ -626,10 +627,10 @@ app.get('/api/public/stats', asyncHandler(async (req, res) => {
   const roundDown = (n, step) => Math.floor(Number(n || 0) / step) * step;
   try {
     const [{ rows: membersRows }, { rows: creatorsRows }, { rows: videosRows }, { rows: countriesRows }] = await Promise.all([
-      dbQuery(`SELECT COUNT(*) AS c FROM users WHERE role = 'user' OR role = 'member'`),
-      dbQuery(`SELECT COUNT(*) AS c FROM users WHERE creator_status = 'active' AND creator_verified = TRUE`),
-      dbQuery(`SELECT COUNT(*) AS c FROM channel_videos WHERE status = 'published'`),
-      dbQuery(`SELECT COUNT(DISTINCT country) AS c FROM users WHERE country IS NOT NULL AND country <> ''`),
+      query(`SELECT COUNT(*) AS c FROM users WHERE role = 'user' OR role = 'member'`),
+      query(`SELECT COUNT(*) AS c FROM users WHERE creator_status = 'active' AND creator_verified = TRUE`),
+      query(`SELECT COUNT(*) AS c FROM channel_videos WHERE status = 'published'`),
+      query(`SELECT COUNT(DISTINCT country) AS c FROM users WHERE country IS NOT NULL AND country <> ''`),
     ]);
     const payload = {
       success: true,
