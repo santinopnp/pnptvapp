@@ -17669,25 +17669,57 @@ app.get('/api/ads/rewarded/config', requireSessionAuth, adCallbackLimiter, async
   const featureOn   = await adUnlockService.isFeatureEnabled();
   const eligible    = adUnlockService.isTierEligibleForAds(user?.tier, user?.role);
 
-  // Determine active ad network + zone for this surface.
-  // Preference order: ExoClick → TrafficJunky (TJ retained for legacy compat
-  // even though TJ is advertiser-side only in practice). Any provider works
-  // as long as its `<NET>_ZONE_<SURFACE_UPPER>` env var is set + a matching
-  // `AD_SECRET_<NET_UPPER>` secret exists for HMAC verification.
+  // Determine active ad network + zone/tag for this surface.
+  //
+  // Two integration modes:
+  //   A) S2S postback (kept for future adult networks that ship a real Rewarded
+  //      Video product): `<NET>_ZONE_<SURFACE>` env var + `AD_SECRET_<NET>`
+  //      HMAC secret. Frontend loads network's rewarded SDK.
+  //   B) Client-side VAST (used for TrafficStars/ExoClick pre-roll since those
+  //      networks do NOT offer publisher-side Rewarded S2S): `<NET>_VAST_URL_
+  //      <SURFACE>` env var contains the VAST tag URL. Frontend plays the ad
+  //      via IMA, then submits the signed nonce to /client-verify on completion.
+  //   C) Affiliate smartlink (Adultforce and similar CPA networks): user
+  //      clicks button → new tab opens the offer URL with sub_id={userId} →
+  //      when the network's postback fires on lead/signup, we grant unlock via
+  //      the same /callback endpoint. Frontend polls /active while the tab is
+  //      open. Env var: `<NET>_OFFER_URL_<SURFACE>` (URL with `{sub_id}`
+  //      placeholder we substitute server-side to prevent client tampering).
+  //
+  // Preference: TrafficStars VAST → ExoClick VAST → ExoClick S2S → Adultforce
+  //             affiliate → TrafficJunky (legacy).
   const SURFACE_UPPER = String(surface).toUpperCase();
   const NETWORK_PREFERENCE = [
-    { network: 'exoclick',     envVar: `EXO_ZONE_${SURFACE_UPPER}` },
-    { network: 'trafficjunky', envVar: `TJ_ZONE_${SURFACE_UPPER}` },
+    { network: 'trafficstars', mode: 'vast',      envVar: `TS_VAST_URL_${SURFACE_UPPER}` },
+    { network: 'exoclick',     mode: 'vast',      envVar: `EXO_VAST_URL_${SURFACE_UPPER}` },
+    { network: 'exoclick',     mode: 's2s',       envVar: `EXO_ZONE_${SURFACE_UPPER}` },
+    { network: 'adultforce',   mode: 'affiliate', envVar: `AF_OFFER_URL_${SURFACE_UPPER}` },
+    { network: 'trafficjunky', mode: 's2s',       envVar: `TJ_ZONE_${SURFACE_UPPER}` },
   ];
-  let zoneId = null;
-  let adNetwork = null;
+  let zoneIdOrTag = null;
+  let adNetwork   = null;
+  let integrationMode = null;
   for (const cand of NETWORK_PREFERENCE) {
     const val = process.env[cand.envVar];
-    if (val) { zoneId = val; adNetwork = cand.network; break; }
+    if (val) { zoneIdOrTag = val; adNetwork = cand.network; integrationMode = cand.mode; break; }
   }
 
-  // enabled only when: feature flag on AND user is free-tier AND zone configured
+  // enabled only when: feature flag on AND user is free-tier AND zone/tag configured
   const enabled = featureOn && eligible && !!adNetwork;
+
+  // Affiliate mode: substitute {sub_id} server-side so the client can't spoof
+  // another user's id and steal the resulting postback. Also append the surface
+  // for postback dispatch clarity.
+  let offerUrl = null;
+  if (enabled && integrationMode === 'affiliate') {
+    offerUrl = String(zoneIdOrTag)
+      .replace(/\{sub_id\}/g, encodeURIComponent(String(userId)))
+      .replace(/\{surface\}/g, encodeURIComponent(String(surface)));
+    if (!offerUrl.includes(String(userId))) {
+      // Template had no placeholder — append as query param
+      offerUrl += (offerUrl.includes('?') ? '&' : '?') + 'sub_id=' + encodeURIComponent(String(userId));
+    }
+  }
 
   const [rateStatus, activeUnlockExpiresAt] = await Promise.all([
     adUnlockService.getRateLimitStatus(userId, surface),
@@ -17698,13 +17730,121 @@ app.get('/api/ads/rewarded/config', requireSessionAuth, adCallbackLimiter, async
     success: true,
     enabled,
     ad_network: enabled ? adNetwork : null,
-    zone_id:    enabled ? zoneId   : null,
+    integration_mode: enabled ? integrationMode : null,   // 'vast' | 's2s' | 'affiliate'
+    zone_id:    enabled && integrationMode === 's2s'       ? zoneIdOrTag : null,
+    vast_url:   enabled && integrationMode === 'vast'      ? zoneIdOrTag : null,
+    offer_url:  enabled && integrationMode === 'affiliate' ? offerUrl    : null,
+    client_side_grant: enabled && integrationMode === 'vast',
     remaining_today: rateStatus.remaining,
     active_until:    activeUnlockExpiresAt
       ? new Date(activeUnlockExpiresAt).toISOString()
       : null,
     ttl_seconds: adUnlockService.SURFACE_TTL_SEC[surface],
   });
+}));
+
+// POST /api/ads/rewarded/nonce
+// Client-side VAST flow only. Frontend calls this BEFORE showing the ad to
+// receive a short-TTL signed nonce. After the VAST `complete` event fires,
+// the frontend redeems the nonce via /client-verify to receive the unlock.
+// Rate-limited at the surface level (same 3/day as the S2S callback).
+app.post('/api/ads/rewarded/nonce', requireSessionAuth, adCallbackLimiter, express.json(), asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const surface = String(req.body?.surface || '');
+  if (!adUnlockService.isValidSurface(surface)) {
+    return res.status(400).json({ success: false, error: 'invalid_surface' });
+  }
+  const featureOn = await adUnlockService.isFeatureEnabled();
+  if (!featureOn) return res.status(503).json({ success: false, error: 'ads_disabled' });
+  const user = req.session?.user;
+  if (!adUnlockService.isTierEligibleForAds(user?.tier, user?.role)) {
+    return res.status(403).json({ success: false, error: 'not_eligible' });
+  }
+  const rate = await adUnlockService.getRateLimitStatus(user.id, surface);
+  if (rate.remaining <= 0) {
+    return res.status(429).json({ success: false, error: 'daily_cap_reached', remaining: rate.remaining });
+  }
+  const crypto = require('crypto');
+  const secret = process.env.AD_CLIENT_NONCE_SECRET || process.env.SESSION_SECRET || 'change-me';
+  const nonceId = crypto.randomBytes(16).toString('hex');
+  const issuedAt = Date.now();
+  const payload = `${user.id}.${surface}.${nonceId}.${issuedAt}`;
+  const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  // Nonce format: base64(payload).signature — self-contained, no server-side store.
+  const nonce = Buffer.from(payload).toString('base64') + '.' + signature;
+  return res.json({ success: true, nonce, ttl_seconds: 300 });
+}));
+
+// POST /api/ads/rewarded/client-verify
+// Client-side VAST completion → grant unlock. Redeems the nonce issued above.
+// Anti-fraud: nonce is single-use (deduped in Redis for its TTL), signed,
+// bound to a specific user + surface, and expires after 5 min. `elapsed_ms`
+// must be >= expected ad duration (client-reported; not authoritative but
+// filters obvious tampering). Rate limits already enforced by adUnlockService.
+app.post('/api/ads/rewarded/client-verify', requireSessionAuth, adCallbackLimiter, express.json(), asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const { surface, nonce, elapsed_ms } = req.body || {};
+  if (!adUnlockService.isValidSurface(String(surface))) {
+    return res.status(400).json({ success: false, error: 'invalid_surface' });
+  }
+  if (typeof nonce !== 'string' || !nonce.includes('.')) {
+    return res.status(400).json({ success: false, error: 'missing_nonce' });
+  }
+  const user = req.session?.user;
+  if (!adUnlockService.isTierEligibleForAds(user?.tier, user?.role)) {
+    return res.status(403).json({ success: false, error: 'not_eligible' });
+  }
+
+  const crypto = require('crypto');
+  const secret = process.env.AD_CLIENT_NONCE_SECRET || process.env.SESSION_SECRET || 'change-me';
+  const [payloadB64, sig] = nonce.split('.');
+  let payload;
+  try {
+    payload = Buffer.from(payloadB64, 'base64').toString('utf8');
+  } catch { return res.status(400).json({ success: false, error: 'invalid_nonce_format' }); }
+  const [nonceUser, nonceSurface, nonceId, issuedAtStr] = payload.split('.');
+  if (!nonceUser || !nonceSurface || !nonceId || !issuedAtStr) {
+    return res.status(400).json({ success: false, error: 'invalid_nonce_payload' });
+  }
+  if (String(nonceUser) !== String(user.id) || nonceSurface !== String(surface)) {
+    return res.status(400).json({ success: false, error: 'nonce_mismatch' });
+  }
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  if (!sig || sig.length !== expected.length
+      || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return res.status(401).json({ success: false, error: 'invalid_signature' });
+  }
+  const issuedAt = parseInt(issuedAtStr, 10);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > 300_000) {
+    return res.status(410).json({ success: false, error: 'nonce_expired' });
+  }
+  // Sanity: user reported ad ran at least 5s (protects against instant tap-fake)
+  const elapsed = Number(elapsed_ms) || 0;
+  if (elapsed < 5000) {
+    return res.status(400).json({ success: false, error: 'ad_too_short', elapsed });
+  }
+  // Single-use dedup (Redis) so replay of the same nonce fails on second attempt
+  try {
+    const { getRedis } = require('../../services/redisService');
+    const r = getRedis();
+    if (r) {
+      const key = `ads:nonce_used:${nonceId}`;
+      const set = await r.set(key, '1', 'NX', 'EX', 600);
+      if (set === null) return res.status(409).json({ success: false, error: 'nonce_already_used' });
+    }
+  } catch { /* Redis down → allow through, rate limit still bounds abuse */ }
+
+  const result = await adUnlockService.grantUnlock({
+    userId: user.id,
+    surface,
+    adNetwork: 'client_vast',
+    adTxnId: nonceId,
+    userTier: user.tier,
+    userRole: user.role,
+    meta: { ip: req.ip, ua: (req.get('user-agent') || '').slice(0, 200), elapsed_ms: elapsed, mode: 'client_vast' },
+  });
+  if (!result.ok) return res.status(400).json({ success: false, error: result.reason });
+  return res.json({ success: true, expiresAt: result.expiresAt });
 }));
 
 // GET /api/ads/rewarded/active?surface=X
