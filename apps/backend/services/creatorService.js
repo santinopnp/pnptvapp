@@ -1442,12 +1442,21 @@ class CreatorService {
   // ── Dashboard ──────────────────────────────────────────────────────────────
 
   static async getCreatorDashboard(creatorId) {
-    const [subscriberRes, earningsRes, exclusiveRes, applicationRes, enrollmentRes] = await Promise.all([
+    const [
+      subscriberRes,
+      earningsRes,
+      exclusiveRes,
+      applicationRes,
+      enrollmentRes,
+      videosUnpricedRes,
+      isLiveRes,
+    ] = await Promise.all([
       query(
         `SELECT creator_subscriber_count, creator_status, creator_type, creator_price_usd,
                 creator_verified, creator_featured, creator_dash_address, stream_rules,
                 creator_subscription_paused, hype_bot_enabled,
-                crystal_creator_active_until, crystal_creator_invited_at
+                crystal_creator_active_until, crystal_creator_invited_at,
+                channel_pass_enabled, channel_pass_price_usd
            FROM users WHERE id = $1`,
         [creatorId]
       ),
@@ -1469,6 +1478,24 @@ class CreatorService {
       query(
         'SELECT id, tier, status, admin_notes, created_at, reviewed_at FROM creator_enrollments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
         [creatorId]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS count
+           FROM channel_videos
+          WHERE uploader_id = $1
+            AND status = 'published'
+            AND rent_price_rush IS NULL
+            AND buy_price_rush IS NULL`,
+        [String(creatorId)]
+      ),
+      query(
+        `SELECT 1
+           FROM live_streams
+          WHERE host_id = $1
+            AND status IN ('live', 'active')
+            AND started_at IS NOT NULL
+          LIMIT 1`,
+        [String(creatorId)]
       ),
     ]);
 
@@ -1500,6 +1527,10 @@ class CreatorService {
       crystalCreator,
       crystalActiveUntil,
       crystalInvited: !!user.crystal_creator_invited_at,
+      channelPassEnabled: !!user.channel_pass_enabled,
+      channelPassPriceUsd: user.channel_pass_price_usd ? parseFloat(user.channel_pass_price_usd) : null,
+      videosUnpricedCount: videosUnpricedRes.rows[0]?.count || 0,
+      isLiveNow: isLiveRes.rowCount > 0,
     };
   }
 

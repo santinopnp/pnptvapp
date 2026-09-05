@@ -768,50 +768,14 @@ async function setAcceptingCalls(req, res) {
     const redis = getRedis();
     const acceptingKey = ACCEPTING_CALLS_KEY(userId);
 
+    // REGLA B semantics: the Redis key is an OPT-OUT marker only.
+    //   accepting=true  → DEL key (default state: bookable while live-broadcasting)
+    //   accepting=false → SET key to '0' with no TTL (permanent opt-out until toggled back)
+    // getBookingOptions treats `null` or any value ≠ '0' as available; only '0' means opted-out.
+    // Guards on turn-on: only call-packages requirement (real business rule).
+
     if (accepting) {
-      // Guard 1: creator must be online
-      let onlineRaw;
-      try {
-        onlineRaw = await redis.get(ONLINE_KEY(userId));
-      } catch (redisErr) {
-        logger.warn('[callBookingController] setAcceptingCalls Redis unavailable checking online status', { userId, error: redisErr.message });
-        return res.status(503).json({ success: false, error: 'Service temporarily unavailable. Please try again.' });
-      }
-      const isOnline = onlineRaw !== null && onlineRaw !== '0';
-      if (!isOnline) {
-        return res.status(400).json({
-          success: false,
-          error: 'You must be online before accepting calls. Go online first, then enable this toggle.',
-          code: 'must_be_online_first',
-        });
-      }
-
-      // Guard 2: creator must not be currently broadcasting
-      let liveRows;
-      try {
-        const liveResult = await query(
-          `SELECT id
-             FROM live_streams
-            WHERE host_id = $1
-              AND status IN ('live', 'active')
-              AND started_at IS NOT NULL
-            LIMIT 1`,
-          [userId]
-        );
-        liveRows = liveResult.rows;
-      } catch (dbErr) {
-        logger.error('[callBookingController] setAcceptingCalls live_streams check failed', { userId, error: dbErr.message });
-        return res.status(500).json({ success: false, error: 'Failed to verify stream status' });
-      }
-      if (liveRows.length > 0) {
-        return res.status(409).json({
-          success: false,
-          error: 'You cannot accept calls while you are broadcasting live.',
-          code: 'cannot_accept_calls_while_live',
-        });
-      }
-
-      // Guard 3: creator must have at least one active call package
+      // Guard: creator must have at least one active call package
       let pkgRows;
       try {
         const pkgResult = await query(
@@ -831,11 +795,11 @@ async function setAcceptingCalls(req, res) {
         });
       }
 
-      // All guards passed — set the flag
+      // Clear opt-out marker
       try {
-        await redis.set(acceptingKey, '1', 'EX', ACCEPTING_CALLS_TTL_SECONDS);
+        await redis.del(acceptingKey);
       } catch (redisErr) {
-        logger.error('[callBookingController] setAcceptingCalls Redis SET failed', { userId, error: redisErr.message });
+        logger.warn('[callBookingController] setAcceptingCalls Redis DEL failed', { userId, error: redisErr.message });
         return res.status(503).json({ success: false, error: 'Service temporarily unavailable. Please try again.' });
       }
 
@@ -850,29 +814,15 @@ async function setAcceptingCalls(req, res) {
         logger.warn('[callBookingController] setAcceptingCalls socket emit failed (non-fatal)', { userId, error: sockErr.message });
       }
 
-      // Creator's own X auto-post (opt-in via users.x_auto_post_availability)
-      setImmediate(() => {
-        const XPS = require('../../../services/xPostService');
-        const uname = sessionUser.username ? `@${sessionUser.username}` : userId;
-        XPS.postCreatorEvent({
-          userId,
-          eventType: 'availability',
-          text: `Open for private calls right now → https://pnptv.app/u/${uname}`,
-          dedupKey: `xautopost:avail:${userId}`,
-          dedupTtl: 14400,
-        }).catch(() => {});
-      });
-
-      const acceptingUntil = new Date(Date.now() + ACCEPTING_CALLS_TTL_SECONDS * 1000).toISOString();
-      logger.info('[callBookingController] creator now accepting calls', { userId, acceptingUntil });
-      return res.json({ success: true, accepting: true, acceptingUntil });
+      logger.info('[callBookingController] creator now accepting calls (opt-out cleared)', { userId });
+      return res.json({ success: true, accepting: true });
     } else {
-      // Turning off — DEL key (idempotent even if key doesn't exist)
+      // Turning off — write permanent opt-out marker
       try {
-        await redis.del(acceptingKey);
+        await redis.set(acceptingKey, '0');
       } catch (redisErr) {
-        logger.warn('[callBookingController] setAcceptingCalls Redis DEL failed (non-fatal)', { userId, error: redisErr.message });
-        // Still consider this a success — worst case the key expires on its own
+        logger.warn('[callBookingController] setAcceptingCalls Redis SET opt-out failed', { userId, error: redisErr.message });
+        return res.status(503).json({ success: false, error: 'Service temporarily unavailable. Please try again.' });
       }
 
       // Emit Socket.IO event
@@ -886,7 +836,7 @@ async function setAcceptingCalls(req, res) {
         logger.warn('[callBookingController] setAcceptingCalls socket emit (off) failed (non-fatal)', { userId, error: sockErr.message });
       }
 
-      logger.info('[callBookingController] creator stopped accepting calls', { userId });
+      logger.info('[callBookingController] creator opted out of calls', { userId });
       return res.json({ success: true, accepting: false });
     }
   } catch (err) {
@@ -930,46 +880,28 @@ async function getAcceptingCallsStatus(req, res) {
     }
 
     const online = onlineRaw !== null && onlineRaw !== '0';
-    const flagSet = acceptingRaw !== null && acceptingRaw !== '0';
+    // REGLA B: the accepting_calls Redis key is now an OPT-OUT marker only.
+    // null / any value ≠ '0' → accepting is ON (default).  '0' → opted out.
+    const accepting = acceptingRaw !== '0';
 
-    // Read-time gate: if the creator is broadcasting live (any path — webcam,
-    // Restreamer RTMP, bot-initiated), they are busy and cannot take calls.
-    // This covers the gap where Restreamer/bot paths bypass the socketHandlers
-    // auto-clear. Cheap indexed query (host_id + status).
-    let broadcasting = false;
-    if (flagSet && online) {
-      try {
-        const { rowCount } = await query(
-          `SELECT 1 FROM live_streams
-            WHERE host_id::text = $1::text
-              AND status IN ('live', 'active')
-              AND started_at IS NOT NULL
-              AND ended_at IS NULL
-            LIMIT 1`,
-          [creatorId]
-        );
-        broadcasting = rowCount > 0;
-      } catch (dbErr) {
-        logger.warn('[callBookingController] getAcceptingCallsStatus live_streams check failed', { creatorId, error: dbErr.message });
-      }
+    let isLive = false;
+    try {
+      const { rowCount } = await query(
+        `SELECT 1 FROM live_streams
+          WHERE host_id::text = $1::text
+            AND status IN ('live', 'active')
+            AND started_at IS NOT NULL
+            AND ended_at IS NULL
+          LIMIT 1`,
+        [creatorId]
+      );
+      isLive = rowCount > 0;
+    } catch (dbErr) {
+      logger.warn('[callBookingController] getAcceptingCallsStatus live_streams check failed', { creatorId, error: dbErr.message });
     }
 
-    // All three must be true — accepting_calls is meaningless without active
-    // presence, and is mutually exclusive with broadcasting.
-    const accepting = online && flagSet && !broadcasting;
-
-    // Include remaining TTL so the frontend countdown survives page reloads.
-    let acceptingUntil = null;
-    if (accepting) {
-      try {
-        const pttl = await redis.pttl(ACCEPTING_CALLS_KEY(creatorId));
-        if (pttl > 0) {
-          acceptingUntil = new Date(Date.now() + pttl).toISOString();
-        }
-      } catch (_) { /* non-fatal — countdown just won't show */ }
-    }
-
-    return res.json({ accepting, online, acceptingUntil });
+    // Frontend can compute effective bookable state as: accepting && online && isLive.
+    return res.json({ accepting, online, isLive });
   } catch (err) {
     logger.error('[callBookingController] getAcceptingCallsStatus error', { error: err.message });
     return res.status(500).json({ success: false, error: 'Failed to retrieve accepting calls status' });

@@ -4402,6 +4402,14 @@ export interface CreatorDashboard {
   crystalActiveUntil?: string | null;
   /** True once the creator has ever been invited to (or granted) a Crystal pass. */
   crystalInvited?: boolean;
+  /** True when the creator has their monthly Channel Pass activated. */
+  channelPassEnabled?: boolean;
+  /** Monthly USD price the creator charges for Channel Pass ($5–$50), or null if not set. */
+  channelPassPriceUsd?: number | null;
+  /** Count of published videos this creator has that don't have rent/buy prices set. */
+  videosUnpricedCount?: number;
+  /** True when the creator is currently live-broadcasting (REGLA B: this drives call availability). */
+  isLiveNow?: boolean;
 }
 
 export interface CreatorSubscriptionStatus {
@@ -8286,14 +8294,13 @@ export function setNextShowDate(
 export interface AcceptingCallsStatus {
   accepting: boolean;
   online: boolean;
-  /** ISO string — only present when accepting=true */
-  acceptingUntil?: string;
+  /** REGLA B: creator is currently live-broadcasting. Bookable = accepting && online && isLive. */
+  isLive?: boolean;
 }
 
 export interface SetAcceptingCallsResponse {
   success: boolean;
-  /** ISO string — only present when accepting=true */
-  acceptingUntil?: string;
+  accepting?: boolean;
 }
 
 /** Creator: read own accepting-calls state (use own userId). */
@@ -10967,7 +10974,7 @@ export async function checkoutChannelPass(
 ): Promise<ChannelPassCheckoutResult> {
   const body: { provider: string; payCurrency?: string } = { provider };
   if (payCurrency) body.payCurrency = payCurrency;
-  return request(`/api/creators/${encodeURIComponent(creatorId)}/channel-pass/checkout`, {
+  return request(`/api/subscriptions/creators/${encodeURIComponent(creatorId)}/channel-pass/checkout`, {
     method: "POST",
     body,
   });
@@ -10983,13 +10990,13 @@ export interface ChannelPassViewerInfo {
 }
 
 export async function getCreatorChannelPass(creatorId: string): Promise<ChannelPassViewerInfo> {
-  return request(`/api/creators/${encodeURIComponent(creatorId)}/channel-pass`);
+  return request(`/api/subscriptions/creators/${encodeURIComponent(creatorId)}/channel-pass`);
 }
 
 export async function saveChannelPassSettings(
   opts: { enabled: boolean; price_usd: number }
 ): Promise<{ success: boolean }> {
-  return request("/api/creator/settings/channel-pass", {
+  return request("/api/subscriptions/creator/settings/channel-pass", {
     method: "POST",
     body: opts,
   });
@@ -11008,12 +11015,12 @@ export interface UserChannelPass {
 }
 
 export async function getUserChannelPasses(): Promise<UserChannelPass[]> {
-  const res = await request<UserChannelPass[] | { items: UserChannelPass[] }>("/api/user/channel-passes");
+  const res = await request<UserChannelPass[] | { items: UserChannelPass[] }>("/api/subscriptions/user/channel-passes");
   return Array.isArray(res) ? res : (res as { items: UserChannelPass[] }).items ?? [];
 }
 
 export async function cancelChannelPass(subscriptionId: string): Promise<{ success: boolean }> {
-  return request(`/api/user/channel-passes/${encodeURIComponent(subscriptionId)}/cancel`, {
+  return request(`/api/subscriptions/user/channel-passes/${encodeURIComponent(subscriptionId)}/cancel`, {
     method: "POST",
   });
 }

@@ -177,6 +177,107 @@ export function OverviewTab({ dashboard, user, withdrawable, t, onTabChange }: O
         </div>
       </div>
 
+      {/* Get Monetizing — surfaces revenue tools the creator hasn't touched yet */}
+      {(() => {
+        const passOff = dashboard.channelPassEnabled === false;
+        const passPrice = dashboard.channelPassPriceUsd ?? null;
+        const unpricedCount = dashboard.videosUnpricedCount ?? 0;
+        const isLiveNow = dashboard.isLiveNow === true;
+        const es = tGlobal.lang === "es";
+        // Only render the card when at least one CTA is actionable.
+        if (!passOff && unpricedCount === 0 && !isContentCreator && !isPerformer) return null;
+        return (
+          <div className="glass-card-sm mb-4 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              💎 {es ? "Empezá a monetizar" : "Get monetizing"}
+            </p>
+            <div className="space-y-2">
+              {passOff && (
+                <button
+                  onClick={() => onTabChange("settings")}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-colors hover:bg-white/[0.06]"
+                  style={{ background: "rgba(94,209,196,0.08)", border: "1px solid rgba(94,209,196,0.28)" }}
+                >
+                  <span className="text-xl flex-shrink-0" aria-hidden>💳</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white">{es ? "Activá tu Channel Pass" : "Activate your Channel Pass"}</p>
+                    <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {es
+                        ? "Suscripción mensual de $5–$50. Los fans acceden a todo tu contenido y a chat directo."
+                        : "$5–$50 monthly subscription. Fans unlock all your content and direct chat."}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#5ED1C4" }}>→</span>
+                </button>
+              )}
+              {!passOff && passPrice !== null && (
+                <div
+                  className="flex items-center gap-3 p-3 rounded-xl"
+                  style={{ background: "rgba(94,209,196,0.05)", border: "1px solid rgba(94,209,196,0.2)" }}
+                >
+                  <span className="text-xl flex-shrink-0" aria-hidden>✓</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white">
+                      {es ? `Channel Pass activo — $${passPrice.toFixed(2)}/mes` : `Channel Pass active — $${passPrice.toFixed(2)}/mo`}
+                    </p>
+                    <p className="text-[11px] mt-0.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {es ? "Ajustá el precio desde Settings." : "Adjust the price from Settings."}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {unpricedCount > 0 && (
+                <button
+                  onClick={() => onTabChange("settings")}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-colors hover:bg-white/[0.06]"
+                  style={{ background: "rgba(255,180,84,0.08)", border: "1px solid rgba(255,180,84,0.28)" }}
+                >
+                  <span className="text-xl flex-shrink-0" aria-hidden>🎬</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white">
+                      {es
+                        ? `Poné precio a ${unpricedCount} video${unpricedCount === 1 ? "" : "s"}`
+                        : `Set prices on ${unpricedCount} video${unpricedCount === 1 ? "" : "s"}`}
+                    </p>
+                    <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {es
+                        ? "Alquiler 48h o compra permanente en Ru$h. Sin precio = solo visible para tus suscriptores."
+                        : "48h rent or permanent buy in Ru$h. No price = subscriber-only."}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#FFB454" }}>→</span>
+                </button>
+              )}
+              {isPerformer && (
+                <div
+                  className="flex items-center gap-3 p-3 rounded-xl cursor-pointer"
+                  onClick={() => navigate("/creators/availability")}
+                  style={{
+                    background: isLiveNow ? "rgba(212,0,122,0.1)" : "rgba(255,255,255,0.03)",
+                    border: isLiveNow ? "1px solid rgba(212,0,122,0.35)" : "1px solid rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <span className="text-xl flex-shrink-0" aria-hidden>{isLiveNow ? "🔴" : "📞"}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white">
+                      {isLiveNow
+                        ? (es ? "En vivo — reservable ahora" : "You're live — bookable right now")
+                        : (es ? "Cámara = disponible para calls" : "Live cam = private calls available")}
+                    </p>
+                    <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                      {isLiveNow
+                        ? (es ? "Los fans pueden bookear una private call mientras estás transmitiendo." : "Fans can book a private call while you're broadcasting.")
+                        : (es ? "Los slots aparecen automáticamente cuando encendés cámara." : "Booking slots appear automatically when you go live.")}
+                    </p>
+                  </div>
+                  <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: isLiveNow ? "#D4007A" : "rgba(255,255,255,0.4)" }}>→</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Subscription price card (always visible) */}
       <div className="glass-card-sm p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
