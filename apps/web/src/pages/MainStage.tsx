@@ -37,6 +37,8 @@ import { FreeTierEntryCard } from "@/components/mainstage/FreeTierEntryCard";
 import { AdUnlockButton } from "@/components/mainstage/AdUnlockButton";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
+import { BookCallModal } from "@/components/creators/BookCallModal";
+import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
 import { TipRushRail } from "@/components/payments/TipRushRail";
 import { usePrivy } from "@privy-io/react-auth";
 
@@ -556,6 +558,10 @@ export default function MainStage() {
   // Tracks which crystal creator is selected in the multi-cammer tip sheet.
   // null = use the first crystal creator in onStage (or donation account if none).
   const [tipSelectedCreatorId, setTipSelectedCreatorId] = useState<string | null>(null);
+  // Book-a-call target — when non-null, BookCallModal opens over the stage
+  // WITHOUT unmounting the LiveKit viewer. Any redirect away from MainStage
+  // kills the viewer's presence, so book/tip flows must stay inline.
+  const [bookCallCreator, setBookCallCreator] = useState<CreatorCardCreator | null>(null);
   // Persist last-selected tip amount across sessions (localStorage) so a $10
   // repeat-tipper doesn't have to re-click every time. Falls back to the first
   // unified preset ($5) if storage is unreadable or empty.
@@ -2369,13 +2375,47 @@ export default function MainStage() {
                               {msg.cta.label}
                             </button>
                           ) : msg.cta.href ? (
-                            <a
-                              href={msg.cta.href}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Intercept known intents so we never unmount the
+                                // LiveKit viewer. Unknown targets open in a new
+                                // tab as a last-resort escape hatch — the user
+                                // stays on Main Stage in the original tab.
+                                const href = msg.cta?.href ?? "";
+                                // 1) Book a call — /c/<username>?action=book
+                                const bookMatch = href.match(/^\/c\/([^/?#]+)\?(?:.*&)?action=book(?:$|&)/);
+                                if (bookMatch) {
+                                  const uname = bookMatch[1];
+                                  const onStageEntry = (state?.spotlight?.onStage ?? []).find(
+                                    (x) => x.username === uname,
+                                  );
+                                  setBookCallCreator({
+                                    id: String(msg.cta?.recipientUserId ?? onStageEntry?.userId ?? ""),
+                                    username: uname,
+                                    photo_url: null,
+                                    creator_type: "occasional",
+                                    creator_price_usd: 0,
+                                    crystalCreator: !!onStageEntry?.isCrystal,
+                                  });
+                                  return;
+                                }
+                                // 2) Any tip-related href → open the inline tip sheet
+                                if (/^\/tip(\/|$|\?)/.test(href) || /^\/main-stage\?.*tip/.test(href)) {
+                                  const recipientId = msg.cta?.recipientUserId ?? null;
+                                  if (recipientId) setTipSelectedCreatorId(recipientId);
+                                  setShowTipSheet(true);
+                                  return;
+                                }
+                                // 3) Unknown — open a new tab so the current
+                                // Main Stage session stays alive.
+                                window.open(href, "_blank", "noopener,noreferrer");
+                              }}
                               className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
                               style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
                             >
                               {msg.cta.label}
-                            </a>
+                            </button>
                           ) : null
                         )}
                       </div>
@@ -2450,6 +2490,18 @@ export default function MainStage() {
         onSuccess={(newBalance) => setTokenBalance(newBalance)}
         dpnsHandle={null}
       />
+
+      {/* Inline book-a-call modal — mounted here so LiveKit stays connected
+          while the user picks a package and pays. Redirecting to
+          /c/<creator> would unmount the entire MainStage tree. */}
+      {bookCallCreator && (
+        <BookCallModal
+          creator={bookCallCreator}
+          isOnline={true}
+          open={true}
+          onClose={() => setBookCallCreator(null)}
+        />
+      )}
 
       {/* Tip sheet — Crystal Creators on stage receive tips directly.
           Multi-cammer: every Crystal Creator in the queue is tippable.
@@ -2526,7 +2578,17 @@ export default function MainStage() {
                                 className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20 text-white/60 hover:text-white/90 hover:border-white/40 transition-colors"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/c/${creator.username}?action=book`);
+                                  // Stay on Main Stage — open BookCallModal inline
+                                  // instead of navigating away (which kills LiveKit).
+                                  setShowTipSheet(false);
+                                  setBookCallCreator({
+                                    id: String(creator.userId),
+                                    username: creator.username as string,
+                                    photo_url: null,
+                                    creator_type: "occasional",
+                                    creator_price_usd: 0,
+                                    crystalCreator: !!creator.isCrystal,
+                                  });
                                 }}
                               >
                                 Book a call
