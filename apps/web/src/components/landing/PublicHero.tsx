@@ -404,19 +404,49 @@ export function PublicHero({ lang, stats, statsLoading, onJoinFree, onExploreCli
             </button>
           </div>
 
-          {/* Stat pills */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Stat cards — desktop-first design. Grid of 3 rich cards with icon,
+              big numeric hero, and label. Backdrop-blur glass + accent glow + hover lift. */}
+          <div className="grid grid-cols-3 gap-3 xl:gap-4 max-w-2xl">
             {statsLoading ? (
               <>
-                <div className="h-8 w-28 rounded-full bg-pnp-surface animate-pulse" />
-                <div className="h-8 w-28 rounded-full bg-pnp-surface animate-pulse" />
-                <div className="h-8 w-24 rounded-full bg-pnp-surface animate-pulse" />
+                <div className="h-24 xl:h-28 rounded-2xl bg-pnp-surface animate-pulse" />
+                <div className="h-24 xl:h-28 rounded-2xl bg-pnp-surface animate-pulse" />
+                <div className="h-24 xl:h-28 rounded-2xl bg-pnp-surface animate-pulse" />
               </>
             ) : (
               <>
-                <StatPill value={formatStat(stats?.members_plus, c.statMembers)} color="#D4007A" />
-                <StatPill value={formatStat(stats?.creators_plus, c.statCreators)} color="#7B61FF" />
-                <StatPill value={c.statLive} color="#E69138" live />
+                <StatCard
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/>
+                    </svg>
+                  }
+                  value={stats?.members_plus || "5000+"}
+                  label={c.statMembers}
+                  color="#D4007A"
+                />
+                <StatCard
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/>
+                    </svg>
+                  }
+                  value={stats?.creators_plus || "50+"}
+                  label={c.statCreators}
+                  color="#7B61FF"
+                />
+                <StatCard
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <circle cx="12" cy="12" r="9" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx="12" cy="12" r="4" fill="currentColor" />
+                    </svg>
+                  }
+                  value={c.statLive}
+                  label={lang === "es" ? "streaming" : "streaming"}
+                  color="#E69138"
+                  live
+                />
               </>
             )}
           </div>
@@ -571,6 +601,81 @@ function StatPill({ value, color, live }: StatPillProps) {
         />
       )}
       {value}
+    </div>
+  );
+}
+
+// StatCard — desktop-first stat display. Rich glass card with icon in a
+// colored puck, big numeric hero, and a mono label underneath. Subtle glow
+// on hover. Used in the desktop hero (lg+ split layout). Mobile keeps the
+// simpler StatPill above.
+interface StatCardProps {
+  icon: React.ReactNode;
+  value: string;
+  label: string;
+  color: string;
+  live?: boolean;
+}
+
+function StatCard({ icon, value, label, color, live }: StatCardProps) {
+  return (
+    <div
+      className="group relative flex flex-col justify-between rounded-2xl p-3 xl:p-4 transition-all duration-300 hover:-translate-y-0.5 cursor-default overflow-hidden"
+      style={{
+        background: `linear-gradient(135deg, ${color}12 0%, rgba(15,15,20,0.6) 100%)`,
+        border: `1px solid ${color}30`,
+        backdropFilter: "blur(12px)",
+        boxShadow: `0 4px 24px -8px ${color}20`,
+      }}
+    >
+      {/* Ambient glow — only visible on hover */}
+      <div
+        aria-hidden="true"
+        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-0 group-hover:opacity-60 transition-opacity duration-500 pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${color}80 0%, transparent 70%)`, filter: "blur(20px)" }}
+      />
+      {/* Top row: icon puck + live dot */}
+      <div className="flex items-center justify-between mb-2 xl:mb-3 relative z-10">
+        <div
+          className="flex items-center justify-center w-8 h-8 xl:w-9 xl:h-9 rounded-lg"
+          style={{
+            background: `${color}25`,
+            color,
+          }}
+          aria-hidden="true"
+        >
+          <div className="w-4 h-4 xl:w-5 xl:h-5">{icon}</div>
+        </div>
+        {live && (
+          <span
+            className="flex items-center gap-1 text-[9px] xl:text-[10px] font-bold uppercase tracking-widest"
+            style={{ color, fontFamily: "'Roboto Mono', monospace" }}
+          >
+            <span
+              aria-hidden="true"
+              className="w-1.5 h-1.5 rounded-full animate-pulse"
+              style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+            />
+            LIVE
+          </span>
+        )}
+      </div>
+      {/* Value — big hero number */}
+      <div className="relative z-10">
+        <div
+          className="text-2xl xl:text-3xl font-black leading-none tracking-tight"
+          style={{ color, fontFamily: "'Roboto Mono', monospace" }}
+        >
+          {value}
+        </div>
+        {/* Label */}
+        <div
+          className="text-[10px] xl:text-xs uppercase tracking-wider mt-1 text-white/50"
+          style={{ fontFamily: "'Roboto Mono', monospace" }}
+        >
+          {label}
+        </div>
+      </div>
     </div>
   );
 }
