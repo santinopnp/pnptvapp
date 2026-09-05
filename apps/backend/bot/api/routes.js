@@ -17652,6 +17652,78 @@ app.get('/api/ads/rewarded/status', requireSessionAuth, asyncHandler(async (req,
   });
 }));
 
+// GET /api/ads/rewarded/config?surface=X
+// Called by the frontend to decide whether to render the "Watch an ad" button
+// for a specific surface. Returns the ad network + zone ID so the SDK can be
+// mounted, plus today's remaining grant count and any active unlock expiry.
+// Only free-tier users receive enabled=true — members/PRIME/admin always get
+// enabled=false (they don't see ads).
+app.get('/api/ads/rewarded/config', requireSessionAuth, adCallbackLimiter, asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const surface = String(req.query.surface || '');
+  if (!adUnlockService.isValidSurface(surface)) {
+    return res.status(400).json({ success: false, error: 'invalid_surface' });
+  }
+
+  const user        = req.session?.user;
+  const userId      = user?.id;
+  const featureOn   = await adUnlockService.isFeatureEnabled();
+  const eligible    = adUnlockService.isTierEligibleForAds(user?.tier, user?.role);
+
+  // Determine active ad network + zone for this surface.
+  // TJ_ZONE_<SURFACE_UPPER> env vars — absent means network not wired yet.
+  const SURFACE_ZONE_ENV = {
+    mainstage_extend:   'TJ_ZONE_MAINSTAGE_EXTEND',
+    prime_video_single: 'TJ_ZONE_PRIME_VIDEO_SINGLE',
+    nearby_premium:     'TJ_ZONE_NEARBY_PREMIUM',
+    dm_extra:           'TJ_ZONE_DM_EXTRA',
+  };
+  const zoneId   = process.env[SURFACE_ZONE_ENV[surface]] || null;
+  const adNetwork = zoneId ? 'trafficjunky' : null;
+
+  // enabled only when: feature flag on AND user is free-tier AND zone configured
+  const enabled = featureOn && eligible && !!adNetwork;
+
+  const [rateStatus, activeUnlockExpiresAt] = await Promise.all([
+    adUnlockService.getRateLimitStatus(userId, surface),
+    adUnlockService.getActiveUnlockExpiresAt(userId, surface),
+  ]);
+
+  return res.json({
+    success: true,
+    enabled,
+    ad_network: enabled ? adNetwork : null,
+    zone_id:    enabled ? zoneId   : null,
+    remaining_today: rateStatus.remaining,
+    active_until:    activeUnlockExpiresAt
+      ? new Date(activeUnlockExpiresAt).toISOString()
+      : null,
+    ttl_seconds: adUnlockService.SURFACE_TTL_SEC[surface],
+  });
+}));
+
+// GET /api/ads/rewarded/active?surface=X
+// Frontend polls this after the rewarded ad completes (S2S postback is async)
+// to confirm the server-side unlock has landed before showing gated content.
+app.get('/api/ads/rewarded/active', requireSessionAuth, adCallbackLimiter, asyncHandler(async (req, res) => {
+  const adUnlockService = require('../../services/adUnlockService');
+  const surface = String(req.query.surface || '');
+  if (!adUnlockService.isValidSurface(surface)) {
+    return res.status(400).json({ success: false, error: 'invalid_surface' });
+  }
+  const userId      = req.session?.user?.id;
+  const expiresAt   = await adUnlockService.getActiveUnlockExpiresAt(userId, surface);
+  const secondsLeft = expiresAt
+    ? Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+    : null;
+  return res.json({
+    success:      true,
+    active:       !!expiresAt,
+    expires_at:   expiresAt ? new Date(expiresAt).toISOString() : null,
+    seconds_left: secondsLeft,
+  });
+}));
+
 // GET /api/ads/config — public tier-aware config. Returns:
 //   showAds     true iff user is free-tier AND feature flag is on
 //   surfaces    metadata about each unlock (TTL etc) for the client to render

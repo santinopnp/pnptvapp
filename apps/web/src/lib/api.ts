@@ -11113,3 +11113,32 @@ export function createAdminVideoGrant(opts: {
   });
 }
 
+// ── Rewarded-ad unlock ─────────────────────────────────────────────────────
+
+export interface RewardedAdConfig {
+  enabled: boolean;
+  ad_network: "trafficjunky" | "exoclick" | null;
+  zone_id: string | null;
+  remaining_today: number;
+  active_until: string | null;
+  ttl_seconds: number;
+}
+
+export interface RewardedAdActive {
+  active: boolean;
+  expires_at: string | null;
+  seconds_left: number | null;
+}
+
+export function getRewardedAdConfig(
+  surface: string,
+): Promise<{ success: boolean } & RewardedAdConfig> {
+  return request(`/api/ads/rewarded/config?surface=${encodeURIComponent(surface)}`);
+}
+
+export function getRewardedAdActive(
+  surface: string,
+): Promise<{ success: boolean } & RewardedAdActive> {
+  return request(`/api/ads/rewarded/active?surface=${encodeURIComponent(surface)}`);
+}
+
