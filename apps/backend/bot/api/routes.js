@@ -586,8 +586,7 @@ app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
               WHEN photo_file_id LIKE 'http%' THEN photo_file_id
               ELSE '/uploads/avatars/' || photo_file_id
             END AS avatar_url,
-            followers_count, creator_verified,
-            COALESCE(is_pnptv_fam, FALSE) AS is_pnptv_fam
+            followers_count, creator_verified
        FROM users
       WHERE creator_status = 'active'
         AND creator_verified = TRUE
@@ -606,7 +605,7 @@ app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
       avatar_url:      r.avatar_url,
       followers_count: Number(r.followers_count) || 0,
       is_verified:     true,
-      is_fam:          !!r.is_pnptv_fam,
+      is_fam:          false,
       profile_url:     `/c/${r.username}`,
     })),
     count: rows.length,
