@@ -1059,6 +1059,33 @@ const VIDEO_FETCH_RATE_WINDOW_SEC = 60 * 60; // 1 hour
 const { query: videoGuardQuery } = require('../../config/postgres');
 const { validateTierFresh: videoGuardValidateTier } = require('../../services/accessService');
 const { cache: videoGuardCache, getRedis: videoGuardGetRedis } = require('../../config/redis');
+const videoAccessService = require('../../services/videoAccessService');
+
+// Map media URL → channel_videos.id. In-memory 60s TTL, capped at 1000 entries.
+const _videoIdUrlCache = new Map(); // url → { videoId: bigint|null, expiresAt: number }
+async function lookupVideoIdFromMediaUrl(mediaUrl) {
+  const now = Date.now();
+  const cached = _videoIdUrlCache.get(mediaUrl);
+  if (cached && cached.expiresAt > now) return cached.videoId;
+  let videoId = null;
+  try {
+    const { rows } = await videoGuardQuery(
+      `SELECT (metadata->>'video_id')::bigint AS video_id
+       FROM social_posts
+       WHERE media_url = $1 AND metadata->>'kind' = 'channel_promo' AND is_deleted = false
+       LIMIT 1`,
+      [mediaUrl]
+    );
+    videoId = rows[0]?.video_id ?? null;
+  } catch (_) { /* non-fatal — fall through to null */ }
+  _videoIdUrlCache.set(mediaUrl, { videoId, expiresAt: now + 60_000 });
+  if (_videoIdUrlCache.size > 1000) {
+    const drop = [..._videoIdUrlCache.entries()]
+      .sort((a, b) => a[1].expiresAt - b[1].expiresAt).slice(0, 200);
+    for (const [k] of drop) _videoIdUrlCache.delete(k);
+  }
+  return videoId;
+}
 
 // Purge video_fetch_log rows older than 90 days. Runs once on startup then daily.
 const _runVideoFetchLogCleanup = () => {
@@ -1197,6 +1224,21 @@ app.use(async (req, res, next) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
     const viewerRole = req.session?.user?.role || '';
+
+    // Bypass: user has an active per-video rent/buy grant
+    try {
+      const matchedVideoId = await lookupVideoIdFromMediaUrl(req.path);
+      if (matchedVideoId) {
+        const grant = await videoAccessService.hasActiveGrant(viewerId, matchedVideoId);
+        if (grant.granted) {
+          if (await tryR2Redirect(300)) return;
+          return next();
+        }
+      }
+    } catch (grantBypassErr) {
+      logger.warn('Video grant bypass check failed — continuing to tier check', { error: grantBypassErr.message, path: req.path });
+    }
+
     const passEntitlement = async () => {
       if (viewerRole === 'admin' || viewerRole === 'superadmin') return true;
       if (entry.authorId && String(viewerId) === entry.authorId) return true;
@@ -1207,6 +1249,17 @@ app.use(async (req, res, next) => {
           req.session.user.tier = freshTier;
         }
         return true;
+      }
+      // Channel Pass bypass: viewer holds an active creator-subscription entitlement
+      // for the video's uploader — grants access to exclusive content regardless of tier.
+      if (entry.authorId) {
+        try {
+          const channelPassService = require('../../services/channelPassService');
+          const hasPass = await channelPassService.checkActiveEntitlement(viewerId, entry.authorId);
+          if (hasPass) return true;
+        } catch (passErr) {
+          logger.warn('Channel pass entitlement check failed — skipping bypass', { error: passErr.message });
+        }
       }
       return false;
     };
@@ -6887,6 +6940,138 @@ app.post('/api/webapp/admin/users/:id/credit-rush', adminGuard, asyncHandler(asy
 }));
 app.delete('/api/webapp/admin/users/:id', adminGuard, asyncHandler(webappAdminController.deleteUser));
 
+// ─── Admin video-access grants (refunds / comps / edge cases) ──────────────────
+// POST /api/webapp/admin/video-access-grants
+app.post('/api/webapp/admin/video-access-grants', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const { user_id, video_id, expires_at, reason } = req.body || {};
+  const adminId = String(req.session?.user?.id || 'admin');
+
+  if (!user_id || typeof user_id !== 'string' || !user_id.trim()) {
+    return res.status(400).json({ success: false, error: 'user_id required' });
+  }
+  if (!video_id || typeof video_id !== 'string' || !video_id.trim()) {
+    return res.status(400).json({ success: false, error: 'video_id required' });
+  }
+  if (!reason || typeof reason !== 'string' || !reason.trim()) {
+    return res.status(400).json({ success: false, error: 'reason required' });
+  }
+
+  const { query: dbQuery } = require('../../config/postgres');
+
+  // Validate user exists
+  const { rows: userRows } = await dbQuery(
+    `SELECT id, username FROM users WHERE id = $1 LIMIT 1`,
+    [user_id.trim()]
+  );
+  if (!userRows[0]) return res.status(404).json({ success: false, error: 'User not found' });
+
+  // Validate video exists
+  const { rows: videoRows } = await dbQuery(
+    `SELECT id, title FROM channel_videos WHERE id = $1 LIMIT 1`,
+    [video_id.trim()]
+  );
+  if (!videoRows[0]) return res.status(404).json({ success: false, error: 'Video not found' });
+
+  // Validate expires_at if provided
+  let parsedExpiry = null;
+  if (expires_at && typeof expires_at === 'string' && expires_at.trim()) {
+    parsedExpiry = new Date(expires_at.trim());
+    if (isNaN(parsedExpiry.getTime())) {
+      return res.status(400).json({ success: false, error: 'expires_at is not a valid ISO date' });
+    }
+    parsedExpiry = parsedExpiry.toISOString();
+  }
+
+  const grant = await videoAccessService.adminGrant({
+    userId: user_id.trim(),
+    videoId: video_id.trim(),
+    adminUserId: adminId,
+    expiresAt: parsedExpiry,
+    reason: reason.trim(),
+  });
+
+  // Audit log
+  await dbQuery(
+    `INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, metadata, ip_address, user_agent, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+    [
+      adminId,
+      'admin_video_access_grant',
+      'video_access_grant',
+      String(grant.id),
+      JSON.stringify({
+        user_id: user_id.trim(),
+        video_id: video_id.trim(),
+        expires_at: parsedExpiry,
+        reason: reason.trim(),
+        username: userRows[0].username,
+        video_title: videoRows[0].title,
+      }),
+      req.ip || 'unknown',
+      req.headers['user-agent'] || 'unknown',
+    ]
+  );
+
+  logger.info('[admin/video-access-grants] Grant created', {
+    grantId: grant.id,
+    userId: user_id,
+    videoId: video_id,
+    videoTitle: videoRows[0].title,
+    username: userRows[0].username,
+    adminId,
+    reason,
+    expiresAt: parsedExpiry,
+  });
+
+  return res.json({ success: true, grant });
+}));
+
+// GET /api/webapp/admin/video-access-grants — list/filter recent admin grants
+app.get('/api/webapp/admin/video-access-grants', requireSessionAuth, adminGuard, asyncHandler(async (req, res) => {
+  const { user_id, video_id } = req.query;
+  const { query: dbQuery } = require('../../config/postgres');
+
+  const conditions = [`vag.grant_type = 'admin_grant'`];
+  const params = [];
+
+  if (user_id && typeof user_id === 'string' && user_id.trim()) {
+    params.push(user_id.trim());
+    conditions.push(`vag.user_id = $${params.length}`);
+  }
+  if (video_id && typeof video_id === 'string' && video_id.trim()) {
+    params.push(video_id.trim());
+    conditions.push(`vag.video_id = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const { rows } = await dbQuery(
+    `SELECT
+       vag.id,
+       vag.user_id,
+       u.username,
+       u.first_name,
+       vag.video_id,
+       cv.title AS video_title,
+       vag.grant_type,
+       vag.expires_at,
+       vag.granted_by_user_id,
+       gb.username AS granted_by_username,
+       vag.metadata,
+       vag.created_at
+     FROM video_access_grants vag
+     LEFT JOIN users u  ON u.id  = vag.user_id
+     LEFT JOIN channel_videos cv ON cv.id = vag.video_id
+     LEFT JOIN users gb ON gb.id = vag.granted_by_user_id
+     ${whereClause}
+     ORDER BY vag.created_at DESC
+     LIMIT 100`,
+    params
+  );
+
+  return res.json({ success: true, grants: rows });
+}));
+
 // ─── Creator balance admin (ledger view + manual adjustments + withdraw queue) ──────────
 const adminCreatorBalanceController = require('./controllers/adminCreatorBalanceController');
 app.get('/api/webapp/admin/creators/withdraw-requests', adminGuard, asyncHandler(adminCreatorBalanceController.listWithdrawRequests));
@@ -10981,6 +11166,137 @@ app.get('/api/webapp/channels/:channelId/videos/:videoId/stream', softAuth, asyn
     if (!res.headersSent) res.status(502).json({ error: 'Video unavailable' });
   }
 }));
+
+// ── Per-video Rent/Buy (Ru$h) ─────────────────────────────────────────────────
+
+const videoPurchaseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.session?.user?.id || req.ip,
+  message: { error: 'Too many purchase attempts. Please wait.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// GET /api/videos/:videoId/access
+// Returns prices + whether the requesting user already has a grant.
+app.get('/api/videos/:videoId/access', requireSessionAuth, asyncHandler(async (req, res) => {
+  const videoId = parseInt(req.params.videoId, 10);
+  if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+  const userId = req.session.user.id;
+  const [prices, grant] = await Promise.all([
+    videoAccessService.getPrices(videoId),
+    videoAccessService.hasActiveGrant(userId, videoId),
+  ]);
+  return res.json({
+    prices,
+    has_grant: grant.granted,
+    grant_type: grant.grant_type,
+    expires_at: grant.expires_at,
+  });
+}));
+
+// POST /api/videos/:videoId/purchase
+// Body: { grantType: 'rent'|'buy' }
+app.post('/api/videos/:videoId/purchase', requireSessionAuth, videoPurchaseLimiter, asyncHandler(async (req, res) => {
+  const videoId = parseInt(req.params.videoId, 10);
+  if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+  const { grantType } = req.body || {};
+  if (!grantType || !['rent', 'buy'].includes(grantType)) {
+    return res.status(400).json({ error: 'grantType must be "rent" or "buy"' });
+  }
+  const userId = req.session.user.id;
+  try {
+    const result = await videoAccessService.purchase({ userId, videoId, grantType });
+    return res.json({
+      success: true,
+      grant_type: result.grant_type,
+      expires_at: result.expires_at,
+      new_balance: result.balance_after,
+    });
+  } catch (err) {
+    if (err.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ code: 'INSUFFICIENT_FUNDS', available: err.available, required: err.required });
+    }
+    if (err.code === 'ALREADY_OWNED') {
+      return res.status(409).json({ code: 'ALREADY_OWNED' });
+    }
+    if (err.code === 'PRICE_NOT_SET') {
+      return res.status(400).json({ code: 'PRICE_NOT_SET' });
+    }
+    if (err.code === 'VIDEO_NOT_FOUND' || err.status === 404) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+    logger.error('Video purchase error', { videoId, userId, grantType, error: err.message });
+    return res.status(500).json({ error: 'Purchase failed' });
+  }
+}));
+
+// PATCH /api/creator/videos/:videoId/pricing
+// Body: { rent_price_rush?: number|null, buy_price_rush?: number|null }
+// Owner-only: uploader_id must match session user.
+app.patch('/api/creator/videos/:videoId/pricing', requireSessionAuth, asyncHandler(async (req, res) => {
+  const videoId = parseInt(req.params.videoId, 10);
+  if (!Number.isFinite(videoId)) return res.status(400).json({ error: 'Invalid video id' });
+  const userId = req.session.user.id;
+  const isAdmin = ['admin', 'superadmin'].includes(req.session.user.role || '');
+
+  const { rows } = await getPool().query(
+    `SELECT id, uploader_id FROM channel_videos WHERE id = $1 AND status != 'removed'`,
+    [videoId]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Video not found' });
+  if (!isAdmin && String(rows[0].uploader_id) !== String(userId)) {
+    return res.status(403).json({ error: 'Not authorized to edit this video' });
+  }
+
+  const body = req.body || {};
+  const updates = {};
+  const params = [videoId];
+
+  if ('rent_price_rush' in body) {
+    const v = body.rent_price_rush;
+    if (v !== null && v !== undefined) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 6 || n > 3000) {
+        return res.status(400).json({ error: 'rent_price_rush must be 6–3000 or null' });
+      }
+      updates.rent_price_rush = n;
+    } else {
+      updates.rent_price_rush = null;
+    }
+  }
+  if ('buy_price_rush' in body) {
+    const v = body.buy_price_rush;
+    if (v !== null && v !== undefined) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 30 || n > 6000) {
+        return res.status(400).json({ error: 'buy_price_rush must be 30–6000 or null' });
+      }
+      updates.buy_price_rush = n;
+    } else {
+      updates.buy_price_rush = null;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No pricing fields provided' });
+  }
+
+  const setClauses = Object.keys(updates).map((col, i) => {
+    params.push(updates[col]);
+    return `${col} = $${params.length}`;
+  });
+
+  await getPool().query(
+    `UPDATE channel_videos SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $1`,
+    params
+  );
+
+  return res.json({ success: true, ...updates });
+}));
+
+// ── End Per-video Rent/Buy ────────────────────────────────────────────────────
 
 app.get('/api/performers', softAuth, asyncHandler(async (req, res) => {
   // Live status changes frequently — prevent browser from caching stale isLive values.

@@ -564,6 +564,16 @@ async function initializeQueues() {
     jobId: 'cron-crypto-reconcile-grant-failed',
   });
 
+  // Channel Pass expiry sweep — daily at 03:00 UTC.
+  // Expires overdue creator_subscriptions + user_entitlements rows, invalidates
+  // Redis entitlement cache, and sends 3-day-warning web push to subscribers
+  // whose pass expires within the next 3 days (dedup via Redis NX key, 25h TTL).
+  await cronQueue.add('channel-pass-expiry-sweep', {}, {
+    repeat: { pattern: '0 3 * * *', tz: 'UTC' },
+    attempts: 2, removeOnFail: false,
+    jobId: 'cron-channel-pass-expiry-sweep',
+  });
+
   logger.info('[BullMQ] Queues initialized and repeatable jobs registered');
 }
 

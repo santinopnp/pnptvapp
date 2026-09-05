@@ -818,6 +818,29 @@ export default function PostCard({
                 {p.exclusiveLabel}
               </span>
             )}
+            {/* Rent/buy paywall badge — shown on video posts with per-video pricing.
+                Hidden for the uploader (isOwn) since they always have access.
+                Distinct amber palette to separate from the pink exclusive badge. */}
+            {!isOwn && post.media_type === "video" && (() => {
+              const rentPrice = (post as any).rent_price_rush ?? (post.metadata as any)?.rent_price_rush;
+              const buyPrice = (post as any).buy_price_rush ?? (post.metadata as any)?.buy_price_rush;
+              const passEnabled = (post as any).channel_pass_enabled ?? (post.metadata as any)?.channel_pass_enabled;
+              if (!rentPrice && !buyPrice && !passEnabled) return null;
+              return (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    background: "rgba(230,145,56,0.15)",
+                    color: "#E69138",
+                    border: "1px solid rgba(230,145,56,0.30)",
+                  }}
+                  title="Rent or buy this video with Ru$h 💎"
+                >
+                  <span aria-hidden="true">💎</span>
+                  <span className="hidden sm:inline">Rent · Buy</span>
+                </span>
+              );
+            })()}
             {/* AI-generated disclosure — self-declared or admin-flagged */}
             {post.is_ai_generated && (
               <span
@@ -1240,6 +1263,8 @@ export default function PostCard({
                         preload="metadata"
                         poster={post.video_thumbnail_url || undefined}
                         onError={() => setVideoError(true)}
+                        videoId={post.id}
+                        uploaderId={post.author_id}
                       />
                       {post.author_username && post.author_creator_status === "active" && (
                         <img

@@ -1041,6 +1041,121 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'channel-pass-expiry-sweep': {
+      // ── Step 1: expire overdue rows inside a single transaction ──────────────
+      const pool = getPool();
+      const client = await pool.connect();
+      let expiredSubs = [];
+      let expiredEnts = [];
+      try {
+        await client.query('BEGIN');
+
+        const subsResult = await client.query(`
+          UPDATE creator_subscriptions
+             SET status = 'expired', updated_at = NOW()
+           WHERE status = 'active'
+             AND expires_at IS NOT NULL
+             AND expires_at < NOW()
+          RETURNING id, creator_id, subscriber_id
+        `);
+        expiredSubs = subsResult.rows;
+
+        const entsResult = await client.query(`
+          UPDATE user_entitlements
+             SET is_consumed = TRUE, updated_at = NOW()
+           WHERE add_on_id = 'creator-subscription'
+             AND is_consumed = FALSE
+             AND expires_at IS NOT NULL
+             AND expires_at < NOW()
+          RETURNING user_id, creator_id
+        `);
+        expiredEnts = entsResult.rows;
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        logger.error('[channel-pass-expiry-sweep] Transaction failed', { error: txErr.message });
+        client.release();
+        throw txErr; // let BullMQ retry
+      }
+      client.release();
+
+      logger.info({ expired_subs: expiredSubs.length, expired_ents: expiredEnts.length }, 'channel-pass-expiry-sweep');
+
+      // ── Step 2: invalidate Redis entitlement cache for expired subscribers ───
+      try {
+        const { cache } = require('../../config/redis');
+        for (const sub of expiredSubs) {
+          const key = `channel_pass:${sub.subscriber_id}:${sub.creator_id}`;
+          cache.del(key).catch(() => {});
+        }
+      } catch (redisErr) {
+        logger.warn('[channel-pass-expiry-sweep] Redis cache invalidation error', { error: redisErr.message });
+      }
+
+      // ── Step 3: 3-day expiry warning pushes ──────────────────────────────────
+      try {
+        const { rows: expiringSoon } = await pgQuery(`
+          SELECT cs.id AS sub_id,
+                 cs.subscriber_id,
+                 cs.creator_id,
+                 cs.expires_at,
+                 u.username AS creator_username
+            FROM creator_subscriptions cs
+            JOIN users u ON u.id = cs.creator_id
+           WHERE cs.status = 'active'
+             AND cs.expires_at IS NOT NULL
+             AND cs.expires_at >= NOW() + INTERVAL '2 days'
+             AND cs.expires_at <  NOW() + INTERVAL '3 days'
+        `);
+
+        if (expiringSoon.length > 0) {
+          const { getRedis } = require('../../config/redis');
+          const redis = getRedis();
+          const PushNotificationService = _safeRequire('../pushNotificationService');
+          const APP_URL = process.env.APP_PUBLIC_URL || 'https://pnptv.app';
+          // Date-scoped dedup key so the warning fires once per calendar day even
+          // if the job is retried. TTL is 25h to bridge the next 03:00 UTC run.
+          const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+          const DEDUP_TTL = 25 * 3600;
+
+          for (const row of expiringSoon) {
+            try {
+              const dedupKey = `channel_pass_expiry_warn:${row.sub_id}:${today}`;
+              const acquired = redis
+                ? await redis.set(dedupKey, '1', 'EX', DEDUP_TTL, 'NX').catch(() => null)
+                : null;
+              // If NX returned null another process (or today's earlier run) already sent it
+              if (acquired === null && redis) continue;
+
+              if (PushNotificationService) {
+                const creatorHandle = row.creator_username ? `@${row.creator_username}` : 'your creator';
+                await PushNotificationService.sendToUser(String(row.subscriber_id), {
+                  title: 'Channel Pass expiring soon',
+                  body: `Your Channel Pass for ${creatorHandle} expires in 3 days. Renew now to keep exclusive access.`,
+                  url: `${APP_URL}/my-subscriptions`,
+                  tag: `channel-pass-expiry-${row.sub_id}`,
+                });
+              }
+            } catch (rowErr) {
+              logger.warn('[channel-pass-expiry-sweep] Warning push failed for sub', {
+                subId: row.sub_id, error: rowErr.message,
+              });
+            }
+          }
+
+          logger.info('[channel-pass-expiry-sweep] 3-day warning pushes dispatched', {
+            candidates: expiringSoon.length,
+          });
+        }
+      } catch (warnErr) {
+        // Non-fatal: expiry writes already committed; push failures must not cause a retry
+        logger.warn('[channel-pass-expiry-sweep] 3-day warning sweep error', { error: warnErr.message });
+      }
+
+      return;
+    }
+
     default:
       logger.warn(`[BullMQ] cronProcessor: unhandled job name "${job.name}"`);
   }

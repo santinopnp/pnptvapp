@@ -2098,6 +2098,21 @@ const getPost = async (req, res) => {
       }
     }
 
+    // Channel Pass bypass: if viewer holds an active creator-subscription entitlement
+    // for this post's author, unlock regardless of PRIME tier or creator sub.
+    if (contentLocked && viewerId && !isAuthor && !viewerIsAdmin) {
+      try {
+        const channelPassService = require('../../../services/channelPassService');
+        const hasPass = await channelPassService.checkActiveEntitlement(viewerId, String(row.author_id));
+        if (hasPass) {
+          contentLocked = false;
+          lockedReason = null;
+        }
+      } catch (passErr) {
+        logger.warn('getPost: channel pass check failed — leaving post locked', { viewerId, err: passErr.message });
+      }
+    }
+
     // Enrichment for the paywall UI (only when locked). Video posts get the
     // blurred preview clip + inline NP checkout hints.
     let previewGifUrl = null;
