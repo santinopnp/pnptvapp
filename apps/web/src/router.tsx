@@ -387,6 +387,7 @@ const CreatorChannelsHub = lazy(() => import("@/pages/creators/CreatorChannelsHu
 const CreatorGuidelines = lazy(() => import("@/pages/creators/CreatorGuidelines"));
 const CreatorStudioWizard = lazy(() => import("@/pages/creator/CreatorStudioWizard"));
 const CrystalServiceBookings = lazy(() => import("@/pages/creator/CrystalServiceBookings"));
+const CreatorReplayShows = lazy(() => import("@/pages/creator/CreatorReplayShows"));
 const PrivateCall = lazy(() => import("@/pages/PrivateCall"));
 const Donate = lazy(() => import("@/pages/Donate"));
 const Onboarding = lazy(() => import("@/pages/Onboarding"));
@@ -1162,6 +1163,7 @@ export const router = createBrowserRouter([
       { path: "tools", element: <ModuleLoader><CreatorTools /></ModuleLoader> },
       { path: "guidelines", element: <ModuleLoader><CreatorGuidelines /></ModuleLoader> },
       { path: "services", element: <ModuleLoader><CrystalServiceBookings /></ModuleLoader> },
+      { path: "replay-shows", element: <ModuleLoader><CreatorReplayShows /></ModuleLoader> },
     ],
   },
   // Main Stage guest join — public, no auth, no Layout shell

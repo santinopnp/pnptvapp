@@ -2,10 +2,89 @@ import {
   GridLayout,
   ParticipantTile,
   useTracks,
+  useMaybeTrackRefContext,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { MEDIA_IDENTITY } from "./CinemaGrid";
 import { useI18n } from "@/lib/i18n";
+
+/** Identity prefix used by replay bots that stream pre-recorded video. */
+const REPLAY_IDENTITY_PREFIX = "replay-";
+
+/**
+ * Parse participant metadata to extract replay info.
+ * Metadata shape: `{ replay: true, creator_user_id: "..." }`
+ */
+interface ReplayMeta {
+  replay: true;
+  creator_user_id: string;
+}
+
+function parseReplayMeta(raw: string | undefined | null): ReplayMeta | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.replay === true && typeof parsed.creator_user_id === "string") {
+      return parsed as ReplayMeta;
+    }
+  } catch {
+    // Not JSON or wrong shape — fall through
+  }
+  return null;
+}
+
+/**
+ * Thin wrapper around `<ParticipantTile />` that overlays an "Encore" pill
+ * whenever the current track belongs to a replay participant.
+ *
+ * Detection order (prefer metadata, fall back to identity prefix):
+ *   1. `participant.metadata` contains `{ replay: true, creator_user_id }` → replay
+ *   2. `participant.identity` starts with "replay-" → replay
+ */
+function ReplayAwareParticipantTile() {
+  const trackRef = useMaybeTrackRefContext();
+  const participant = trackRef?.participant;
+
+  const replayMeta = parseReplayMeta(participant?.metadata ?? null);
+  const isReplay =
+    replayMeta !== null ||
+    (participant?.identity?.startsWith(REPLAY_IDENTITY_PREFIX) ?? false);
+
+  return (
+    <div className="relative w-full h-full">
+      <ParticipantTile />
+      {isReplay && (
+        <div
+          className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full pointer-events-none select-none"
+          style={{
+            background: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+            border: "1px solid rgba(216,185,255,0.3)",
+            boxShadow: "0 0 8px rgba(60,26,77,0.6)",
+          }}
+        >
+          {/* Animated replay icon */}
+          <svg
+            className="w-2.5 h-2.5 flex-shrink-0"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            style={{ color: "#d8b9ff" }}
+            aria-hidden="true"
+          >
+            <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+          </svg>
+          <span
+            className="leading-none font-bold tracking-wide"
+            style={{ fontSize: "11px", color: "#e8d5ff" }}
+          >
+            Encore
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function EqualGrid() {
   const t = useI18n().live;
@@ -37,7 +116,7 @@ export function EqualGrid() {
   return (
     <div className="h-full w-full bg-pnp-background">
       <GridLayout tracks={tracks} style={{ height: "100%" }}>
-        <ParticipantTile />
+        <ReplayAwareParticipantTile />
       </GridLayout>
     </div>
   );

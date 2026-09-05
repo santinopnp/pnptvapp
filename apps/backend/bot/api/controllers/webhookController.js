@@ -285,6 +285,17 @@ const handleLiveKitWebhook = async (req, res) => {
 
     logger.info('LiveKit webhook received', { event: eventType, room: roomName });
 
+    // Crystal Replay Shows: ingest_ended fires when a URL_INPUT ingress finishes.
+    // Match it to an active session and mark it stopped so the UI reflects reality.
+    if (eventType === 'ingress_ended') {
+      try {
+        const crystalReplayService = require('../../../services/crystalReplayService');
+        await crystalReplayService.handleLiveKitWebhookEvent(event);
+      } catch (replayErr) {
+        logger.error('LiveKit webhook: ingress_ended handler error', { message: replayErr.message });
+      }
+    }
+
     // Only act on hangout rooms (named "hangout-{groupId}")
     if (roomName.startsWith(HANGOUT_ROOM_PREFIX)) {
       const groupId = roomName.slice(HANGOUT_ROOM_PREFIX.length);

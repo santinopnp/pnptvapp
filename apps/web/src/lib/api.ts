@@ -10837,3 +10837,52 @@ export async function adminToggleWhalePig(userId: string, isWhalePig: boolean): 
   return res.json();
 }
 
+// ============================================================================
+// Crystal Creator — Replay Shows
+// ============================================================================
+
+export interface ReplayShow {
+  id: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  durationSeconds: number | null;
+  createdAt: string;
+}
+
+export interface ActiveReplaySession {
+  sessionId: string;
+  showId: string;
+  showTitle: string;
+  startedAt: string;
+  tipTotalRush: number;
+}
+
+export async function listMyReplayShows(): Promise<{ shows: ReplayShow[] }> {
+  return request("/api/webapp/creator/replay-shows");
+}
+
+export async function createReplayShow(body: { videoUrl: string; title: string }): Promise<{ show: ReplayShow }> {
+  return request("/api/webapp/creator/replay-shows", { method: "POST", body });
+}
+
+export async function deleteReplayShow(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/webapp/creator/replay-shows/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function startReplayShow(id: string): Promise<{ ok: boolean; sessionId: string }> {
+  return request(`/api/webapp/creator/replay-shows/${encodeURIComponent(id)}/start`, { method: "POST" });
+}
+
+export async function stopReplayShow(): Promise<{ ok: boolean }> {
+  return request("/api/webapp/creator/replay-shows/session/stop", { method: "POST" });
+}
+
+export async function getActiveReplaySession(): Promise<ActiveReplaySession | null> {
+  const res = await fetch(`${API_BASE}/api/webapp/creator/replay-shows/session`, { credentials: "include" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`http_${res.status}`);
+  const data = await res.json();
+  return data.session ?? null;
+}
+

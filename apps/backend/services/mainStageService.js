@@ -370,29 +370,48 @@ async function getState() {
 
   // Enrich every queue entry with username + isCrystal for multi-cammer tipping.
   // Human queue entries only — excludes MEDIA_BOT_IDENTITY and guest_/viewer_ prefixes.
+  // Replay identities (replay-<userId>) are included and marked isReplay:true so the
+  // frontend can show the replay badge and route tips to the real creator.
   // Batched: one performers query + one users query, no per-entry loop.
   let onStage = [];
   const humanEntries = queue.filter((id) => isHumanCammerIdentity(id));
   if (humanEntries.length > 0) {
     try {
-      // Step 1: resolve each entry to a canonical user_id via the performers table.
-      // Some queue entries may already be user_ids; the OR covers both cases.
-      const perfResult = await getPool().query(
-        'SELECT id::text AS perf_id, user_id::text AS user_id FROM performers WHERE id::text = ANY($1) OR user_id::text = ANY($1)',
-        [humanEntries]
-      );
-      // Build a lookup: input identity → resolved user_id.
-      // For entries that don't appear in performers, the entry itself is treated as user_id.
-      const resolvedIds = new Map(); // inputIdentity → resolvedUserId
+      // Step 0: pre-resolve replay- identities to their creator_user_id.
+      // replay-<userId> entries bypass the performers lookup — they ARE the userId.
+      const replayEntries = new Set(); // entries that are replay identities
       for (const entry of humanEntries) {
-        // Default: the entry itself is its own user_id.
-        resolvedIds.set(entry, entry);
+        if (String(entry).startsWith('replay-')) {
+          replayEntries.add(entry);
+        }
       }
-      for (const row of perfResult.rows) {
-        // If a queue entry matches a performer id or performer user_id, map it to user_id.
-        for (const entry of humanEntries) {
-          if (entry === row.perf_id || entry === row.user_id) {
-            resolvedIds.set(entry, row.user_id);
+
+      // Step 1: resolve non-replay entries to a canonical user_id via the performers table.
+      // Some queue entries may already be user_ids; the OR covers both cases.
+      const nonReplayEntries = humanEntries.filter((e) => !replayEntries.has(e));
+      const resolvedIds = new Map(); // inputIdentity → resolvedUserId
+
+      // Default: each entry resolves to itself.
+      for (const entry of humanEntries) {
+        if (replayEntries.has(entry)) {
+          // 'replay-<userId>' → strip prefix to get the real userId.
+          resolvedIds.set(entry, String(entry).slice('replay-'.length));
+        } else {
+          resolvedIds.set(entry, entry);
+        }
+      }
+
+      if (nonReplayEntries.length > 0) {
+        const perfResult = await getPool().query(
+          'SELECT id::text AS perf_id, user_id::text AS user_id FROM performers WHERE id::text = ANY($1) OR user_id::text = ANY($1)',
+          [nonReplayEntries]
+        );
+        for (const row of perfResult.rows) {
+          // If a queue entry matches a performer id or performer user_id, map it to user_id.
+          for (const entry of nonReplayEntries) {
+            if (entry === row.perf_id || entry === row.user_id) {
+              resolvedIds.set(entry, row.user_id);
+            }
           }
         }
       }
@@ -428,11 +447,19 @@ async function getState() {
       // Build onStage, preserving queue order, deduplicating by resolved userId.
       const seen = new Set();
       for (const entry of humanEntries) {
-        const userId = resolvedIds.get(entry) || entry;
+        const userId   = resolvedIds.get(entry) || entry;
+        const isReplay = replayEntries.has(entry);
         if (seen.has(userId)) continue;
         seen.add(userId);
         const info = userMap.get(userId) || { username: null, isCrystal: false };
-        onStage.push({ userId, username: info.username, isCrystal: info.isCrystal });
+        onStage.push({
+          userId,
+          username:  info.username,
+          isCrystal: info.isCrystal,
+          isReplay,
+          // participantIdentity preserved so frontend can match the LiveKit participant.
+          participantIdentity: entry,
+        });
       }
     } catch (onStageErr) {
       logger.warn(`getState: onStage enrichment failed (non-fatal): ${onStageErr.message}`);

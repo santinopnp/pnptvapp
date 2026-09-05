@@ -22249,6 +22249,141 @@ app.get(
 
 // ── End Main Stage ────────────────────────────────────────────────────────────
 
+// ── Crystal Creator Replay Shows ──────────────────────────────────────────────
+// Crystal Creators stream pre-recorded MP4s into main-stage-prime as if live.
+// Feature gated by Redis flag `feature:crystal_replay_shows` (default OFF).
+// All routes require an active Crystal Creator subscription (requireCrystalCreator).
+
+const requireCrystalCreator = require('./middleware/requireCrystalCreator');
+const crystalReplayService  = require('../../services/crystalReplayService');
+
+const crystalReplayLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  message: 'Too many Crystal Replay requests — please slow down.',
+});
+
+// GET /api/webapp/creator/replay-shows — list my shows
+app.get(
+  '/api/webapp/creator/replay-shows',
+  requireSessionAuth,
+  requireCrystalCreator,
+  asyncHandler(async (req, res) => {
+    const shows = await crystalReplayService.listMyShows(req.session.user.id);
+    return res.json({ success: true, shows });
+  })
+);
+
+// POST /api/webapp/creator/replay-shows — create a show
+app.post(
+  '/api/webapp/creator/replay-shows',
+  requireSessionAuth,
+  requireCrystalCreator,
+  crystalReplayLimiter,
+  asyncHandler(async (req, res) => {
+    const { title, sourceUrl, r2Key, thumbnailUrl, durationSeconds } = req.body || {};
+    try {
+      const show = await crystalReplayService.createShow({
+        creatorUserId:   req.session.user.id,
+        title,
+        sourceUrl,
+        r2Key:           r2Key || null,
+        thumbnailUrl:    thumbnailUrl || null,
+        durationSeconds: durationSeconds || null,
+      });
+      return res.status(201).json({ success: true, show });
+    } catch (err) {
+      if (err.code === 'VALIDATION_ERROR') {
+        return res.status(400).json({ success: false, error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  })
+);
+
+// DELETE /api/webapp/creator/replay-shows/:id — soft delete a show
+app.delete(
+  '/api/webapp/creator/replay-shows/:id',
+  requireSessionAuth,
+  requireCrystalCreator,
+  asyncHandler(async (req, res) => {
+    try {
+      await crystalReplayService.deleteShow(req.params.id, req.session.user.id);
+      return res.json({ success: true });
+    } catch (err) {
+      if (err.code === 'NOT_FOUND') {
+        return res.status(404).json({ success: false, error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  })
+);
+
+// GET /api/webapp/creator/replay-shows/session — active session for polling
+app.get(
+  '/api/webapp/creator/replay-shows/session',
+  requireSessionAuth,
+  requireCrystalCreator,
+  asyncHandler(async (req, res) => {
+    const session = await crystalReplayService.getActiveSession(req.session.user.id);
+    return res.json({ success: true, session: session || null });
+  })
+);
+
+// POST /api/webapp/creator/replay-shows/:id/start — start a replay session
+app.post(
+  '/api/webapp/creator/replay-shows/:id/start',
+  requireSessionAuth,
+  requireCrystalCreator,
+  crystalReplayLimiter,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await crystalReplayService.startReplay(req.session.user.id, req.params.id);
+      return res.json({ success: true, ...result });
+    } catch (err) {
+      if (err.code === 'FEATURE_DISABLED') {
+        return res.status(503).json({ success: false, error: err.message, code: err.code });
+      }
+      if (err.code === 'CRYSTAL_ONLY') {
+        return res.status(403).json({ success: false, error: err.message, code: err.code });
+      }
+      if (err.code === 'SESSION_ALREADY_ACTIVE') {
+        return res.status(409).json({ success: false, error: err.message, code: err.code });
+      }
+      if (err.code === 'NOT_FOUND') {
+        return res.status(404).json({ success: false, error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  })
+);
+
+// POST /api/webapp/creator/replay-shows/stop — stop active replay
+app.post(
+  '/api/webapp/creator/replay-shows/stop',
+  requireSessionAuth,
+  requireCrystalCreator,
+  asyncHandler(async (req, res) => {
+    const stoppedId = await crystalReplayService.stopReplay(req.session.user.id, 'manual');
+    if (!stoppedId) {
+      return res.status(404).json({ success: false, error: 'No active replay session to stop.', code: 'NOT_FOUND' });
+    }
+    return res.json({ success: true, stoppedSessionId: stoppedId });
+  })
+);
+
+// POST /api/admin/crystal-replay/kill-all — admin: kill all active replay sessions
+app.post(
+  '/api/admin/crystal-replay/kill-all',
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const result = await crystalReplayService.killAll();
+    return res.json({ success: true, ...result });
+  })
+);
+
+// ── End Crystal Creator Replay Shows ──────────────────────────────────────────
+
 // ── Moderation Dashboard ──────────────────────────────────────────────────────
 
 app.get('/api/webapp/admin/moderation/bans', adminGuard, asyncHandler(async (req, res) => {

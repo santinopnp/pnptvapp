@@ -57,15 +57,17 @@ type CreatorNavLabelKey =
   | "navDashboard" | "navStudioSetup" | "navDocumentation" | "navStartWebcamming"
   | "navPrivateCalls" | "navPnpChannels" | "navEarnings" | "navPayouts"
   | "navAnalytics" | "navSettings" | "navSubscribers" | "navMyAITools"
-  | "navMyBenefits" | "navTools";
+  | "navMyBenefits" | "navTools" | "navReplayShows";
 
 // roles: which creator_role values may see this nav item. Omit = always show.
+// crystalOnly: hide unless the user has an active Crystal Creator pass.
 type NavItem = {
   to: string;
   labelKey: CreatorNavLabelKey;
   end?: boolean;
   icon: string;
   roles?: CreatorRoleClient[];
+  crystalOnly?: boolean;
 };
 const navItems: NavItem[] = [
   {
@@ -143,11 +145,17 @@ const navItems: NavItem[] = [
     labelKey: "navTools",
     icon: "M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75",
   },
+  {
+    to: "/creators/replay-shows",
+    labelKey: "navReplayShows",
+    icon: "M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z",
+    crystalOnly: true,
+  },
 ];
 
 export default function CreatorLayout() {
   const { isAuthenticated, isLoading, user } = useAuth();
-  const { dashboard } = useCreatorData();
+  const { dashboard, crystalCreator } = useCreatorData();
   const navigate = useNavigate();
   const location = useLocation();
   const { creator: t } = useI18n();
@@ -192,6 +200,8 @@ export default function CreatorLayout() {
     return <Navigate to="/creators" replace />;
   }
   const visibleNavItems = navItems.filter((item) => {
+    // Crystal-only items are hidden for non-crystal creators (admins always see them)
+    if (item.crystalOnly && !crystalCreator && !isAdminRole) return false;
     if (!item.roles) return true;
     if (isAdminRole) return true;
     return userRole ? item.roles.includes(userRole) : false;
@@ -249,6 +259,14 @@ export default function CreatorLayout() {
               <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
             </svg>
             <span className="flex-1">{t[item.labelKey]}</span>
+            {item.crystalOnly && (
+              <span
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0"
+                style={{ background: "rgba(216,185,255,0.12)", color: "#d8b9ff", border: "1px solid rgba(216,185,255,0.2)" }}
+              >
+                ❖
+              </span>
+            )}
             {item.to === "/creators/documentation" && pendingRequiredCount > 0 && (
               <span
                 className="min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold text-white flex items-center justify-center shrink-0"
