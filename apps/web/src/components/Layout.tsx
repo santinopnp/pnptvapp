@@ -1685,6 +1685,7 @@ export function Layout() {
                       { to: "/privacy", label: t.nav.privacy || "Privacy" },
                       { to: "/community-guidelines", label: t.nav.guidelines || "Guidelines" },
                       { to: "/content-policy", label: t.nav.contentPolicy || "Content Policy" },
+                      { to: "/2257", label: "18 U.S.C. § 2257" },
                       { to: "/dmca", label: "DMCA" },
                       { to: "/refunds", label: t.nav.refunds || "Refunds" },
                     ].map((link) => (

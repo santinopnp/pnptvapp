@@ -45,6 +45,7 @@ const copy = {
         heading: "Contact",
         links: [
           { label: "support@pnptv.app", href: "mailto:support@pnptv.app" },
+          { label: "dmca@pnptv.app", href: "mailto:dmca@pnptv.app" },
           { label: "Help Center", href: "/docs" },
           { label: "Safety", href: "/safety" },
         ],
@@ -93,6 +94,7 @@ const copy = {
         heading: "Contacto",
         links: [
           { label: "support@pnptv.app", href: "mailto:support@pnptv.app" },
+          { label: "dmca@pnptv.app", href: "mailto:dmca@pnptv.app" },
           { label: "Centro de ayuda", href: "/docs" },
           { label: "Seguridad", href: "/safety" },
         ],
