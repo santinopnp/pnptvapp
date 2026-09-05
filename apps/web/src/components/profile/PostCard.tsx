@@ -67,8 +67,12 @@ function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: stri
         style={{ WebkitOverflowScrolling: "touch" }}
       >
         {urls.map((url, i) => (
+          // aspect-square reserves the layout space before the image loads,
+          // preventing CLS. The container is 100% wide (flex item) so the
+          // browser knows the height immediately without needing img metadata.
           <div key={i} className="w-full flex-shrink-0 snap-center">
             {isCarouselVideo(url) ? (
+              // Videos: reserve height via maxHeight — they vary in aspect ratio
               <video
                 src={url}
                 controls
@@ -81,15 +85,20 @@ function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: stri
                 style={{ maxHeight: 480 }}
               />
             ) : (
-              <img
-                src={url}
-                alt={`Slide ${i + 1} of ${urls.length}`}
-                className="w-full object-cover"
-                loading={i === 0 ? undefined : "lazy"}
-                onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
-                onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
-                style={onImageClick ? { cursor: "zoom-in" } : undefined}
-              />
+              // Aspect-ratio wrapper eliminates CLS: browser reserves vertical
+              // space before the image is fetched. object-cover fills the box.
+              <div className="relative w-full aspect-square bg-white/5">
+                <img
+                  src={url}
+                  alt={`Slide ${i + 1} of ${urls.length}`}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading={i === 0 ? undefined : "lazy"}
+                  decoding="async"
+                  onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
+                  onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
+                  style={onImageClick ? { cursor: "zoom-in" } : undefined}
+                />
+              </div>
             )}
           </div>
         ))}

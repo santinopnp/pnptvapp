@@ -2824,6 +2824,22 @@ const updateProfile = async (req, res) => {
       }
     }
 
+    // Bust the public-profile Redis cache so visitors see the updated profile
+    // within one natural TTL cycle rather than waiting up to 90 s.
+    setImmediate(async () => {
+      try {
+        const { getRedis } = require('../../../config/redis');
+        const redis = getRedis();
+        const pattern = `profile:public:${user.id}:*`;
+        let redisCursor = '0';
+        do {
+          const [nextCursor, keys] = await redis.scan(redisCursor, 'MATCH', pattern, 'COUNT', 50);
+          redisCursor = nextCursor;
+          if (keys.length > 0) await redis.del(...keys);
+        } while (redisCursor !== '0');
+      } catch { /* non-fatal */ }
+    });
+
     return res.json({ success: true });
   } catch (error) {
     logger.error('Update profile error:', error);

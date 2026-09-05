@@ -1940,7 +1940,6 @@ class SocialPostService {
                 u.id as author_id, u.username as author_username,
                 u.first_name as author_first_name, u.photo_file_id as author_photo,
                 COALESCE(sp.hype_score, 0) AS hype_score,
-                (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers,
                 cc_gate.access_type AS channel_access_type,
                 cc_gate.creator_id  AS channel_creator_id
                 ${likedSubquery}
@@ -1990,6 +1989,40 @@ class SocialPostService {
         [userId]
       ),
     ]);
+
+    // Batch-fetch tagged_performers for all returned posts in a single query,
+    // replacing the N+1 correlated subquery that was embedded in the main SELECT.
+    const postIds = postsRes.rows.map(r => r.id);
+    const mentionsByPost = new Map();
+    if (postIds.length > 0) {
+      const { rows: mentionRows } = await query(
+        `SELECT pm.post_id, u.id, u.username, u.first_name,
+                CASE
+                  WHEN u.photo_file_id IS NULL THEN NULL
+                  WHEN u.photo_file_id LIKE '/uploads/%' THEN u.photo_file_id
+                  ELSE u.photo_file_id
+                END AS photo_file_id,
+                u.creator_verified
+           FROM post_mentions pm
+           JOIN users u ON u.id = pm.mentioned_user_id
+          WHERE pm.post_id = ANY($1::int[])
+            AND pm.mention_type = 'tag'
+          ORDER BY pm.post_id, pm.created_at`,
+        [postIds]
+      );
+      for (const r of mentionRows) {
+        if (!mentionsByPost.has(r.post_id)) mentionsByPost.set(r.post_id, []);
+        mentionsByPost.get(r.post_id).push({
+          id: String(r.id),
+          username: r.username,
+          avatar_url: normalizeImageUrl(r.photo_file_id),
+          creator_verified: r.creator_verified || false,
+        });
+      }
+    }
+    for (const row of postsRes.rows) {
+      row.tagged_performers = mentionsByPost.get(row.id) || [];
+    }
 
     const profile = profileRes.rows[0] || null;
     if (profile) profile.photo_file_id = normalizeImageUrl(profile.photo_file_id);

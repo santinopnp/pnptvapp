@@ -68,7 +68,10 @@ export function UserAvatar({
     <img
       src={photoUrl}
       alt={displayName || "User"}
+      width={px}
+      height={px}
       loading="lazy"
+      decoding="async"
       className={
         isPnptvLogo
           ? "w-full h-full rounded-full object-contain bg-black p-0.5"
