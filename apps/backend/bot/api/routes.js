@@ -13502,7 +13502,7 @@ const tokenActivationStatusLimiter = rateLimit({
 });
 
 // POST /api/wallet/token-activation/reserve
-// Body: { packageKey: 'pkg_10'|'pkg_25'|'pkg_50'|'pkg_100'|'pkg_500', language?: 'es'|'en' }
+// Body: { packageKey: 'pkg_5'|'pkg_10'|'pkg_25'|'pkg_50'|'pkg_100'|'pkg_250'|'pkg_500'|'pkg_1000', language?: 'es'|'en' }
 // Returns: { code, activationCode, meruUrl, activationUrl, expiresAt, tokens }
 app.post('/api/wallet/token-activation/reserve', tokenActivationReserveLimiter, requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;
@@ -16729,9 +16729,8 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
       };
     }
     // Custom-amount Ru$h purchase — no preset package. Flat 6 Ru$h per USD
-    // (no bonus). Bounded server-side; client input is untrusted. Cap matches
-    // the largest preset package (pkg_5000) so custom never exceeds a route
-    // the DB already supports.
+    // (no bonus). Bounded server-side; client input is untrusted. Cap kept
+    // at $5000 to allow custom whales beyond the preset ceiling (pkg_1000).
     const amt = Number(spec?.amountUsd);
     if (!Number.isFinite(amt) || amt < 1 || amt > 5000) throwErr('Ru$h amount must be $1–$5000', 400);
     const usd = Math.round(amt * 100) / 100;
