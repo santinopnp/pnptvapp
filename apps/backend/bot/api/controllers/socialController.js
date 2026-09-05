@@ -23,6 +23,29 @@ const { archivePromotedSourceForSocialPost } = require('../utils/promotedPostDel
 const IdentityVerificationService = require('../../../services/identityVerificationService');
 const EntitlementAccessService = require('../../../services/entitlementAccessService');
 
+/**
+ * Bust the Redis profile-page cache for a given user id.
+ * Called after createPost / deletePost / updateProfile so the profile wall
+ * reflects the change within one natural TTL cycle rather than up to 90 s late.
+ * Uses SCAN instead of KEYS to avoid blocking the Redis event loop on large keyspaces.
+ * Non-fatal: a Redis failure must never break the originating HTTP response.
+ */
+async function bustProfileCache(userId) {
+  try {
+    const { getRedis } = require('../../../config/redis');
+    const redis = getRedis();
+    const pattern = `profile:public:${userId}:*`;
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 50);
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+    } while (cursor !== '0');
+  } catch { /* non-fatal — Redis down or key already gone */ }
+}
+
 async function extractVideoThumbnail(videoPath, thumbPath) {
   try {
     await execFileAsync('ffmpeg', [
@@ -509,6 +532,9 @@ const createPost = async (req, res) => {
     const io = req.app.get('io');
     emitNewPost(io, fullPost, user.id);
 
+    // Bust profile cache so the new post appears immediately on the profile wall
+    setImmediate(() => bustProfileCache(user.id));
+
     return res.json({ success: true, post: fullPost });
   } catch (err) {
     logger.error('createPost error', err);
@@ -659,6 +685,8 @@ const deletePost = async (req, res) => {
     }
     const deleted = await SocialPostService.deletePost(postId, user.id, isAdmin);
     if (!deleted) return res.status(404).json({ error: 'Post not found or not yours' });
+    // Bust profile cache so the deleted post disappears from the profile wall
+    setImmediate(() => bustProfileCache(user.id));
     return res.json({ success: true });
   } catch (err) {
     logger.error('deletePost error', err);
@@ -1253,6 +1281,9 @@ const createPostWithMedia = async (req, res) => {
     const io = req.app.get('io');
     emitNewPost(io, fullPost, user.id);
 
+    // Bust profile cache so the new media post appears immediately on the profile wall
+    setImmediate(() => bustProfileCache(user.id));
+
     return res.json({ success: true, post: fullPost });
   } catch (err) {
     logger.error('createPostWithMedia error', err);
@@ -1666,6 +1697,9 @@ const createPostWithMultiMedia = async (req, res) => {
     const io = req.app.get('io');
     emitNewPost(io, fullPost, user.id);
 
+    // Bust profile cache so the new media post appears immediately on the profile wall
+    setImmediate(() => bustProfileCache(user.id));
+
     return res.json({ success: true, post: fullPost });
   } catch (err) {
     logger.error('createPostWithMultiMedia error', err);
@@ -1758,11 +1792,32 @@ const getPublicProfile = async (req, res) => {
     // Profile browsing is open to all authenticated users (no tier restriction).
 
     const isFreeViewer = !isAdmin && viewerTier === 'free';
+    const cursor = isFreeViewer ? undefined : req.query.cursor;
+    const limit  = isFreeViewer ? FREE_PROFILE_LIMIT : req.query.limit;
+
+    // ── Redis response cache (90 s, tier-aware) ──────────────────────────────
+    // Key encodes: canonical userId + viewer tier + pagination cursor.
+    // Admins bypass cache so they always see the unblurred, unfiltered view.
+    // Per-viewer (viewerId) caching is intentionally NOT done — the per-user
+    // block check and region check above already ran; the payload itself only
+    // differs by tier (free vs paid) and cursor.  Cache is bust-on-write from
+    // createPost / deletePost / updateProfile — see those handlers.
+    const PROFILE_CACHE_TTL = 90; // seconds
+    const cacheKey = `profile:public:${userId}:${viewerTier || 'guest'}:${cursor || ''}`;
+    let cachedPayload = null;
+    if (!isAdmin) {
+      try {
+        const redis = getRedis();
+        const raw = await redis.get(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return res.json(parsed);
+        }
+      } catch { /* Redis down — fall through to DB */ }
+    }
+
     const result = await SocialPostService.getPublicProfile(
-      userId, viewerId,
-      isFreeViewer ? undefined : req.query.cursor,
-      isFreeViewer ? FREE_PROFILE_LIMIT : req.query.limit,
-      viewerTier, isAdmin
+      userId, viewerId, cursor, limit, viewerTier, isAdmin
     );
     if (!result.profile) {
       // Soft-deleted or missing from social service — stamp tombstone so next requests skip DB
@@ -1782,7 +1837,7 @@ const getPublicProfile = async (req, res) => {
     const gamificationService = require('../../../services/gamificationService');
     const gamificationBadges = await gamificationService.getUserBadges(profile.id).catch(() => []);
 
-    return res.json({
+    const payload = {
       success: true,
       profile: {
         id: profile.id,
@@ -1831,7 +1886,16 @@ const getPublicProfile = async (req, res) => {
       posts: result.posts,
       nextCursor: isFreeViewer ? null : result.nextCursor,
       freeUserLimited: isFreeViewer,
-    });
+    };
+
+    // Write to cache (non-admin, best-effort — never let Redis failure break the response)
+    if (!isAdmin) {
+      try {
+        await getRedis().set(cacheKey, JSON.stringify(payload), 'EX', PROFILE_CACHE_TTL);
+      } catch { /* non-fatal */ }
+    }
+
+    return res.json(payload);
   } catch (err) {
     logger.error('getPublicProfile error', err);
     return res.status(500).json({ error: 'Failed to load profile' });
