@@ -162,10 +162,16 @@ async function analyzePayment({ userId, provider, reference, amount, planId, not
 
 Your job: analyze payment evidence provided by an admin and determine whether it represents a valid, completed payment that should activate a membership.
 
-PAYMENT PROVIDER RULES:
-- ePayco: state code 1 = Accepted/Approved ("Aceptada"/"Aprobada"), 2 = Rejected, 3 = Pending, 4 = Failed
-- Daimo: "payment_completed" = valid, "payment_bounced" = failed, "payment_refunded" = refunded
-- BTCPay: "Settled" or "Confirmed" = valid
+PAYMENT PROVIDER RULES (current stack as of 2026-09):
+- Stripe (card, primary in supported regions): payment_intent status "succeeded" = valid; "requires_action", "processing" = pending; "canceled", "failed" = rejected. Also check charges[0].captured = true.
+- MoonPay (card, majority of regions): transaction status "completed" = valid; "pending", "waitingAuthorization" = pending; "failed" = rejected. Match against externalTransactionId or externalCustomerId.
+- EfiPay (Colombia email-link only): "paid"/"settled" = valid, "pending"/"waiting" = pending, "expired"/"canceled" = rejected.
+- NowPayments (any-crypto fallback): payment_status "finished" or "confirmed" = valid; "waiting", "confirming", "sending", "partially_paid" = pending; "failed", "expired", "refunded" = rejected. Prefer records with actually_paid ≥ pay_amount.
+- On-chain USDC/Base (direct wallet, primary crypto path): valid when a matching tx hash exists on Base with ≥1 confirmation, receiving address matches our treasury/user embedded wallet, and USDC amount ≥ plan price (small dust tolerance).
+- Legacy (historical records only — do NOT accept new activations from these):
+  - ePayco: state code 1 = Accepted, 2 = Rejected, 3 = Pending, 4 = Failed
+  - Daimo: "payment_completed" = valid, "payment_bounced" = failed, "payment_refunded" = refunded
+  - BTCPay: "Settled" or "Confirmed" = valid
 
 VALIDATION CHECKS (apply ALL):
 1. Does a payment record exist in the database for this reference/transaction?
