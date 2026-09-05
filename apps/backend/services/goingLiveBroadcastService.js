@@ -324,6 +324,12 @@ async function notifyMainStage(creatorId, creatorName, channelRef) {
       ).catch(() => {});
     }
 
+    // Avisa a quien intento reservar mientras no estaba disponible. No bloquea
+    // la salida en vivo: si falla, se registra y se sigue.
+    try {
+      require('./callWaitlistService').notifyAvailable(creatorId).catch(() => {});
+    } catch (e) { /* servicio ausente: no impedir el directo */ }
+
     // Fire the socket event to everyone currently connected to Main Stage.
     let socketSingleton;
     try { socketSingleton = require('./socketSingleton'); } catch { return; }
@@ -509,6 +515,15 @@ function isProcessLive(p) {
   return kbps > 0;
 }
 
+// Softer "still-live" check for hysteresis. A running Restreamer process with
+// momentary bitrate = 0 (buffer stall, network flap) is NOT actually offline —
+// it's just re-buffering. Only treat the process as OFF when Restreamer itself
+// stops reporting it as `running`. Used to keep last-state = '1' during flaps
+// so we don't fire duplicate "You're LIVE!" notifications every ~10 min.
+function isProcessRunning(p) {
+  return p?.state?.exec === 'running';
+}
+
 async function pollTick(bot) {
   if (pollerBusy) return;
   pollerBusy = true;
@@ -530,7 +545,8 @@ async function pollTick(bot) {
     for (const p of processes) {
       const refId = sanitizeChannelRef(p.reference || p.id);
       if (!refId) continue;
-      const isLive = isProcessLive(p);
+      const isLive = isProcessLive(p);          // running + bitrate > 0 (first-detect gate)
+      const isRunning = isProcessRunning(p);    // running (softer, ignores bitrate flap)
       const lastRaw = await redis.get(LAST_STATE_KEY(refId)).catch(() => null);
       const wasLive = lastRaw === '1';
 
@@ -567,7 +583,12 @@ async function pollTick(bot) {
         }
       }
 
-      await redis.set(LAST_STATE_KEY(refId), isLive ? '1' : '0', 'EX', LAST_STATE_TTL_S).catch(() => {});
+      // Hysteresis: while wasLive, only step down to '0' when Restreamer itself
+      // stops reporting the process as running. Momentary bitrate = 0 (buffer
+      // stall) keeps state at '1' so we don't re-fire "You're LIVE!" on the
+      // next tick. Fixes ~15 duplicate Slack pings per 2h live session.
+      const nextState = wasLive ? (isRunning ? '1' : '0') : (isLive ? '1' : '0');
+      await redis.set(LAST_STATE_KEY(refId), nextState, 'EX', LAST_STATE_TTL_S).catch(() => {});
     }
   } catch (err) {
     logger.error('goLivePoller: tick error', { error: err.message });
