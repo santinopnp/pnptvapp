@@ -246,15 +246,16 @@ const token = asyncHandler(async (req, res) => {
   const canScreenShare    = participantTier !== 'newcomer';
   const canPublishAudio   = participantTier !== 'newcomer';
 
-  const NEWCOMER_SESSION_S  = 3600;               // 60 min cam window
-  const NEWCOMER_COOLDOWN_S = 2400;               // 40 min cooldown
-  const NEWCOMER_WINDOW_S   = NEWCOMER_SESSION_S + NEWCOMER_COOLDOWN_S; // 100 min Redis TTL
+  const NEWCOMER_SESSION_S  = 3 * 3600;           // 3 hour cam window
+  const NEWCOMER_COOLDOWN_S = 24 * 3600;          // 24 hour cooldown
+  const NEWCOMER_WINDOW_S   = NEWCOMER_SESSION_S + NEWCOMER_COOLDOWN_S; // 27 h Redis TTL
 
+  // Paid tiers (member + prime + admin) get 24h tokens — effectively unlimited
+  // within a sitting. Any session longer than a day can reconnect. Newcomer
+  // stays hard-capped by the backend session-tracker regardless of token TTL.
   let tokenTtlSeconds = participantTier === 'newcomer'
     ? NEWCOMER_SESSION_S
-    : participantTier === 'member'
-      ? 4 * 3600
-      : 12 * 3600; // prime / admin
+    : 24 * 3600; // member / prime / admin
 
   let sessionStartedAt   = null;
   let sessionLimitSeconds = null;
@@ -283,7 +284,7 @@ const token = asyncHandler(async (req, res) => {
           const cooldownRemainingS = Math.max(0, NEWCOMER_WINDOW_S - elapsedS);
           return res.status(429).json({
             success: false,
-            error: 'Your 1-hour preview has ended. Take a 40-minute break, or become a Member to stay on cam.',
+            error: 'Your 3-hour preview has ended. Come back in 24 hours, or become a Member to stay on cam.',
             code: 'FREE_USER_COOLDOWN',
             cooldownSeconds: cooldownRemainingS,
           });
@@ -662,7 +663,7 @@ const viewerToken = asyncHandler(async (req, res) => {
     viewerId,
     'Viewer',
     false,
-    { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds: 2 * 3600 }
+    { canPublishVideo: false, canPublishAudio: false, canPublishData: false, ttlSeconds: 24 * 3600 }
   );
   logger.info('[MainStage] viewer token issued', { ip: req.ip });
   return res.json({
