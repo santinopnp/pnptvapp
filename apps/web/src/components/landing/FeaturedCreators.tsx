@@ -27,6 +27,7 @@ const copy = {
     error: "Couldn't load creators.",
     retry: "Try again",
     empty: "",
+    viewProfile: "View profile →",
   },
   es: {
     heading: "Creadores destacados",
@@ -35,6 +36,7 @@ const copy = {
     error: "No se pudieron cargar los creadores.",
     retry: "Intentar de nuevo",
     empty: "",
+    viewProfile: "Ver perfil →",
   },
 };
 
@@ -63,9 +65,11 @@ export const FeaturedCreators = React.forwardRef<HTMLElement, FeaturedCreatorsPr
       className="w-full px-4 py-16 sm:px-6 lg:px-8"
       style={{ background: "#0A0A0F" }}
     >
-      <div className="max-w-5xl mx-auto">
-        {/* Section header */}
-        <div className="text-center mb-10">
+      {/* Desktop: max-w bumped to 7xl on xl+ */}
+      <div className="max-w-5xl xl:max-w-7xl mx-auto">
+
+        {/* Section header — sticky on lg+ (left-anchored) */}
+        <div className="text-center lg:text-left mb-10 lg:sticky lg:top-24 lg:self-start">
           <p
             className="text-[10px] font-bold uppercase tracking-[0.3em] mb-3"
             style={{
@@ -82,7 +86,7 @@ export const FeaturedCreators = React.forwardRef<HTMLElement, FeaturedCreatorsPr
           >
             {c.heading}
           </h2>
-          <p className="text-pnp-textSecondary text-sm sm:text-base max-w-lg mx-auto">{c.sub}</p>
+          <p className="text-pnp-textSecondary text-sm sm:text-base max-w-lg mx-auto lg:mx-0">{c.sub}</p>
         </div>
 
         {/* Error state */}
@@ -124,13 +128,35 @@ export const FeaturedCreators = React.forwardRef<HTMLElement, FeaturedCreatorsPr
           </div>
         )}
 
-        {/* Creator grid */}
+        {/* Creator grid — mosaic on xl+, standard 4-col on lg, 2/3-col below */}
         {!loading && !error && creators.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-            {creators.map((creator) => (
-              <CreatorCard key={creator.username} creator={creator} followersLabel={c.followers} />
-            ))}
-          </div>
+          <>
+            {/* ── XL+ mosaic grid ── */}
+            <div className="hidden xl:grid xl:grid-cols-4 gap-4 auto-rows-auto">
+              {creators.map((creator, i) => (
+                <CreatorCard
+                  key={creator.username}
+                  creator={creator}
+                  followersLabel={c.followers}
+                  viewProfileLabel={c.viewProfile}
+                  hero={i === 0}
+                />
+              ))}
+            </div>
+
+            {/* ── Below xl: standard grid (untouched) ── */}
+            <div className="xl:hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+              {creators.map((creator) => (
+                <CreatorCard
+                  key={creator.username}
+                  creator={creator}
+                  followersLabel={c.followers}
+                  viewProfileLabel={c.viewProfile}
+                  hero={false}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
     </section>
@@ -140,13 +166,29 @@ export const FeaturedCreators = React.forwardRef<HTMLElement, FeaturedCreatorsPr
 interface CreatorCardProps {
   creator: PublicCreator;
   followersLabel: string;
+  viewProfileLabel: string;
+  hero: boolean;
 }
 
-function CreatorCard({ creator, followersLabel }: CreatorCardProps) {
+function CreatorCard({ creator, followersLabel, viewProfileLabel, hero }: CreatorCardProps) {
+  const ringColor = creator.is_fam
+    ? "linear-gradient(135deg, #FFB454, #E69138)"
+    : "linear-gradient(135deg, #D4007A, #7B61FF)";
+
+  const ringColorHover = creator.is_fam
+    ? "linear-gradient(135deg, #FFC97A, #F5A340)"
+    : "linear-gradient(135deg, #FF1A94, #9B7FFF)";
+
   return (
     <a
       href={creator.profile_url || `/c/${creator.username}`}
-      className="group relative rounded-2xl p-4 flex flex-col items-center gap-3 transition-all duration-200 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background"
+      className={[
+        "group relative rounded-2xl flex flex-col items-center gap-3 transition-all duration-200",
+        "hover:-translate-y-1 hover:scale-[1.02]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background",
+        // xl hero card: 2x2 span, more padding, larger layout
+        hero ? "xl:col-span-2 xl:row-span-2 xl:p-8 p-4" : "p-4",
+      ].join(" ")}
       style={{
         background: "#1A1A1A",
         border: "1px solid #2A2A2A",
@@ -154,18 +196,24 @@ function CreatorCard({ creator, followersLabel }: CreatorCardProps) {
       }}
       aria-label={`Visit ${creator.display_name}'s profile`}
     >
-      {/* Avatar with gradient ring */}
+      {/* Avatar with gradient ring — larger in hero mode */}
       <div
-        className="relative flex-shrink-0 p-[2px] rounded-full transition-all duration-200"
+        className={[
+          "relative flex-shrink-0 p-[2px] rounded-full transition-all duration-200",
+          "group-hover:[--ring-bg:var(--ring-hover)]",
+        ].join(" ")}
         style={{
-          background: creator.is_fam
-            ? "linear-gradient(135deg, #FFB454, #E69138)"
-            : "linear-gradient(135deg, #D4007A, #7B61FF)",
+          background: ringColor,
           boxShadow: "0 0 0 2px #0A0A0F",
         }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = ringColorHover; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ringColor; }}
       >
         <div
-          className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden bg-pnp-surface"
+          className={[
+            "rounded-full overflow-hidden bg-pnp-surface",
+            hero ? "w-20 h-20 sm:w-24 sm:h-24 xl:w-64 xl:h-64" : "w-20 h-20 sm:w-24 sm:h-24",
+          ].join(" ")}
           style={{ border: "2px solid #0A0A0F" }}
         >
           {creator.avatar_url ? (
@@ -186,7 +234,7 @@ function CreatorCard({ creator, followersLabel }: CreatorCardProps) {
           )}
         </div>
 
-        {/* Live indicator dot — decorative; could be wired to real data */}
+        {/* Live indicator dot */}
         <div
           aria-hidden="true"
           className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 border-pnp-background"
@@ -198,7 +246,7 @@ function CreatorCard({ creator, followersLabel }: CreatorCardProps) {
       <div className="w-full text-center space-y-0.5 min-w-0">
         <div className="flex items-center justify-center gap-1 flex-wrap">
           <span
-            className="text-xs sm:text-sm font-bold text-white leading-tight truncate max-w-full"
+            className={["font-bold text-white leading-tight truncate max-w-full", hero ? "xl:text-xl text-xs sm:text-sm" : "text-xs sm:text-sm"].join(" ")}
             title={creator.display_name}
           >
             {creator.display_name}
@@ -231,15 +279,27 @@ function CreatorCard({ creator, followersLabel }: CreatorCardProps) {
         </p>
       </div>
 
-      {/* Bio — 2 lines truncated */}
+      {/* Bio — hero shows more lines on xl */}
       {creator.bio && (
         <p
-          className="text-[10px] sm:text-xs text-pnp-textSecondary text-center leading-relaxed line-clamp-2 w-full min-w-0"
+          className={["text-pnp-textSecondary text-center leading-relaxed w-full min-w-0", hero ? "text-[10px] sm:text-xs xl:text-sm xl:line-clamp-4 line-clamp-2" : "text-[10px] sm:text-xs line-clamp-2"].join(" ")}
           title={creator.bio}
         >
           {creator.bio}
         </p>
       )}
+
+      {/* "View profile →" — slides in from right on xl hover */}
+      <span
+        className={[
+          "text-xs font-semibold transition-all duration-200 mt-auto",
+          hero ? "xl:opacity-0 xl:translate-x-2 xl:group-hover:opacity-100 xl:group-hover:translate-x-0 opacity-0 hidden xl:block" : "hidden",
+        ].join(" ")}
+        style={{ color: creator.is_fam ? "#E69138" : "#D4007A", fontFamily: "'Roboto Mono', monospace" }}
+        aria-hidden="true"
+      >
+        {viewProfileLabel}
+      </span>
     </a>
   );
 }

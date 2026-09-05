@@ -8,6 +8,7 @@ const copy = {
   en: {
     eyebrow: "//members",
     heading: "What members say",
+    pullQuote: "Not another sanitized dating app.",
     quotes: [
       {
         text: "Finally a space that gets us. Not another sanitized dating app.",
@@ -16,6 +17,7 @@ const copy = {
         city: "Mexico City",
         initial: "A",
         color: "#D4007A",
+        highlight: true,
       },
       {
         text: "The Main Stage is next-level. It's like a queer party 24/7.",
@@ -24,6 +26,7 @@ const copy = {
         city: "Bogotá",
         initial: "D",
         color: "#7B61FF",
+        highlight: false,
       },
       {
         text: "I love that creators actually make bank here. Real earnings, real community.",
@@ -32,12 +35,14 @@ const copy = {
         city: "Madrid",
         initial: "M",
         color: "#E69138",
+        highlight: false,
       },
     ],
   },
   es: {
     eyebrow: "//miembros",
     heading: "Lo que dicen los miembros",
+    pullQuote: "No otra app de citas sin chiste.",
     quotes: [
       {
         text: "Por fin un espacio que nos entiende. No otra app de citas sin chiste.",
@@ -46,6 +51,7 @@ const copy = {
         city: "Ciudad de México",
         initial: "A",
         color: "#D4007A",
+        highlight: true,
       },
       {
         text: "El Main Stage es otro nivel. Es como una fiesta queer 24/7.",
@@ -54,6 +60,7 @@ const copy = {
         city: "Bogotá",
         initial: "D",
         color: "#7B61FF",
+        highlight: false,
       },
       {
         text: "Me encanta que los creadores de verdad ganan aquí. Ingresos reales, comunidad real.",
@@ -62,6 +69,7 @@ const copy = {
         city: "Madrid",
         initial: "M",
         color: "#E69138",
+        highlight: false,
       },
     ],
   },
@@ -80,9 +88,9 @@ export function Testimonials({ lang }: TestimonialsProps) {
       className="w-full px-4 py-16 sm:px-6 lg:px-8"
       style={{ background: "#0A0A0F" }}
     >
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl xl:max-w-5xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-10">
+        <div className="text-center mb-10 xl:mb-14">
           <p
             className="text-[10px] font-bold uppercase tracking-[0.3em] mb-3"
             style={{ fontFamily: "'Roboto Mono', monospace", color: "#A1A1A3" }}
@@ -98,10 +106,36 @@ export function Testimonials({ lang }: TestimonialsProps) {
           </h2>
         </div>
 
-        {/* Quote grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* ── XL+ magazine masonry ── */}
+        <div className="hidden xl:grid xl:grid-cols-3 gap-6 items-start">
+          {c.quotes.map((q, i) => (
+            <QuoteCard
+              key={q.name}
+              quote={q}
+              offset={i === 1 ? -14 : 0}
+              xl
+            />
+          ))}
+        </div>
+
+        {/* xl+ divider lines between cards */}
+        <div className="hidden xl:flex items-center justify-center gap-0 mt-6" aria-hidden="true">
+          {c.quotes.map((q, i) => (
+            <React.Fragment key={q.name}>
+              {i > 0 && (
+                <div
+                  className="w-px h-16 mx-auto"
+                  style={{ background: `linear-gradient(180deg, transparent, ${q.color}40, transparent)` }}
+                />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* ── Below xl: original grid (untouched) ── */}
+        <div className="xl:hidden grid grid-cols-1 sm:grid-cols-3 gap-4">
           {c.quotes.map((q) => (
-            <QuoteCard key={q.name} quote={q} />
+            <QuoteCard key={q.name} quote={q} offset={0} xl={false} />
           ))}
         </div>
       </div>
@@ -116,19 +150,24 @@ interface Quote {
   city: string;
   initial: string;
   color: string;
+  highlight: boolean;
 }
 
 interface QuoteCardProps {
   quote: Quote;
+  offset: number;
+  xl: boolean;
 }
 
-function QuoteCard({ quote }: QuoteCardProps) {
+function QuoteCard({ quote, offset, xl }: QuoteCardProps) {
   return (
     <figure
       className="flex flex-col gap-4 rounded-2xl p-5"
       style={{
         background: "#151518",
-        border: "1px solid #252525",
+        border: quote.highlight && xl ? `1px solid ${quote.color}40` : "1px solid #252525",
+        marginTop: xl && offset !== 0 ? `${offset}px` : undefined,
+        boxShadow: quote.highlight && xl ? `0 0 40px ${quote.color}12` : undefined,
       }}
     >
       {/* Big quote mark */}
@@ -140,18 +179,41 @@ function QuoteCard({ quote }: QuoteCardProps) {
         &ldquo;
       </div>
 
-      {/* Quote text */}
+      {/* Quote text — larger on xl */}
       <blockquote className="flex-1">
         <p
-          className="text-sm sm:text-base text-white leading-relaxed italic"
+          className={["text-white leading-relaxed italic", xl ? "text-sm xl:text-xl" : "text-sm sm:text-base"].join(" ")}
           style={{ fontFamily: "'Roboto Mono', monospace" }}
         >
           {quote.text}
         </p>
       </blockquote>
 
+      {/* Editorial pull-quote chip — only on highlighted card in xl mode */}
+      {quote.highlight && xl && (
+        <div
+          className="self-start px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest"
+          style={{
+            background: `${quote.color}15`,
+            border: `1px solid ${quote.color}35`,
+            color: quote.color,
+            fontFamily: "'Roboto Mono', monospace",
+          }}
+          aria-hidden="true"
+        >
+          Editor&apos;s pick
+        </div>
+      )}
+
+      {/* Divider */}
+      <div
+        className="h-px w-full"
+        style={{ background: xl ? `linear-gradient(90deg, ${quote.color}30, transparent)` : "#252525" }}
+        aria-hidden="true"
+      />
+
       {/* Attribution */}
-      <figcaption className="flex items-center gap-3 mt-auto pt-2 border-t border-pnp-border">
+      <figcaption className="flex items-center gap-3 mt-auto">
         {/* Initial avatar */}
         <div
           className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
