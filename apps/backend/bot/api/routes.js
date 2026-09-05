@@ -580,14 +580,19 @@ app.get('/api/public/featured-creators', asyncHandler(async (req, res) => {
   // Only verified, active creators. Order by follower_count desc so the most
   // popular float up. Cap at 12.
   const { rows } = await dbQuery(
-    `SELECT id, username, first_name, bio, avatar_url, followers_count,
-            creator_verified, is_pnptv_fam
+    `SELECT id, username, first_name, bio,
+            CASE
+              WHEN photo_file_id IS NULL THEN NULL
+              WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+              ELSE '/uploads/avatars/' || photo_file_id
+            END AS avatar_url,
+            followers_count, creator_verified, is_pnptv_fam
        FROM users
       WHERE creator_status = 'active'
         AND creator_verified = TRUE
         AND username IS NOT NULL
-        AND avatar_url IS NOT NULL
-        AND COALESCE(is_hidden, FALSE) = FALSE
+        AND photo_file_id IS NOT NULL
+        AND COALESCE(subscription_status, '') <> 'banned'
       ORDER BY followers_count DESC NULLS LAST, created_at DESC
       LIMIT 12`
   );

@@ -33,7 +33,6 @@ const copy = {
         heading: "Contact",
         links: [
           { label: "support@pnptv.app", href: "mailto:support@pnptv.app" },
-          { label: "hello@easybots.store", href: "mailto:hello@easybots.store" },
           { label: "Help Center", href: "/docs" },
           { label: "Safety", href: "/safety" },
         ],
@@ -69,7 +68,6 @@ const copy = {
         heading: "Contacto",
         links: [
           { label: "support@pnptv.app", href: "mailto:support@pnptv.app" },
-          { label: "hello@easybots.store", href: "mailto:hello@easybots.store" },
           { label: "Centro de ayuda", href: "/docs" },
           { label: "Seguridad", href: "/safety" },
         ],
