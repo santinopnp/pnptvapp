@@ -11163,3 +11163,47 @@ export function verifyRewardedAdCompletion(
   });
 }
 
+export type AdSlotFormat =
+  | "banner"
+  | "sticky_banner"
+  | "mobile_banner"
+  | "in_content_banner"
+  | "popunder"
+  | "mobile_popunder"
+  | "vast"
+  | "video_slider"
+  | "outstream_video"
+  | "vertical_video"
+  | "push_inpage"
+  | "recommendation_widget"
+  | "multi_format"
+  | "instant_message";
+
+export interface AdSlotConfig {
+  zoneId: string;
+  format: AdSlotFormat;
+  size: string | null;
+  vastUrl: string | null;
+  capPerSession: number;
+}
+
+export interface AdsConfigResponse {
+  ok: boolean;
+  showAds: boolean;
+  slots: Record<string, AdSlotConfig>;
+  scriptUrl: string | null;
+}
+
+let adsConfigCache: Promise<AdsConfigResponse> | null = null;
+
+export function getAdsConfig(): Promise<AdsConfigResponse> {
+  if (!adsConfigCache) {
+    adsConfigCache = request<AdsConfigResponse>(`/api/ads/config`).catch(() => ({
+      ok: false, showAds: false, slots: {}, scriptUrl: null,
+    }));
+  }
+  return adsConfigCache;
+}
+
+export function invalidateAdsConfig() { adsConfigCache = null; }
+

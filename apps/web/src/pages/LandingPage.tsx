@@ -11,6 +11,7 @@ import { HowItWorks } from "@/components/landing/HowItWorks";
 import { Testimonials } from "@/components/landing/Testimonials";
 import { SafeSaneCommunity } from "@/components/landing/SafeSaneCommunity";
 import { PublicFooter } from "@/components/landing/PublicFooter";
+import { AdSlot } from "@/components/AdSlot";
 
 // ── WebAuthn helpers ──────────────────────────────────────────────────────────
 // Authentik's flow executor returns binary fields as base64url strings; the
@@ -990,7 +991,9 @@ export function LandingPage() {
         onJoinFree={scrollToAuth}
         onExploreClick={scrollToCreators}
       />
+      <div className="my-4 flex justify-center px-4"><AdSlot slot="landing_hero" /></div>
       <HowItWorks lang={t.lang} />
+      <div className="my-4 flex justify-center px-4"><AdSlot slot="outstream_video" /></div>
       <FeaturedCreators
         lang={t.lang}
         creators={creators}
