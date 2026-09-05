@@ -341,7 +341,8 @@ async function fulfillChannelPassFromPayment({ userId, creatorId, priceUsd, sour
            AND cs.subscriber_id = $2::text
            AND cs.creator_id    = $3::text
          LIMIT 1`,
-        [String(sourceRef), userId, creatorId]
+        [String(sourceRef), userId, creatorId],
+        { cache: false }
       );
       if (existingEarnings.length > 0) {
         logger.info('[channelPassService] fulfillChannelPassFromPayment: already fulfilled (idempotent)', {
