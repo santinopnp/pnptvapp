@@ -11117,8 +11117,12 @@ export function createAdminVideoGrant(opts: {
 
 export interface RewardedAdConfig {
   enabled: boolean;
-  ad_network: "trafficjunky" | "exoclick" | null;
+  ad_network: "trafficstars" | "exoclick" | "trafficjunky" | "adultforce" | null;
+  integration_mode: "vast" | "s2s" | "affiliate" | null;
   zone_id: string | null;
+  vast_url: string | null;
+  offer_url: string | null;
+  client_side_grant: boolean;
   remaining_today: number;
   active_until: string | null;
   ttl_seconds: number;
@@ -11140,5 +11144,22 @@ export function getRewardedAdActive(
   surface: string,
 ): Promise<{ success: boolean } & RewardedAdActive> {
   return request(`/api/ads/rewarded/active?surface=${encodeURIComponent(surface)}`);
+}
+
+export function issueRewardedAdNonce(
+  surface: string,
+): Promise<{ success: boolean; nonce: string; ttl_seconds: number; error?: string }> {
+  return request(`/api/ads/rewarded/nonce`, { method: "POST", body: { surface } });
+}
+
+export function verifyRewardedAdCompletion(
+  surface: string,
+  nonce: string,
+  elapsedMs: number,
+): Promise<{ success: boolean; expiresAt?: string; error?: string }> {
+  return request(`/api/ads/rewarded/client-verify`, {
+    method: "POST",
+    body: { surface, nonce, elapsed_ms: elapsedMs },
+  });
 }
 
