@@ -105,13 +105,17 @@ async function getBookingOptions(req, res) {
       redis.get(`user:${creatorId}:accepting_calls`),
     ]);
     const isOnline = onlineRaw !== null && onlineRaw !== '0';
-    const flagSet = acceptingRaw !== null && acceptingRaw !== '0';
+    // REGLA B — accepting_calls es OPT-OUT: solo bloquea si vale exactamente
+    // '0'. Ausente significa disponible, así el caso normal no exige que el
+    // creador active nada.
+    const optedOut = acceptingRaw === '0';
 
-    // Read-time gate: if the creator is broadcasting live (any path — webcam,
-    // Restreamer RTMP, bot-initiated), they cannot take calls and we must not
-    // surface near-term slots. Cheap indexed query, only runs if Redis flag is set.
-    let isBroadcasting = false;
-    if (isOnline && flagSet) {
+    // REGLA B — estar en vivo es lo que DA disponibilidad (antes la quitaba).
+    // Se consulta live_streams y no la clave redis mainstage:live:{id}: a esa
+    // nadie le hace DEL al terminar, expira sola a las 4 h, y dejaría al
+    // creador "disponible" mucho después de haberse ido.
+    let isLiveNow = false;
+    if (isOnline) {
       try {
         const liveCheck = await dbQuery(
           `SELECT 1 FROM live_streams
@@ -122,16 +126,21 @@ async function getBookingOptions(req, res) {
             LIMIT 1`,
           [creatorId]
         );
-        isBroadcasting = liveCheck.rowCount > 0;
+        isLiveNow = liveCheck.rowCount > 0;
       } catch (liveErr) {
         logger.warn('[getBookingOptions] live_streams check failed (non-fatal)', { creatorId, error: liveErr.message });
       }
     }
-    const isAcceptingCalls = isOnline && flagSet && !isBroadcasting;
+    const isAcceptingCalls = isOnline && isLiveNow && !optedOut;
 
     const fromDate = moment.utc().toDate();
     const toDate = moment.utc().add(14, 'days').toDate();
-    const slots = await CallBookingService.getAvailableSlots(creatorId, fromDate, toDate, durationMinutes);
+    // REGLA B — la disponibilidad es presencia, no calendario: sin directo no
+    // se ofrece ningún hueco. Las reservas YA confirmadas no se tocan (viven en
+    // bookings y se honran); esto solo controla lo que se ofrece de nuevo.
+    const slots = isAcceptingCalls
+      ? await CallBookingService.getAvailableSlots(creatorId, fromDate, toDate, durationMinutes)
+      : [];
 
     // ── Near-term slot injection (only when accepting_calls is active) ────────
     let nearTermSlots = [];
@@ -162,11 +171,9 @@ async function getBookingOptions(req, res) {
           endMinutes: eh * 60 + em,
         });
       }
-      // If the creator has NO schedule rows at all, we do not inject near-term
-      // slots — they need to set up their availability first.
-      const hasSchedule = scheduleByDay.size > 0;
-
-      if (hasSchedule) {
+      // REGLA B — ya no se exige horario semanal: la presencia en vivo es la
+      // única condición. scheduleByDay queda sin uso a propósito.
+      {
         // Fetch existing bookings that could overlap the near-term window
         const nearWindowStart = new Date(windowStart).toISOString();
         const nearWindowEnd = new Date(windowEnd + durationMinutes * 60 * 1000).toISOString();
@@ -206,10 +213,10 @@ async function getBookingOptions(req, res) {
           // in the creator's local tz. Since we only look ~60 min ahead and most creators in the
           // same day-of-week context, using the schedule's day_of_week (UTC-aligned) is an
           // acceptable approximation; the 5-min granularity prevents edge-of-day issues.
-          const daySlots = scheduleByDay.get(dowUtc) || [];
-          const withinSchedule = daySlots.some(
-            (s) => minuteOfDayUtc >= s.startMinutes && endMinuteOfDayUtc <= s.endMinutes
-          );
+          // REGLA B — sin filtro de horario. Se conserva el cálculo de minutos
+          // por si se quisiera reintroducir una ventana, pero no restringe.
+          void dowUtc; void minuteOfDayUtc; void endMinuteOfDayUtc;
+          const withinSchedule = true;
 
           if (withinSchedule) {
             // Check for conflicts with existing bookings
