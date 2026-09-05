@@ -266,59 +266,17 @@ const unsubscribeFromCreator = async (req, res) => {
   }
 };
 
-// ── Payout destination validators (server-side; must mirror cashoutService) ──
-// Active lanes: usdc_erc20 | eth | bre_b | cashapp | wise
-// Retired 2026-08-08: meru, btc, dash, usdt_tron, usdt_base
+// ── Payout destination validators ────────────────────────────────────────────
+// SIMPLIFIED 2026-09-05 — single lane: privy_wallet (USDC on Base to the
+// creator's Privy embedded wallet). All older lanes (usdc_erc20, eth, bre_b,
+// cashapp, wise, meru, btc, dash, usdt_*) are permanently retired.
 const PAYOUT_VALIDATORS = {
-  usdc_erc20: (d) => {
+  privy_wallet: (d) => {
     const a = (d?.address || '').trim();
-    if (!a) return 'USDC-ERC20 address is required.';
+    if (!a) return 'Wallet address is required.';
     if (!/^0x[0-9a-fA-F]{40}$/.test(a)) {
-      return 'Invalid USDC-ERC20 address. Use 0x… Ethereum mainnet address (42 chars).';
+      return 'Invalid wallet address. Use a 0x… EVM address.';
     }
-    return null;
-  },
-  eth: (d) => {
-    const a = (d?.address || '').trim();
-    if (!a) return 'ETH address is required.';
-    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) {
-      return 'Invalid ETH address. Use 0x… Ethereum mainnet address (42 chars).';
-    }
-    return null;
-  },
-  cashapp: (d) => {
-    const handle = (d?.handle || '').trim();
-    if (!handle) return 'Cash App handle is required.';
-    if (handle.length > 50) return 'Cash App handle too long.';
-    return null;
-  },
-  wise: (d) => {
-    const email = (d?.email || '').trim();
-    if (!email) return 'Wise email is required.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-      return 'Invalid Wise email address.';
-    }
-    return null;
-  },
-  // Colombia: Bre-B is the Banrep interoperable instant-payment key.
-  // Payload: { key: string, key_type: 'phone' | 'cedula' | 'email' }
-  bre_b: (d) => {
-    const key = (d?.key || '').trim();
-    const type = (d?.key_type || '').trim().toLowerCase();
-    if (!key) return 'Bre-B key is required.';
-    if (!['phone', 'cedula', 'email'].includes(type)) {
-      return 'Bre-B key_type must be phone, cedula, or email.';
-    }
-    if (type === 'phone' && !/^\+?[0-9]{10,15}$/.test(key)) {
-      return 'Invalid Bre-B phone. Use 10–15 digits (e.g. 3001234567 or +573001234567).';
-    }
-    if (type === 'cedula' && !/^[0-9]{6,12}$/.test(key)) {
-      return 'Invalid Bre-B cedula. Use 6–12 digits.';
-    }
-    if (type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(key)) {
-      return 'Invalid Bre-B email.';
-    }
-    if (key.length > 200) return 'Bre-B key too long.';
     return null;
   },
 };
@@ -326,11 +284,16 @@ const PAYOUT_VALIDATORS = {
 const VALID_PAYOUT_LANES = Object.keys(PAYOUT_VALIDATORS);
 
 // GET /api/webapp/creator/wallet
-// Returns the per-lane destinations blob.
+// SIMPLIFIED 2026-09-05 — single payout destination = the creator's Privy
+// embedded wallet (users.preferred_wallet_address, fallback wallet_address).
+// USDC on Base is the delivery rail. Legacy fields kept in the response for
+// backward compat with older client versions but should be treated as
+// deprecated.
 const getWalletAddress = async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT creator_payout_destinations, creator_wallet_verified,
+      `SELECT COALESCE(NULLIF(preferred_wallet_address, ''), NULLIF(wallet_address, '')) AS wallet_address,
+              creator_payout_destinations, creator_wallet_verified,
               payout_method, fiat_payout_method, fiat_payout_account,
               payout_reenroll_needed
          FROM users WHERE id = $1`,
@@ -339,6 +302,11 @@ const getWalletAddress = async (req, res) => {
     const row = rows[0] || {};
     return res.json({
       success: true,
+      // New surface — single Privy wallet on Base as the only cashout destination.
+      wallet_address: row.wallet_address || null,
+      chain: 'base',
+      token: 'USDC',
+      // Legacy (deprecated) — kept so older PayoutsTab bundles don't crash.
       destinations: row.creator_payout_destinations || {},
       verified: row.creator_wallet_verified || false,
       payoutMethod: row.payout_method || null,
@@ -353,87 +321,41 @@ const getWalletAddress = async (req, res) => {
 };
 
 // POST /api/webapp/creator/wallet
-// Accepts: { destinations: { usdc_erc20: { address }, eth: { address }, bre_b: { key, key_type }, cashapp: { handle }, wise: { email } } }
-// Each provided lane is validated + jsonb-merged into the existing column.
-// Setting a new active lane also clears payout_reenroll_needed if it was set.
+// SIMPLIFIED 2026-09-05. The single payout destination is the Privy embedded
+// wallet on `users.preferred_wallet_address` / `users.wallet_address`, which
+// gets populated automatically when the creator connects Privy. We keep this
+// endpoint alive so older UI bundles don't 404, but it's now a soft no-op:
+//   • If body.destinations.privy_wallet.address is supplied, we validate it,
+//     mirror it into `preferred_wallet_address`, and clear payout_reenroll_needed.
+//   • Any other lane in the body (usdc_erc20, eth, bre_b, cashapp, wise, etc.)
+//     is silently ignored — those rails are retired.
 const saveWalletAddress = async (req, res) => {
   try {
     const body = req.body || {};
+    const dests = (body.destinations && typeof body.destinations === 'object') ? body.destinations : {};
 
-    // Collect destination updates (only known active lanes accepted).
-    const destUpdates = {};
-    if (body.destinations && typeof body.destinations === 'object') {
-      for (const lane of VALID_PAYOUT_LANES) {
-        if (body.destinations[lane] && typeof body.destinations[lane] === 'object') {
-          destUpdates[lane] = body.destinations[lane];
-        }
-      }
+    let addressPatch = null;
+    const privy = dests.privy_wallet;
+    if (privy && typeof privy === 'object' && typeof privy.address === 'string') {
+      const err = PAYOUT_VALIDATORS.privy_wallet(privy);
+      if (err) return res.status(400).json({ error: err });
+      addressPatch = privy.address.trim();
     }
 
-    if (Object.keys(destUpdates).length === 0 && !body.fiatProvider && !body.fiatAccount) {
-      return res.status(400).json({ error: 'No destinations provided.' });
-    }
-
-    // Validate every lane in the patch before any DB write.
-    const sanitized = {};
-    for (const [lane, payload] of Object.entries(destUpdates)) {
-      const validatorFn = PAYOUT_VALIDATORS[lane];
-      if (!validatorFn) return res.status(400).json({ error: `Unknown payout lane: ${lane}` });
-      const error = validatorFn(payload);
-      if (error) return res.status(400).json({ error });
-      // Normalise whitespace in stored values.
-      if (lane === 'bre_b') {
-        sanitized[lane] = { key: payload.key.trim(), key_type: payload.key_type.trim().toLowerCase() };
-      } else if (lane === 'cashapp') {
-        sanitized[lane] = { handle: payload.handle.trim() };
-      } else if (lane === 'wise') {
-        sanitized[lane] = { email: payload.email.trim() };
-      } else {
-        sanitized[lane] = { address: payload.address.trim() };
-      }
-    }
-
-    if (Object.keys(sanitized).length > 0) {
+    if (addressPatch) {
       await query(
         `UPDATE users
-            SET creator_payout_destinations = COALESCE(creator_payout_destinations, '{}'::jsonb) || $1::jsonb,
+            SET preferred_wallet_address = $1,
+                creator_payout_destinations = COALESCE(creator_payout_destinations, '{}'::jsonb)
+                  || jsonb_build_object('privy_wallet', jsonb_build_object('address', $1::text)),
                 payout_reenroll_needed = false,
                 updated_at = NOW()
           WHERE id = $2`,
-        [
-          JSON.stringify(sanitized),
-          req.user.id,
-        ]
+        [addressPatch, req.user.id]
       );
     }
 
-    // Legacy fiat path stays as-is — fiat is not a cashout lane anymore but
-    // some creators may still have it set and the old UI may write to it.
-    if (body.fiatProvider !== undefined || body.fiatAccount !== undefined) {
-      const VALID_FIAT_PROVIDERS = ['venmo', 'cashapp', 'zelle', 'paypal', 'wise', 'revolut'];
-      const provider = (body.fiatProvider || '').trim().toLowerCase();
-      const account = (body.fiatAccount || '').trim().replace(/<[^>]*>/g, '');
-      if (provider && !VALID_FIAT_PROVIDERS.includes(provider)) {
-        return res.status(400).json({ error: 'Invalid fiat provider.' });
-      }
-      if (account.length > 200) {
-        return res.status(400).json({ error: 'Fiat account too long.' });
-      }
-      if (provider && account) {
-        await query(
-          `UPDATE users
-              SET payout_method = 'fiat',
-                  fiat_payout_method = $1,
-                  fiat_payout_account = $2,
-                  updated_at = NOW()
-            WHERE id = $3`,
-          [provider, account, req.user.id]
-        );
-      }
-    }
-
-    // Payout address save satisfies checklist item 2 — check if the creator is
-    // now fully ready to accept subscribers (identity + terms may already be set).
+    // Trigger the creator unlock check the old flow relied on.
     CreatorService.checkAndMaybeUnlockCreator(req.user.id).catch(err =>
       logger.warn('saveWalletAddress: checkAndMaybeUnlockCreator failed (non-fatal)', {
         userId: req.user.id,
@@ -441,13 +363,18 @@ const saveWalletAddress = async (req, res) => {
       })
     );
 
-    // Return the fresh destinations blob so the client can update state without a refetch.
+    // Return the resolved wallet so callers can update state without a refetch.
     const { rows: fresh } = await query(
-      `SELECT creator_payout_destinations FROM users WHERE id = $1`,
+      `SELECT COALESCE(NULLIF(preferred_wallet_address, ''), NULLIF(wallet_address, '')) AS wallet_address,
+              creator_payout_destinations
+         FROM users WHERE id = $1`,
       [req.user.id]
     );
     return res.json({
       success: true,
+      wallet_address: fresh[0]?.wallet_address || null,
+      chain: 'base',
+      token: 'USDC',
       destinations: fresh[0]?.creator_payout_destinations || {},
     });
   } catch (err) {

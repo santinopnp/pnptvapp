@@ -4912,28 +4912,26 @@ export function getCreatorModerationHistory(): Promise<CreatorModerationHistory>
 }
 
 // Payout destinations are stored as a per-lane jsonb blob. Lane payloads:
-// Active cashout lanes (aligned with backend cashoutService.js, migration 364).
-// Retired 2026-08-08: meru, btc, dash, usdt_tron, usdt_base.
-//   usdc_erc20 → { address: string }  (EVM 0x… on Ethereum mainnet)
-//   eth        → { address: string }  (EVM 0x… on Ethereum mainnet)
-//   bre_b      → { handle:  string }  (Colombia bre_b handle or phone)
-//   cashapp    → { handle:  string }  ($cashtag or phone)
-//   wise       → { email:   string }  (Wise registered email)
-export type PayoutLane = "usdc_erc20" | "eth" | "bre_b" | "cashapp" | "wise";
+// Single active cashout lane — the creator's Privy embedded wallet on Base.
+// From there they bridge / swap / off-ramp to any exchange themselves.
+// Simplified 2026-09-05. Older lanes (meru/btc/dash/usdt_*/usdc_erc20/eth/
+// bre_b/cashapp/wise) are permanently retired; the backend now rejects them.
+export type PayoutLane = "privy_wallet";
 
+// Retained shape so legacy code compiles, but only privy_wallet is populated.
 export type PayoutDestinations = Partial<{
-  usdc_erc20: { address: string };
-  eth:        { address: string };
-  bre_b:      { handle:  string };
-  cashapp:    { handle:  string };
-  wise:       { email:   string };
+  privy_wallet: { address: string };
 }>;
 
 export function getCreatorWallet(): Promise<{
   success: boolean;
+  // New surface (2026-09-05) — single Privy embedded wallet as the destination.
+  wallet_address: string | null;
+  chain: "base";
+  token: "USDC";
+  // Legacy mirrors kept for backward compat with older bundles.
   destinations: PayoutDestinations;
   verified: boolean;
-  // Legacy mirrors — present for backward compat with the old single-method UI.
   payoutMethod: "dash" | "meru" | "fiat";
   meruAccount: string | null;
   fiatPayoutMethod: string | null;
@@ -9384,7 +9382,9 @@ export interface CashoutBalance {
 export interface CashoutRequestBody {
   amount_usd: number;
   lane: PayoutLane;
-  destination: Record<string, unknown>;
+  // Destination is derived server-side from the creator's Privy wallet
+  // (simplified 2026-09-05). Kept optional for legacy callers that still send it.
+  destination?: Record<string, unknown>;
 }
 
 export interface CashoutRequestResponse {

@@ -7369,31 +7369,38 @@ app.post('/api/webapp/rush/pay-plan', requireSessionAuth, asyncHandler(async (re
 }));
 
 // ─── Creator withdraw request (creator initiates, admin approves) ───────────
-// POST /api/webapp/creators/withdraw  { amountUsd, destinationAddress, destinationCurrency? }
+// POST /api/webapp/creators/withdraw  { amountUsd }
+// SIMPLIFIED 2026-09-05 — destination is always USDC on Base to the creator's
+// Privy embedded wallet (server-side lookup). Client no longer supplies
+// destinationAddress / destinationCurrency. Any client-supplied values are
+// ignored for compatibility with older bundles.
 app.post('/api/webapp/creators/withdraw', requireSessionAuth, asyncHandler(async (req, res) => {
   const user = req.session.user;
   const amountUsd = parseFloat(req.body?.amountUsd);
-  const destinationAddress = String(req.body?.destinationAddress || '').trim();
-  const destinationCurrency = String(req.body?.destinationCurrency || 'usdttrc20').toLowerCase();
 
-  if (!Number.isFinite(amountUsd) || amountUsd < 50) {
-    return res.status(400).json({ success: false, error: 'Minimum withdrawal is $50' });
-  }
-  if (!destinationAddress || destinationAddress.length < 20) {
-    return res.status(400).json({ success: false, error: 'Valid destination address required' });
-  }
-  const ALLOWED_CURRENCIES = new Set(['usdttrc20', 'usdterc20', 'usdtbsc', 'btc', 'usdc', 'usdcsol', 'dash']);
-  if (!ALLOWED_CURRENCIES.has(destinationCurrency)) {
-    return res.status(400).json({ success: false, error: 'Unsupported destination currency' });
+  if (!Number.isFinite(amountUsd) || amountUsd < 25) {
+    return res.status(400).json({ success: false, error: 'Minimum withdrawal is $25' });
   }
 
-  // Verify creator
+  // Verify creator + look up Privy wallet in one query.
   const { rows: uRows } = await getPool().query(
-    "SELECT id, creator_status FROM users WHERE id = $1", [String(user.id)]
+    `SELECT id, creator_status,
+            COALESCE(NULLIF(preferred_wallet_address, ''), NULLIF(wallet_address, '')) AS addr
+       FROM users WHERE id = $1`,
+    [String(user.id)]
   );
   if (!uRows.length || uRows[0].creator_status !== 'active') {
     return res.status(403).json({ success: false, error: 'Not an active creator' });
   }
+  const destinationAddress = uRows[0].addr || '';
+  if (!destinationAddress || !/^0x[a-fA-F0-9]{40}$/.test(destinationAddress)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Connect a wallet first — log in with Privy and finish the wallet setup, then try again.',
+      code: 'NO_WALLET_CONFIGURED',
+    });
+  }
+  const destinationCurrency = 'usdc'; // USDC on Base — the single supported rail.
 
   // Lock oldest 'available' earnings summing to amountUsd (FIFO fair)
   const { getClient: getPgClient } = require('../../config/postgres');
