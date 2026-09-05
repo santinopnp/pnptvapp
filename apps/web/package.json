@@ -14,6 +14,8 @@
     "@livekit/components-react": "^2.9.20",
     "@livekit/components-styles": "^1.2.0",
     "@pnptv/ui-kit": "*",
+    "@solana-program/system": "^0.13.0",
+    "@solana/kit": "^7.1.1",
     "@types/react-window": "^1.8.8",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.12",
