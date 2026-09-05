@@ -468,6 +468,17 @@ function fmtMmSs(secs: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+// Smart cooldown formatter — shows Xh Ym when > 1h, MM:SS when < 1h.
+// Handles the new 24-hour cooldown gracefully.
+function fmtCooldown(secs: number): string {
+  if (secs >= 3600) {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  return fmtMmSs(secs);
+}
+
 export default function MainStage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -1037,7 +1048,8 @@ export default function MainStage() {
         setGateState(res.gateState as MainStageGateState);
       }
       // Refresh timer: free-tier tokens expire at window close (< 1h), so
-      // don't schedule a 1h-45m refresh — the whole point is that access ends.
+      // don't schedule a refresh — the whole point is that access ends.
+      // Paid viewers get 24h tokens, so refresh 15 min before expiry.
       if (viewerRefreshRef.current) clearTimeout(viewerRefreshRef.current);
       if (!isFreeTierViewer) {
         viewerRefreshRef.current = setTimeout(async () => {
@@ -1048,7 +1060,7 @@ export default function MainStage() {
           } catch {
             // On failure, let the connection expire naturally.
           }
-        }, (2 * 60 - 15) * 60 * 1000);
+        }, (24 * 60 - 15) * 60 * 1000);
       }
     } catch (err: unknown) {
       // Free-tier gate closed → surface gate info so the UI renders the
@@ -1216,14 +1228,14 @@ export default function MainStage() {
           <p className="text-white/70 text-sm max-w-xs mx-auto">
             Come back in{" "}
             <span className="text-pink-400 font-bold tabular-nums">
-              {cooldownLeft !== null ? fmtMmSs(cooldownLeft) : `${mins} min`}
+              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
             </span>
             , or skip the wait and become a Member — cam + mic all day.
           </p>
           <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
             Nos encantó tenerte 💎 Vuelve en{" "}
             <span className="tabular-nums">
-              {cooldownLeft !== null ? fmtMmSs(cooldownLeft) : `${mins} min`}
+              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
             </span>
             {" "}o únete como Miembro — cámara + mic todo el día.
           </p>
