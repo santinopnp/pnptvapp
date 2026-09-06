@@ -113,6 +113,46 @@ async function getSessionImpressions(sessionId) {
  * Daily summary for the ops report: impressions per slot, click-through rate,
  * upgrade CTA effectiveness, unique users, new Prime subs correlated with ads.
  */
+/**
+ * Rollup impressions + upgrade CTR by A/B variant. Reads
+ * ad_events.metadata->>'variant' — 'A' | 'B' | 'control' | null (rows
+ * written before variant was tracked are aggregated as 'unknown').
+ */
+async function getVariantBreakdown(sinceHours = 24) {
+  const { rows } = await query(
+    `SELECT COALESCE(metadata->>'variant', 'unknown') AS variant,
+            COUNT(*) FILTER (WHERE event_type='impression')    AS impressions,
+            COUNT(*) FILTER (WHERE event_type='click')         AS clicks,
+            COUNT(*) FILTER (WHERE event_type='upgrade_shown') AS upgrade_shown,
+            COUNT(*) FILTER (WHERE event_type='upgrade_click') AS upgrade_click,
+            COUNT(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL) AS unique_users
+       FROM ad_events
+      WHERE created_at > NOW() - ($1 || ' hours')::interval
+      GROUP BY 1
+      ORDER BY impressions DESC`,
+    [String(sinceHours)]
+  );
+  return rows;
+}
+
+/**
+ * Hourly time-series of impressions for the sparkline. Buckets are UTC hours.
+ * Returns [{bucket:'2026-09-06T04:00:00Z', impressions:N}, ...] oldest→newest.
+ */
+async function getImpressionsHourly(sinceHours = 24) {
+  const { rows } = await query(
+    `SELECT date_trunc('hour', created_at) AS bucket,
+            COUNT(*)::int AS impressions
+       FROM ad_events
+      WHERE created_at > NOW() - ($1 || ' hours')::interval
+        AND event_type = 'impression'
+      GROUP BY 1
+      ORDER BY 1 ASC`,
+    [String(sinceHours)]
+  );
+  return rows;
+}
+
 async function getDailySummary(sinceHours = 24) {
   const params = [String(sinceHours)];
   const [slots, subs, uniqueUsers] = await Promise.all([
@@ -190,5 +230,7 @@ module.exports = {
   getSessionImpressions,
   getDailySummary,
   getConversionCohort,
+  getVariantBreakdown,
+  getImpressionsHourly,
   ALLOWED_EVENT_TYPES,
 };

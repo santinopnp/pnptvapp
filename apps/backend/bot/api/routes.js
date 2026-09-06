@@ -18183,11 +18183,13 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
 app.get('/api/admin/monetization/summary', adminGuard, asyncHandler(async (req, res) => {
   const adAnalytics = require('../../services/adAnalyticsService');
   const hours = Math.min(720, Math.max(1, parseInt(req.query.hours, 10) || 24));
-  const [summary, cohort] = await Promise.all([
+  const [summary, cohort, variants, hourly] = await Promise.all([
     adAnalytics.getDailySummary(hours).catch(() => ({ slots: [], newPrimeSubs: 0, uniqueUsersServedAds: 0 })),
     adAnalytics.getConversionCohort(hours).catch(() => []),
+    adAnalytics.getVariantBreakdown(hours).catch(() => []),
+    adAnalytics.getImpressionsHourly(hours).catch(() => []),
   ]);
-  return res.json({ ok: true, hours, summary, cohort });
+  return res.json({ ok: true, hours, summary, cohort, variants, hourly });
 }));
 
 // POST /api/ads/event — client-side analytics batch drop.

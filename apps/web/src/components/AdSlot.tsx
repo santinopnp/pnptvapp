@@ -117,8 +117,17 @@ function ensureFlushLoop() {
     window.addEventListener("pagehide", flushEvents);
   }
 }
+// Module-scope variant cache — set by the first AdSlot that gets the config.
+// Every tracked event auto-injects this so ad_events.metadata.variant is
+// consistent across all events in the session for post-hoc A/B analysis.
+let cachedVariant: string | null = null;
+export function setTrackedVariant(v: string | null) { cachedVariant = v; }
+
 export function trackAdEvent(slot: string, type: string, metadata?: Record<string, unknown>) {
-  eventQueue.push({ slot, type, metadata });
+  const meta = cachedVariant
+    ? { ...(metadata || {}), variant: cachedVariant }
+    : metadata;
+  eventQueue.push({ slot, type, metadata: meta });
   ensureFlushLoop();
   if (eventQueue.length >= 20) flushEvents();
 }
@@ -194,6 +203,7 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
     let cancelled = false;
     getAdsConfig().then((r) => {
       if (cancelled) return;
+      if (r.ux?.variant) setTrackedVariant(r.ux.variant);
       if (!r.showAds) return;
       const s = r.slots?.[slot];
       if (!s || !s.zoneId) return;
