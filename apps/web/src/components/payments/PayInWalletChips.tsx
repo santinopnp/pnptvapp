@@ -570,7 +570,21 @@ export function WalletPayCard({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) return;
-      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      // Privy's Stripe fiat onramp intermittently returns "Unable to check
+      // payment status" / "Unable to open payment window" — the user did NOT
+      // get charged, but the flow is dead. Point them at an alternative path
+      // (Ru$h purchase via our own Stripe wire, then pay the surface in Ru$h)
+      // instead of dumping the raw error message.
+      const isOnrampGlitch =
+        /unable to (check payment status|open payment window)/i.test(msg) ||
+        /something went wrong setting up checkout/i.test(msg);
+      if (isOnrampGlitch) {
+        setError(es
+          ? "El pago con tarjeta está fallando en este momento. Prueba con 🎫 Ru$h 💎 (también con tarjeta, pipeline distinta) o vuelve a intentarlo en unos minutos."
+          : "Card top-up is glitching right now. Try 🎫 Ru$h 💎 instead (also card-based, different pipeline) or retry in a couple of minutes.");
+      } else {
+        setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+      }
       reportWalletClientError("addFunds", err, {
         surface, amountUsd, address: activeWallet?.address,
         walletType: activeWallet?.walletClientType,
