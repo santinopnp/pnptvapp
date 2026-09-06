@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PNPtv! — Strategic Documents</title>
+  <style>
+    :root {
+      --bg: #0d0d0f;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --accent: #7c5cfc;
+      --accent-soft: rgba(124,92,252,0.12);
+      --text: #e8e8f0;
+      --text-muted: #8888a0;
+      --gold: #f5c842;
+      --teal: #2dd4bf;
+      --coral: #f87171;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1a1025 0%, #0d0d1a 60%, #0a1520 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 48px 24px 40px;
+      text-align: center;
+    }
+
+    .logo-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .logo-mark span {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #a78bfa 0%, #7c5cfc 50%, #2dd4bf 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .logo-mark .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    header h1 {
+      font-size: clamp(20px, 4vw, 32px);
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    /* ── Lang toggle ── */
+    .lang-bar {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .lang-btn {
+      padding: 6px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .lang-btn.active,
+    .lang-btn:hover {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: #a78bfa;
+    }
+
+    /* ── Layout ── */
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 20px 80px;
+    }
+
+    /* ── Section ── */
+    .section {
+      margin-bottom: 48px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .section-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ── Doc cards ── */
+    .doc-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .doc-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .doc-card:hover {
+      border-color: var(--accent);
+      background: #1e1e28;
+    }
+
+    .doc-flag {
+      font-size: 22px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .doc-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .doc-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .doc-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .doc-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-view {
+      background: var(--accent-soft);
+      color: #a78bfa;
+      border: 1px solid rgba(124,92,252,0.3);
+    }
+
+    .btn-view:hover {
+      background: rgba(124,92,252,0.22);
+    }
+
+    .btn-pdf {
+      background: rgba(245,200,66,0.1);
+      color: var(--gold);
+      border: 1px solid rgba(245,200,66,0.25);
+    }
+
+    .btn-pdf:hover {
+      background: rgba(245,200,66,0.18);
+    }
+
+    .btn-icon { font-size: 13px; }
+
+    /* ── Badge ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    .badge-live { background: rgba(45,212,191,0.15); color: var(--teal); }
+    .badge-new  { background: rgba(124,92,252,0.2); color: #a78bfa; }
+
+    /* ── Footer note ── */
+    .footer-note {
+      text-align: center;
+      padding: 32px 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer-note a { color: #a78bfa; text-decoration: none; }
+    .footer-note a:hover { text-decoration: underline; }
+
+    /* ── Lang layers ── */
+    [data-lang="es"] { display: none; }
+    body.lang-es [data-lang="en"] { display: none; }
+    body.lang-es [data-lang="es"] { display: block; }
+    body.lang-es .doc-actions[data-lang="es"],
+    body.lang-es .doc-info[data-lang="es"] { display: flex; }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .doc-card { flex-direction: column; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">
+    <div class="dot"></div>
+    <span>PNPtv!</span>
+    <div class="dot"></div>
+  </div>
+  <h1 data-lang="en">Strategic Documents & Reports</h1>
+  <h1 data-lang="es" style="display:none">Documentos Estratégicos e Informes</h1>
+  <p data-lang="en">Business development, creator welfare, and institutional planning documents for PNPtv! — Queer PNP community platform.</p>
+  <p data-lang="es" style="display:none">Documentos de desarrollo de negocio, bienestar de creadores y planificación institucional de PNPtv! — plataforma comunitaria Queer PNP.</p>
+
+  <div class="lang-bar">
+    <button class="lang-btn active" onclick="setLang('en')">🇺🇸 English</button>
+    <button class="lang-btn" onclick="setLang('es')">🇨🇴 Español</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── CREATOR CARE ── -->
+  <section class="section">
+    <div class="section-header">
+      <div class="section-icon" style="background:rgba(45,212,191,0.12);">💚</div>
+      <div>
+        <div class="section-title" data-lang="en">Creator Care Program <span class="badge badge-new">New</span></div>
+        <div class="section-title" data-lang="es" style="display:none">Creator Care Program <span class="badge badge-new">Nuevo</span></div>
+        <div class="section-subtitle" data-lang="en">Wellness, fair pay, growth & community — complete guide for creators</div>
+        <div class="section-subtitle" data-lang="es" style="display:none">Bienestar, pagos justos, crecimiento y comunidad — guía completa para creadores</div>
+      </div>
+    </div>
+    <div class="doc-grid">
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Creator Care Program — Complete Guide <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Four pillars: fair money, body & mind, real growth, community of peers. Roadmap with blank Owner / Due date fields for the team to fill in.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/creator-care-program-en.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Creator Care Program — Guía Completa <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Cuatro pilares: dinero justo, cuerpo y mente, crecer de verdad, comunidad de pares. Roadmap con campos Responsable / Due date en blanco para completar en equipo.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/creator-care-program-es.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── DUTY OF CARE / TECHNICAL PLAN ── -->
+  <section class="section">
+    <div class="section-header">
+      <div class="section-icon" style="background:rgba(124,92,252,0.12);">🛡</div>
+      <div>
+        <div class="section-title" data-lang="en">Duty of Care — Technical Implementation Plan</div>
+        <div class="section-title" data-lang="es" style="display:none">Duty of Care — Plan de Implementación Técnica</div>
+        <div class="section-subtitle" data-lang="en">5-phase plan with verified codebase references, metrics, and team blanks</div>
+        <div class="section-subtitle" data-lang="es" style="display:none">Plan de 5 fases con referencias verificadas del codebase, métricas y campos en blanco para el equipo</div>
+      </div>
+    </div>
+    <div class="doc-grid">
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Technical Implementation Plan — Duty of Care (EN)</div>
+          <div class="doc-desc">Comprehensive 5-phase roadmap: identity verification, wellness infrastructure, economic protections, community safety, and institutional reporting. Each phase has Owner & Due date fields.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/implementation-plan-duty-of-care.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Plan de Implementación Técnica — Duty of Care (ES)</div>
+          <div class="doc-desc">Hoja de ruta de 5 fases: verificación de identidad, infraestructura de bienestar, protecciones económicas, seguridad comunitaria e informes institucionales. Cada fase tiene campos Responsable y Due date.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/plan-implementacion-duty-of-care.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+
+    </div>
+  </section>
+
+  <!-- ── ACADEMIC THESIS ── -->
+  <section class="section">
+    <div class="section-header">
+      <div class="section-icon" style="background:rgba(248,113,113,0.1);">📚</div>
+      <div>
+        <div class="section-title" data-lang="en">Academic Thesis — Technological Sovereignty & Ethical HR in Sex Work</div>
+        <div class="section-title" data-lang="es" style="display:none">Tesis Académica — Soberanía Tecnológica y RRHH Éticos en el Trabajo Sexual</div>
+        <div class="section-subtitle" data-lang="en">PNPtv as case study — verified against actual production code</div>
+        <div class="section-subtitle" data-lang="es" style="display:none">PNPtv como caso de estudio — verificado contra el código en producción</div>
+      </div>
+    </div>
+    <div class="doc-grid">
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Academic Thesis (EN) — PNPtv Case Study</div>
+          <div class="doc-desc">Intersects the original thesis with the production codebase: passkey auth, Wellness Mode cooling-off, PNP-context content filter, location fuzzing, HMAC security, and more — all verified against live service files.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/academic-thesis-pnptv.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Tesis Académica (ES) — Caso de Estudio PNPtv</div>
+          <div class="doc-desc">Intersecta la tesis original con el codebase en producción: passkey auth, Wellness Mode con cooling-off, filtro de contenido contextualizado PNP, fuzzing de ubicación, seguridad HMAC — todo verificado contra los archivos de servicio en vivo.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/tesis-academica-pnptv.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── BUSINESS PLAN ── -->
+  <section class="section">
+    <div class="section-header">
+      <div class="section-icon" style="background:rgba(245,200,66,0.1);">📈</div>
+      <div>
+        <div class="section-title" data-lang="en">Business Plan & Phase 2 Roadmap</div>
+        <div class="section-title" data-lang="es" style="display:none">Plan de Negocio y Hoja de Ruta Fase 2</div>
+        <div class="section-subtitle" data-lang="en">Mission, org chart, revenue model, OKRs, 12-month milestones, hiring plan</div>
+        <div class="section-subtitle" data-lang="es" style="display:none">Misión, organigrama, modelo de ingresos, OKRs, hitos a 12 meses, plan de contratación</div>
+      </div>
+    </div>
+    <div class="doc-grid">
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Business Development Plan (EN) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Mission, vision, values. 10-person org chart, welfare-first creator ATS, revenue model & competitive moat, OKRs, compliance strategy.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-business-plan-en.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Plan de Desarrollo Empresarial (ES) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Misión, visión, valores. Organigrama de 10 personas, ATS bienestar-primero, modelo de ingresos y ventaja competitiva, OKRs, estrategia de cumplimiento.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-business-plan-es.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Phase 2 Roadmap — 12-Month Plan (EN) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Month-by-month milestones, hiring plan (7 roles + timing), tool adoption schedule, financial framework, risk register, KPIs by department.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-phase2-roadmap-en.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Hoja de Ruta Fase 2 — 12 Meses (ES) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Hitos mes a mes, plan de contratación (7 roles + cronograma), herramientas, marco financiero, registro de riesgos, KPIs por departamento.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-phase2-roadmap-es.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── PITCH DECK ── -->
+  <section class="section">
+    <div class="section-header">
+      <div class="section-icon" style="background:rgba(224,64,251,0.1);">🚀</div>
+      <div>
+        <div class="section-title" data-lang="en">Investor & Partner Pitch Deck</div>
+        <div class="section-title" data-lang="es" style="display:none">Pitch Deck para Inversores y Aliados</div>
+        <div class="section-subtitle" data-lang="en">12-slide deck: problem, solution, market, product, business model, team, roadmap &amp; the ask</div>
+        <div class="section-subtitle" data-lang="es" style="display:none">12 diapositivas: problema, solución, mercado, producto, modelo de negocio, equipo, hoja de ruta y propuesta</div>
+      </div>
+    </div>
+    <div class="doc-grid">
+
+      <div class="doc-card">
+        <div class="doc-flag">🇺🇸</div>
+        <div class="doc-info">
+          <div class="doc-title">Pitch Deck (EN) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Full investor and partner pitch: the problem, solution, market opportunity, product, business model, competitive moat, team, roadmap, and the ask.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-pitch-deck-en.html"><span class="btn-icon">👁</span> Read online</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card">
+        <div class="doc-flag">🇨🇴</div>
+        <div class="doc-info">
+          <div class="doc-title">Pitch Deck (ES) <span class="badge badge-live">Live</span></div>
+          <div class="doc-desc">Pitch completo para inversores y aliados: el problema, la solución, el mercado, el producto, el modelo de negocio, la ventaja competitiva, el equipo, la hoja de ruta y la propuesta.</div>
+          <div class="doc-actions">
+            <a class="btn btn-view" href="/docs/pnptv-pitch-deck-es.html"><span class="btn-icon">👁</span> Leer en línea</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<div class="footer-note">
+  <p data-lang="en">Questions? <a href="mailto:support@pnptv.app">support@pnptv.app</a> · All documents are confidential and intended for internal and authorized use only.</p>
+  <p data-lang="es" style="display:none">¿Preguntas? <a href="mailto:support@pnptv.app">support@pnptv.app</a> · Todos los documentos son confidenciales y de uso interno y autorizado únicamente.</p>
+  <p style="margin-top: 8px; font-size: 11px; color: #555;">PNPtv! / Amplifying Insights LLC · v1.0 · 2026</p>
+</div>
+
+<script>
+  function setLang(lang) {
+    document.body.classList.toggle('lang-es', lang === 'es');
+    document.querySelectorAll('.lang-btn').forEach((btn, i) => {
+      btn.classList.toggle('active', (i === 0 && lang === 'en') || (i === 1 && lang === 'es'));
+    });
+    // toggle all data-lang elements
+    document.querySelectorAll('[data-lang]').forEach(el => {
+      el.style.display = (el.dataset.lang === lang) ? '' : 'none';
+    });
+  }
+
+  // Init
+  setLang('en');
+</script>
+
+</body>
+</html>

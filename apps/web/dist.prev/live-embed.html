@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>PNPtv! Live</title>
+<style>
+  html,body { margin:0; padding:0; background:#000; height:100%; overflow:hidden; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:#fff; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  video { width:100%; height:100%; object-fit:contain; background:#000; }
+  #err, #wait { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:1rem; font-size:.9rem; color:#bbb; }
+  #err.on, #wait.on { display:flex; }
+  a { color:#D4007A; text-decoration:none; font-weight:700; }
+  .brand { position:absolute; top:12px; left:12px; font-size:11px; font-weight:800; letter-spacing:.05em; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.6); pointer-events:none; }
+  .live-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:#ff2b6a; margin-right:4px; vertical-align:middle; animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted autoplay controls preload="metadata"></video>
+  <div id="wait"><div>Connecting to live stream…</div></div>
+  <div id="err"><div>Stream unavailable.<br><a id="openLink" href="https://pnptv.app">Open on pnptv.app →</a></div></div>
+  <div class="brand"><span class="live-dot"></span>PNPtv! LIVE</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<script>
+(function () {
+  var v = document.getElementById('v');
+  var wait = document.getElementById('wait');
+  var err = document.getElementById('err');
+  var openLink = document.getElementById('openLink');
+  var params = new URLSearchParams(location.search);
+  var ref = params.get('ref') || '';
+  var safeRef = ref.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeRef) { err.classList.add('on'); return; }
+  openLink.href = 'https://pnptv.app/live/' + encodeURIComponent(safeRef);
+  var src = 'https://live.pnptv.app/memfs/' + safeRef + '.m3u8';
+  wait.classList.add('on');
+  var fail = function () { wait.classList.remove('on'); err.classList.add('on'); };
+  var ok = function () { wait.classList.remove('on'); err.classList.remove('on'); };
+  if (v.canPlayType('application/vnd.apple.mpegurl')) {
+    v.src = src;
+    v.addEventListener('loadedmetadata', ok, { once: true });
+    v.addEventListener('error', fail, { once: true });
+  } else if (window.Hls && window.Hls.isSupported()) {
+    var hls = new window.Hls({ lowLatencyMode: true, liveSyncDurationCount: 2 });
+    hls.loadSource(src);
+    hls.attachMedia(v);
+    hls.on(window.Hls.Events.MANIFEST_PARSED, ok);
+    hls.on(window.Hls.Events.ERROR, function (_evt, data) { if (data && data.fatal) fail(); });
+  } else {
+    fail();
+  }
+  // Auto-refresh when tab regains focus (in case stream came back up)
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && v.error) location.reload();
+  });
+})();
+</script>
+</body>
+</html>

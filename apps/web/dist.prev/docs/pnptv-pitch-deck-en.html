@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PNPtv! — Investor & Partner Pitch Deck</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root {
+    --bg:       #08080f;
+    --bg2:      #0f0f1e;
+    --bg3:      #13132a;
+    --card:     #141428;
+    --border:   rgba(255,255,255,0.07);
+    --purple:   #7c3aed;
+    --violet:   #a855f7;
+    --magenta:  #e040fb;
+    --gold:     #fbbf24;
+    --cyan:     #06b6d4;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --text:     #e8e8f0;
+    --muted:    #8888aa;
+    --radius:   14px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    line-height: 1.65;
+    font-size: 16px;
+  }
+
+  /* ── CONFIDENTIAL WATERMARK ── */
+  body::before {
+    content: "CONFIDENTIAL";
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%) rotate(-35deg);
+    font-size: 7vw;
+    color: rgba(255,255,255,0.025);
+    pointer-events: none;
+    z-index: 9999;
+    white-space: nowrap;
+    font-weight: 900;
+    letter-spacing: .2em;
+  }
+
+  /* ── NAV ── */
+  .top-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(8,8,15,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 28px;
+  }
+  .top-bar .brand { font-weight: 800; font-size: 18px; letter-spacing: -.5px; }
+  .top-bar .brand span { color: var(--magenta); }
+  .top-bar .confidential-tag {
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--magenta); border: 1px solid var(--magenta);
+    padding: 3px 10px; border-radius: 20px;
+  }
+
+  /* ── SLIDES ── */
+  .slide {
+    min-height: 100vh;
+    padding: 80px 48px;
+    display: flex; flex-direction: column; justify-content: center;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .slide:nth-child(even) { background: var(--bg2); }
+
+  .slide-number {
+    position: absolute; top: 32px; right: 40px;
+    font-size: 11px; letter-spacing: .15em; color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .slide-inner { max-width: 960px; margin: 0 auto; width: 100%; }
+
+  /* ── TYPOGRAPHY ── */
+  .eyebrow {
+    font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--violet); margin-bottom: 16px; font-weight: 600;
+  }
+  h1 { font-size: clamp(2.4rem, 5vw, 4rem); font-weight: 900; line-height: 1.1; letter-spacing: -.03em; }
+  h2 { font-size: clamp(1.8rem, 3.5vw, 2.8rem); font-weight: 800; line-height: 1.15; letter-spacing: -.02em; }
+  h3 { font-size: 1.25rem; font-weight: 700; }
+  .sub { font-size: 1.15rem; color: var(--muted); margin-top: 16px; line-height: 1.7; max-width: 680px; }
+  .lead { font-size: 1.35rem; color: var(--text); line-height: 1.65; max-width: 760px; }
+  em { color: var(--violet); font-style: normal; font-weight: 600; }
+  strong { color: #fff; }
+
+  /* ── GRADIENT TEXT ── */
+  .gradient-text {
+    background: linear-gradient(135deg, var(--violet), var(--magenta));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+
+  /* ── COVER SLIDE ── */
+  .cover-slide {
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,.22) 0%, transparent 70%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(224,64,251,.12) 0%, transparent 60%),
+                var(--bg);
+    min-height: 100vh;
+  }
+  .cover-logo { font-size: 3rem; font-weight: 900; letter-spacing: -.04em; margin-bottom: 8px; }
+  .cover-logo span { color: var(--magenta); }
+  .cover-tagline { font-size: clamp(1rem, 2vw, 1.2rem); color: var(--muted); margin-bottom: 48px; }
+  .cover-title { margin-bottom: 32px; }
+  .cover-meta { display: flex; gap: 32px; flex-wrap: wrap; margin-top: 48px; }
+  .cover-meta-item { font-size: 13px; color: var(--muted); }
+  .cover-meta-item strong { color: var(--text); display: block; font-size: 15px; }
+
+  /* ── STAT GRID ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 40px; }
+  .stat-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 28px 24px; text-align: center;
+  }
+  .stat-card .stat-value { font-size: 2.2rem; font-weight: 900; letter-spacing: -.03em; }
+  .stat-card .stat-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  /* ── CARDS ── */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 36px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 28px 24px;
+  }
+  .card .card-icon { font-size: 2rem; margin-bottom: 14px; }
+  .card h3 { margin-bottom: 10px; }
+  .card p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+
+  /* ── ACCENT CARD ── */
+  .accent-card {
+    background: linear-gradient(135deg, rgba(124,58,237,.18), rgba(224,64,251,.1));
+    border: 1px solid rgba(168,85,247,.3);
+    border-radius: var(--radius);
+    padding: 36px 32px;
+    margin-top: 32px;
+  }
+  .accent-card.gold-accent {
+    background: linear-gradient(135deg, rgba(251,191,36,.12), rgba(251,191,36,.04));
+    border-color: rgba(251,191,36,.3);
+  }
+  .accent-card.green-accent {
+    background: linear-gradient(135deg, rgba(34,197,94,.12), rgba(34,197,94,.04));
+    border-color: rgba(34,197,94,.3);
+  }
+
+  /* ── TWO-COL ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; margin-top: 36px; }
+  @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* ── PROBLEM ITEMS ── */
+  .problem-list { list-style: none; margin-top: 32px; display: flex; flex-direction: column; gap: 20px; }
+  .problem-list li {
+    display: flex; gap: 16px; align-items: flex-start;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px 24px;
+  }
+  .problem-list li .picon { font-size: 1.6rem; flex-shrink: 0; }
+  .problem-list li .ptitle { font-weight: 700; font-size: 1rem; margin-bottom: 4px; }
+  .problem-list li .pdesc { font-size: 14px; color: var(--muted); }
+
+  /* ── FEATURE ROW ── */
+  .feature-row { display: flex; flex-direction: column; gap: 14px; margin-top: 28px; }
+  .feature-item {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px;
+  }
+  .feature-item .fi-icon { font-size: 1.4rem; flex-shrink: 0; width: 40px; text-align: center; }
+  .feature-item .fi-title { font-weight: 700; font-size: 15px; }
+  .feature-item .fi-desc { font-size: 13px; color: var(--muted); }
+
+  /* ── TABLE ── */
+  .revenue-table { width: 100%; border-collapse: collapse; margin-top: 28px; }
+  .revenue-table th {
+    background: rgba(124,58,237,.2); color: var(--violet);
+    font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .revenue-table td { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .revenue-table tr:last-child td { border-bottom: none; }
+  .revenue-table tr:hover td { background: rgba(255,255,255,.03); }
+  .badge-live { background: rgba(34,197,94,.2); color: var(--green); border: 1px solid rgba(34,197,94,.4); border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+  .badge-soon { background: rgba(251,191,36,.15); color: var(--gold); border: 1px solid rgba(251,191,36,.35); border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+
+  /* ── TIMELINE ── */
+  .timeline { margin-top: 32px; display: flex; flex-direction: column; gap: 4px; }
+  .tl-item { display: flex; gap: 20px; align-items: flex-start; padding: 18px 0; border-bottom: 1px solid var(--border); }
+  .tl-item:last-child { border-bottom: none; }
+  .tl-quarter { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--violet); min-width: 60px; padding-top: 2px; }
+  .tl-content h4 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .tl-content p { font-size: 13px; color: var(--muted); }
+
+  /* ── TEAM ── */
+  .team-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin-top: 36px; }
+  .team-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 28px 24px; text-align: center;
+  }
+  .team-avatar {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--purple), var(--magenta));
+    margin: 0 auto 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem; font-weight: 900; color: #fff;
+  }
+  .team-name { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+  .team-role { font-size: 13px; color: var(--violet); margin-bottom: 10px; font-weight: 600; }
+  .team-bio { font-size: 13px; color: var(--muted); line-height: 1.55; }
+
+  /* ── MOAT ── */
+  .moat-list { list-style: none; margin-top: 28px; counter-reset: moat; display: flex; flex-direction: column; gap: 14px; }
+  .moat-list li {
+    counter-increment: moat;
+    display: flex; gap: 16px; align-items: flex-start;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px;
+  }
+  .moat-list li::before {
+    content: counter(moat);
+    min-width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--purple), var(--magenta));
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 14px; flex-shrink: 0;
+  }
+  .moat-list li .mtitle { font-weight: 700; margin-bottom: 4px; }
+  .moat-list li .mdesc { font-size: 14px; color: var(--muted); }
+
+  /* ── SPLIT VISUAL ── */
+  .split-visual { display: flex; gap: 12px; margin-top: 28px; align-items: stretch; }
+  .split-bar { border-radius: 10px; padding: 24px 20px; font-weight: 800; font-size: 1.5rem; display: flex; flex-direction: column; justify-content: flex-end; }
+  .split-creator { background: linear-gradient(180deg, rgba(34,197,94,.25), rgba(34,197,94,.1)); border: 1px solid rgba(34,197,94,.4); flex: 7; color: var(--green); }
+  .split-platform { background: linear-gradient(180deg, rgba(124,58,237,.25), rgba(124,58,237,.1)); border: 1px solid rgba(124,58,237,.4); flex: 3; color: var(--violet); }
+  .split-bar .split-pct { font-size: 2.8rem; }
+  .split-bar .split-who { font-size: 13px; color: var(--muted); font-weight: 500; margin-top: 4px; }
+
+  /* ── CTA ── */
+  .cta-block { text-align: center; margin-top: 48px; }
+  .cta-email {
+    display: inline-block; margin-top: 20px;
+    background: linear-gradient(135deg, var(--purple), var(--magenta));
+    color: #fff; text-decoration: none; font-weight: 700; font-size: 16px;
+    padding: 16px 40px; border-radius: 50px;
+    letter-spacing: .02em;
+  }
+  .divider { height: 1px; background: linear-gradient(90deg, transparent, var(--border), transparent); margin: 48px 0; }
+
+  /* ── PROTECTION ── */
+  p,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,pre,code,span,a,em,strong,section,article
+  {-webkit-user-select:none!important;-moz-user-select:none!important;user-select:none!important}
+  @media print{html{display:none!important}}
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 680px) {
+    .slide { padding: 60px 24px; }
+    .top-bar { padding: 12px 20px; }
+    .split-visual { flex-direction: column; }
+    .cover-meta { flex-direction: column; gap: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <div class="brand">PNP<span>tv!</span></div>
+  <div class="confidential-tag">Confidential</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 1 — COVER
+     ═══════════════════════════════════════════════ -->
+<section class="slide cover-slide">
+  <div class="slide-number">01 / 12</div>
+  <div class="slide-inner">
+    <div class="cover-logo">PNP<span>tv!</span></div>
+    <div class="cover-tagline">The world's first welfare-first adult platform for the queer PNP community</div>
+
+    <div class="cover-title">
+      <h1>Where <span class="gradient-text">creators earn</span><br>and communities <span class="gradient-text">thrive.</span></h1>
+      <p class="sub">
+        A live, revenue-generating SaaS platform serving a deeply underserved global community —
+        built on radical transparency, creator welfare, and a technical foundation that outclasses anything in its category.
+      </p>
+    </div>
+
+    <div class="cover-meta">
+      <div class="cover-meta-item">
+        <strong>Status</strong>
+        Live in production
+      </div>
+      <div class="cover-meta-item">
+        <strong>Stage</strong>
+        Revenue-generating · Scaling
+      </div>
+      <div class="cover-meta-item">
+        <strong>Category</strong>
+        Creator Economy · Adult · LGBTQ+
+      </div>
+      <div class="cover-meta-item">
+        <strong>Geography</strong>
+        LATAM · US · Europe
+      </div>
+      <div class="cover-meta-item">
+        <strong>Deck date</strong>
+        August 2026
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 2 — THE PROBLEM
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">02 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Problem</div>
+    <h2>Adult platforms are built to exploit, not protect.</h2>
+    <p class="sub">
+      A $100B+ global industry with no platform that treats its creators as human beings —
+      and no platform that speaks to the PNP community at all.
+    </p>
+
+    <ul class="problem-list">
+      <li>
+        <div class="picon">💸</div>
+        <div>
+          <div class="ptitle">Creators are exploited on day one</div>
+          <div class="pdesc">Most platforms take 20–50% with no transparency, no minimum guarantee, and no support infrastructure. Creators absorb all the risk while platforms capture most of the value.</div>
+        </div>
+      </li>
+      <li>
+        <div class="picon">🏳️‍🌈</div>
+        <div>
+          <div class="ptitle">The PNP community has zero dedicated platforms</div>
+          <div class="pdesc">Gay and queer adults who are part of PNP culture — estimated tens of millions globally — are scattered across Grindr, OnlyFans, and Telegram with no community home. No content moderation calibrated to their reality. No harm reduction. No belonging.</div>
+        </div>
+      </li>
+      <li>
+        <div class="picon">🆘</div>
+        <div>
+          <div class="ptitle">No welfare infrastructure anywhere in the industry</div>
+          <div class="pdesc">Creator burnout, coercion, and trafficking are industry-wide problems. No platform has built a systematic intake process, ongoing check-ins, or a distress protocol. The industry's answer is a ToS and a ban button.</div>
+        </div>
+      </li>
+      <li>
+        <div class="picon">🔒</div>
+        <div>
+          <div class="ptitle">Payment infrastructure penalizes adult creators</div>
+          <div class="pdesc">Visa/Mastercard restrictions, sudden bans, and chargeback fraud destroy creator income overnight. Legacy platforms leave creators exposed to payment risk with no alternatives.</div>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 3 — THE SOLUTION
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">03 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Solution</div>
+    <h2>PNPtv! — the platform built <em>from inside</em> the community.</h2>
+
+    <div class="accent-card">
+      <p class="lead">
+        "The question that founded us wasn't 'how do we make money from creators?' It was:
+        <strong>how do we make a creator's career something they can be proud of —
+        something that doesn't cost them their health, and leaves them with something real when they decide to move on?</strong>"
+      </p>
+      <p style="margin-top:14px;font-size:14px;color:var(--muted)">— PNPtv! founding team</p>
+    </div>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🎯</div>
+        <h3>Community-specific</h3>
+        <p>The only platform built explicitly for PNP-adjacent queer adults. Content moderation, language, culture, and harm reduction are calibrated to this community — not retrofitted from a generalist platform.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🛡️</div>
+        <h3>Welfare-first intake</h3>
+        <p>Every creator passes a structured welfare interview before going live. We screen for coercion, financial desperation, and third-party control — not because it's good PR, but because it protects us legally and morally.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">₿</div>
+        <h3>Crypto-native payments</h3>
+        <p>NowPayments integration across 5 channels: BTC, DASH, USDT TRC-20, USDT Base, and Meru (LATAM). No chargebacks. No bank deplatforming. Creators get paid reliably.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <h3>Modern tech stack</h3>
+        <p>React/Vite frontend, Node.js/PostgreSQL/Redis backend, LiveKit for video calls, BullMQ for async jobs. Built to scale without rebuilding. No technical debt hiding behind a pretty interface.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 4 — MARKET OPPORTUNITY
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">04 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">Market Opportunity</div>
+    <h2>A $100B+ industry with a <em>zero-player niche</em>.</h2>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-value gradient-text">$100B+</div>
+        <div class="stat-label">Global adult content market (2026 est.)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value gradient-text">$6B+</div>
+        <div class="stat-label">Creator economy in adult content annually</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value gradient-text">0</div>
+        <div class="stat-label">Dedicated platforms for the PNP queer community worldwide</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value gradient-text">25–45</div>
+        <div class="stat-label">Primary member age range — highest-spend demographic online</div>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-top:40px">
+      <div>
+        <h3 style="margin-bottom:16px">Who are our members</h3>
+        <div class="feature-row">
+          <div class="feature-item">
+            <div class="fi-icon">🌎</div>
+            <div>
+              <div class="fi-title">LATAM + US + Europe</div>
+              <div class="fi-desc">Primarily gay and bisexual men, 25–45, globally distributed</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">💎</div>
+            <div>
+              <div class="fi-title">High disposable income, high loyalty</div>
+              <div class="fi-desc">Members who find community don't leave — churn is a content problem, not a community one</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🔞</div>
+            <div>
+              <div class="fi-title">Underserved by every existing platform</div>
+              <div class="fi-desc">Cannot find PNP-specific content, community, or harm reduction anywhere else</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:16px">Who are our creators</h3>
+        <div class="feature-row">
+          <div class="feature-item">
+            <div class="fi-icon">🎬</div>
+            <div>
+              <div class="fi-title">Community figures, not strangers</div>
+              <div class="fi-desc">Creators are known within the community — their audience follows them, not the platform</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🏆</div>
+            <div>
+              <div class="fi-title">Motivated by community, not just money</div>
+              <div class="fi-desc">Creators who chose PNPtv! over generalist platforms have higher retention and content quality</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🌱</div>
+            <div>
+              <div class="fi-title">Growing with us</div>
+              <div class="fi-desc">Our Creator Care Program builds careers — retained creators are our best marketing</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 5 — PRODUCT
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">05 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Product</div>
+    <h2>A full creator economy platform, <em>live in production today</em>.</h2>
+    <p class="sub">Not a landing page, not a beta. A complete product with real users, real creators, and real revenue.</p>
+
+    <div class="card-grid" style="margin-top:32px">
+      <div class="card">
+        <div class="card-icon">💎</div>
+        <h3>PRIME Subscriptions</h3>
+        <p>Recurring monthly membership unlocking the full platform: premium content, exclusive hangouts, creator channels, and priority access to live shows.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📺</div>
+        <h3>Creator Channels (PNP Channels)</h3>
+        <p>Individual creator content libraries — photos, videos, and series. Members purchase 30-day passes to specific creators they follow.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔴</div>
+        <h3>Live Streaming (PNP Live)</h3>
+        <p>RTMP-based live streaming with real-time tipping (Ru$h tokens), viewer interaction, and Main Stage for featured broadcasts. Creators keep 100% of live tips.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📞</div>
+        <h3>Private Calls</h3>
+        <p>LiveKit-powered video calls booked directly through the platform. Creators set availability, members book slots, platform handles scheduling and payment.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">💬</div>
+        <h3>Hangouts</h3>
+        <p>Community group spaces — themed rooms where members connect, share, and interact. Both free community hangouts and creator-exclusive gated spaces.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🛡️</div>
+        <h3>Self-Care Center</h3>
+        <p>Built-in wellness features: Wellness Mode with 24h cooling-off, private use tracker, Sober Body program, and Cristina AI support — 24/7, in-app.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 6 — BUSINESS MODEL
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">06 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">Business Model</div>
+    <h2>Multiple revenue streams. <em>Transparent economics.</em></h2>
+
+    <div class="two-col">
+      <div>
+        <table class="revenue-table">
+          <thead>
+            <tr><th>Revenue Stream</th><th>Status</th><th>Platform Take</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>PRIME Subscriptions</td><td><span class="badge-live">Live</span></td><td>30%</td></tr>
+            <tr><td>Creator Channel Passes</td><td><span class="badge-live">Live</span></td><td>30%</td></tr>
+            <tr><td>Private Call Bookings</td><td><span class="badge-live">Live</span></td><td>30%</td></tr>
+            <tr><td>Ru$h Token Tips (live)</td><td><span class="badge-live">Live</span></td><td>0% — creator keeps all</td></tr>
+            <tr><td>Ticketed Shows</td><td><span class="badge-soon">Q4 2026</span></td><td>30%</td></tr>
+            <tr><td>Creator Advertising (boosts)</td><td><span class="badge-soon">2027</span></td><td>100%</td></tr>
+            <tr><td>Creator Training Certification</td><td><span class="badge-soon">2027</span></td><td>100%</td></tr>
+            <tr><td>B2B Platform Licensing</td><td><span class="badge-soon">2028</span></td><td>100%</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 style="margin-bottom:8px">The split that doesn't change</h3>
+        <p style="font-size:14px;color:var(--muted);margin-bottom:4px">Creators always receive <strong style="color:var(--green)">70%</strong>. Platform retains <strong style="color:var(--violet)">30%</strong>. No fine print.</p>
+        <div class="split-visual">
+          <div class="split-bar split-creator">
+            <div class="split-pct">70%</div>
+            <div class="split-who">Creators</div>
+          </div>
+          <div class="split-bar split-platform">
+            <div class="split-pct">30%</div>
+            <div class="split-who">PNPtv!</div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-top:14px">
+          Live stream tips: <strong style="color:#fff">100% to creator</strong> — zero commission.<br>
+          The 7-day hold on transactions is fraud protection for the creator, not a cash-flow mechanism.
+        </p>
+      </div>
+    </div>
+
+    <div class="accent-card gold-accent" style="margin-top:32px">
+      <h3 style="color:var(--gold);margin-bottom:10px">North Star Metric</h3>
+      <p style="font-size:15px"><strong>Active Creator Earnings</strong> — the total monthly income generated by creators on the platform. When creators earn more, everything else follows: better content, more members, more trust, more revenue for the platform.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 7 — CREATOR CARE (DIFFERENTIATOR)
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">07 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Differentiator</div>
+    <h2>Creator welfare isn't our marketing. <em>It's our moat.</em></h2>
+    <p class="sub">No competitor can replicate this overnight. It's process, culture, and product — all three simultaneously.</p>
+
+    <div class="two-col" style="margin-top:32px">
+      <div>
+        <h3 style="margin-bottom:16px;font-size:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">What we do today</h3>
+        <div class="feature-row">
+          <div class="feature-item">
+            <div class="fi-icon">🎙️</div>
+            <div>
+              <div class="fi-title">Welfare interview at intake</div>
+              <div class="fi-desc">30-min video call screening for coercion, financial desperation, third-party control — before anyone goes live</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">📋</div>
+            <div>
+              <div class="fi-title">§2257 verification</div>
+              <div class="fi-desc">Government ID via Persona.com. Age and identity confirmed. Legal shield for us and for creators.</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🔕</div>
+            <div>
+              <div class="fi-title">Wellness Mode with cooling-off</div>
+              <div class="fi-desc">24-hour intentional friction if a creator wants to pause content during a difficult moment</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🤖</div>
+            <div>
+              <div class="fi-title">Cristina AI — 24/7 support</div>
+              <div class="fi-desc">In-app AI support available around the clock for creator and member questions</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:16px;font-size:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">What's coming</h3>
+        <div class="feature-row">
+          <div class="feature-item">
+            <div class="fi-icon">🫂</div>
+            <div>
+              <div class="fi-title">Sober Body Program</div>
+              <div class="fi-desc">Private peer group + weekly counselor-led sessions for creators in recovery — non-judgmental, PNP-context-aware</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">💰</div>
+            <div>
+              <div class="fi-title">10% Wellness Fund</div>
+              <div class="fi-desc">Q1 2027: 10% of net platform commission reinvested into each creator's individual wellness budget (therapy, health, education)</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🎓</div>
+            <div>
+              <div class="fi-title">Peer Mentorship</div>
+              <div class="fi-desc">Q4 2026: Certified senior creators mentor newcomers — paid in Ru$h tokens</div>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="fi-icon">🏅</div>
+            <div>
+              <div class="fi-title">Creator Certification</div>
+              <div class="fi-desc">2027: Verifiable credential signaling welfare compliance, identity verification, and platform standards</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 8 — TECHNOLOGY
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">08 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">Technology</div>
+    <h2>Production-grade infrastructure. <em>Not a prototype.</em></h2>
+    <p class="sub">Built to handle scale from day one — with architecture decisions made by engineers who've seen what breaks at volume.</p>
+
+    <div class="card-grid" style="margin-top:32px">
+      <div class="card">
+        <div class="card-icon">⚛️</div>
+        <h3>Frontend</h3>
+        <p>React + Vite + Tailwind CSS. PWA with passkey authentication (phishing-resistant by design). Mobile-first. Zero dependence on Stripe or legacy payment UIs.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🖥️</div>
+        <h3>Backend</h3>
+        <p>Node.js / Express / PostgreSQL / Redis. BullMQ job queues for async operations. PostGIS for geolocation (Nearby feature). Socket.IO for real-time events.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎥</div>
+        <h3>Video</h3>
+        <p>LiveKit for private video calls. RTMP/Restreamer for live broadcasts. Designed around the creator's workflow, not a generic video SDK.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h3>Security</h3>
+        <p>100% passwordless auth (passkeys + magic links). AES-256 payment data encryption. AI age verification via Azure Face API — photo discarded immediately after analysis, never stored.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">₿</div>
+        <h3>Payments</h3>
+        <p>NowPayments: BTC, DASH, USDT TRC-20, USDT Base, Meru. No chargebacks. No bank deplatforming risk. Real-time fraud detection at transaction level.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🤖</div>
+        <h3>AI (in production)</h3>
+        <p>Cristina AI for 24/7 support. Grok-based content moderation calibrated for PNP context. AI content description generation for creator uploads. More agents on the roadmap.</p>
+      </div>
+    </div>
+
+    <div class="accent-card" style="margin-top:28px">
+      <p><strong>Architecture roadmap in execution:</strong> BullMQ event bus (eliminating silent job failures), circuit breakers for third-party dependencies, OpenTelemetry observability, selective microservice extraction. This is an engineering team that knows what's next — not one that has to figure it out under pressure.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 9 — COMPETITIVE MOAT
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">09 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">Competitive Position</div>
+    <h2>Five layers of defensible advantage.</h2>
+    <p class="sub">Each layer takes years to build and can't be purchased. Combined, they create a position that a VC-backed generalist platform cannot replicate.</p>
+
+    <ol class="moat-list">
+      <li>
+        <div>
+          <div class="mtitle">Community specificity</div>
+          <div class="mdesc">PNP + queer niche = deep loyalty, near-zero substitution. Members cannot find what PNPtv! offers anywhere else. This isn't a feature — it's the foundation.</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="mtitle">Creator welfare brand</div>
+          <div class="mdesc">A creator who feels protected stays and refers others. A creator who feels exploited leaves and tells everyone. Our welfare-first intake is a durable reputation moat that grows with every successful creator.</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="mtitle">Safety and harm reduction credibility</div>
+          <div class="mdesc">Harm reduction built into the product — not bolted on for PR — becomes a legal and reputational shield. Regulators, journalists, and partners evaluate platforms on this. We're ahead by years.</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="mtitle">Technical reliability</div>
+          <div class="mdesc">Modern architecture (BullMQ, circuit breakers, PostGIS, LiveKit) gives us better uptime and creator tools than any comparable platform. Our tech lead designed this to scale — not to launch.</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="mtitle">Community trust and founder relationships</div>
+          <div class="mdesc">Santino's personal brand and decade of community trust is not replicable by any competitor. The community sees a founder, not a startup. That's a distribution advantage money can't buy.</div>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 10 — ROADMAP
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">10 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">12-Month Roadmap</div>
+    <h2>Execution-focused. <em>No vaporware.</em></h2>
+    <p class="sub">Every milestone is tied to a measurable KPI and a specific owner. The roadmap was built to be tracked, not filed.</p>
+
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-quarter">Q3 2026</div>
+        <div class="tl-content">
+          <h4>Platform foundation &amp; visibility</h4>
+          <p>BullMQ event bus live · Zoho CRM + Books fully operational · Sober Body Program beta · Creator earnings ledger (transaction-level) · Geoblocking for creators · Creator Advisory Panel launched</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-quarter">Q4 2026</div>
+        <div class="tl-content">
+          <h4>Creator welfare &amp; monetization expansion</h4>
+          <p>Individual counseling (industry-experienced professionals) · Peer Mentorship Program · Ticketed Shows (Main Stage events) · Portable data export · Creator referral program live</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-quarter">Q1 2027</div>
+        <div class="tl-content">
+          <h4>Welfare fund &amp; AI tools</h4>
+          <p>10% wellness fund launch (per creator) · AI agent suite for creators (pricing, calendar, earnings analysis, content descriptions) · First creator-produced educational content</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-quarter">Q2 2027</div>
+        <div class="tl-content">
+          <h4>Education &amp; advertising</h4>
+          <p>Creator Training Library launch · Creator advertising / profile boost system · Growth Marketer hire · LATAM partnership expansion</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-quarter">Q3 2027</div>
+        <div class="tl-content">
+          <h4>Credentialing &amp; B2B horizon</h4>
+          <p>PNPtv! Creator Certification · B2B licensing conversations begin (licensing welfare-first onboarding process to partner platforms)</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 11 — TEAM
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">11 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Team</div>
+    <h2>Built by people who <em>live this community</em>.</h2>
+    <p class="sub">The founding team combines 10+ years of talent operations experience with senior engineering and a decade of PNP community presence. This isn't a team that studied the market from the outside.</p>
+
+    <div class="team-grid">
+      <div class="team-card">
+        <div class="team-avatar">S</div>
+        <div class="team-name">Santino</div>
+        <div class="team-role">CEO / CCO — Co-founder</div>
+        <div class="team-bio">10+ years of community presence in the PNP scene. Expert in creator relations, talent welfare, and community trust. The platform's public face and its ethical compass.</div>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">C</div>
+        <div class="team-name">Carlos</div>
+        <div class="team-role">CTO / CPO — Co-founder</div>
+        <div class="team-bio">Senior full-stack architect who designed the entire platform from the ground up. Architecture, security, payments, real-time systems — built and owned by one person who thinks in systems.</div>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">M</div>
+        <div class="team-name">Miguel</div>
+        <div class="team-role">Full-Stack Engineer</div>
+        <div class="team-bio">Core full-stack contributor across frontend and backend. Executes features from design to deployment within the monorepo architecture.</div>
+      </div>
+    </div>
+
+    <div class="accent-card" style="margin-top:28px">
+      <h3 style="margin-bottom:10px">Next 7 hires (funded growth)</h3>
+      <p style="font-size:14px;color:var(--muted)">
+        <strong style="color:var(--text)">DevOps/SRE</strong> ·
+        <strong style="color:var(--text)">Creator Success Manager</strong> ·
+        <strong style="color:var(--text)">Welfare &amp; Safety Officer</strong> ·
+        <strong style="color:var(--text)">Content/Community Manager</strong> ·
+        <strong style="color:var(--text)">Growth Marketer</strong> ·
+        <strong style="color:var(--text)">Operations Manager</strong> ·
+        <strong style="color:var(--text)">CX Lead</strong>
+        <br><br>Each role has a defined mandate, a hire date, and a KR attached to it. Hiring is sequenced by impact, not by org chart aesthetics.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════
+     SLIDE 12 — THE ASK
+     ═══════════════════════════════════════════════ -->
+<section class="slide">
+  <div class="slide-number">12 / 12</div>
+  <div class="slide-inner">
+    <div class="eyebrow">The Ask</div>
+    <h2>We're looking for partners who <em>understand what we're building</em>.</h2>
+
+    <div class="card-grid" style="margin-top:32px">
+      <div class="card">
+        <div class="card-icon">💼</div>
+        <h3>Strategic Investment</h3>
+        <p>Growth capital to accelerate the 7-hire plan, fund the wellness infrastructure, and expand creator acquisition across LATAM and Europe. We are not looking for a pivot — we are looking for fuel.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🤝</div>
+        <h3>Harm Reduction Partnerships</h3>
+        <p>LGBTQ+ and chemsex harm reduction organizations: join our Sober Body Program as a resource provider. We bring the platform. You bring the expertise. Together we reduce real harm.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🏢</div>
+        <h3>B2B Licensing (2028)</h3>
+        <p>Other adult platforms that want to adopt the welfare-first creator intake model. We built it. We'll license the process, the documentation, and the training — so the industry raises its floor.</p>
+      </div>
+    </div>
+
+    <div class="accent-card green-accent" style="margin-top:32px">
+      <h3 style="color:var(--green);margin-bottom:12px">What we offer investors</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:8px">
+        <div>
+          <div style="font-weight:700;margin-bottom:4px">✅ Live, revenue-generating product</div>
+          <div style="font-size:13px;color:var(--muted)">No MVP, no runway countdown to product-market fit</div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:4px">✅ Zero-competition niche</div>
+          <div style="font-size:13px;color:var(--muted)">No comparable platform exists for this community</div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:4px">✅ Regulatory-ahead positioning</div>
+          <div style="font-size:13px;color:var(--muted)">Welfare compliance as a legal shield and reputational asset</div>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:4px">✅ Defensible moat, not a feature</div>
+          <div style="font-size:13px;color:var(--muted)">Community trust built over a decade — not acquired by a marketing budget</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cta-block">
+      <p style="font-size:18px;color:var(--muted)">Ready to talk?</p>
+      <a class="cta-email" href="mailto:support@pnptv.app">support@pnptv.app</a>
+      <p style="margin-top:16px;font-size:13px;color:var(--muted)">
+        Full technical documentation, financial projections, and due diligence materials available on request under NDA.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<div style="text-align:center;padding:32px 24px;border-top:1px solid var(--border);color:var(--muted);font-size:12px">
+  <p>PNPtv! / Amplifying Insights LLC · Confidential · August 2026</p>
+  <p style="margin-top:6px">This document contains proprietary and confidential information. Do not distribute without written authorization.</p>
+  <p style="margin-top:10px"><a href="/docs/" style="color:var(--violet);text-decoration:none">← Back to document library</a></p>
+</div>
+
+<script src="/docs/protection.js"></script>
+</body>
+</html>
