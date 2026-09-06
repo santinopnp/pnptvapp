@@ -2069,7 +2069,12 @@ export default function MainStage() {
                 mediaStartedAt={state?.media?.startedAt ?? null}
                 isParticipant={isParticipant}
                 isAdmin={isAdmin}
-                onSpotlightPick={(identity) => admin.setSpotlight(identity)}
+                onSpotlightPick={(identity) => {
+                  admin.setSpotlight(identity).catch((err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    window.alert(msg);
+                  });
+                }}
                 onConnectionStateChange={setConnState}
                 onCammersChange={handleCammersChange}
                 onLeave={handleLeave}
@@ -2190,7 +2195,12 @@ export default function MainStage() {
                 mediaStartedAt={state?.media?.startedAt ?? null}
                 isParticipant={isParticipant}
                 isAdmin={isAdmin}
-                onSpotlightPick={(identity) => admin.setSpotlight(identity)}
+                onSpotlightPick={(identity) => {
+                  admin.setSpotlight(identity).catch((err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    window.alert(msg);
+                  });
+                }}
                 onConnectionStateChange={setConnState}
                 onCammersChange={handleCammersChange}
                 onLeave={handleLeave}

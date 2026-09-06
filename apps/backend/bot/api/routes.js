@@ -889,6 +889,7 @@ app.use(conditionalMiddleware(helmet({
         "'unsafe-eval'",
         "https://code.jquery.com",
         "https://telegram.org",
+        "https://w.soundcloud.com",
       ],
       styleSrc: ["'self'", "'unsafe-inline'", "https:", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https:", "https://fonts.gstatic.com", "data:"],
