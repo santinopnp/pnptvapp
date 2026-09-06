@@ -187,7 +187,14 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         // Base EOA — needs its own ETH for gas. requestGasTopup seeds ~$0.20
         // when the wallet is empty; best-effort so we still attempt the tx if
         // treasury is unavailable (fallback to pre-existing behavior).
-        await requestGasTopup(activeWallet.address);
+        // Instrumented (2026-09-06): capture topup failures so we can spot
+        // treasury outages or user daily-cap hits behind silent tx errors.
+        const topupResult = await requestGasTopup(activeWallet.address);
+        if (!topupResult.ok && !topupResult.skipped) {
+          reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
+            surface: "rush", amountUsd: usdAmount, address: activeWallet.address, walletType: activeWallet.walletClientType,
+          });
+        }
         const res = await privySendTransaction(
           { chainId: 8453, to: intent.receivingAddress as `0x${string}`, value: valueWei.toString() },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -212,7 +219,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         args: [intent.receivingAddress as `0x${string}`, parseUnits(intent.amountUsdc.toFixed(6), 6)],
       });
       if (isEmbedded) {
-        await requestGasTopup(activeWallet.address);
+        const topupResult = await requestGasTopup(activeWallet.address);
+        if (!topupResult.ok && !topupResult.skipped) {
+          reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
+            surface: "rush", amountUsd: usdAmount, address: activeWallet.address, walletType: activeWallet.walletClientType,
+          });
+        }
         const res = await privySendTransaction(
           { chainId: 8453, to: USDC_BASE_ADDRESS, data, value: "0" },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }

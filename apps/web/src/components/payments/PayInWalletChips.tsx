@@ -196,8 +196,9 @@ export function WalletCheckoutHero({ lang = "en", compact = false }: { lang?: "e
 // pass the surface + amountUsd + entitlementSpec; the component handles
 // balance fetch, gas-sponsored USDC transfer via Privy, and backend verify.
 
-import { useEffect as _useEffect, useState as _useState } from "react";
+import { useEffect as _useEffect, useState as _useState, useRef as _useRef } from "react";
 import { usePrivy, useWallets, useAddFunds, useConnectWallet, useSendTransaction, useUnlinkWallet, useCreateWallet } from "@privy-io/react-auth";
+import { getLinkedWallet } from "@/lib/api";
 import { createWalletClient, custom, encodeFunctionData, parseUnits, parseEther } from "viem";
 import { base, mainnet } from "viem/chains";
 
@@ -282,6 +283,49 @@ export function grossUpForOnramp(targetUsd: number): string {
   return Math.max(15, grossed).toFixed(0);
 }
 
+/**
+ * Detects a stuck-Privy state so the wallet UI can offer a clear recovery
+ * path instead of silently showing an empty balance.
+ *
+ * Returns:
+ *   status='initializing' — Privy SDK still loading (<5s)
+ *   status='needs_login'  — SDK ready but not authenticated (session expired
+ *                            on device, or storage partitioned by iOS Safari)
+ *   status='no_wallet'    — Authenticated but useWallets() empty even though
+ *                            the server has a linked wallet on file for this
+ *                            user (Privy failed to hydrate the embedded wallet)
+ *   status='ready'        — Wallet(s) usable
+ */
+function usePrivyRecovery() {
+  const { ready, authenticated } = usePrivy();
+  const { wallets } = useWallets();
+  const [elapsedMs, setElapsedMs] = _useState(0);
+  const [serverHasPrivy, setServerHasPrivy] = _useState<boolean | null>(null);
+  const [serverWalletAddr, setServerWalletAddr] = _useState<string | null>(null);
+  const startedAt = _useRef<number>(Date.now());
+
+  _useEffect(() => {
+    const t = setInterval(() => setElapsedMs(Date.now() - startedAt.current), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  _useEffect(() => {
+    let cancelled = false;
+    getLinkedWallet()
+      .then((r) => { if (!cancelled) { setServerHasPrivy(!!r.hasPrivyId); setServerWalletAddr(r.walletAddress); } })
+      .catch(() => { if (!cancelled) setServerHasPrivy(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!ready && elapsedMs < 5000) return { status: "initializing" as const, elapsedMs, wallets, serverWalletAddr };
+  if (ready && !authenticated) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
+  // Authenticated but no wallets — only alarming when server says user should have one
+  if (authenticated && wallets.length === 0 && serverHasPrivy === true && elapsedMs > 5000) {
+    return { status: "no_wallet" as const, elapsedMs, wallets, serverWalletAddr };
+  }
+  return { status: "ready" as const, elapsedMs, wallets, serverWalletAddr };
+}
+
 export interface WalletPayCardProps {
   surface: WalletCheckoutSurface;
   amountUsd: number;
@@ -311,6 +355,7 @@ export function WalletPayCard({
   const priceReady = amountUsd > 0;
   const { authenticated, login } = usePrivy();
   const { wallets } = useWallets();
+  const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
   const [connectError, setConnectError] = _useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
@@ -473,7 +518,14 @@ export function WalletPayCard({
         // from a platform treasury when the wallet is empty; best-effort so
         // we proceed with the tx attempt either way (a 503 falls back to the
         // pre-existing "insufficient funds for gas" error, no regression).
-        await requestGasTopup(activeWallet.address);
+        // Instrumented (2026-09-06): report topup failures so we can debug
+        // silent drop-offs where a doomed tx UI opens with insufficient gas.
+        const topupResult = await requestGasTopup(activeWallet.address);
+        if (!topupResult.ok && !topupResult.skipped) {
+          reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
+            surface, amountUsd, address: activeWallet.address, walletType: activeWallet.walletClientType,
+          });
+        }
         const res = await privySendTransaction(
           { chainId: 8453, to: _USDC_BASE as `0x${string}`, data, value: "0" },
           { sponsor: false, address: activeWallet.address, uiOptions: { showWalletUIs: true } }
@@ -548,6 +600,12 @@ export function WalletPayCard({
       // instant in sandbox and up to ~2 min in prod. Poll balance every 3s
       // for up to 60s so the user gets an obvious "we're waiting" affordance
       // instead of the same "Pay with card" button reappearing.
+      //
+      // Auto-continue (2026-09-06): the old flow required a second manual
+      // Pay click after balance arrived — the biggest drop point per
+      // checkout_intents data (56% of intents expired without a signed tx).
+      // Now we auto-invoke handlePay once funds are here so one Top-up
+      // click carries the user through to entitlement grant.
       setFunding(true);
       const start = Date.now();
       const poll = async (): Promise<void> => {
@@ -557,6 +615,7 @@ export function WalletPayCard({
           setUsdc(bal);
           if (bal != null && bal >= amountUsd) {
             setFunding(false);
+            handlePay().catch(() => { /* handlePay owns its own error UI */ });
             return;
           }
         } catch { /* keep polling on transient errors */ }
@@ -598,6 +657,72 @@ export function WalletPayCard({
   const gasLabel = isEmbedded
     ? (es ? "gas gratis" : "no gas fees")
     : (es ? "gas: ~$0.01 en Base" : "gas: ~$0.01 on Base");
+
+  // Recovery UI — replaces the wallet card when Privy is stuck. Silent
+  // failure of the SDK (iOS 18 Safari storage partitioning, expired session)
+  // used to render as "No USDC balance" with no way forward. Now we show
+  // an explicit re-login / retry affordance so the user can recover in 1 tap.
+  if (recovery.status === "initializing") {
+    return (
+      <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-3 flex items-center justify-center gap-2">
+        <svg className="w-4 h-4 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span className="text-xs text-white/70">{es ? "Cargando billetera…" : "Loading wallet…"}</span>
+      </div>
+    );
+  }
+  if (recovery.status === "needs_login") {
+    return (
+      <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🔒</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-white">{es ? "Reconectá tu billetera" : "Reconnect your wallet"}</p>
+            <p className="text-[11px] text-white/60 leading-snug">
+              {es
+                ? "La sesión de tu wallet expiró. Iniciá sesión de nuevo para pagar."
+                : "Your wallet session expired. Sign back in to complete payment."}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => login().catch(() => reportWalletClientError("privyLoginFromRecovery", "login failed", { surface }))}
+          className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+          style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
+        >
+          {es ? "Iniciar sesión" : "Sign in to wallet"}
+        </button>
+      </div>
+    );
+  }
+  if (recovery.status === "no_wallet") {
+    return (
+      <div className="rounded-xl border border-amber-400/40 bg-amber-500/[0.06] p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">💫</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-white">{es ? "Sincronizando billetera…" : "Syncing wallet…"}</p>
+            <p className="text-[11px] text-white/60 leading-snug">
+              {es
+                ? `Estamos vinculando ${recovery.serverWalletAddr ? "tu wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "tu wallet"}. Si no aparece en 30 seg, recargá la página.`
+                : `Linking ${recovery.serverWalletAddr ? "wallet " + recovery.serverWalletAddr.slice(0, 6) + "…" : "your wallet"}. If nothing appears in 30s, refresh the page.`}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="w-full py-2.5 rounded-xl text-xs font-semibold text-white/90 transition"
+          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+        >
+          {es ? "Recargar página" : "Refresh page"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -887,6 +1012,7 @@ const _setPreferredWallet = setPreferredWallet;
 export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
   const { authenticated, login, exportWallet } = usePrivy();
   const { wallets } = useWallets();
+  const recovery = usePrivyRecovery();
   const { addFunds } = useAddFunds();
   const [connectError, setConnectError] = _useState<string | null>(null);
   const { connectWallet } = useConnectWallet({
@@ -1582,6 +1708,67 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           : activeWallet.walletClientType === "walletconnect"
             ? "WalletConnect"
             : activeWallet.walletClientType || "External";
+
+  // Recovery UI — same 3-state coverage as WalletPayCard. Presented as a
+  // compact panel INSIDE the sheet (not a full-screen replacement) so users
+  // still see the wallet header + close button.
+  const renderRecoveryPanel = () => {
+    if (recovery.status === "initializing") {
+      return (
+        <div className="p-6 flex items-center justify-center gap-2">
+          <svg className="w-5 h-5 animate-spin text-emerald-300" fill="none" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-sm text-white/70">Cargando billetera…</span>
+        </div>
+      );
+    }
+    if (recovery.status === "needs_login") {
+      return (
+        <div className="p-6 space-y-3">
+          <div className="text-center space-y-1">
+            <div className="text-3xl">🔒</div>
+            <p className="text-base font-bold text-white">Reconectá tu billetera</p>
+            <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
+              La sesión de tu wallet expiró en este dispositivo. Iniciá sesión de nuevo para ver tu saldo y pagar.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => login().catch(() => reportWalletClientError("privyLoginFromRecovery", "login failed", { source: "WalletHomeSheet" }))}
+            className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
+            style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
+          >Iniciar sesión</button>
+          <p className="text-[10px] text-white/40 text-center">
+            En iPhone: si no abre nada, cerrá Safari completamente y volvé a entrar.
+          </p>
+        </div>
+      );
+    }
+    if (recovery.status === "no_wallet") {
+      return (
+        <div className="p-6 space-y-3">
+          <div className="text-center space-y-1">
+            <div className="text-3xl">💫</div>
+            <p className="text-base font-bold text-white">Sincronizando billetera…</p>
+            <p className="text-xs text-white/60 max-w-xs mx-auto leading-relaxed">
+              {recovery.serverWalletAddr
+                ? `Vinculando ${recovery.serverWalletAddr.slice(0, 6)}…${recovery.serverWalletAddr.slice(-4)}. Si no aparece en 30s, recargá.`
+                : "Buscando tu wallet. Si no aparece en 30s, recargá."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/90 transition"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
+          >Recargar página</button>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div

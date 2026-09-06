@@ -2311,7 +2311,9 @@ function QuickTipSheet({
   onClose: () => void;
 }) {
   const [selectedRush, setSelectedRush] = useState<number>(QUICK_TIP_PRESETS[1].rush);
-  const [railMode, setRailMode] = useState<"rush" | "usdc">("rush");
+  // Default to USDC (Privy embedded wallet) so it's the primary payment rail.
+  // Users with Ru$h balance can still one-click to swap rails.
+  const [railMode, setRailMode] = useState<"rush" | "usdc">("usdc");
   const [rushDone, setRushDone] = useState(false);
 
   // Derived USD amount for WalletPayCard based on selected preset.
@@ -2392,19 +2394,8 @@ function QuickTipSheet({
           ))}
         </div>
 
-        {/* Rail selector */}
+        {/* Rail selector — USDC first (primary), Ru$h second (spend existing balance) */}
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setRailMode("rush")}
-            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
-              railMode === "rush"
-                ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
-                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
-            }`}
-          >
-            Pay with Ru$h 💎 — instant
-          </button>
           <button
             type="button"
             onClick={() => setRailMode("usdc")}
@@ -2415,6 +2406,17 @@ function QuickTipSheet({
             }`}
           >
             Pay with USDC — gasless
+          </button>
+          <button
+            type="button"
+            onClick={() => setRailMode("rush")}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+              railMode === "rush"
+                ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+            }`}
+          >
+            Pay with Ru$h 💎 — instant
           </button>
         </div>
 

@@ -403,6 +403,9 @@ export default function CreatorProfilePage() {
   const [tipError, setTipError] = useState("");
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
+  // Rail: USDC (Privy) is the primary tip method; Ru$h is the secondary
+  // shortcut for users with an existing token balance. Rush→USD ratio is 6:1.
+  const [tipRail, setTipRail] = useState<"usdc" | "rush">("usdc");
 
   // ── Channel Pass state ───────────────────────────────────────────────────────
   const [channelPass, setChannelPass] = useState<ChannelPassViewerInfo | null>(null);
@@ -2068,12 +2071,38 @@ export default function CreatorProfilePage() {
                   style={{ background: "var(--pnp-surface, #1e1e1e)", border: "1px solid rgba(255,255,255,0.08)" }}
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-white">Send a Rush tip</span>
-                    {walletBalance !== null && (
+                    <span className="text-sm font-semibold text-white">Send a tip</span>
+                    {tipRail === "rush" && walletBalance !== null && (
                       <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                         Your balance: {walletBalance} 💎
                       </span>
                     )}
+                  </div>
+
+                  {/* Rail selector — USDC (Privy) primary, Ru$h secondary. */}
+                  <div className="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setTipRail("usdc")}
+                      className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-colors ${
+                        tipRail === "usdc"
+                          ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with USDC
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTipRail("rush")}
+                      className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-colors ${
+                        tipRail === "rush"
+                          ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with Ru$h 💎
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-4 gap-2 mb-3">
@@ -2168,14 +2197,41 @@ export default function CreatorProfilePage() {
                     <div className="text-sm mb-3" style={{ color: "#FF6B6B" }}>{tipError}</div>
                   )}
 
-                  <button
-                    onClick={handleSendTip}
-                    disabled={!tipAmount || tipLoading || tipResult === "success"}
-                    className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-opacity disabled:opacity-50"
-                    style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
-                  >
-                    {tipLoading ? "Sending…" : "Send tip"}
-                  </button>
+                  {tipRail === "usdc" ? (
+                    !tipAmount ? (
+                      <div className="w-full py-3 rounded-xl bg-white/[0.04] border border-white/10 text-center text-xs text-white/50">
+                        Pick an amount above
+                      </div>
+                    ) : (
+                      <WalletPayCard
+                        surface="tip"
+                        amountUsd={tipAmount / 6}
+                        entitlementSpec={{ creatorId: data.creator.id, message: tipMessage.trim() || undefined }}
+                        metadata={{ creatorId: data.creator.id, source: "creator_profile_tip" }}
+                        label={`Send $${(tipAmount / 6).toFixed(2)} tip`}
+                        lang="en"
+                        compact
+                        onSuccess={() => {
+                          setTipResult("success");
+                          setTimeout(() => {
+                            setTipPanelOpen(false);
+                            setTipResult(null);
+                            setTipAmount(null);
+                            setTipMessage("");
+                          }, 2000);
+                        }}
+                      />
+                    )
+                  ) : (
+                    <button
+                      onClick={handleSendTip}
+                      disabled={!tipAmount || tipLoading || tipResult === "success"}
+                      className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-opacity disabled:opacity-50"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      {tipLoading ? "Sending…" : "Send tip"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
