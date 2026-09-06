@@ -14,6 +14,7 @@ import { AppShell, RightRail, SuggestedCreatorRow, SuggestedFollowRow, ContextHi
 import { PnpFamHomeStrip } from "@/components/badges/PnpFamHomeStrip";
 import { CrystalCreatorsRow } from "@/components/crystal/CrystalCreatorsRow";
 import { AdSlot } from "@/components/AdSlot";
+import { PrimeRewardCard } from "@/components/PrimeRewardCard";
 import { CRYSTAL_UI_ENABLED, getCryptoGuideStatus } from "@/lib/api";
 
 const ChatEmbedded = lazy(() => import("@/pages/Chat"));
@@ -145,6 +146,8 @@ export default function Home() {
           },
         ]}
       />
+      <PrimeRewardCard className="mt-2" />
+      <div className="flex justify-center pt-2"><AdSlot slot="sidebar_desktop" /></div>
     </>
   );
 

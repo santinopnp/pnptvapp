@@ -18134,12 +18134,29 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   //   in this session (client counts locally). Cap 1/session, 3/week per user
   //   (enforced client-side via localStorage — best-effort).
   const isLoggedFree = !!user && adLevel !== 'none' && adLevel !== 'minimal';
+  // A/B bucket by user id (or session cookie for anon). Same user keeps same
+  // variant across sessions. Redis kill switch pnpapp:ads:ab:enabled=0
+  // collapses to variant 'A' (full UX).
+  let uxVariant = 'A';
+  try {
+    const { cache } = require('../../config/redis');
+    const abEnabled = String(await cache.get('ads:ab:enabled') ?? '1') !== '0';
+    if (abEnabled) {
+      const bucketKey = user?.id || req.cookies?.['connect.sid'] || req.ip || '';
+      uxVariant = adUnlockService.getUxVariant(bucketKey);
+    }
+  } catch { /* fail open — default to A */ }
+  const chipOn        = uxVariant === 'A' || uxVariant === 'B';
+  const modalOn       = uxVariant === 'A';
+  const interstitialOn = uxVariant === 'A';
   const uxFlags = showAds ? {
-    showUpgradeChip: isLoggedFree || !user, // logged-in free/light/full users + anonymous
-    upgradeModalMode: (isLoggedFree || !user) ? 'replace_popunder' : 'off',
-    interstitialAfterN: isLoggedFree ? 20 : 0,
+    variant: uxVariant,
+    showUpgradeChip: (isLoggedFree || !user) && chipOn,
+    upgradeModalMode: ((isLoggedFree || !user) && modalOn) ? 'replace_popunder' : 'off',
+    interstitialAfterN: (isLoggedFree && interstitialOn) ? 20 : 0,
     interstitialCapPerWeek: 3,
   } : {
+    variant: uxVariant,
     showUpgradeChip: false,
     upgradeModalMode: 'off',
     interstitialAfterN: 0,
@@ -18157,6 +18174,19 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
     scriptUrl: showAds ? EXO_PROVIDER : null,
     ux: uxFlags,
   });
+}));
+
+// GET /api/admin/monetization/summary — dashboard data.
+// Returns getDailySummary + getConversionCohort for the admin monetization page.
+// Query param: hours (default 24, max 720 = 30d).
+app.get('/api/admin/monetization/summary', adminGuard, asyncHandler(async (req, res) => {
+  const adAnalytics = require('../../services/adAnalyticsService');
+  const hours = Math.min(720, Math.max(1, parseInt(req.query.hours, 10) || 24));
+  const [summary, cohort] = await Promise.all([
+    adAnalytics.getDailySummary(hours).catch(() => ({ slots: [], newPrimeSubs: 0, uniqueUsersServedAds: 0 })),
+    adAnalytics.getConversionCohort(hours).catch(() => []),
+  ]);
+  return res.json({ ok: true, hours, summary, cohort });
 }));
 
 // POST /api/ads/event — client-side analytics batch drop.

@@ -248,11 +248,35 @@ async function getActiveUnlockExpiresAt(userId, surface) {
   return rows.length ? rows[0].expires_at : null;
 }
 
+/**
+ * A/B variant assignment — deterministic hash of userId so the same user
+ * always lands in the same cohort. Anonymous visitors bucket by their
+ * session id (from getOrCreateSessionId on the client, forwarded via
+ * event batch), or fall back to 'control' when neither is available.
+ *
+ * Cohorts:
+ *   'A'       — new UX (upgrade chip + modal + interstitial ALL enabled)
+ *   'B'       — chip only (no modal, no interstitial) — measures chip impact alone
+ *   'control' — legacy popunder (no chip, no modal, no interstitial)
+ */
+function getUxVariant(bucketKey) {
+  if (!bucketKey) return 'control';
+  // Fast deterministic bucket by summing char codes and taking mod 3.
+  let sum = 0;
+  const s = String(bucketKey);
+  for (let i = 0; i < s.length; i++) sum = (sum + s.charCodeAt(i)) | 0;
+  const bucket = Math.abs(sum) % 100;
+  if (bucket < 50) return 'A';      // 50%
+  if (bucket < 80) return 'B';      // 30%
+  return 'control';                  // 20%
+}
+
 module.exports = {
   isFeatureEnabled,
   setFeatureEnabled,
   isTierEligibleForAds,
   getTierAdLevel,
+  getUxVariant,
   AD_FREE_TRIAL_DAYS,
   isValidSurface,
   getRateLimitStatus,
