@@ -172,7 +172,7 @@
          actionable error UI when the splash would otherwise hang forever. -->
     <script>
       (function () {
-        var SPLASH_WATCHDOG_MS = 10000;
+        var SPLASH_WATCHDOG_MS = 15000;
         function isSplashVisible() {
           var s = document.getElementById("splash");
           return !!(s && !s.classList.contains("hide"));
