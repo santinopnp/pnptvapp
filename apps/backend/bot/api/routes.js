@@ -18024,16 +18024,13 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
     try {
       const { cache } = require('../../config/redis');
       const cacheKey = `ads:meta:${user.id}`;
-      const cached = await cache.get(cacheKey);
-      if (cached) {
-        try { userMeta = JSON.parse(cached); } catch { userMeta = null; }
-      }
+      userMeta = await cache.get(cacheKey);
       if (!userMeta) {
         const { rows } = await query('SELECT created_at FROM users WHERE id = $1 LIMIT 1', [String(user.id)]);
         const createdAt = rows[0]?.created_at || null;
         const exposureLast7d = await adAnalytics.getUserExposureDays(user.id, 7).catch(() => 0);
         userMeta = { createdAt, exposureLast7d, sessionsLast30d: 0 };
-        await cache.setex(cacheKey, 900, JSON.stringify(userMeta)).catch(() => {});
+        await cache.set(cacheKey, userMeta, 900).catch(() => {});
       }
     } catch { userMeta = null; }
   }
@@ -18103,12 +18100,18 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   } catch { /* fail open — global flag is authoritative */ }
 
   const slots = {};
-  // Member tier gets only the passive sticky footer — everything else is silent.
+  // Slot sets by intensity level. Member = minimal (2 slots). Light = the
+  // safest, non-invasive subset. Full = everything.
   const MINIMAL_SLOTS = new Set(['sticky_footer_desktop', 'sticky_footer_mobile']);
+  const LIGHT_SLOTS = new Set([
+    'sticky_footer_desktop', 'sticky_footer_mobile',
+    'landing_hero', 'feed_native', 'sidebar_desktop',
+  ]);
   for (const s of slotDefs) {
     if (!s.zone) continue;
     if (perSlotDisabled[s.id]) continue;
     if (adLevel === 'minimal' && !MINIMAL_SLOTS.has(s.id)) continue;
+    if (adLevel === 'light'   && !LIGHT_SLOTS.has(s.id))   continue;
     slots[s.id] = {
       zoneId: s.zone,
       format: s.format,
@@ -18118,14 +18121,41 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
     };
   }
 
+  // UX policy for the client. All flags respect the same global kill switch —
+  // if showAds is false, the whole block collapses to safe defaults.
+  //
+  // showUpgradeChip: render the "Sin ads con PRIME →" pill next to each display
+  //   ad. Only meaningful for logged-in free/light/full users (member is already
+  //   paying; skip the noise).
+  // upgradeModalMode: 'replace_popunder' | 'off'. When 'replace_popunder', the
+  //   client shows an internal PRIME upsell modal instead of the ExoClick popunder;
+  //   on dismiss it falls back to the actual popunder (or logs the dismiss).
+  // interstitialAfterN: show a full-screen PRIME upsell after N ad impressions
+  //   in this session (client counts locally). Cap 1/session, 3/week per user
+  //   (enforced client-side via localStorage — best-effort).
+  const isLoggedFree = !!user && adLevel !== 'none' && adLevel !== 'minimal';
+  const uxFlags = showAds ? {
+    showUpgradeChip: isLoggedFree || !user, // logged-in free/light/full users + anonymous
+    upgradeModalMode: (isLoggedFree || !user) ? 'replace_popunder' : 'off',
+    interstitialAfterN: isLoggedFree ? 20 : 0,
+    interstitialCapPerWeek: 3,
+  } : {
+    showUpgradeChip: false,
+    upgradeModalMode: 'off',
+    interstitialAfterN: 0,
+    interstitialCapPerWeek: 0,
+  };
+
   return res.json({
     ok: true,
     showAds,
+    adLevel,
     capPerDay: adUnlockService.ALLOWED_GRANTS_PER_DAY,
     surfaces,
     networks: showAds ? networks : null,
     slots: showAds ? slots : {},
     scriptUrl: showAds ? EXO_PROVIDER : null,
+    ux: uxFlags,
   });
 }));
 

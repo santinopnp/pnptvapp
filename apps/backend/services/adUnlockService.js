@@ -30,6 +30,7 @@ const ALLOWED_SURFACES = new Set([
   'prime_video_single',
   'nearby_premium',
   'dm_extra',
+  'prime_trial_24h',
 ]);
 
 // Default TTL by surface, in seconds. Client can't override — server-authoritative.
@@ -38,7 +39,13 @@ const SURFACE_TTL_SEC = {
   prime_video_single: 60 * 60,      // 60 min to start watching (single video, one time)
   nearby_premium:     60 * 60,      // 60 min extended Nearby
   dm_extra:           24 * 60 * 60, // 24h of +5 DMs
+  prime_trial_24h:    24 * 60 * 60, // 24h of full PRIME access (rewarded → conversion path)
 };
+
+// Ad-free trial for new signups — first N days after account creation, no ads
+// at all. Matched to Prime Trial duration so the transition prompt lands
+// naturally: "your ad-free trial ended — start your Prime trial to keep it".
+const AD_FREE_TRIAL_DAYS = 3;
 
 async function isFeatureEnabled() {
   try {
@@ -69,16 +76,34 @@ function isTierEligibleForAds(userTier, userRole) {
 
 /**
  * Returns the ad "level" a user is entitled to see:
- *   'full'    — all slots (free, anonymous)
+ *   'full'    — all slots (heavy engaged free user + anonymous)
+ *   'light'   — reduced slot set (new free user, first 7d after trial)
  *   'minimal' — only passive sticky footer (member/basic — they pay something)
- *   'none'    — no ads (prime, admin, banned)
+ *   'none'    — no ads (prime, admin, banned, in ad-free trial)
+ *
+ * userMeta lets callers pass session-derived signals for dynamic intensity:
+ *   { createdAt, sessionsLast30d, exposureLast7d }
+ * All optional — falls back to the coarse tier-only calculation.
  */
-function getTierAdLevel(userTier, userRole) {
+function getTierAdLevel(userTier, userRole, userMeta) {
   if (userRole === 'admin' || userRole === 'superadmin') return 'none';
   const tier = String(userTier || '').toLowerCase();
   if (tier === 'prime' || tier === 'banned') return 'none';
   if (tier === 'member') return 'minimal';
-  return 'full';
+
+  // Free tier — check dynamic signals
+  if (userMeta && userMeta.createdAt) {
+    const ageMs = Date.now() - new Date(userMeta.createdAt).getTime();
+    const ageDays = ageMs / (24 * 60 * 60 * 1000);
+    if (ageDays < AD_FREE_TRIAL_DAYS) return 'none';           // 3-day ad-free trial
+    if (ageDays < AD_FREE_TRIAL_DAYS + 7) return 'light';       // first week after trial
+  }
+  // Heavy signal — an established user with high engagement takes full ad load
+  if (userMeta && (userMeta.sessionsLast30d >= 15 || userMeta.exposureLast7d >= 40)) {
+    return 'full';
+  }
+  // Default free tier — light. Only becomes 'full' once they're clearly engaged.
+  return 'light';
 }
 
 function isValidSurface(surface) {
@@ -228,6 +253,7 @@ module.exports = {
   setFeatureEnabled,
   isTierEligibleForAds,
   getTierAdLevel,
+  AD_FREE_TRIAL_DAYS,
   isValidSurface,
   getRateLimitStatus,
   grantUnlock,
