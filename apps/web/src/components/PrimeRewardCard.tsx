@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { useTier } from "@/hooks/useTier";
 import { useAuth } from "@/hooks/useAuth";
 import { getRewardedAdConfig, getRewardedAdActive } from "@/lib/api";
 import { trackAdEvent as trackClientEvent } from "@/components/AdSlot";
+import { PrimeRewardedModal } from "@/components/PrimeRewardedModal";
 
 /**
  * "Watch 3 ads → 24h Prime" rewarded surface. Renders a compact card that
@@ -20,6 +22,7 @@ export function PrimeRewardCard({ className }: { className?: string }) {
   const { isAuthenticated } = useAuth();
   const [surfaceReady, setSurfaceReady] = useState(false);
   const [activeUntil, setActiveUntil] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     if (isPrime || isAdmin) return;
@@ -70,11 +73,18 @@ export function PrimeRewardCard({ className }: { className?: string }) {
     ? "Sin cargo. Sin tarjeta. Solo 3 ads cortos."
     : "Cero ads. Todo desbloqueado. Sin tarjeta si cancelás en 3 días.";
   const ctaText = surfaceReady ? "Ver primer ad" : "Empezar trial";
-  const ctaHref = surfaceReady
-    ? "/subscribe?ref=prime-reward-card&plan=trial"  // TODO(fase-5): real VAST-in-modal flow
-    : "/subscribe?ref=prime-reward-card&plan=trial";
+  const trialHref = "/subscribe?ref=prime-reward-card&plan=trial";
+
+  const handleCta = (e: React.MouseEvent) => {
+    trackClientEvent("prime_reward_card", "upgrade_click", { surface: surfaceReady ? "rewarded" : "trial" });
+    if (surfaceReady) {
+      e.preventDefault();
+      setModalOpen(true);
+    }
+  };
 
   return (
+    <>
     <div
       className={`rounded-2xl p-4 text-white ${className ?? ""}`}
       style={{
@@ -100,14 +110,25 @@ export function PrimeRewardCard({ className }: { className?: string }) {
         </div>
       </div>
       <Link
-        to={ctaHref}
-        onClick={() => trackClientEvent("prime_reward_card", "upgrade_click", { surface: surfaceReady ? "rewarded" : "trial" })}
+        to={trialHref}
+        onClick={handleCta}
         className="mt-3 block w-full text-center py-2.5 rounded-xl text-xs font-bold transition-transform active:scale-[0.98]"
         style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)", color: "#fff", boxShadow: "0 4px 14px rgba(212,0,122,0.25)" }}
       >
         {ctaText}
       </Link>
     </div>
+    {modalOpen && createPortal(
+      <PrimeRewardedModal
+        onClose={() => setModalOpen(false)}
+        onGranted={(expiresAt) => {
+          setActiveUntil(expiresAt);
+          setModalOpen(false);
+        }}
+      />,
+      document.body,
+    )}
+    </>
   );
 }
 

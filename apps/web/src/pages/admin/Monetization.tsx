@@ -3,6 +3,8 @@ import {
   getAdminMonetizationSummary,
   type AdminMonetizationSlot,
   type AdminMonetizationCohortRow,
+  type AdminMonetizationVariantRow,
+  type AdminMonetizationHourlyRow,
 } from "@/lib/api";
 
 const RANGES = [
@@ -43,6 +45,8 @@ export default function AdminMonetization() {
   const [newPrimeSubs, setNewPrimeSubs] = useState(0);
   const [uniqueUsers, setUniqueUsers] = useState(0);
   const [cohort, setCohort] = useState<AdminMonetizationCohortRow[]>([]);
+  const [variants, setVariants] = useState<AdminMonetizationVariantRow[]>([]);
+  const [hourly, setHourly] = useState<AdminMonetizationHourlyRow[]>([]);
 
   const load = useCallback((h: number) => {
     setLoading(true);
@@ -53,6 +57,8 @@ export default function AdminMonetization() {
         setNewPrimeSubs(r.summary.newPrimeSubs || 0);
         setUniqueUsers(r.summary.uniqueUsersServedAds || 0);
         setCohort(r.cohort || []);
+        setVariants(r.variants || []);
+        setHourly(r.hourly || []);
       })
       .catch((err) => setError(err?.message || "load failed"))
       .finally(() => setLoading(false));
@@ -112,6 +118,72 @@ export default function AdminMonetization() {
         <StatPill label="Upgrade CTA shown" value={totals.upgShown.toLocaleString()} />
         <StatPill label="Upgrade CTA click" value={totals.upgClick.toLocaleString()} sub={`CTR ${pct(totals.upgClick, totals.upgShown)}`} />
       </div>
+
+      {hourly.length > 0 && (
+        <Section title={`Impresiones por hora — últimas ${hours}h`}>
+          <div className="flex items-end gap-0.5 h-24">
+            {hourly.map((h, i) => {
+              const max = Math.max(...hourly.map((x) => Number(x.impressions) || 0), 1);
+              const heightPct = Math.max((Number(h.impressions) / max) * 100, 2);
+              return (
+                <div key={i} className="group relative flex-1 flex flex-col items-center justify-end h-full">
+                  <div
+                    className="w-full rounded-t transition-colors"
+                    style={{ height: `${heightPct}%`, background: "rgba(212,0,122,0.7)" }}
+                  />
+                  <div className="absolute -top-9 left-1/2 -translate-x-1/2 hidden group-hover:block bg-black/90 border border-white/10 rounded px-2 py-1 text-[10px] text-white whitespace-nowrap z-10 pointer-events-none">
+                    {new Date(h.bucket).toISOString().slice(5, 13).replace('T', ' ')}: {Number(h.impressions).toLocaleString()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {variants.length > 0 && (
+        <Section title={`A/B variants — últimas ${hours}h`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs uppercase tracking-wider" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  <th className="text-left py-2 pr-3">Variant</th>
+                  <th className="text-right py-2 px-2">Users</th>
+                  <th className="text-right py-2 px-2">Imp</th>
+                  <th className="text-right py-2 px-2">Clk</th>
+                  <th className="text-right py-2 px-2">CTR</th>
+                  <th className="text-right py-2 px-2">Upg shown</th>
+                  <th className="text-right py-2 px-2">Upg click</th>
+                  <th className="text-right py-2 pl-2">Upg CTR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {variants.map((v) => (
+                  <tr key={v.variant} className="border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      <span
+                        className="px-2 py-0.5 rounded-full text-white font-bold"
+                        style={{
+                          background: v.variant === 'A' ? '#D4007A'
+                            : v.variant === 'B' ? '#E69138'
+                            : v.variant === 'control' ? '#636366' : '#3A3A3C',
+                        }}
+                      >{v.variant}</span>
+                    </td>
+                    <td className="text-right py-2 px-2">{Number(v.unique_users).toLocaleString()}</td>
+                    <td className="text-right py-2 px-2">{Number(v.impressions).toLocaleString()}</td>
+                    <td className="text-right py-2 px-2">{Number(v.clicks).toLocaleString()}</td>
+                    <td className="text-right py-2 px-2 text-white/60 text-xs">{pct(Number(v.clicks), Number(v.impressions))}</td>
+                    <td className="text-right py-2 px-2">{Number(v.upgrade_shown).toLocaleString()}</td>
+                    <td className="text-right py-2 px-2">{Number(v.upgrade_click).toLocaleString()}</td>
+                    <td className="text-right py-2 pl-2 text-white/60 text-xs">{pct(Number(v.upgrade_click), Number(v.upgrade_shown))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
 
       <Section title={`Slots — últimas ${hours}h`}>
         {slots.length === 0 ? (

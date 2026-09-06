@@ -11189,6 +11189,7 @@ export interface AdSlotConfig {
 }
 
 export interface AdsUxFlags {
+  variant?: "A" | "B" | "control";
   showUpgradeChip: boolean;
   upgradeModalMode: "replace_popunder" | "off";
   interstitialAfterN: number;
@@ -11231,6 +11232,18 @@ export interface AdminMonetizationCohortRow {
   impressions_prior_30d: number;
   upgrade_ctas_clicked: number;
 }
+export interface AdminMonetizationVariantRow {
+  variant: string;
+  impressions: number;
+  clicks: number;
+  upgrade_shown: number;
+  upgrade_click: number;
+  unique_users: number;
+}
+export interface AdminMonetizationHourlyRow {
+  bucket: string;
+  impressions: number;
+}
 export interface AdminMonetizationSummary {
   ok: boolean;
   hours: number;
@@ -11240,6 +11253,8 @@ export interface AdminMonetizationSummary {
     uniqueUsersServedAds: number;
   };
   cohort: AdminMonetizationCohortRow[];
+  variants?: AdminMonetizationVariantRow[];
+  hourly?: AdminMonetizationHourlyRow[];
 }
 export function getAdminMonetizationSummary(hours = 24): Promise<AdminMonetizationSummary> {
   return request<AdminMonetizationSummary>(`/api/admin/monetization/summary?hours=${hours}`);
