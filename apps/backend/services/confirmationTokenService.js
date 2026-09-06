@@ -24,11 +24,17 @@ class ConfirmationTokenService {
       // Store token in database with expiration (24 hours)
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
+      // confirmation_tokens.payment_id is a UUID column. Synthetic IDs from
+      // NowPayments ("pnptv-nowp-…") and Privy wallet ("wallet:sub:…") are not
+      // UUIDs — pass NULL for those to avoid a 22P02 cast error.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const safePaymentId = paymentId && UUID_RE.test(String(paymentId)) ? paymentId : null;
+
       await query(
         `INSERT INTO confirmation_tokens
          (token, payment_id, user_id, plan_id, provider, expires_at, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [token, paymentId, userId, planId, provider, expiresAt]
+        [token, safePaymentId, userId, planId, provider, expiresAt]
       );
 
       logger.info('Confirmation token generated', {

@@ -370,7 +370,13 @@ export function WalletPayCard({
     onError: (err) => {
       const msg = typeof err === "string" ? err : String(err);
       if (/exited|closed|cancel|reject/i.test(msg)) return;
-      setConnectError(msg || (es ? "No se pudo conectar la billetera." : "Could not connect wallet."));
+      const isGeneric = /generic_connect_wallet_error/i.test(msg) || !msg || msg === "undefined";
+      const friendlyMsg = isGeneric
+        ? (es
+            ? "No se pudo conectar la billetera. Intenta refrescar la página o usa la billetera integrada."
+            : "Could not connect wallet. Try refreshing the page or use the built-in wallet instead.")
+        : msg;
+      setConnectError(friendlyMsg);
       reportWalletClientError("connectWallet", err, { surface });
     },
   });
@@ -1055,7 +1061,10 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
       // show a scary error when the user just closed the modal.
       const msg = typeof err === "string" ? err : String(err);
       if (/exited|closed|cancel|reject/i.test(msg)) return;
-      setConnectError(msg || "Could not connect wallet — please try again.");
+      const isGeneric = /generic_connect_wallet_error/i.test(msg) || !msg || msg === "undefined";
+      setConnectError(isGeneric
+        ? "Could not connect wallet. Try refreshing the page or use the built-in wallet instead."
+        : msg);
       reportWalletClientError("connectWallet", err, { source: "WalletHomeSheet" });
     },
   });
