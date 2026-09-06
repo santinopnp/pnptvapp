@@ -7591,6 +7591,31 @@ app.post('/api/webapp/creators/rush-to-usd', requireSessionAuth, asyncHandler(as
     return res.status(403).json({ success: false, error: 'Not an active creator' });
   }
 
+  // Ru$h received from tips already generates a creator_earnings row via the
+  // rush_tip handler — allowing them to also flow through rush-to-usd would
+  // double-count the payout. Only Ru$h from non-tip sources (purchase, admin
+  // grant, refund credit, gift receive) is eligible for manual conversion.
+  const { rows: convRows } = await getPool().query(
+    `SELECT
+       COALESCE(SUM(delta_balance) FILTER (WHERE reason = 'live_tip_receive'), 0) AS tip_received,
+       COALESCE(SUM(-delta_balance) FILTER (WHERE reason = 'earnings_conversion'), 0) AS already_converted,
+       COALESCE(SUM(delta_balance) FILTER (WHERE delta_balance > 0), 0) AS lifetime_credits
+     FROM token_ledger WHERE user_id = $1`,
+    [String(user.id)]
+  );
+  const tipReceived = Number(convRows[0].tip_received || 0);
+  const alreadyConverted = Number(convRows[0].already_converted || 0);
+  const lifetimeCredits = Number(convRows[0].lifetime_credits || 0);
+  const convertiblePool = Math.max(0, lifetimeCredits - tipReceived - alreadyConverted);
+  if (rushAmount > convertiblePool) {
+    return res.status(400).json({
+      success: false,
+      error: `Only ${convertiblePool} Ru$h eligible for manual conversion. Tips flow to your weekly payout automatically — no conversion needed.`,
+      code: 'INELIGIBLE_RUSH_SOURCE',
+      convertible: convertiblePool,
+    });
+  }
+
   const grossUsd = parseFloat((rushAmount / 6).toFixed(4));
   const creatorUsd = parseFloat((grossUsd * 0.70).toFixed(2));
   const platformUsd = parseFloat((grossUsd * 0.30).toFixed(2));
@@ -14590,12 +14615,9 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     // credit the creator's Ru$h wallet but never generate a USD earnings
     // record, so the creator can't cash out.
     //
-    // Split uses TIP_CREATOR_RATE (1.0 = 100 % to creator) per monetization
-    // policy — tips are commission-free. The previous 70/30 usage was a bug
-    // introduced when the legacy pnpLiveTipsService pattern was copied here
-    // without checking the config's is_tip carve-out (fixed 2026-09-05).
-    // When a tip lands during an active PNPtv! Mode session, the config
-    // overrides to 70/30 (PNPTV_MODE_*_TIP_RATE) — mirrored below.
+    // Split uses TIP_CREATOR_RATE (0.70 as of 2026-09-06 — no revenue is
+    // exempt from the 30% platform fee). PNPtv! Mode override applies the same
+    // 70/30 split via PNPTV_MODE_*_TIP_RATE — mirrored below.
     const {
       TIP_CREATOR_RATE,
       PNPTV_MODE_CREATOR_TIP_RATE,
@@ -14678,7 +14700,7 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
 }));
 
 // ── Creator tip endpoints ─────────────────────────────────────────────────────
-// Tips are 100% commission-free to the creator (TIP_CREATOR_RATE = 1.0).
+// Tips take the standard 30% platform fee (TIP_CREATOR_RATE = 0.70 since 2026-09-06).
 // Uses NowPayments hosted invoice. Idempotency key = UUID stored in creator_tips.order_id.
 
 const creatorTipLimiter = rateLimit({

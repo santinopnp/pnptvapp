@@ -9,7 +9,11 @@
 // CREATOR_REVENUE_RATE + PLATFORM_COMMISSION_RATE MUST equal exactly 1.
 const PLATFORM_COMMISSION_RATE = 0.30;
 const CREATOR_REVENUE_RATE     = 0.70;
-const TIP_CREATOR_RATE         = 1.0; // 100% to creator — tips are fully exempt from platform commission
+// Tips also take the 30% platform fee (updated 2026-09-06). Was 1.0 (100%) —
+// aligned with the "no revenue is exempt from platform fee" policy so tip
+// earnings match the split used everywhere else (calls, subscriptions,
+// content, PNPtv! Mode, admin payouts).
+const TIP_CREATOR_RATE         = 0.70;
 
 // ── Gifted-token policy ──────────────────────────────────────────────────────
 // Tokens gifted before PNP Live's public launch are restricted to these
@@ -37,10 +41,11 @@ const AMADEUS_USER_ID = '7bdabb03-b447-4e8e-b989-efe1b5e773fd';
 // list is the source of truth for seeding + admin displays.
 const PNPTV_MODE_FOUNDER_IDS = [SANTINO_USER_ID, LEX_USER_ID, AMADEUS_USER_ID];
 
-// Tips landing during an active pnptv_mode_sessions row split 70/30
-// (creator/platform). Regular tips outside PNPtv! Mode keep the existing
-// TIP_CREATOR_RATE (1.0). The platform-side share funds Main Stage infra
-// (LiveKit egress, discovery push fan-out, moderation).
+// Tips landing during an active pnptv_mode_sessions row keep the same 70/30
+// split as regular tips (TIP_CREATOR_RATE is now 0.70 as of 2026-09-06 —
+// previously PNPtv! Mode was the only path that took a platform cut on tips).
+// Kept as separate constants in case PNPtv! Mode adopts a different split
+// later.
 const PNPTV_MODE_CREATOR_TIP_RATE  = 0.70;
 const PNPTV_MODE_PLATFORM_TIP_RATE = 0.30;
 
