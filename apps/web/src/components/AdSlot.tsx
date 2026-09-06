@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTier } from "@/hooks/useTier";
 import { getAdsConfig, type AdSlotConfig, type AdSlotFormat } from "@/lib/api";
 
@@ -37,11 +38,102 @@ const DISPLAY_FORMATS: ReadonlySet<AdSlotFormat> = new Set([
 
 const POPUNDER_FORMATS: ReadonlySet<AdSlotFormat> = new Set(["popunder", "mobile_popunder"]);
 
+// Routes where ads are hard-suppressed regardless of tier — checkout, payment
+// confirmation, and pending-wallet screens. Ads on these pages destroy
+// conversion far more than they earn, so we drop them silently.
+const NO_AD_ROUTE_PATTERNS: RegExp[] = [
+  /^\/subscribe/,
+  /^\/confirm-payment/,
+  /^\/lifetime100/,
+  /^\/join(\/|$)/,
+  /^\/onboarding/,
+  /^\/auth/,
+];
+
+// Live pages get 60 seconds of grace at the top (viewer just landed — don't
+// interrupt engagement). Also suppresses during an active tipping session
+// (last tip < 5 min ago) to protect the highest-revenue moment.
+const LIVE_GRACE_MS = 60 * 1000;
+const TIP_GRACE_MS = 5 * 60 * 1000;
+
+function isRouteSuppressed(pathname: string): boolean {
+  return NO_AD_ROUTE_PATTERNS.some((r) => r.test(pathname));
+}
+
+function isLiveActivelyEngaged(pathname: string): boolean {
+  if (!/^\/(live|stream)(\/|$)/.test(pathname)) return false;
+  // Landing on live: use sessionStorage marker set on first mount by the page
+  const landedAtStr = sessionStorage.getItem(`pnpapp:live:landed_at:${pathname}`);
+  if (!landedAtStr) {
+    sessionStorage.setItem(`pnpapp:live:landed_at:${pathname}`, String(Date.now()));
+    return true; // first mount ⇒ grace window
+  }
+  const landedAt = parseInt(landedAtStr, 10);
+  if (Date.now() - landedAt < LIVE_GRACE_MS) return true;
+  // Active tipping window
+  const lastTipStr = sessionStorage.getItem("pnpapp:live:last_tip_at");
+  if (lastTipStr) {
+    const lastTip = parseInt(lastTipStr, 10);
+    if (Date.now() - lastTip < TIP_GRACE_MS) return true;
+  }
+  return false;
+}
+
+// Cache the anonymous/user session id so all events share it. Persisted in
+// sessionStorage so it survives navigation but resets per browser session.
+function getOrCreateSessionId(): string {
+  const KEY = "pnpapp:ads:sid";
+  let sid = sessionStorage.getItem(KEY);
+  if (!sid) {
+    sid = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    sessionStorage.setItem(KEY, sid);
+  }
+  return sid;
+}
+
+// Client-side batched analytics — collects impression/click events, flushes
+// every 15s or on visibilityChange=hidden, whichever comes first. Silent
+// failures — instrumentation must never break rendering.
+interface QueuedEvent { slot: string; type: string; metadata?: Record<string, unknown> }
+const eventQueue: QueuedEvent[] = [];
+let flushTimer: ReturnType<typeof setInterval> | null = null;
+async function flushEvents() {
+  if (!eventQueue.length) return;
+  const batch = eventQueue.splice(0, eventQueue.length);
+  try {
+    await fetch("/api/ads/event", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: getOrCreateSessionId(), events: batch }),
+      keepalive: true,
+    });
+  } catch { /* silent */ }
+}
+function ensureFlushLoop() {
+  if (flushTimer) return;
+  flushTimer = setInterval(flushEvents, 15_000);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushEvents();
+    });
+    window.addEventListener("pagehide", flushEvents);
+  }
+}
+export function trackAdEvent(slot: string, type: string, metadata?: Record<string, unknown>) {
+  eventQueue.push({ slot, type, metadata });
+  ensureFlushLoop();
+  if (eventQueue.length >= 20) flushEvents();
+}
+
 function sessionCapKey(slot: string) { return `pnpapp:adslot:${slot}:shown`; }
 
 export function AdSlot({ slot, className, style, onVastUrl }: Props) {
   const { isPrime, isAdmin } = useTier();
-  const adsBlocked = isPrime || isAdmin;
+  const location = useLocation();
+  const routeSuppressed = isRouteSuppressed(location.pathname);
+  const liveSuppressed = isLiveActivelyEngaged(location.pathname);
+  const adsBlocked = isPrime || isAdmin || routeSuppressed || liveSuppressed;
   const ref = useRef<HTMLDivElement | null>(null);
   const [cfg, setCfg] = useState<AdSlotConfig | null>(null);
   const [scriptUrl, setScriptUrl] = useState<string | null>(null);
@@ -67,6 +159,7 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
 
     if (cfg.format === "vast") {
       if (cfg.vastUrl && onVastUrl) onVastUrl(cfg.vastUrl);
+      trackAdEvent(slot, "impression", { format: "vast" });
       return;
     }
 
@@ -85,6 +178,7 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
       push.textContent = `(AdProvider = window.AdProvider || []).push({"serve": {}});`;
       document.body.appendChild(push);
       if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
+      trackAdEvent(slot, "popunder_fired", { format: cfg.format });
       return;
     }
 
@@ -102,6 +196,10 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
       push.textContent = `(AdProvider = window.AdProvider || []).push({"serve": {}});`;
       host.appendChild(push);
       if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
+      trackAdEvent(slot, "impression", { format: cfg.format, size: cfg.size });
+      // Any click within the ad container counts as a click event.
+      const onClick = () => trackAdEvent(slot, "click", { format: cfg.format });
+      host.addEventListener("click", onClick, { once: false });
     }
   }, [cfg, scriptUrl, slot, adsBlocked, onVastUrl]);
 

@@ -18107,6 +18107,49 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   });
 }));
 
+// POST /api/ads/event — client-side analytics batch drop.
+// Accepts an array of {slot, type, metadata} events observed by AdSlot on
+// the client. softAuth so anonymous LandingPage visits are also counted.
+// Rate-limited (share adCallbackLimiter — 60/min/ip). Silently ignores
+// admin/superadmin (their impressions are noise, not ad revenue).
+const adEventsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/api/ads/event', adEventsLimiter, softAuth, express.json({ limit: '32kb' }), asyncHandler(async (req, res) => {
+  const events = Array.isArray(req.body?.events) ? req.body.events : null;
+  if (!events || events.length === 0) return res.json({ ok: true, recorded: 0 });
+  if (events.length > 50) return res.status(400).json({ ok: false, error: 'batch_too_large' });
+
+  const user = req.session?.user;
+  if (user && (user.role === 'admin' || user.role === 'superadmin')) {
+    return res.json({ ok: true, recorded: 0 }); // silently drop admin noise
+  }
+
+  const sessionId = String(req.body?.sessionId || req.sessionID || req.cookies?.['connect.sid'] || '').slice(0, 64);
+  if (!sessionId) return res.status(400).json({ ok: false, error: 'missing_session' });
+
+  const adAnalytics = require('../../services/adAnalyticsService');
+  let recorded = 0;
+  for (const e of events) {
+    if (!e || typeof e !== 'object') continue;
+    if (!adAnalytics.ALLOWED_EVENT_TYPES.has(String(e.type))) continue;
+    if (!e.slot || typeof e.slot !== 'string') continue;
+    adAnalytics.recordEvent({
+      userId: user?.id || null,
+      sessionId,
+      slotId: String(e.slot).slice(0, 64),
+      eventType: String(e.type),
+      metadata: e.metadata && typeof e.metadata === 'object' ? e.metadata : {},
+    });
+    recorded++;
+  }
+  return res.json({ ok: true, recorded });
+}));
+
 // ── Hostinger Mail webhook — message.received on support@pnptv.app ────────────
 // Hostinger sends Authorization: Bearer <webhook-secret> with each delivery.
 // The secret was returned once at webhook creation time; stored as env var.
