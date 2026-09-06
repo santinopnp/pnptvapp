@@ -2,14 +2,18 @@
 
 /**
  * cashoutService.js
- * Creator cash-out off-ramp. Active lanes (migration 364):
- *   1. usdc_erc20 — USDC on Ethereum ERC-20; manual settlement from treasury
- *   2. eth        — Ethereum mainnet address; manual settlement from treasury
- *   3. bre_b      — bre_b fiat; manual operator settlement (Colombia)
- *   4. cashapp    — Cash App $cashtag; manual operator settlement
- *   5. wise       — Wise email; manual operator settlement
+ * Creator cash-out off-ramp — SIMPLIFIED 2026-09-05.
  *
- * Retired lanes (2026-08-08, migration 364): meru, btc, dash, usdt_tron, usdt_base
+ * Single active lane: `privy_wallet` — USDC on Base, sent to the creator's
+ * Privy embedded wallet address (stored on `users.preferred_wallet_address`
+ * or `users.wallet_address`). From there creators bridge / swap / off-ramp
+ * on their own; we no longer operate fiat rails.
+ *
+ * Retired 2026-08-08 (migration 364): meru, btc, dash, usdt_tron, usdt_base
+ * Retired 2026-09-05: usdc_erc20, eth, bre_b, cashapp, wise
+ *
+ * Historic orders in fiat_cashout_orders under the retired lanes remain
+ * queryable for auditing — new cashouts can only use `privy_wallet`.
  *
  * All public methods throw structured errors with a `.code` property so
  * route handlers can map them to HTTP status codes without string matching.
@@ -113,45 +117,35 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
       `Single cashout request cannot exceed $${MAX_CASHOUT_USD_PER_REQUEST.toFixed(2)}.`
     );
   }
-  const validLanes = ['usdc_erc20', 'eth', 'bre_b', 'cashapp', 'wise'];
+  const validLanes = ['privy_wallet'];
   if (!validLanes.includes(lane)) {
     throw err('INVALID_LANE', `lane must be one of: ${validLanes.join(', ')}`);
   }
-  if (!destination || typeof destination !== 'object') {
-    throw err('MISSING_DESTINATION', 'destination object is required');
-  }
-  // Per-lane address shape + format validation runs server-side regardless of
-  // what the client says is saved on their profile.
-  validateLaneDestination(lane, destination);
 
-  // Minimum cashout floor — lowered from $50 to $25 on 2026-09-05 after audit
-  // showed 8 of 10 creators with earnings were locked out by the $50 floor.
+  // For the privy_wallet lane the client does NOT supply the destination — we
+  // always send to the creator's own Privy embedded wallet (address stored on
+  // their profile). This eliminates the "did you paste the right address?"
+  // failure mode entirely.
+  const walletRow = await query(
+    `SELECT COALESCE(NULLIF(preferred_wallet_address, ''), NULLIF(wallet_address, '')) AS addr
+       FROM users WHERE id = $1 LIMIT 1`,
+    [String(creatorId)]
+  );
+  const walletAddress = walletRow.rows[0]?.addr || null;
+  if (!walletAddress || !isValidEvmAddress(walletAddress)) {
+    throw err(
+      'NO_WALLET_CONFIGURED',
+      'Connect a wallet first — log in with Privy and finish the wallet setup, then try again.',
+      400
+    );
+  }
+  destination = { address: walletAddress, chain: 'base', token: 'USDC' };
+
+  // Minimum cashout floor — lowered from $50 to $25 on 2026-09-05.
   // Override via MIN_CASHOUT_USD_PER_REQUEST env var if a specific need arises.
   const MIN_CASHOUT_USD = parseFloat(process.env.MIN_CASHOUT_USD_PER_REQUEST || '25');
   if (amountUsd < MIN_CASHOUT_USD) {
     throw err('BELOW_MINIMUM', `Minimum cashout is $${MIN_CASHOUT_USD.toFixed(2)}.`, 400);
-  }
-
-  // Fix 8: Verify destination matches the stored value for that lane
-  const destCheck = await query(
-    `SELECT creator_payout_destinations FROM users WHERE id = $1`,
-    [creatorId]
-  );
-  const stored = destCheck.rows[0]?.creator_payout_destinations || {};
-  if (stored[lane]) {
-    const storedVal = (lane === 'bre_b' || lane === 'cashapp')
-      ? stored[lane]?.handle
-      : lane === 'wise'
-        ? stored[lane]?.email
-        : stored[lane]?.address;
-    const submittedVal = (lane === 'bre_b' || lane === 'cashapp')
-      ? destination.handle
-      : lane === 'wise'
-        ? destination.email
-        : destination.address;
-    if (storedVal && storedVal !== submittedVal) {
-      throw err('DESTINATION_MISMATCH', 'Destination does not match your saved payout address.', 400);
-    }
   }
 
   // Block concurrent / overlapping cashout orders. The DB-level SKIP LOCKED on
@@ -298,37 +292,16 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
 /**
  * Validate the destination payload for a given lane. Throws on bad shape.
  * Lane-specific shapes:
- *   usdc_erc20 → { address: string }   (EVM 0x…)
- *   eth        → { address: string }   (EVM 0x…)
- *   bre_b      → { handle: string }    (Colombia bre_b handle)
- *   cashapp    → { handle: string }    ($cashtag or phone)
- *   wise       → { email: string }     (Wise registered email)
+ *   privy_wallet → { address, chain: 'base', token: 'USDC' }
+ *   The address is not client-supplied — it's read from the creator's
+ *   `users.preferred_wallet_address` (or fallback `users.wallet_address`).
+ *   USDC on Base is the delivery rail; from there the creator bridges /
+ *   swaps / off-ramps as they choose.
  */
 function validateLaneDestination(lane, destination) {
-  if (lane === 'usdc_erc20' || lane === 'eth') {
-    if (!isValidEvmAddress(destination.address)) {
-      throw err('INVALID_DESTINATION', `${lane === 'eth' ? 'ETH' : 'USDC-ERC20'} destination must be { address: 0x… } Ethereum mainnet address.`);
-    }
-    return;
-  }
-  if (lane === 'bre_b') {
-    const h = String(destination.handle || '').trim();
-    if (!h || h.length < 3 || h.length > 50) {
-      throw err('INVALID_DESTINATION', 'bre_b destination must be { handle: string } — account handle or phone.');
-    }
-    return;
-  }
-  if (lane === 'cashapp') {
-    const h = String(destination.handle || '').trim();
-    if (!h || h.length < 2 || h.length > 50) {
-      throw err('INVALID_DESTINATION', 'Cash App destination must be { handle: string } — $cashtag or phone.');
-    }
-    return;
-  }
-  if (lane === 'wise') {
-    const e = String(destination.email || '').trim();
-    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 254) {
-      throw err('INVALID_DESTINATION', 'Wise destination must be { email: string } — Wise registered email.');
+  if (lane === 'privy_wallet') {
+    if (!isValidEvmAddress(destination?.address)) {
+      throw err('INVALID_DESTINATION', 'Privy wallet destination must be a valid EVM address (0x…).');
     }
     return;
   }

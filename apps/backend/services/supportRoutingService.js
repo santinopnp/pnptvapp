@@ -3,6 +3,13 @@ const SupportTopicModel = require('../models/supportTopicModel');
 const { addReaction } = require('../bot/utils/telegramReactions');
 
 /**
+ * Neutraliza los caracteres que Telegram lee como formato en Markdown clasico.
+ * Va sobre el DATO (nombre, texto del usuario, nombre de archivo), nunca sobre
+ * la plantilla: las negritas que pone el codigo tienen que seguir funcionando.
+ */
+const mdEscape = (v) => String(v ?? '').replace(/([_*`[\]\\])/g, '\\$1');
+
+/**
  * Support Routing Service
  * Manages forum topic creation and message routing between users and support group
  */
@@ -59,7 +66,7 @@ class SupportRoutingService {
           // Send reopen notification with quick actions
           const reopenMessage = `🔄 *TICKET REABIERTO*
 
-👤 *Usuario:* ${firstName} ${username}
+👤 *Usuario:* ${mdEscape(firstName)} ${mdEscape(username)}
 🆔 *User ID:* \`${userId}\`
 📅 *Reabierto:* ${new Date().toLocaleString('es-ES')}
 
@@ -149,7 +156,7 @@ class SupportRoutingService {
 
 ${priorityEmoji} *Prioridad:* ${priority}
 ${categoryEmoji} *Categoría:* ${category}
-👤 *Usuario:* ${firstName} ${username}
+👤 *Usuario:* ${mdEscape(firstName)} ${mdEscape(username)}
 🆔 *User ID:* \`${userId}\`
 🌍 *Idioma:* ${language}
 📅 *Creado:* ${new Date().toLocaleString('es-ES')}
@@ -218,7 +225,7 @@ _Responde en este topic para enviar mensajes al usuario._`;
     const user = ctx.from;
     const userId = String(user.id);
     const firstName = user.first_name || 'Unknown';
-    const username = user.username ? user.username.replace(/@/g, '\\@') : 'No username';
+    const username = user.username ? mdEscape(user.username.replace(/@/g, '')) : 'No username';
 
     try {
       // Extract message text for category/priority detection
@@ -236,7 +243,7 @@ _Responde en este topic para enviar mensajes al usuario._`;
       } else if (ctx.message?.document) {
         const doc = ctx.message.document;
         const sizeKB = doc.file_size ? Math.round(doc.file_size / 1024) : '?';
-        fileInfo = `\n📎 *Archivo:* ${doc.file_name || 'documento'} (${sizeKB} KB)`;
+        fileInfo = `\n📎 *Archivo:* ${mdEscape(doc.file_name || 'documento')} (${sizeKB} KB)`;
       } else if (ctx.message?.video) {
         const video = ctx.message.video;
         const sizeMB = video.file_size ? Math.round(video.file_size / (1024 * 1024)) : '?';
@@ -245,18 +252,18 @@ _Responde en este topic para enviar mensajes al usuario._`;
         fileInfo = `\n📎 *Archivo:* Nota de voz (${ctx.message.voice.duration}s)`;
       } else if (ctx.message?.audio) {
         const audio = ctx.message.audio;
-        fileInfo = `\n📎 *Archivo:* Audio - ${audio.title || audio.file_name || 'audio'} (${audio.duration}s)`;
+        fileInfo = `\n📎 *Archivo:* Audio - ${mdEscape(audio.title || audio.file_name || 'audio')} (${audio.duration}s)`;
       }
 
       // Build message header with file info
       const requestEmoji = this.getRequestEmoji(requestType);
-      const header = `${requestEmoji} *${firstName}* (@${username}):${fileInfo}\n\n`;
+      const header = `${requestEmoji} *${mdEscape(firstName)}* (@${username}):${fileInfo}\n\n`;
 
       // Send based on message type
       if (messageType === 'text' && ctx.message?.text) {
         await this.telegram.sendMessage(
           this.supportGroupId,
-          header + ctx.message.text,
+          header + mdEscape(ctx.message.text),
           {
             message_thread_id: threadId,
             parse_mode: 'Markdown',
@@ -269,7 +276,7 @@ _Responde en este topic para enviar mensajes al usuario._`;
           photo.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -279,7 +286,7 @@ _Responde en este topic para enviar mensajes al usuario._`;
           ctx.message.document.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -289,7 +296,7 @@ _Responde en este topic para enviar mensajes al usuario._`;
           ctx.message.video.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -943,12 +950,12 @@ Reply with a number from 1 to 5 or share your feedback.`
           const alertMessage = `${priorityEmoji} *ALERTA: SLA INCUMPLIDO*
 
 ${categoryEmoji} *Ticket:* ${topic.user_id}
-👤 *Usuario:* ${topic.thread_name}
+👤 *Usuario:* ${mdEscape(topic.thread_name)}
 ⏰ *Tiempo sin respuesta:* ${this.getSlaBreachTime(topic)}
 📅 *Creado:* ${new Date(topic.created_at).toLocaleString('es-ES')}
 
-*Prioridad:* ${topic.priority}
-*Categoría:* ${topic.category}`;
+*Prioridad:* ${mdEscape(topic.priority)}
+*Categoría:* ${mdEscape(topic.category)}`;
           
           try {
             await this.telegram.sendMessage(
@@ -1047,7 +1054,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
 
       const header = `${requestEmoji} *${requestLabel}*
 
-👤 *Usuario:* ${firstName} ${username}
+👤 *Usuario:* ${mdEscape(firstName)} ${mdEscape(username)}
 🆔 *User ID:* \`${user.id}\`
 📅 *Fecha:* ${new Date().toLocaleString('es-ES')}
 
@@ -1057,7 +1064,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
       if (messageType === 'text') {
         await this.telegram.sendMessage(
           this.supportGroupId,
-          header + message,
+          header + mdEscape(message),
           {
             message_thread_id: threadId,
             parse_mode: 'Markdown',
@@ -1070,7 +1077,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
           photo.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -1080,7 +1087,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
           ctx.message.document.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -1090,7 +1097,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
           ctx.message.video.file_id,
           {
             message_thread_id: threadId,
-            caption: header + (ctx.message.caption || ''),
+            caption: header + mdEscape(ctx.message.caption || ''),
             parse_mode: 'Markdown',
           }
         );
@@ -1120,7 +1127,7 @@ ${categoryEmoji} *Ticket:* ${topic.user_id}
         // Fallback to text message
         await this.telegram.sendMessage(
           this.supportGroupId,
-          header + message,
+          header + mdEscape(message),
           {
             message_thread_id: threadId,
             parse_mode: 'Markdown',
