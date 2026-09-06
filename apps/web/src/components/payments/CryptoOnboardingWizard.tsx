@@ -274,8 +274,8 @@ const PAY_CLIPS: Record<WalletKey, Clip[]> = {
   metamask: [
     { src: TW_SRC, start: 118, end: 127,
       title: { en: "In PNPtv: pick token, network and your wallet", es: "En PnP: elige token, red y tu wallet" },
-      desc:  { en: "On the payment screen tap \"Pay with Tokens\", pick the same token and network you bought, then the MetaMask icon (the orange fox).",
-               es: "En la pantalla de pago toca \"Pagar con Tokens\", elige el mismo token y red que compraste y luego el icono de MetaMask (el zorro naranja)." },
+      desc:  { en: "On the payment screen tap \"Pay with Ru$h\", pick the same token and network you bought, then the MetaMask icon (the orange fox).",
+               es: "En la pantalla de pago toca \"Pagar con Ru$h\", elige el mismo token y red que compraste y luego el icono de MetaMask (el zorro naranja)." },
       caption: { en: "PNPtv checkout: Ru$h + MetaMask / Trust Wallet icons", es: "Checkout de PnP: Ru$h + iconos MetaMask / True Wallet" } },
     { src: MM_SRC, start: 236, end: 243,
       title: { en: "NOWPayments shows exact amount and network", es: "NOWPayments muestra monto exacto y red" },
@@ -291,8 +291,8 @@ const PAY_CLIPS: Record<WalletKey, Clip[]> = {
   trust: [
     { src: TW_SRC, start: 118, end: 127,
       title: { en: "In PNPtv: pick token, network and your wallet", es: "En PnP: elige token, red y tu wallet" },
-      desc:  { en: "On the payment screen tap \"Pay with Tokens\", pick the same token and network you bought, then the Trust Wallet icon (or MetaMask if that's what you use).",
-               es: "En la pantalla de pago toca \"Pagar con Tokens\", elige el mismo token y red que compraste y luego el icono de True Wallet (o MetaMask si usas esa)." },
+      desc:  { en: "On the payment screen tap \"Pay with Ru$h\", pick the same token and network you bought, then the Trust Wallet icon (or MetaMask if that's what you use).",
+               es: "En la pantalla de pago toca \"Pagar con Ru$h\", elige el mismo token y red que compraste y luego el icono de True Wallet (o MetaMask si usas esa)." },
       caption: { en: "PNPtv checkout: Ru$h + MetaMask / Trust Wallet icons", es: "Checkout de PnP: Ru$h + iconos MetaMask / True Wallet" } },
     { src: TW_SRC, start: 146.5, end: 151,
       title: { en: "NOWPayments shows exact amount and network", es: "NOWPayments muestra monto exacto y red" },

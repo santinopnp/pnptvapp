@@ -265,11 +265,15 @@ class PNPLiveTipsService {
         [String(performerId)]
       );
       const creatorUserId = perfLookup.rows.length > 0 ? String(perfLookup.rows[0].user_id) : String(performerId);
-      if (balanceTokensSpent > 0) {
-        const earnableUsd = balanceTokensSpent / TOKENS_PER_USD;
-        const baseCreatorEarn = Math.round(balanceTokensSpent * CREATOR_REVENUE_RATE * 1000) / 1000;
+      // giftedTokensSpent = tokens drawn from gifted_balance or creator_gifts pools.
+      // The platform absorbs the cost of gifted tips (founders get credit for gifted tips).
+      const giftedTokensSpent = Math.max(0, amount - balanceTokensSpent);
+      const totalTokensForEarnings = balanceTokensSpent + giftedTokensSpent; // always === amount
+      if (balanceTokensSpent > 0 || giftedTokensSpent > 0) {
+        const earnableUsd = totalTokensForEarnings / TOKENS_PER_USD;
+        const baseCreatorEarn = Math.round(totalTokensForEarnings * CREATOR_REVENUE_RATE * 1000) / 1000;
         const { creatorAmount: creatorTokensEarn, platformAmount: platformTokensEarn } =
-          await applyCreatorBonus(baseCreatorEarn, balanceTokensSpent);
+          await applyCreatorBonus(baseCreatorEarn, totalTokensForEarnings);
         const amountCreatorEarn = Math.round(creatorTokensEarn / TOKENS_PER_USD * 100) / 100;
         const amountPlatformEarn = Math.round(platformTokensEarn / TOKENS_PER_USD * 100) / 100;
         await client.query(

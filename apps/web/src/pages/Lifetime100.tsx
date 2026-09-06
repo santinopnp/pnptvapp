@@ -231,27 +231,42 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<InvoiceState | null>(null);
-  const [widgetLoaded, setWidgetLoaded] = useState(false);
-  const [widgetErrored, setWidgetErrored] = useState(false);
-  const [widgetReloadKey, setWidgetReloadKey] = useState(0);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const popupRef = useRef<Window | null>(null);
   const emailInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!invoice) return;
-    setWidgetLoaded(false);
-    setWidgetErrored(false);
-    const timeoutId = window.setTimeout(() => {
-      setWidgetErrored((prev) => (widgetLoaded ? prev : true));
-    }, 8000);
-    return () => window.clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoice?.nowpaymentsInvoiceId, widgetReloadKey]);
 
   useEffect(() => {
     if (invoice) return;
     const id = setTimeout(() => emailInputRef.current?.focus(), 80);
     return () => clearTimeout(id);
   }, [invoice]);
+
+  // Listen for NowPayments success postMessage from the popup window
+  useEffect(() => {
+    if (!invoice) return;
+    const onMessage = (ev: MessageEvent) => {
+      try {
+        const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
+        if (data?.status === "success" || data?.type === "payment_success" || data?.eventType === "payment_status_changed") {
+          popupRef.current?.close();
+          setPopupOpen(false);
+        }
+      } catch { /* ignore non-JSON */ }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [invoice]);
+
+  // Poll every 2 s to detect if the popup was manually closed
+  useEffect(() => {
+    if (!popupOpen) return;
+    const id = window.setInterval(() => {
+      if (popupRef.current?.closed) {
+        setPopupOpen(false);
+      }
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [popupOpen]);
 
   const handleContinue = useCallback(async () => {
     const trimmed = email.trim().toLowerCase();
@@ -362,77 +377,59 @@ function CryptoPaymentModal({ s, lang, onClose }: CryptoPaymentModalProps) {
             🔗 {s.widgetFallbackCta}
           </a>
 
-          {widgetErrored && (
+          {popupOpen ? (
             <div style={{
-              margin: "0 0 10px", padding: "10px 12px",
-              fontSize: 12, color: "#fca5a5",
-              background: "rgba(220,38,38,0.10)",
-              border: "1px solid rgba(220,38,38,0.35)",
-              borderRadius: 10,
-            }}>
-              {s.widgetFailed}
-            </div>
-          )}
-
-          <div
-            style={{
-              position: "relative",
-              width: "100%",
-              height: 480,
-              borderRadius: 14,
-              overflow: "hidden",
-              background: "#0d0510",
+              margin: "0 0 12px", padding: "20px 16px",
+              borderRadius: 14, background: "#0d0510",
               border: "1px solid rgba(255,180,84,0.25)",
-            }}
-          >
-            {!widgetLoaded && !widgetErrored && (
+              display: "flex", flexDirection: "column",
+              alignItems: "center", gap: 12, textAlign: "center",
+            }}>
               <div style={{
-                position: "absolute", inset: 0, zIndex: 2,
-                display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center",
-                gap: 10, background: "#0d0510",
-                color: "#8E8E93", fontSize: 12,
-              }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%",
-                  border: "3px solid rgba(255,180,84,0.25)",
-                  borderTopColor: "#ffb454",
-                  animation: "spin 0.8s linear infinite",
-                }} />
-                <span>{s.widgetLoading}</span>
-                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-              </div>
-            )}
-            <iframe
-              key={`np-widget-${widgetReloadKey}`}
-              src={widgetSrc}
-              title="NowPayments checkout"
-              width="100%"
-              height="480"
-              frameBorder="0"
-              scrolling="yes"
-              referrerPolicy="strict-origin-when-cross-origin"
-              sandbox="allow-scripts allow-forms allow-popups allow-same-origin allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox"
-              onLoad={() => { setWidgetLoaded(true); setWidgetErrored(false); }}
-              onError={() => setWidgetErrored(true)}
-              style={{ display: "block", border: 0, width: "100%", height: 480, background: "#fff" }}
-              allow="payment"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => { setWidgetLoaded(false); setWidgetErrored(false); setWidgetReloadKey((n) => n + 1); }}
-            style={{
-              display: "block", width: "100%", marginTop: 8,
-              padding: "8px 12px", fontSize: 12, fontWeight: 600,
-              color: "#93c5fd", background: "rgba(59,153,252,0.08)",
-              border: "1px solid rgba(59,153,252,0.25)",
-              borderRadius: 10, cursor: "pointer", minHeight: 40,
-            }}
-          >
-            🔄 {s.widgetReload}
-          </button>
+                width: 36, height: 36, borderRadius: "50%",
+                border: "3px solid rgba(255,180,84,0.25)",
+                borderTopColor: "#ffb454",
+                animation: "spin 0.8s linear infinite",
+              }} />
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+              <p style={{ margin: 0, fontSize: 13, color: "#c7c7cc", lineHeight: 1.5 }}>
+                {s.widgetLoading}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  const popup = window.open(widgetSrc, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+                  if (popup) { popupRef.current = popup; setPopupOpen(true); }
+                }}
+                style={{
+                  padding: "8px 14px", fontSize: 12, fontWeight: 600,
+                  color: "#93c5fd", background: "rgba(59,153,252,0.08)",
+                  border: "1px solid rgba(59,153,252,0.25)",
+                  borderRadius: 10, cursor: "pointer",
+                }}
+              >
+                🔄 {s.widgetReload}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                const popup = window.open(widgetSrc, "pnp_np_wallet", "width=540,height=700,left=200,top=100");
+                if (popup) { popupRef.current = popup; setPopupOpen(true); }
+              }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                width: "100%", marginBottom: 12, padding: "14px 20px",
+                borderRadius: 12, border: "none",
+                background: "linear-gradient(90deg, #ff3377, #ff9933)",
+                color: "#ffffff", fontSize: 14, fontWeight: 700,
+                cursor: "pointer", minHeight: 48,
+              }}
+            >
+              {s.cryptoOpenInNewTab}
+            </button>
+          )}
 
           <p style={{ margin: "16px 0 8px", fontSize: 11, fontWeight: 600, color: "#8E8E93" }}>
             {s.cryptoOpenWallet}

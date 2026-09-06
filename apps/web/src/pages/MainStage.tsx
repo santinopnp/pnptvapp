@@ -589,7 +589,7 @@ export default function MainStage() {
   // fires MainStage tip animations). "usdc" pays gasless USDC on Base via
   // WalletPayCard. Default = rush when the user's Ru$h balance covers the
   // selected preset (converted to Rush at 6 = $1); otherwise usdc.
-  const [tipRailMode, setTipRailMode] = useState<'rush' | 'usdc'>('rush');
+  const [tipRailMode, setTipRailMode] = useState<'rush' | 'usdc'>('usdc');
   const [tipMessage, setTipMessage] = useState<string>("");
   const { authenticated: privyAuthenticated, login: privyLogin } = usePrivy();
 

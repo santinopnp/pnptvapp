@@ -387,7 +387,7 @@ const strings = {
     mainStageWatching: "watching",
 
     // Token activation code flow (Meru card/bank)
-    tokenActTitle: "Pay with Card or PSE",
+    tokenActTitle: "Pay with Card or Bank Transfer",
     tokenActSubtitle: "Your activation code has been reserved. Complete payment on Meru, then return here to activate your Ru$h ⚡💲.",
     tokenActCodeLabel: "Your Activation Code",
     tokenActAlsoEmailed: "Also sent to your email",
@@ -813,7 +813,7 @@ const strings = {
     mainStageWatching: "viendo",
 
     // Token activation code flow (Meru card/bank)
-    tokenActTitle: "Pagar con Tarjeta o PSE",
+    tokenActTitle: "Pagar con Tarjeta o Transferencia Bancaria",
     tokenActSubtitle: "Tu código de activación está reservado. Completa el pago en Meru y vuelve aquí para activar tu Ru$h ⚡💲.",
     tokenActCodeLabel: "Tu código de activación",
     tokenActAlsoEmailed: "También enviado a tu correo",

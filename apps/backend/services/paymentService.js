@@ -705,7 +705,7 @@ class PaymentService {
 
       if (addOnsResult.rows.length === 0) {
         logger.error('grantEntitlementsForPlan: no plan_add_ons mapping found — entitlements NOT granted', { planId, userId });
-        return { granted: 0, errors: 0, warning: 'NO_PLAN_ADDONS' };
+        throw new Error('NO_PLAN_ADDONS: plan ' + planId + ' has no add-ons configured');
       }
 
       const txClient = await getClient();

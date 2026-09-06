@@ -113,14 +113,19 @@ export function TipRushRail({
   const [needsTopUp, setNeedsTopUp] = useState(false);
   const hasWallet = useMemo(() => hasInjectedWallet(), []);
 
-  // Spendable Ru$h: gifted counts only when the recipient is gifted-allowed
-  // (Santino). Otherwise the backend rejects even if gifted covers the amount.
+  // Gifted balance is only spendable when the recipient is Santino or Lex.
+  // Even if the parent passes allowGifted=true, we guard here against ineligible
+  // targets — the backend would reject with 402 otherwise.
+  const GIFTED_ALLOWED_IDS = ['8599671840', '8f5f4dd1-7bdb-4571-b026-e09d91113c91'];
+  const giftedAllowedForTarget = allowGifted && GIFTED_ALLOWED_IDS.includes(creatorId);
+
+  // Spendable Ru$h: gifted counts only when the recipient is gifted-allowed.
   const balance = useMemo(() => {
     if (regularBalance === null && giftedBalance === null) return null;
     const reg = regularBalance ?? 0;
     const gif = giftedBalance ?? 0;
-    return allowGifted ? reg + gif : reg;
-  }, [regularBalance, giftedBalance, allowGifted]);
+    return giftedAllowedForTarget ? reg + gif : reg;
+  }, [regularBalance, giftedBalance, giftedAllowedForTarget]);
 
   // El saldo se pide siempre: lo necesitan el chip de "todo" y la comprobacion
   // de fondos, no solo la linea que lo muestra.

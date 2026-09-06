@@ -172,14 +172,14 @@ class CryptoPaymentService {
         amountReceived,
       });
       if (!result?.ok) {
-        logger.warn('CryptoPayment: walletCheckout delegate returned not-ok', {
+        logger.error('CryptoPayment: walletCheckout delegate returned not-ok', {
           paymentId: payment.id, surface: payment.surface, reason: result?.reason,
         });
-      } else {
-        logger.info('CryptoPayment: delegated to walletCheckout', {
-          paymentId: payment.id, surface: payment.surface, intentId: result.intentId,
-        });
+        throw new Error('walletCheckout delegate failed: ' + (result?.reason || 'unknown'));
       }
+      logger.info('CryptoPayment: delegated to walletCheckout', {
+        paymentId: payment.id, surface: payment.surface, intentId: result.intentId,
+      });
       return;
     }
 

@@ -410,7 +410,7 @@ export default function Donate() {
 
             {ethPrice && (
               <p className="text-[10px] text-pnp-textSecondary/60">
-                ETH ≈ {fmtPrice(ethPrice)} · Base network · 1 Ru$h = $0.17 USD
+                ETH ≈ {fmtPrice(ethPrice)} · Base network · 6 Ru$h = $1 USD
               </p>
             )}
           </div>

@@ -23,7 +23,8 @@ const PaymentSecurityService = require('./paymentSecurityService');
 // Performers eligible for Gifted Ru$h partial payment on private calls.
 // Never expand this list without explicit approval.
 const GIFTED_ELIGIBLE_PERFORMER_USER_IDS = new Set([
-  '8599671840',  // Santino (display_name "Santino", performer user_id)
+  '8599671840',                                    // Santino
+  '8f5f4dd1-7bdb-4571-b026-e09d91113c91',          // Lex
 ]);
 
 const TOKENS_PER_USD = 6;

@@ -55,7 +55,7 @@ const strings = {
 
     // ── Payment methods ───────────────────────────────────────────────────────
     paymentMethod: "Payment Method",
-    cardPse: "Card / PSE",
+    cardPse: "Card / Bank Transfer",
     cardPseDesc: "Credit, Debit",
     usdc: "Pay",
     // Dash and Lightning i18n strings removed 2026-07-31 (BTCPay/Dash/Lightning retired)
@@ -175,7 +175,7 @@ const strings = {
     invalidEmail: "Por favor ingresa un correo electrónico válido",
 
     paymentMethod: "Método de pago",
-    cardPse: "Tarjeta / PSE",
+    cardPse: "Tarjeta / Transferencia Bancaria",
     cardPseDesc: "Crédito, Débito",
     usdc: "Pagar",
     // Dash y Lightning strings eliminados 2026-07-31 (BTCPay/Dash/Lightning retirados)
@@ -289,7 +289,7 @@ const strings = {
     invalidEmail: "Por favor, insira um endereço de e-mail válido",
 
     paymentMethod: "Método de Pagamento",
-    cardPse: "Cartão / PSE",
+    cardPse: "Cartão / Transferência Bancária",
     cardPseDesc: "Crédito, Débito",
     usdc: "Pagar",
     // Dash and Lightning info strings removed 2026-07-31
@@ -403,7 +403,7 @@ const strings = {
     invalidEmail: "请输入有效的电子邮件地址",
 
     paymentMethod: "支付方式",
-    cardPse: "银行卡 / PSE",
+    cardPse: "银行卡 / 银行转账",
     cardPseDesc: "信用卡、借记卡",
     usdc: "支付",
     // Dash and Lightning info strings removed 2026-07-31
@@ -516,7 +516,7 @@ const strings = {
     invalidEmail: "請輸入有效的電子郵件地址",
 
     paymentMethod: "付款方式",
-    cardPse: "銀行卡 / PSE",
+    cardPse: "銀行卡 / 銀行轉帳",
     cardPseDesc: "信用卡、金融卡",
     usdc: "付款",
     // Dash and Lightning info strings removed 2026-07-31
@@ -629,7 +629,7 @@ const strings = {
     invalidEmail: "Veuillez saisir une adresse e-mail valide",
 
     paymentMethod: "Mode de Paiement",
-    cardPse: "Carte / PSE",
+    cardPse: "Carte / Virement Bancaire",
     cardPseDesc: "Crédit, Débit",
     usdc: "Payer",
     // Dash and Lightning info strings removed 2026-07-31
@@ -742,7 +742,7 @@ const strings = {
     invalidEmail: "Bitte gib eine gültige E-Mail-Adresse ein",
 
     paymentMethod: "Zahlungsmethode",
-    cardPse: "Karte / PSE",
+    cardPse: "Karte / Banküberweisung",
     cardPseDesc: "Kredit, Debit",
     usdc: "Bezahlen",
     // Dash and Lightning info strings removed 2026-07-31
@@ -855,7 +855,7 @@ const strings = {
     invalidEmail: "กรุณากรอกที่อยู่อีเมลที่ถูกต้อง",
 
     paymentMethod: "วิธีการชำระเงิน",
-    cardPse: "บัตร / PSE",
+    cardPse: "บัตร / โอนเงิน",
     cardPseDesc: "เครดิต, เดบิต",
     usdc: "ชำระเงิน",
     // Dash and Lightning info strings removed 2026-07-31
@@ -968,7 +968,7 @@ const strings = {
     invalidEmail: "Per favore inserisci un indirizzo e-mail valido",
 
     paymentMethod: "Metodo di Pagamento",
-    cardPse: "Carta / PSE",
+    cardPse: "Carta / Bonifico Bancario",
     cardPseDesc: "Credito, Debito",
     usdc: "Paga",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1081,7 +1081,7 @@ const strings = {
     invalidEmail: "Lütfen geçerli bir e-posta adresi gir",
 
     paymentMethod: "Ödeme Yöntemi",
-    cardPse: "Kart / PSE",
+    cardPse: "Kart / Banka Transferi",
     cardPseDesc: "Kredi, Banka Kartı",
     usdc: "Öde",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1194,7 +1194,7 @@ const strings = {
     invalidEmail: "Пожалуйста, введи корректный адрес электронной почты",
 
     paymentMethod: "Способ Оплаты",
-    cardPse: "Карта / PSE",
+    cardPse: "Карта / Банковский Перевод",
     cardPseDesc: "Кредитная, Дебетовая",
     usdc: "Оплата",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1307,7 +1307,7 @@ const strings = {
     invalidEmail: "Vul een geldig e-mailadres in",
 
     paymentMethod: "Betaalmethode",
-    cardPse: "Kaart / PSE",
+    cardPse: "Kaart / Bankoverschrijving",
     cardPseDesc: "Krediet, Debet",
     usdc: "Betalen",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1420,7 +1420,7 @@ const strings = {
     invalidEmail: "Vui lòng nhập địa chỉ email hợp lệ",
 
     paymentMethod: "Phương Thức Thanh Toán",
-    cardPse: "Thẻ / PSE",
+    cardPse: "Thẻ / Chuyển Khoản",
     cardPseDesc: "Tín dụng, Ghi nợ",
     usdc: "Thanh toán",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1533,7 +1533,7 @@ const strings = {
     invalidEmail: "有効なメールアドレスを入力してください",
 
     paymentMethod: "支払い方法",
-    cardPse: "カード / PSE",
+    cardPse: "カード / 銀行振込",
     cardPseDesc: "クレジット、デビット",
     usdc: "支払う",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1646,7 +1646,7 @@ const strings = {
     invalidEmail: "Masukkan alamat email yang valid",
 
     paymentMethod: "Metode Pembayaran",
-    cardPse: "Kartu / PSE",
+    cardPse: "Kartu / Transfer Bank",
     cardPseDesc: "Kredit, Debit",
     usdc: "Bayar",
     // Dash and Lightning info strings removed 2026-07-31
@@ -1759,7 +1759,7 @@ const strings = {
     invalidEmail: "يرجى إدخال عنوان بريد إلكتروني صالح",
 
     paymentMethod: "طريقة الدفع",
-    cardPse: "بطاقة / PSE",
+    cardPse: "بطاقة / تحويل مصرفي",
     cardPseDesc: "ائتمان، خصم",
     usdc: "ادفع",
     // Dash and Lightning info strings removed 2026-07-31

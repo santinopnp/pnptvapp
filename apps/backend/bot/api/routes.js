@@ -17137,7 +17137,11 @@ app.post('/api/wallet/gas-topup', walletSpendLimiter, requireSessionAuth, asyncH
     return res.json(result);
   } catch (err) {
     const status = err.status || 500;
-    return res.status(status).json({ ok: false, error: err.message || 'gas_topup_failed' });
+    return res.status(status).json({
+      success: false,
+      error: 'GAS_TOPUP_FAILED',
+      message: 'Wallet gas funding failed — try again in 30 seconds.',
+    });
   }
 }));
 

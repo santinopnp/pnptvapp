@@ -396,15 +396,30 @@ export function WalletPayCard({
   // or (b) 60s of polling elapses. Prevents the "Pay with card" button from
   // re-appearing as if nothing happened while Stripe onramp settles.
   const [funding, setFunding] = _useState(false);
+  const [eth, setEth] = _useState<number | null>(null);
+  // Tracks whether the onramp poll has been cancelled (component unmounted).
+  const pollCancelledRef = _useRef(false);
+
+  _useEffect(() => {
+    // Reset cancellation flag when the wallet/auth changes so a fresh poll can run.
+    pollCancelledRef.current = false;
+    return () => {
+      pollCancelledRef.current = true;
+      setFunding(false);
+    };
+  }, [authenticated, activeWallet?.address]);
 
   _useEffect(() => {
     if (!authenticated || !activeWallet) return;
     setLoading(true);
-    getWalletUsdcBalance(activeWallet.address)
-      .then((r) => setUsdc(r.hasWallet ? r.usdc : null))
-      .catch(() => setUsdc(null))
-      .finally(() => setLoading(false));
-  }, [authenticated, activeWallet?.address]);
+    Promise.all([
+      getWalletUsdcBalance(activeWallet.address).catch(() => null),
+      isEmbedded ? Promise.resolve(null) : getWalletEthBalance(activeWallet.address).catch(() => null),
+    ]).then(([usdcR, ethR]) => {
+      setUsdc(usdcR?.hasWallet ? usdcR.usdc : null);
+      setEth(ethR?.hasWallet ? ethR.eth : null);
+    }).finally(() => setLoading(false));
+  }, [authenticated, activeWallet?.address, isEmbedded]);
 
   // Not signed into Privy yet — frame as card-primary so a card-only user
   // doesn't bail thinking this is a new-account onboarding step. The Privy
@@ -609,8 +624,10 @@ export function WalletPayCard({
       setFunding(true);
       const start = Date.now();
       const poll = async (): Promise<void> => {
+        if (pollCancelledRef.current) return;
         try {
           const r = await getWalletUsdcBalance(activeWallet.address);
+          if (pollCancelledRef.current) return;
           const bal = r.hasWallet ? r.usdc : null;
           setUsdc(bal);
           if (bal != null && bal >= amountUsd) {
@@ -619,6 +636,7 @@ export function WalletPayCard({
             return;
           }
         } catch { /* keep polling on transient errors */ }
+        if (pollCancelledRef.current) return;
         if (Date.now() - start >= 60_000) {
           setFunding(false);
           return;
@@ -741,9 +759,11 @@ export function WalletPayCard({
           <p className="text-[11px] text-pnp-textSecondary">
             {loading
               ? (es ? "Consultando saldo…" : "Checking balance…")
-              : usdc == null
-                ? (es ? "Sin saldo USDC" : "No USDC balance")
-                : `${usdc.toFixed(2)} USDC · Base · ${gasLabel}`}
+              : !isEmbedded && eth === 0 && usdc != null && usdc > 0
+                ? (es ? `${usdc.toFixed(2)} USDC · Necesitas ~$0.01 ETH para gas` : `${usdc.toFixed(2)} USDC · Need ~$0.01 ETH for gas`)
+                : usdc == null || usdc === 0
+                  ? (es ? "Sin saldo USDC" : "No USDC balance")
+                  : `${usdc.toFixed(2)} USDC · Base · ${gasLabel}`}
           </p>
         </div>
       </div>

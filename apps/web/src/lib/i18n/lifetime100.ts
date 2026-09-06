@@ -71,9 +71,9 @@ export const strings = {
     ctaSoldOut: "Sold Out",
 
     // ── Card (MercadoPago) modal ───────────────────────────────────────────────
-    cardModalTitle: "Pay with Card via MercadoPago",
-    cardModalBody: "You'll be redirected to MercadoPago to complete your $100 payment. MercadoPago will charge ~320,000 COP (the equivalent of $100 USD). After paying, come back to /mercadopago to complete your activation — usually within a few hours.",
-    cardModalOpenButton: "Open MercadoPago →",
+    cardModalTitle: "Pay via Local Payment",
+    cardModalBody: "A payment link will open in your browser to complete your $100 payment. After paying, come back to complete your activation — usually within a few hours.",
+    cardModalOpenButton: "Open Payment Link →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pay with Wallet — USDC on Base",
@@ -142,7 +142,7 @@ export const strings = {
     // ── /nequinegocios landing page ────────────────────────────────────────────
     nequiPageTitle: "Payment Confirmed — PNPtv!",
     nequiSuccessTitle: "Payment Received!",
-    nequiSuccessBody: "Your Nequi Negocios payment was received. Enter your email below so we can send you your account activation details.",
+    nequiSuccessBody: "Your payment was received. Enter your email below so we can send you your account activation details.",
     nequiPendingTitle: "Verifying Payment…",
     nequiPendingBody: "Your payment is being verified. Enter your email below and we'll contact you once confirmed.",
     nequiDeclinedTitle: "Payment Declined",
@@ -156,16 +156,16 @@ export const strings = {
     nequiTryAgain: "Try a different email",
 
     // ── MercadoPago (mpago.li) entry on /lifetime100 ────────────────────────
-    mercadoPagoCtaTitle: "Pay with MercadoPago",
-    mercadoPagoCtaBody: "Charged in COP (~320,000 COP ≈ $100 USD). Manual activation within a few hours after we verify your payment.",
-    mercadoPagoCtaButton: "Open MercadoPago →",
-    mercadoPagoAlreadyPaid: "Already paid on MercadoPago?",
+    mercadoPagoCtaTitle: "Pay via Local Payment",
+    mercadoPagoCtaBody: "A payment link will open in your browser. Manual activation within a few hours after we verify your payment.",
+    mercadoPagoCtaButton: "Open Payment Link →",
+    mercadoPagoAlreadyPaid: "Already paid via local payment?",
     mercadoPagoAlreadyPaidLink: "Send us your email so we can activate you →",
 
     // ── /mercadopago landing page ──────────────────────────────────────────
     mpagoPageTitle: "Payment Confirmed — PNPtv!",
     mpagoSuccessTitle: "Payment Received!",
-    mpagoSuccessBody: "Your MercadoPago payment was received. Enter your email below so we can send you your account activation details.",
+    mpagoSuccessBody: "Your payment was received. Enter your email below so we can send you your account activation details.",
     mpagoPendingTitle: "Verifying Payment…",
     mpagoPendingBody: "Your payment is being verified. Enter your email below and we'll contact you once confirmed.",
     mpagoDeclinedTitle: "Payment Declined",
@@ -251,9 +251,9 @@ export const strings = {
     ctaSoldOut: "Agotado",
 
     // ── Card (MercadoPago) modal ───────────────────────────────────────────────
-    cardModalTitle: "Pagar con Tarjeta vía MercadoPago",
-    cardModalBody: "Serás redirigido a MercadoPago para completar tu pago de $100. MercadoPago cobrará ~320.000 COP (el equivalente a $100 USD). Después de pagar, vuelve a /mercadopago para completar tu activación — normalmente en pocas horas.",
-    cardModalOpenButton: "Abrir MercadoPago →",
+    cardModalTitle: "Pago Local",
+    cardModalBody: "Se abrirá un enlace de pago en tu navegador para completar tu pago de $100. Después de pagar, vuelve para completar tu activación — normalmente en pocas horas.",
+    cardModalOpenButton: "Abrir Enlace de Pago →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
     walletModalTitle: "Pagar con Billetera — USDC en Base",
@@ -323,7 +323,7 @@ export const strings = {
     // ── /nequinegocios landing page ────────────────────────────────────────────
     nequiPageTitle: "Pago Confirmado — PNPtv!",
     nequiSuccessTitle: "¡Pago Recibido!",
-    nequiSuccessBody: "Tu pago con Nequi fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
+    nequiSuccessBody: "Tu pago fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
     nequiPendingTitle: "Verificando tu pago…",
     nequiPendingBody: "Tu pago está siendo verificado. Ingresa tu correo y te contactamos cuando sea confirmado.",
     nequiDeclinedTitle: "Pago Rechazado",
@@ -337,16 +337,16 @@ export const strings = {
     nequiTryAgain: "Usar otro correo",
 
     // ── MercadoPago (mpago.li) entry on /lifetime100 ────────────────────────
-    mercadoPagoCtaTitle: "Paga con MercadoPago",
-    mercadoPagoCtaBody: "Se cobra en pesos (~320.000 COP ≈ $100 USD). Activación manual en pocas horas después de verificar tu pago.",
-    mercadoPagoCtaButton: "Abrir MercadoPago →",
-    mercadoPagoAlreadyPaid: "¿Ya pagaste en MercadoPago?",
+    mercadoPagoCtaTitle: "Pago Local",
+    mercadoPagoCtaBody: "Se abrirá un enlace de pago en tu navegador. Activación manual en pocas horas después de verificar tu pago.",
+    mercadoPagoCtaButton: "Abrir Enlace de Pago →",
+    mercadoPagoAlreadyPaid: "¿Ya pagaste por enlace local?",
     mercadoPagoAlreadyPaidLink: "Envíanos tu correo y te activamos →",
 
     // ── /mercadopago landing page ──────────────────────────────────────────
     mpagoPageTitle: "Pago Confirmado — PNPtv!",
     mpagoSuccessTitle: "¡Pago Recibido!",
-    mpagoSuccessBody: "Tu pago con MercadoPago fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
+    mpagoSuccessBody: "Tu pago fue recibido. Ingresa tu correo para que te enviemos los detalles de activación de tu membresía.",
     mpagoPendingTitle: "Verificando tu pago…",
     mpagoPendingBody: "Tu pago está siendo verificado. Ingresa tu correo y te contactamos cuando sea confirmado.",
     mpagoDeclinedTitle: "Pago Rechazado",

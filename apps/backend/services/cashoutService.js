@@ -141,9 +141,8 @@ async function requestCashout({ creatorId, amountUsd, lane, destination }) {
   }
   destination = { address: walletAddress, chain: 'base', token: 'USDC' };
 
-  // Minimum cashout floor — lowered from $50 to $25 on 2026-09-05.
-  // Override via MIN_CASHOUT_USD_PER_REQUEST env var if a specific need arises.
-  const MIN_CASHOUT_USD = parseFloat(process.env.MIN_CASHOUT_USD_PER_REQUEST || '25');
+  // Minimum cashout floor: $50. Override via MIN_CASHOUT_USD_PER_REQUEST env var if a specific need arises.
+  const MIN_CASHOUT_USD = parseFloat(process.env.MIN_CASHOUT_USD_PER_REQUEST || '50');
   if (amountUsd < MIN_CASHOUT_USD) {
     throw err('BELOW_MINIMUM', `Minimum cashout is $${MIN_CASHOUT_USD.toFixed(2)}.`, 400);
   }

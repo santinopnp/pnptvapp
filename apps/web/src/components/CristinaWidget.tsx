@@ -131,7 +131,7 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
       { title: "What PRIME Unlocks", description: "PRIME is the premium tier. It unlocks: exclusive creator content, priority in Connect, HD live streaming, Hangout hosting, and VIP support." },
       { title: "Choose Your Plan", description: "Go to the Subscribe page. Available plans: PRIME Week Pass ($15.00, 7 days), Monthly ($25.00, 30 days), Diamond ($99.99, 1 year — best value), and Lifetime ($100 — one-time). PRIME unlocks exclusive content, HD streaming, hangout hosting, and priority support.", action: "Go to Subscribe" },
       { title: "Pay with Card", description: "On any plan, tap the big green '💳 Pay $X' button. Cards, Apple Pay, and Google Pay all work. It's one tap — no crypto knowledge needed. Your PRIME activates as soon as the payment settles." },
-      { title: "Pay with Crypto", description: "Prefer crypto? Tap the '₿ Any crypto' button on any plan to open a NowPayments checkout. Choose from USDC, BTC, ETH, USDT, and many others. Or use the wallet flow to pay USDC directly on Base — gas is sponsored for our built-in wallet." },
+      { title: "Pay with Crypto", description: "Prefer crypto? Tap the '₿ Any crypto' button on any plan to open an any-crypto popup. Choose from USDC, BTC, ETH, USDT, and many others. Or use the wallet flow to pay USDC directly on Base — gas is sponsored for our built-in wallet." },
       { title: "Use Ru$h 💎", description: "If you already have Ru$h in your wallet, you can spend it directly on any plan — no extra checkout. The Ru$h button appears on plan cards when you have enough balance." },
       { title: "Check Your Membership Status", description: "Go to Profile → Settings → Membership section. You'll see your current tier (FREE, Member, or PRIME), your plan name, expiry date, and subscription status. This refreshes automatically from the database.", action: "Go to Profile" },
       { title: "FREE vs PRIME Comparison", description: "FREE: Social Feed, public Hangouts, basic Connect, unlimited DMs, Cristina AI support. PRIME adds: exclusive content, private Hangouts hosting, HD streaming, priority Connect, VIP support." },
@@ -154,10 +154,10 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
     id: "payments",
     emoji: "💳",
     steps: [
-      { title: "Payment Methods Overview", description: "PNPtv accepts: (1) Card / Apple Pay / Google Pay via the built-in PNPtv Wallet, (2) On-chain crypto (USDC on Base — gas sponsored on our wallet), (3) Any-crypto via NowPayments (BTC, ETH, USDC, USDT and more), and (4) Ru$h 💎 in-app currency. Lifetime plans in Colombia can also be paid with Nequi (COP)." },
+      { title: "Payment Methods Overview", description: "PNPtv accepts: (1) Card / Apple Pay / Google Pay via the built-in PNPtv Wallet, (2) On-chain crypto (USDC on Base — gas sponsored on our wallet), (3) Any crypto (BTC, ETH, USDC, USDT and more), and (4) Ru$h 💎 in-app currency. Lifetime plans in Colombia can also be paid via local bank transfer (COP)." },
       { title: "Step 1: Choose Your Plan", description: "Go to the Subscribe page from the bottom nav or the upgrade banner on Home. Browse available plans — each shows the price, duration, and what's included. Tap a plan card to select it.", action: "Go to Subscribe" },
       { title: "Pay with Card", description: "Tap the big green '💳 Pay $X' button on any plan. Cards, Apple Pay, and Google Pay work everywhere. One tap, no crypto knowledge needed. Your PRIME activates as soon as the payment settles." },
-      { title: "Pay with Any Crypto", description: "Tap the orange '₿ Any crypto' button. A NowPayments checkout opens in a popup — you can pay with BTC, ETH, USDC (any chain), USDT, and more. Keep the popup open until your payment confirms; the system activates PRIME automatically." },
+      { title: "Pay with Any Crypto", description: "Tap the orange '₿ Any crypto' button. An any-crypto checkout opens in a popup — you can pay with BTC, ETH, USDC (any chain), USDT, and more. Keep the popup open until your payment confirms; the system activates PRIME automatically." },
       { title: "Pay from Your Wallet (USDC on Base)", description: "If you already have USDC on Base, the 💳 Pay button routes it directly. Our built-in Privy wallet sponsors gas — you don't need any ETH. External wallets (Trust, MetaMask) pay their own tiny (~$0.01) gas fee." },
       { title: "Buy Ru$h 💎", description: "Tap the 💎 wallet widget to buy Ru$h in-app currency. 1 USD = 6 Ru$h, larger packages include a bonus. Pay with card, USDC, BTC, or ETH. Once you have Ru$h you can spend it on plans, tips, and features." },
       { title: "Payment Issues?", description: "Card payments settle instantly. Crypto payments can take 1–5 minutes depending on the coin. If a payment is stuck, check the popup didn't get closed. Anything unresolved after 15 min — contact Cristina AI or email support@pnptv.app." },
@@ -169,7 +169,7 @@ const TUTORIAL_TOPICS: TutorialTopic[] = [
     steps: [
       { title: "What is Ru$h ⚡💲?", description: "Ru$h ⚡💲 is the PNPtv in-app currency. You can use Ru$h to tip creators, make in-app purchases, and unlock special features. Ru$h is separate from your PRIME subscription." },
       { title: "Buy Ru$h", description: "Go to the Ru$h Checkout page. You'll see available packages at different price points. Select a package to proceed to payment.", action: "Go to Token Checkout" },
-      { title: "Pay for Ru$h", description: "Ru$h can be bought with card (Apple Pay / Google Pay via the built-in wallet), USDC on Base (gas sponsored), or via NowPayments in USDC, BTC, or ETH. Pick your preferred rail and tap a package." },
+      { title: "Pay for Ru$h", description: "Ru$h can be bought with card (Apple Pay / Google Pay via the built-in wallet), USDC on Base (gas sponsored), or via any-crypto popup in USDC, BTC, or ETH. Pick your preferred rail and tap a package." },
       { title: "Check Your Balance", description: "Your Ru$h balance is shown in your wallet. You can access it from your Profile or the Ru$h section. The balance updates in real time after purchases." },
       { title: "View Purchase History", description: "Your Ru$h transaction history shows all purchases and spending. Each entry includes the amount, date, and type of transaction." },
     ],
@@ -1532,9 +1532,9 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
                 >
                   <option value="wallet_usdc">Wallet USDC (Base · Alchemy)</option>
-                  <option value="nowpayments">NowPayments (any crypto)</option>
-                  <option value="efipay">EfiPay (email-link)</option>
-                  <option value="nequi_wompi">Nequi/Wompi (COP · Lifetime100)</option>
+                  <option value="nowpayments">Any crypto</option>
+                  <option value="efipay">Email payment</option>
+                  <option value="nequi_wompi">Local bank transfer (COP · Lifetime100)</option>
                   <option value="rush_tokens">Ru$h tokens (in-app)</option>
                 </select>
               </div>

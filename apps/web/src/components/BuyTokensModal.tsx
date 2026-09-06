@@ -192,7 +192,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         const topupResult = await requestGasTopup(activeWallet.address);
         if (!topupResult.ok && !topupResult.skipped) {
           reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
-            surface: "rush", amountUsd: usdAmount, address: activeWallet.address, walletType: activeWallet.walletClientType,
+            surface: "rush", amountUsd: amountUsdOverride, address: activeWallet.address, walletType: activeWallet.walletClientType,
           });
         }
         const res = await privySendTransaction(
@@ -222,7 +222,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
         const topupResult = await requestGasTopup(activeWallet.address);
         if (!topupResult.ok && !topupResult.skipped) {
           reportWalletClientError("gasTopup", new Error(topupResult.reason || "topup_failed"), {
-            surface: "rush", amountUsd: usdAmount, address: activeWallet.address, walletType: activeWallet.walletClientType,
+            surface: "rush", amountUsd: amountUsdOverride, address: activeWallet.address, walletType: activeWallet.walletClientType,
           });
         }
         const res = await privySendTransaction(
@@ -741,7 +741,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                     </>
                   ) : (
                     <span className="text-white/40">
-                      {es ? "Entre $1 y $5000. 6 Ru$h por USD." : "Between $1 and $5000. 6 Ru$h per USD."}
+                      {es ? "Entre $1 y $5000. 6 Ru$h por USD. Usa un paquete predeterminado para Ru$h extra." : "Between $1 and $5000. 6 Ru$h per USD. Use a preset package for bonus Ru$h."}
                     </span>
                   )}
                 </p>
