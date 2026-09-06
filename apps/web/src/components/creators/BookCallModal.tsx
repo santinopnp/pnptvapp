@@ -336,6 +336,19 @@ export function BookCallModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, creator.id]);
 
+  // Auto-align duration to what the creator actually offers. Without this, a
+  // creator who only sells 30-min slots + a user landing with the default 60
+  // → activePackage=null → checkout falls back to $100 with packageId=undefined
+  // → intent creates + user pays + fulfill throws (money moved, no booking).
+  useEffect(() => {
+    if (packages.length === 0) return;
+    if (packages.some((p) => p.duration_minutes === duration)) return;
+    const first = packages.find((p) => p.duration_minutes === 30)
+      ?? packages.find((p) => p.duration_minutes === 60)
+      ?? null;
+    if (first) setDuration(first.duration_minutes as 30 | 60);
+  }, [packages, duration]);
+
   // ── Load slots when entering SELECT_SLOT ────────────────────────────────────
   const loadSlots = useCallback(
     async (offset: number, append: boolean) => {
@@ -1242,6 +1255,23 @@ export function BookCallModal({
             />
           </div>
         )}
+        {/* No matching package for the picked duration — surface a clear
+            explanation instead of falling back to a hardcoded price + a pay
+            button that would create an intent with packageId=undefined. */}
+        {provider === "wallet" && !activePackage && !packagesLoading && (
+          <div
+            className="mt-3 rounded-xl border p-3 text-xs leading-snug"
+            style={{ background: "rgba(255,180,84,0.08)", borderColor: "rgba(255,180,84,0.30)", color: "#FFB454" }}
+          >
+            {packages.length === 0
+              ? (t.lang === "es"
+                  ? "Este creador todavía no publicó paquetes de llamada. Vuelve pronto o mándale un mensaje."
+                  : "This creator hasn't published call packages yet. Check back soon or send them a DM.")
+              : (t.lang === "es"
+                  ? "Este creador no ofrece llamadas de esta duración. Prueba con otra duración."
+                  : "This creator doesn't offer calls at this duration. Try another duration.")}
+          </div>
+        )}
       </div>
 
       {/* Email input */}
@@ -1326,8 +1356,10 @@ export function BookCallModal({
         </div>
       )}
 
-      {/* Submit — hidden for wallet (WalletPayCard has its own pay button). */}
-      {provider === "tokens" && (
+      {/* Submit — hidden for wallet (WalletPayCard has its own pay button).
+          Also hidden entirely when no matching package exists — the amber
+          notice above already tells the user why. */}
+      {provider === "tokens" && activePackage && (
         <button
           type="button"
           disabled={checkoutLoading || !activePackage}
