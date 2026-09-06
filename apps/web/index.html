@@ -173,9 +173,30 @@
     <script>
       (function () {
         var SPLASH_WATCHDOG_MS = 15000;
+        var SPLASH_WATCHDOG_MAX_MS = 45000;
         function isSplashVisible() {
           var s = document.getElementById("splash");
           return !!(s && !s.classList.contains("hide"));
+        }
+        // True if the browser is still fetching /assets/* modules — antivirus
+        // extensions (Kaspersky Anti-Banner et al) rewrite our CSP and inspect
+        // every byte, so heavy sessions can spend 20-30s in module parse
+        // before React mounts. Extending the deadline while resources are
+        // still loading avoids false "boot failure" UI on healthy-but-slow
+        // sessions. Only truly stuck boots (zero active loads) trip the UI.
+        function assetsStillLoading() {
+          try {
+            if (!performance || !performance.getEntriesByType) return false;
+            var entries = performance.getEntriesByType("resource");
+            for (var i = 0; i < entries.length; i++) {
+              var e = entries[i];
+              // duration===0 + responseEnd===0 means fetch not yet complete
+              if (e.responseEnd === 0 && (e.name.indexOf("/assets/") !== -1 || e.initiatorType === "script")) {
+                return true;
+              }
+            }
+            return false;
+          } catch (_) { return false; }
         }
         function show(reason) {
           if (!isSplashVisible()) return;
@@ -198,8 +219,19 @@
           };
         }
         window.__pnptvShowBootError = show;
-        // 1) Watchdog — fires if React never hides the splash.
-        setTimeout(function () { show("timeout"); }, SPLASH_WATCHDOG_MS);
+        // 1) Watchdog — fires if React never hides the splash AND no bundle
+        //    is still loading. Re-checks every 5s up to SPLASH_WATCHDOG_MAX_MS.
+        var watchdogStart = Date.now();
+        function checkTimeout() {
+          if (!isSplashVisible()) return;
+          var elapsed = Date.now() - watchdogStart;
+          if (assetsStillLoading() && elapsed < SPLASH_WATCHDOG_MAX_MS) {
+            setTimeout(checkTimeout, 5000);
+            return;
+          }
+          show("timeout");
+        }
+        setTimeout(checkTimeout, SPLASH_WATCHDOG_MS);
         // 2) Capture-phase resource error listener — catches /assets/*.js
         //    404s, parse failures, and any <script>/<link> load failures
         //    that happen before React mounts.
