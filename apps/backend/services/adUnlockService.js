@@ -56,13 +56,29 @@ async function setFeatureEnabled(enabled) {
 
 /**
  * Server-side check whether the user's tier is eligible to see ads.
- * Basic ('member') + PRIME + admin + banned all bypass — they never see ads.
- * Only 'free' tier is eligible.
+ * PRIME + admin + banned never see ads. Free + member (basic) both do —
+ * see getTierAdLevel for granularity (member gets minimal only).
  */
 function isTierEligibleForAds(userTier, userRole) {
   if (userRole === 'admin' || userRole === 'superadmin') return false;
-  if (String(userTier || '').toLowerCase() === 'free') return true;
-  return false;
+  const tier = String(userTier || '').toLowerCase();
+  if (tier === 'prime') return false;
+  if (tier === 'banned') return false;
+  return true;
+}
+
+/**
+ * Returns the ad "level" a user is entitled to see:
+ *   'full'    — all slots (free, anonymous)
+ *   'minimal' — only passive sticky footer (member/basic — they pay something)
+ *   'none'    — no ads (prime, admin, banned)
+ */
+function getTierAdLevel(userTier, userRole) {
+  if (userRole === 'admin' || userRole === 'superadmin') return 'none';
+  const tier = String(userTier || '').toLowerCase();
+  if (tier === 'prime' || tier === 'banned') return 'none';
+  if (tier === 'member') return 'minimal';
+  return 'full';
 }
 
 function isValidSurface(surface) {
@@ -211,6 +227,7 @@ module.exports = {
   isFeatureEnabled,
   setFeatureEnabled,
   isTierEligibleForAds,
+  getTierAdLevel,
   isValidSurface,
   getRateLimitStatus,
   grantUnlock,

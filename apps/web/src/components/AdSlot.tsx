@@ -40,27 +40,30 @@ const POPUNDER_FORMATS: ReadonlySet<AdSlotFormat> = new Set(["popunder", "mobile
 function sessionCapKey(slot: string) { return `pnpapp:adslot:${slot}:shown`; }
 
 export function AdSlot({ slot, className, style, onVastUrl }: Props) {
-  const { isFree } = useTier();
+  const { isPrime, isAdmin } = useTier();
+  const adsBlocked = isPrime || isAdmin;
   const ref = useRef<HTMLDivElement | null>(null);
   const [cfg, setCfg] = useState<AdSlotConfig | null>(null);
   const [scriptUrl, setScriptUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isFree) { setCfg(null); return; }
+    if (adsBlocked) { setCfg(null); return; }
     let cancelled = false;
     getAdsConfig().then((r) => {
       if (cancelled) return;
       if (!r.showAds) return;
+      // Server filters slots by tier — member only receives sticky_footer_*.
+      // If this slot isn't in the response for the user's tier, it's silently skipped.
       const s = r.slots?.[slot];
       if (!s || !s.zoneId) return;
       setCfg(s);
       setScriptUrl(r.scriptUrl);
     });
     return () => { cancelled = true; };
-  }, [slot, isFree]);
+  }, [slot, adsBlocked]);
 
   useEffect(() => {
-    if (!cfg || !isFree) return;
+    if (!cfg || adsBlocked) return;
 
     if (cfg.format === "vast") {
       if (cfg.vastUrl && onVastUrl) onVastUrl(cfg.vastUrl);
@@ -100,9 +103,9 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
       host.appendChild(push);
       if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
     }
-  }, [cfg, scriptUrl, slot, isFree, onVastUrl]);
+  }, [cfg, scriptUrl, slot, adsBlocked, onVastUrl]);
 
-  if (!isFree) return null;
+  if (adsBlocked) return null;
   if (!cfg) return null;
   if (cfg.format === "vast") return null;
   if (POPUNDER_FORMATS.has(cfg.format)) return null;

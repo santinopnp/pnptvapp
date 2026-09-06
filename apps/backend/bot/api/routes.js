@@ -17982,11 +17982,12 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const adUnlockService = require('../../services/adUnlockService');
   const enabled = await adUnlockService.isFeatureEnabled();
   const user = req.session?.user;
-  // Anonymous visitors (no session) are treated as free-tier for ad eligibility —
-  // LandingPage / public routes still monetize when the flag is on.
-  const eligible = user
-    ? adUnlockService.isTierEligibleForAds(user.tier, user.role)
-    : true;
+  // Anonymous visitors (no session) are treated as free-tier ('full' ad level).
+  // Prime/admin get 'none', member gets 'minimal' (sticky footer only).
+  const adLevel = user
+    ? adUnlockService.getTierAdLevel(user.tier, user.role)
+    : 'full';
+  const eligible = adLevel !== 'none';
   const showAds = enabled && eligible;
 
   const surfaces = adUnlockService.ALLOWED_SURFACES.map(s => ({
@@ -18046,9 +18047,12 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   } catch { /* fail open — global flag is authoritative */ }
 
   const slots = {};
+  // Member tier gets only the passive sticky footer — everything else is silent.
+  const MINIMAL_SLOTS = new Set(['sticky_footer_desktop', 'sticky_footer_mobile']);
   for (const s of slotDefs) {
     if (!s.zone) continue;
     if (perSlotDisabled[s.id]) continue;
+    if (adLevel === 'minimal' && !MINIMAL_SLOTS.has(s.id)) continue;
     slots[s.id] = {
       zoneId: s.zone,
       format: s.format,
