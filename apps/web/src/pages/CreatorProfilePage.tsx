@@ -411,7 +411,8 @@ export default function CreatorProfilePage() {
   const [channelPass, setChannelPass] = useState<ChannelPassViewerInfo | null>(null);
   const [channelPassLoading, setChannelPassLoading] = useState(false);
   const [channelPassPanelOpen, setChannelPassPanelOpen] = useState(false);
-  const [channelPassTab, setChannelPassTab] = useState<"rush" | "crypto">("rush");
+  // Default to crypto tab so USDC (Privy) is the primary Channel Pass payment.
+  const [channelPassTab, setChannelPassTab] = useState<"rush" | "crypto">("crypto");
   const [channelPassBuying, setChannelPassBuying] = useState(false);
   const [channelPassResult, setChannelPassResult] = useState<{ expires_at: string } | null>(null);
   const [channelPassError, setChannelPassError] = useState<string | null>(null);
@@ -1371,7 +1372,7 @@ export default function CreatorProfilePage() {
 
                           {/* Payment tab strip — 2 tabs only */}
                           <div className="flex gap-1 mb-4 p-1 rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
-                            {(["rush", "crypto"] as const).map((tab) => (
+                            {(["crypto", "rush"] as const).map((tab) => (
                               <button
                                 key={tab}
                                 type="button"
