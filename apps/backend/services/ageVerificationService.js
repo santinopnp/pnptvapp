@@ -12,7 +12,7 @@ class AgeVerificationService {
   constructor() {
     // Prefer explicit provider, otherwise choose based on available credentials
     const configuredProvider = process.env.AGE_VERIFICATION_PROVIDER;
-    this.minAge = parseInt(process.env.MIN_AGE_REQUIREMENT || '25', 10);
+    this.minAge = parseInt(process.env.MIN_AGE_REQUIREMENT || '18', 10);
 
     // Azure Face API configuration
     this.azureEndpoint = process.env.AZURE_FACE_ENDPOINT;

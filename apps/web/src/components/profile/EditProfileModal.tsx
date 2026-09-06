@@ -107,7 +107,8 @@ export default function EditProfileModal({
 
   // Compute membership age cutoff using local calendar date (avoids UTC off-by-one)
   const _today = new Date();
-  const dobMax = `${_today.getFullYear() - 25}-${String(_today.getMonth() + 1).padStart(2, "0")}-${String(_today.getDate()).padStart(2, "0")}`;
+  // Tope del selector alineado con la edad minima de la plataforma (18).
+  const dobMax = `${_today.getFullYear() - 18}-${String(_today.getMonth() + 1).padStart(2, "0")}-${String(_today.getDate()).padStart(2, "0")}`;
 
   return (
     <Modal open={open} onClose={onClose} title={p.editProfileTitle}>

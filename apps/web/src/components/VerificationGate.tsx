@@ -79,7 +79,9 @@ export function VerificationGate({ children }: VerificationGateProps) {
   const currentStepNumber = currentStep === "age" ? 1 : currentStep === "terms" ? (needsAge ? 2 : 1) : (needsAge ? 3 : 2);
 
   const _n = new Date();
-  const dobMax = `${_n.getFullYear() - 25}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
+  // Tope del selector: sin esto la interfaz no deja elegir un cumpleaños de
+  // menos de 25 años aunque el servidor acepte 18.
+  const dobMax = `${_n.getFullYear() - 18}-${String(_n.getMonth() + 1).padStart(2, "0")}-${String(_n.getDate()).padStart(2, "0")}`;
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

@@ -2627,7 +2627,8 @@ const updateProfile = async (req, res) => {
     const now = new Date();
     let age = now.getUTCFullYear() - dobYear;
     if (now.getUTCMonth() + 1 < dobMonth || (now.getUTCMonth() + 1 === dobMonth && now.getUTCDate() < dobDay)) age--;
-    if (age < 25) return res.status(400).json({ error: 'AGE_REQUIREMENT_NOT_MET', message: 'You do not meet the age requirements for this platform.' });
+    // 18: mismo umbral que el asistente de onboarding y el alta de creadores.
+    if (age < 18) return res.status(400).json({ error: 'AGE_REQUIREMENT_NOT_MET', message: 'You must be 18 or older to use this platform.' });
     if (dobYear > now.getUTCFullYear() || dateOfBirth > now.toISOString().split('T')[0]) {
       return res.status(400).json({ error: 'Date of birth cannot be in the future' });
     }
