@@ -11217,3 +11217,31 @@ export function getAdsConfig(): Promise<AdsConfigResponse> {
 
 export function invalidateAdsConfig() { adsConfigCache = null; }
 
+export interface AdminMonetizationSlot {
+  slot_id: string;
+  impressions: number;
+  clicks: number;
+  upgrade_shown: number;
+  upgrade_click: number;
+  dismiss: number;
+}
+export interface AdminMonetizationCohortRow {
+  user_id: string;
+  upgraded_at: string;
+  impressions_prior_30d: number;
+  upgrade_ctas_clicked: number;
+}
+export interface AdminMonetizationSummary {
+  ok: boolean;
+  hours: number;
+  summary: {
+    slots: AdminMonetizationSlot[];
+    newPrimeSubs: number;
+    uniqueUsersServedAds: number;
+  };
+  cohort: AdminMonetizationCohortRow[];
+}
+export function getAdminMonetizationSummary(hours = 24): Promise<AdminMonetizationSummary> {
+  return request<AdminMonetizationSummary>(`/api/admin/monetization/summary?hours=${hours}`);
+}
+
