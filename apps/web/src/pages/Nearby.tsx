@@ -20,6 +20,7 @@ import {
   getOnlineUsers,
   browseCreatorChannels,
   getAllPerformers,
+  getMyCallCredits,
   getPublicProfile,
   type NearbyUser,
   type NearbyPlace,
@@ -836,6 +837,10 @@ export default function Nearby() {
   const [selectedPerformer, setSelectedPerformer] = useState<FeaturedPerformer | null>(null);
   const [callsOnlineOnly, setCallsOnlineOnly] = useState(false);
   const [allPerformers, setAllPerformers] = useState<FeaturedPerformer[]>([]);
+  // Creator IDs where the viewer already holds an unused/partial call credit.
+  // Enables the Book button even when the creator is offline (they can still
+  // schedule against the creator's weekly availability).
+  const [creditCreatorIds, setCreditCreatorIds] = useState<Set<string>>(new Set());
 
   // ── Location ───────────────────────────────────────────────────────────────
   const [locationStatus, setLocationStatus] = useState<"online" | "offline">("offline");
@@ -918,6 +923,27 @@ export default function Nearby() {
   useEffect(() => {
     if (selectedPlace) trackPlaceView(selectedPlace.id).catch(() => {});
   }, [selectedPlace]);
+
+  // Load the viewer's unused/partial call credits once. Enables the Book
+  // button for any creator the viewer has a pre-paid or comped credit with,
+  // even when that creator is offline (they still have a weekly schedule).
+  useEffect(() => {
+    let cancelled = false;
+    getMyCallCredits()
+      .then((res) => {
+        if (cancelled || !res?.success) return;
+        const ids = new Set<string>();
+        for (const c of res.credits ?? []) {
+          const remaining = c.quantity_total - c.quantity_used - c.quantity_scheduled;
+          if ((c.status === "unused" || c.status === "partial") && remaining > 0) {
+            ids.add(String(c.creator_id));
+          }
+        }
+        setCreditCreatorIds(ids);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Fetch nearby (Real World) ─────────────────────────────────────────────
   const fetchNearby = useCallback(async (lat: number, lng: number, rad: number, force = false) => {
@@ -1671,19 +1697,33 @@ export default function Nearby() {
                             )}
                           </div>
                         </button>
-                        {/* Book button — FIX HIGH-08: disabled with tooltip when not accepting calls */}
-                        <button
-                          onClick={() => p.isAcceptingCalls !== false && setSelectedPerformer(p)}
-                          disabled={p.isAcceptingCalls === false}
-                          title={p.isAcceptingCalls === false ? "Not accepting calls right now" : undefined}
-                          className="w-full py-2.5 text-[12px] font-bold transition-all active:scale-[.97] flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                          style={{ background: p.isAcceptingCalls === false ? "rgba(123,97,255,0.3)" : "linear-gradient(135deg,#7B61FF,#D4007A)", color: "#fff" }}
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                          </svg>
-                          {p.isAcceptingCalls === false ? "Unavailable" : "Book a Call"}
-                        </button>
+                        {/* Book button — always enabled when the viewer holds a
+                            credit for this creator (schedule flow works even if
+                            creator is offline). */}
+                        {(() => {
+                          const perfId = String(p.userId || p.id || "");
+                          const hasCredit = creditCreatorIds.has(perfId);
+                          const canBook = p.isAcceptingCalls !== false || hasCredit;
+                          const label = !canBook
+                            ? "Unavailable"
+                            : hasCredit && p.isAcceptingCalls === false
+                            ? "Schedule Call"
+                            : "Book a Call";
+                          return (
+                            <button
+                              onClick={() => canBook && setSelectedPerformer(p)}
+                              disabled={!canBook}
+                              title={!canBook ? "Not accepting calls right now" : undefined}
+                              className="w-full py-2.5 text-[12px] font-bold transition-all active:scale-[.97] flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ background: !canBook ? "rgba(123,97,255,0.3)" : "linear-gradient(135deg,#7B61FF,#D4007A)", color: "#fff" }}
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                              </svg>
+                              {label}
+                            </button>
+                          );
+                        })()}
                       </div>
                     );
                   })}
