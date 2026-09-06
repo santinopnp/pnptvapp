@@ -207,6 +207,13 @@ async function initializeQueues() {
     jobId: 'cron-ads-health-check',
   });
 
+  // Monetization daily report — 07:00 UTC (posts summary to #ops-ads-monitor)
+  await cronQueue.add('monetization-daily-report', {}, {
+    repeat: { pattern: '0 7 * * *', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-monetization-daily-report',
+  });
+
   // Meru lifetime100 reconciliation — 7/22/37/52 of each hour
   await cronQueue.add('meru-reconcile', {}, {
     repeat: { pattern: '7,22,37,52 * * * *', tz: 'UTC' },

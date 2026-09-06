@@ -397,6 +397,61 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'monetization-daily-report': {
+      const adAnalytics = _safeRequire('../adAnalyticsService');
+      const slackOps = _safeRequire('../slackOpsService');
+      if (!adAnalytics || !slackOps) { logger.warn('[BullMQ] monetization-daily-report: dep missing'); return; }
+      try {
+        const [summary, cohort] = await Promise.all([
+          adAnalytics.getDailySummary(24),
+          adAnalytics.getConversionCohort(24),
+        ]);
+        const totalImp = summary.slots.reduce((s, r) => s + Number(r.impressions || 0), 0);
+        const totalClicks = summary.slots.reduce((s, r) => s + Number(r.clicks || 0), 0);
+        const totalUpgradeShown = summary.slots.reduce((s, r) => s + Number(r.upgrade_shown || 0), 0);
+        const totalUpgradeClick = summary.slots.reduce((s, r) => s + Number(r.upgrade_click || 0), 0);
+        const ctr = totalImp > 0 ? ((totalClicks / totalImp) * 100).toFixed(2) : '0.00';
+        const upgradeCtaCtr = totalUpgradeShown > 0 ? ((totalUpgradeClick / totalUpgradeShown) * 100).toFixed(2) : '0.00';
+        const cohortAvgImp = cohort.length > 0
+          ? Math.round(cohort.reduce((s, r) => s + Number(r.impressions_prior_30d || 0), 0) / cohort.length)
+          : 0;
+
+        const topSlots = summary.slots.slice(0, 5)
+          .map(r => `• \`${r.slot_id}\`: ${r.impressions} imp / ${r.clicks} clk`)
+          .join('\n') || '(sin actividad)';
+
+        const text = `📊 *Monetización 24h — ${new Date().toISOString().slice(0, 10)}*\n\n`
+          + `*Ads*\n`
+          + `• Impresiones: ${totalImp.toLocaleString()}\n`
+          + `• Clicks: ${totalClicks.toLocaleString()} (CTR ${ctr}%)\n`
+          + `• Users únicos con ads: ${summary.uniqueUsersServedAds.toLocaleString()}\n\n`
+          + `*Upgrade funnel*\n`
+          + `• Upgrade CTA shown: ${totalUpgradeShown}\n`
+          + `• Upgrade CTA clicked: ${totalUpgradeClick} (CTR ${upgradeCtaCtr}%)\n\n`
+          + `*Subscripciones nuevas (Prime)*\n`
+          + `• Nuevas conversiones: ${summary.newPrimeSubs}\n`
+          + `• Promedio impresiones vistas antes del upgrade: ${cohortAvgImp}\n\n`
+          + `*Top 5 slots por impresiones*\n${topSlots}`;
+
+        // Post directly (bypass wrap to avoid queue loop when queue is us)
+        const channel = process.env.SLACK_OPS_ADS_CHANNEL;
+        if (channel && process.env.SLACK_BOT_TOKEN) {
+          await fetch('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+            body: JSON.stringify({ channel, text }),
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => {});
+        }
+        logger.info('[monetization-daily-report] posted', {
+          totalImp, totalClicks, newPrime: summary.newPrimeSubs, cohortSize: cohort.length,
+        });
+      } catch (err) {
+        logger.warn('[monetization-daily-report] failed', { err: err.message });
+      }
+      return;
+    }
+
     case 'ads-health-check': {
       // In-process health check for /api/ads/config. Silent on OK; posts to
       // #ops-ads-monitor via slackOpsService on any anomaly. Anonymous view
