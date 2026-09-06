@@ -831,7 +831,7 @@ export function SharePostModal({
             {/* Note textarea — only shown when there are groups to share to */}
             {hangoutsLoadState === "loaded" && hangoutGroups.length > 0 && (
               <>
-                <textarea
+                <textarea id="pnp-sharepostmodal-1"
                   value={hangoutNote}
                   onChange={(e) => setHangoutNote(e.target.value.slice(0, 500))}
                   rows={2}
@@ -1065,7 +1065,7 @@ export function SharePostModal({
             {dmThreads.length > 0 && dmsLoadState === "loaded" && (
               <>
                 <div>
-                  <textarea
+                  <textarea id="pnp-sharepostmodal-2"
                     value={dmNote}
                     onChange={(e) => setDmNote(e.target.value.slice(0, 500))}
                     placeholder="Add your comment…"

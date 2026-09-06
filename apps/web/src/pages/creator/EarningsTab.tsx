@@ -428,7 +428,7 @@ export function EarningsTab({ earnings, t }: EarningsTabProps) {
               <form onSubmit={handleWithdrawSubmit} className="space-y-3 pt-1 border-t border-white/10">
                 <div>
                   <p className="text-xs font-medium text-white/60 mb-1.5">{t.withdrawAddressLabel}</p>
-                  <input
+                  <input id="pnp-earningstab-1"
                     type="text"
                     placeholder={t.withdrawAddressPlaceholder}
                     value={withdrawAddress}

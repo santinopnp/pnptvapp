@@ -331,7 +331,7 @@ export default function MainStageGuestJoin() {
 
           {/* Legal */}
           <label className="flex items-start gap-3 cursor-pointer select-none">
-            <input
+            <input id="pnp-mainstageguestjoin-1"
               type="checkbox"
               checked={terms}
               onChange={(e) => setTerms(e.target.checked)}
@@ -353,7 +353,7 @@ export default function MainStageGuestJoin() {
           </label>
 
           <label className="flex items-start gap-3 cursor-pointer select-none">
-            <input
+            <input id="pnp-mainstageguestjoin-2"
               type="checkbox"
               checked={privacy}
               onChange={(e) => setPrivacy(e.target.checked)}
@@ -375,7 +375,7 @@ export default function MainStageGuestJoin() {
           </label>
 
           <label className="flex items-start gap-3 cursor-pointer select-none">
-            <input
+            <input id="pnp-mainstageguestjoin-3"
               type="checkbox"
               checked={ageConfirmed}
               onChange={(e) => setAgeConfirmed(e.target.checked)}

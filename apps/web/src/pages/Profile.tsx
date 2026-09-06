@@ -2875,7 +2875,7 @@ export default function Profile() {
                 </div>
 
                 <label className="block text-xs font-medium mb-1.5 text-white/60">{p.reportDescriptionLabel}</label>
-                <textarea
+                <textarea id="pnp-profile-1"
                   value={reportDescription}
                   onChange={(e) => setReportDescription(e.target.value)}
                   placeholder={p.reportDescriptionPlaceholder}
@@ -2948,7 +2948,7 @@ export default function Profile() {
               </div>
             ) : (
               <>
-                <textarea
+                <textarea id="pnp-profile-2"
                   ref={bugTextareaRef}
                   value={bugText}
                   onChange={(e) => setBugText(e.target.value)}

@@ -1357,7 +1357,7 @@ export default function MainStage() {
           </p>
         </div>
         <label className="flex items-center gap-3 cursor-pointer select-none">
-          <input
+          <input id="pnp-mainstage-1"
             type="checkbox"
             checked={viewerAgeConfirmed}
             onChange={(e) => setViewerAgeConfirmed(e.target.checked)}
@@ -1502,19 +1502,19 @@ export default function MainStage() {
           </p>
           <div className="space-y-3 text-sm">
             <label className="flex items-start gap-3">
-              <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} className="mt-1" />
+              <input id="pnp-mainstage-2" type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} className="mt-1" />
               <span>
                 I accept the <a href="/terms" target="_blank" rel="noreferrer" className="text-pnp-accent underline">Terms and Conditions</a>.
               </span>
             </label>
             <label className="flex items-start gap-3">
-              <input type="checkbox" checked={acceptPrivacy} onChange={(e) => setAcceptPrivacy(e.target.checked)} className="mt-1" />
+              <input id="pnp-mainstage-3" type="checkbox" checked={acceptPrivacy} onChange={(e) => setAcceptPrivacy(e.target.checked)} className="mt-1" />
               <span>
                 I accept the <a href="/privacy" target="_blank" rel="noreferrer" className="text-pnp-accent underline">Privacy Policy</a>.
               </span>
             </label>
             <label className="flex items-start gap-3">
-              <input type="checkbox" checked={confirmAge} onChange={(e) => setConfirmAge(e.target.checked)} className="mt-1" />
+              <input id="pnp-mainstage-4" type="checkbox" checked={confirmAge} onChange={(e) => setConfirmAge(e.target.checked)} className="mt-1" />
               <span>I confirm that I am 18 years of age or older.</span>
             </label>
           </div>
@@ -2220,7 +2220,7 @@ export default function MainStage() {
                 paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
               }}
             >
-              <input
+              <input id="pnp-mainstage-5"
                 ref={chatInputRef}
                 type="text"
                 value={chatInput}
@@ -2451,7 +2451,7 @@ export default function MainStage() {
                 paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
               }}
             >
-              <input
+              <input id="pnp-mainstage-6"
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
@@ -2651,7 +2651,7 @@ export default function MainStage() {
                   );
                 })}
               </div>
-              <input
+              <input id="pnp-mainstage-7"
                 type="number"
                 min={1}
                 max={500}
@@ -2668,7 +2668,7 @@ export default function MainStage() {
                 className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
                 placeholder="Custom amount ($)"
               />
-              <input
+              <input id="pnp-mainstage-8"
                 type="text"
                 maxLength={140}
                 value={tipMessage}

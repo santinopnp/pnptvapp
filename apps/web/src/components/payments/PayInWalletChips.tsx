@@ -1747,7 +1747,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                       To address
                     </label>
                     <div className="flex gap-1.5">
-                      <input
+                      <input id="pnp-payinwalletchips-1"
                         type="text"
                         value={sendTo}
                         onChange={(e) => { setSendTo(e.target.value); setSendError(null); }}
@@ -1778,7 +1778,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
                       Amount ({sendAsset === "usdc" ? "USDC" : "ETH"})
                     </label>
                     <div className="flex gap-1.5">
-                      <input
+                      <input id="pnp-payinwalletchips-2"
                         type="text"
                         inputMode="decimal"
                         value={sendAmount}
@@ -1821,7 +1821,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
                   {/* Irreversibility warning + confirm gate */}
                   <label className="flex items-start gap-2 text-[11px] text-amber-100/90 bg-amber-500/[0.08] border border-amber-500/30 rounded-md px-3 py-2 cursor-pointer">
-                    <input
+                    <input id="pnp-payinwalletchips-3"
                       type="checkbox"
                       checked={sendConfirm}
                       onChange={(e) => setSendConfirm(e.target.checked)}
@@ -2516,7 +2516,7 @@ export function TipButton({
             </div>
 
             {/* Custom amount */}
-            <input
+            <input id="pnp-payinwalletchips-4"
               type="number"
               min={1}
               max={500}
@@ -2533,7 +2533,7 @@ export function TipButton({
               className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
               placeholder={es ? "Cantidad personalizada ($)" : "Custom amount ($)"}
             />
-            <input
+            <input id="pnp-payinwalletchips-5"
               type="text"
               maxLength={140}
               value={tipMessage}

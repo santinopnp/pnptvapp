@@ -45,7 +45,7 @@ function SliderField({
           {displayValue ?? value}
         </span>
       </div>
-      <input
+      <input id="pnp-overlayeditormodal-1"
         type="range"
         min={min}
         max={max}
@@ -73,13 +73,13 @@ function ColorField({ label, value, onChange }: ColorFieldProps) {
         {label}
       </label>
       <div className="flex items-center gap-2">
-        <input
+        <input id="pnp-overlayeditormodal-2"
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="w-9 h-9 rounded-lg border border-pnp-border bg-pnp-surfaceHover cursor-pointer p-0.5"
         />
-        <input
+        <input id="pnp-overlayeditormodal-3"
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -299,7 +299,7 @@ export function OverlayEditorModal({ overlay, onClose, onSaved }: OverlayEditorM
                 <label className="block text-xs font-medium text-pnp-textSecondary mb-1">
                   Position
                 </label>
-                <select
+                <select id="pnp-overlayeditormodal-4"
                   value={draft.logo_position}
                   onChange={(e) => set("logo_position", e.target.value)}
                   className="w-full rounded-lg bg-pnp-surface border border-pnp-border px-3 py-2.5 text-sm text-pnp-textPrimary focus:outline-none focus:ring-2 focus:ring-pnp-accent transition-colors appearance-none"
@@ -351,7 +351,7 @@ export function OverlayEditorModal({ overlay, onClose, onSaved }: OverlayEditorM
                     {(draft.banner_text ?? "").length}/200
                   </span>
                 </div>
-                <textarea
+                <textarea id="pnp-overlayeditormodal-5"
                   value={draft.banner_text ?? ""}
                   onChange={(e) =>
                     set("banner_text", e.target.value.slice(0, 200) || null)

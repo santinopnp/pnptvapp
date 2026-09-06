@@ -145,7 +145,7 @@ export default function Mono() {
 
       {/* Input */}
       <div className="flex gap-2 items-end">
-        <textarea
+        <textarea id="pnp-mono-1"
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}

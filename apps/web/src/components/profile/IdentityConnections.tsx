@@ -315,7 +315,7 @@ export default function IdentityConnections({ telegramUsername }: IdentityConnec
                 <>
                   <p className="text-[10px] text-white/50 mb-3">Enter the email from your old account to trigger a password reset.</p>
                   <div className="flex gap-2">
-                    <input
+                    <input id="pnp-identityconnections-1"
                       type="email"
                       value={emailInput}
                       onChange={(e) => setEmailInput(e.target.value)}

@@ -215,7 +215,7 @@ export default function ShopPage() {
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
-                  <input
+                  <input id="pnp-shoppage-1"
                     type="email"
                     value={email}
                     onChange={(e) => {

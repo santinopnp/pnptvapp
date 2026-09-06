@@ -487,7 +487,7 @@ export default function CreatorLive() {
               <div className="space-y-3">
                 <div>
                   <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">Stream title *</label>
-                  <input
+                  <input id="pnp-creatorlive-1"
                     type="text"
                     placeholder="Hot Sunday Show 🔥"
                     maxLength={80}
@@ -500,7 +500,7 @@ export default function CreatorLive() {
                 </div>
                 <div>
                   <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">Short description (optional)</label>
-                  <textarea
+                  <textarea id="pnp-creatorlive-2"
                     rows={2}
                     placeholder="What's happening tonight…"
                     maxLength={200}
@@ -524,7 +524,7 @@ export default function CreatorLive() {
                   )}
                   {streamMeta.tags.length < 5 && (
                     <div className="flex gap-2">
-                      <input
+                      <input id="pnp-creatorlive-3"
                         type="text"
                         placeholder="Add tag (e.g. latex, party, solo)"
                         maxLength={30}
@@ -592,10 +592,10 @@ export default function CreatorLive() {
                 ) : (
                   <div className="space-y-2">
                     <div className="flex gap-2">
-                      <input type="number" min="1" placeholder="Ru$h (e.g. 500)" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)}
+                      <input id="pnp-creatorlive-4" type="number" min="1" placeholder="Ru$h (e.g. 500)" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)}
                         className="w-32 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                         style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      <input type="text" placeholder="Label (e.g. Full show)" maxLength={60} value={goalLabel} onChange={(e) => setGoalLabel(e.target.value)}
+                      <input id="pnp-creatorlive-5" type="text" placeholder="Label (e.g. Full show)" maxLength={60} value={goalLabel} onChange={(e) => setGoalLabel(e.target.value)}
                         className="flex-1 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                         style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
                     </div>
@@ -625,10 +625,10 @@ export default function CreatorLive() {
                 )}
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <input type="number" min="1" placeholder="Ru$h" value={newItemAmount} onChange={(e) => setNewItemAmount(e.target.value)}
+                    <input id="pnp-creatorlive-6" type="number" min="1" placeholder="Ru$h" value={newItemAmount} onChange={(e) => setNewItemAmount(e.target.value)}
                       className="w-24 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
-                    <input type="text" placeholder="What you'll do (e.g. Take off shirt)" maxLength={80} value={newItemLabel} onChange={(e) => setNewItemLabel(e.target.value)}
+                    <input id="pnp-creatorlive-7" type="text" placeholder="What you'll do (e.g. Take off shirt)" maxLength={80} value={newItemLabel} onChange={(e) => setNewItemLabel(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddMenuItem(); } }}
                       className="flex-1 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
@@ -664,7 +664,7 @@ export default function CreatorLive() {
                 ] as const).map(({ key, label, placeholder }) => (
                   <div key={key}>
                     <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1.5">{label}</label>
-                    <textarea rows={2} maxLength={500} placeholder={placeholder} value={autoProfile[key]}
+                    <textarea id="pnp-creatorlive-8" rows={2} maxLength={500} placeholder={placeholder} value={autoProfile[key]}
                       onChange={(e) => setAutoProfile((p) => ({ ...p, [key]: e.target.value }))}
                       className="w-full rounded-xl px-3 py-3 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }} />
@@ -786,7 +786,7 @@ export default function CreatorLive() {
 
               <div className="rounded-2xl p-4 space-y-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
                 <p className="text-xs font-semibold text-white/80">Notify followers? (optional)</p>
-                <textarea
+                <textarea id="pnp-creatorlive-9"
                   className="w-full rounded-xl px-3 py-2 text-xs text-white resize-none focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                   style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", minHeight: "60px" }}
                   placeholder={`Optional message — default: "🔴 You are going live!"`}
@@ -985,7 +985,7 @@ export default function CreatorLive() {
                 Alert your followers before you connect OBS. Max one notification per 6 hours.
               </p>
               <div className="space-y-2">
-                <textarea
+                <textarea id="pnp-creatorlive-10"
                   className="w-full rounded-xl px-3 py-2.5 text-sm text-white resize-none focus:outline-none focus:ring-1"
                   style={{
                     background: "rgba(255,255,255,0.04)",
@@ -1364,7 +1364,7 @@ export default function CreatorLive() {
                 </h2>
                 <p className="text-xs text-pnp-textSecondary">Shown on the Live discovery page to viewers.</p>
                 <div className="space-y-2">
-                  <input
+                  <input id="pnp-creatorlive-11"
                     type="text"
                     placeholder="Stream title (e.g. Hot Sunday Show 🔥)"
                     maxLength={80}
@@ -1372,7 +1372,7 @@ export default function CreatorLive() {
                     onChange={(e) => setStreamMeta((m) => ({ ...m, title: e.target.value }))}
                     className="w-full rounded-lg bg-pnp-surface border border-pnp-border px-2.5 py-2 text-sm text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                   />
-                  <textarea
+                  <textarea id="pnp-creatorlive-12"
                     rows={2}
                     placeholder="Short description (optional)"
                     maxLength={200}
@@ -1401,7 +1401,7 @@ export default function CreatorLive() {
                   )}
                   {streamMeta.tags.length < 5 && (
                     <div className="flex gap-2">
-                      <input
+                      <input id="pnp-creatorlive-13"
                         type="text"
                         placeholder="Add tag (e.g. latex, party, solo)"
                         maxLength={30}
@@ -1501,7 +1501,7 @@ export default function CreatorLive() {
                 {showGoalEditor && (
                   <div className="space-y-2 pt-1 border-t border-pnp-border">
                     <div className="flex gap-2">
-                      <input
+                      <input id="pnp-creatorlive-14"
                         type="number"
                         min="1"
                         placeholder="Ru$h (e.g. 500)"
@@ -1509,7 +1509,7 @@ export default function CreatorLive() {
                         onChange={(e) => setGoalAmount(e.target.value)}
                         className="w-32 rounded-lg bg-pnp-surface border border-pnp-border px-2.5 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       />
-                      <input
+                      <input id="pnp-creatorlive-15"
                         type="text"
                         placeholder="Label (optional)"
                         maxLength={60}
@@ -1583,7 +1583,7 @@ export default function CreatorLive() {
                   <div className="pt-2 border-t border-pnp-border space-y-2">
                     <p className="text-[10px] text-pnp-textSecondary font-medium uppercase tracking-wider">Add item</p>
                     <div className="flex gap-2">
-                      <input
+                      <input id="pnp-creatorlive-16"
                         type="number"
                         min="1"
                         placeholder="Ru$h"
@@ -1591,7 +1591,7 @@ export default function CreatorLive() {
                         onChange={(e) => setNewItemAmount(e.target.value)}
                         className="w-24 rounded-lg bg-pnp-surface border border-pnp-border px-2.5 py-1.5 text-xs text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-1 focus:ring-pnp-accent"
                       />
-                      <input
+                      <input id="pnp-creatorlive-17"
                         type="text"
                         placeholder="What you'll do (e.g. Take off shirt)"
                         maxLength={80}
@@ -1658,7 +1658,7 @@ export default function CreatorLive() {
                       <label className="text-[10px] text-pnp-textSecondary uppercase tracking-wider font-semibold block mb-1">
                         {label}
                       </label>
-                      <textarea
+                      <textarea id="pnp-creatorlive-18"
                         rows={2}
                         maxLength={500}
                         placeholder={placeholder}
@@ -1783,7 +1783,7 @@ export default function CreatorLive() {
 
                 {/* Input row */}
                 <div className="flex gap-2">
-                  <input
+                  <input id="pnp-creatorlive-19"
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}

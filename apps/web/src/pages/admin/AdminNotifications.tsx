@@ -493,7 +493,7 @@ export default function AdminNotifications() {
                     >
                       <CheckIcon />
                     </span>
-                    <input
+                    <input id="pnp-adminnotifications-1"
                       type="checkbox"
                       className="sr-only"
                       checked={checked}

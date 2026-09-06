@@ -62,7 +62,7 @@ async function compressImageForUpload(file: File, maxDim: number, quality: numbe
 }
 
 // Display labels for NowPayments currency codes — kept in sync with the
-// <select> options in step 3 and with ADDRESS_VALIDATORS on the backend.
+// <select id="pnp-creatorenrollmentwizard-1"> options in step 3 and with ADDRESS_VALIDATORS on the backend.
 const TOKEN_LABELS: Record<string, string> = {
   btc:       "Bitcoin (BTC)",
   btcln:     "Bitcoin Lightning",
@@ -659,7 +659,7 @@ export default function CreatorEnrollmentWizard({
                 <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {pr.walletAddress}
                 </label>
-                <input
+                <input id="pnp-creatorenrollmentwizard-2"
                   type="text"
                   value={paymentAddress}
                   onChange={(e) => setPaymentAddress(e.target.value)}
@@ -698,7 +698,7 @@ export default function CreatorEnrollmentWizard({
                 <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                   {pr.idLegalFullName} <span className="text-red-400">*</span>
                 </label>
-                <input
+                <input id="pnp-creatorenrollmentwizard-3"
                   type="text"
                   value={idLegalName}
                   onChange={(e) => setIdLegalName(e.target.value)}
@@ -714,7 +714,7 @@ export default function CreatorEnrollmentWizard({
                   <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     {pr.idDateOfBirth} <span className="text-red-400">*</span>
                   </label>
-                  <input
+                  <input id="pnp-creatorenrollmentwizard-4"
                     type="date"
                     value={idDob}
                     onChange={(e) => setIdDob(e.target.value)}
@@ -727,7 +727,7 @@ export default function CreatorEnrollmentWizard({
                   <label className="text-xs font-medium block mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
                     {pr.idTypeLabel} <span className="text-red-400">*</span>
                   </label>
-                  <select
+                  <select id="pnp-creatorenrollmentwizard-5"
                     value={idType}
                     onChange={(e) => setIdType(e.target.value)}
                     className="w-full rounded-lg px-3 py-2.5 text-white outline-none"
@@ -772,7 +772,7 @@ export default function CreatorEnrollmentWizard({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a1.5 1.5 0 001.5-1.5V5.25a1.5 1.5 0 00-1.5-1.5H3.75a1.5 1.5 0 00-1.5 1.5v14.25c0 .828.672 1.5 1.5 1.5z" />
                     </svg>
                     <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{pr.tapToUploadId}</p>
-                    <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleIdUpload} />
+                    <input id="pnp-creatorenrollmentwizard-6" type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleIdUpload} />
                   </label>
                 )}
               </div>

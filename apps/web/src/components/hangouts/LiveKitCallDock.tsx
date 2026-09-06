@@ -675,7 +675,7 @@ function TipSheet({
           ))}
         </div>
 
-        <input
+        <input id="pnp-livekitcalldock-1"
           type="number"
           min={1}
           max={500}
@@ -689,7 +689,7 @@ function TipSheet({
           placeholder="Custom amount ($)"
         />
 
-        <input
+        <input id="pnp-livekitcalldock-2"
           type="text"
           maxLength={140}
           value={message}

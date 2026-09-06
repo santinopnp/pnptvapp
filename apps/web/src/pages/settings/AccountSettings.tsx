@@ -335,7 +335,7 @@ export default function AccountSettings() {
                   }}
                   className="flex gap-2"
                 >
-                  <input
+                  <input id="pnp-accountsettings-1"
                     type="text"
                     value={usernameValue}
                     onChange={(e) => { setUsernameValue(e.target.value); setUsernameError(null); }}
@@ -428,7 +428,7 @@ export default function AccountSettings() {
                     className="space-y-2"
                   >
                     <div className="flex gap-2">
-                      <input
+                      <input id="pnp-accountsettings-2"
                         type="email"
                         inputMode="email"
                         autoComplete="email"
@@ -539,7 +539,7 @@ export default function AccountSettings() {
               className="space-y-3"
               noValidate
             >
-              <input
+              <input id="pnp-accountsettings-3"
                 type="email"
                 inputMode="email"
                 autoComplete="email"
@@ -599,7 +599,7 @@ export default function AccountSettings() {
         {!passkeyAddSuccess && typeof window !== "undefined" && !!window.PublicKeyCredential && (
           <div className="mb-4 space-y-2">
             <div className="flex gap-2">
-              <input
+              <input id="pnp-accountsettings-4"
                 type="text"
                 value={passkeyAddName}
                 onChange={(e) => { setPasskeyAddName(e.target.value); setPasskeyAddError(null); }}

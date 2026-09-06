@@ -153,7 +153,7 @@ export function CallPackageManager() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/50 mb-1">{t.pkgDuration}</label>
-              <select
+              <select id="pnp-callpackagemanager-1"
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value) as 30 | 60)}
                 className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
@@ -164,7 +164,7 @@ export function CallPackageManager() {
             </div>
             <div>
               <label className="block text-xs text-white/50 mb-1">{t.pkgQuantity}</label>
-              <input
+              <input id="pnp-callpackagemanager-2"
                 type="number"
                 min={1}
                 max={20}
@@ -177,7 +177,7 @@ export function CallPackageManager() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/50 mb-1">{t.pkgPriceUsd}</label>
-              <input
+              <input id="pnp-callpackagemanager-3"
                 type="number"
                 min={0.01}
                 max={1000}
@@ -191,7 +191,7 @@ export function CallPackageManager() {
             </div>
             <div>
               <label className="block text-xs text-white/50 mb-1">{t.pkgTitleOptional}</label>
-              <input
+              <input id="pnp-callpackagemanager-4"
                 type="text"
                 maxLength={80}
                 placeholder={t.pkgTitlePlaceholder}
@@ -243,7 +243,7 @@ export function CallPackageManager() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-white/50 mb-1">{t.pkgPriceUsd}</label>
-                      <input
+                      <input id="pnp-callpackagemanager-5"
                         type="number"
                         min={0.01}
                         max={1000}
@@ -255,7 +255,7 @@ export function CallPackageManager() {
                     </div>
                     <div>
                       <label className="block text-xs text-white/50 mb-1">{t.pkgTitleOptional}</label>
-                      <input
+                      <input id="pnp-callpackagemanager-6"
                         type="text"
                         maxLength={80}
                         value={editTitle}

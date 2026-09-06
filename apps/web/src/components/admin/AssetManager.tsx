@@ -278,7 +278,7 @@ export function AssetUploadField({ type, value, onChange, showError, onError }: 
     <div className="space-y-2">
       {/* URL display + upload trigger row */}
       <div className="flex items-center gap-2">
-        <input
+        <input id="pnp-assetmanager-1"
           type="url"
           readOnly
           value={value ?? ""}
@@ -301,7 +301,7 @@ export function AssetUploadField({ type, value, onChange, showError, onError }: 
           )}
           Upload
         </button>
-        <input
+        <input id="pnp-assetmanager-2"
           ref={fileInputRef}
           type="file"
           accept={accept}

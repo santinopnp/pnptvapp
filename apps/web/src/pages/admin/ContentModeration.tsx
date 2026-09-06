@@ -289,7 +289,7 @@ function BansTab() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <select
+        <select id="pnp-contentmoderation-1"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
           className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary focus:outline-none focus:border-pnp-pink"
@@ -298,7 +298,7 @@ function BansTab() {
           <option value="active">Active</option>
           <option value="inactive">Lifted</option>
         </select>
-        <input
+        <input id="pnp-contentmoderation-2"
           type="text"
           placeholder="Search username or reason…"
           value={search}
@@ -366,7 +366,7 @@ function BansTab() {
                         <div className="space-y-1">
                           {unbanState[ban.id] !== undefined ? (
                             <div className="flex gap-2 items-center">
-                              <input
+                              <input id="pnp-contentmoderation-3"
                                 type="text"
                                 placeholder="Reason…"
                                 value={unbanState[ban.id]}
@@ -475,14 +475,14 @@ function AuditLogTab() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <input
+        <input id="pnp-contentmoderation-4"
           type="text"
           placeholder="Filter by action…"
           value={actionFilter}
           onChange={(e) => setActionFilter(e.target.value)}
           className="flex-1 min-w-40 px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-pink"
         />
-        <select
+        <select id="pnp-contentmoderation-5"
           value={resourceTypeFilter}
           onChange={(e) => setResourceTypeFilter(e.target.value)}
           className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary focus:outline-none focus:border-pnp-pink"
@@ -674,7 +674,7 @@ function UsernameHistoryTab() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        <input
+        <input id="pnp-contentmoderation-6"
           type="text"
           placeholder="Search user ID, old or new username…"
           value={search}
@@ -682,7 +682,7 @@ function UsernameHistoryTab() {
           className="flex-1 min-w-48 px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-pink"
         />
         <label className="flex items-center gap-2 text-sm text-pnp-textSecondary cursor-pointer select-none">
-          <input
+          <input id="pnp-contentmoderation-7"
             type="checkbox"
             checked={flaggedOnly}
             onChange={(e) => setFlaggedOnly(e.target.checked)}

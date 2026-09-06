@@ -779,7 +779,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
               {profilePhotoUploading ? t.settingsProfilePhotoUploading : t.settingsProfilePhotoChangeBtn}
-              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only"
+              <input id="pnp-settingstab-1" type="file" accept="image/jpeg,image/png,image/webp" className="sr-only"
                 onChange={handleProfilePhotoChange} disabled={profilePhotoUploading} />
             </label>
             <p className="text-[10px] mt-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>{t.settingsProfilePhotoHint}</p>
@@ -808,7 +808,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             {coverUploading ? "Uploading…" : coverUrl ? "Change cover" : "Add cover"}
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="sr-only"
+            <input id="pnp-settingstab-2" type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="sr-only"
               onChange={handleCoverChange} disabled={coverUploading} />
           </label>
           {coverUrl && !coverUploading && (
@@ -991,7 +991,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-white mb-1">📱 Meru</label>
-              <input
+              <input id="pnp-settingstab-3"
                 type="text"
                 value={meruAccount}
                 onChange={(e) => { setMeruAccount(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1003,7 +1003,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
 
             <div>
               <label className="block text-xs font-semibold text-white mb-1">₿ Bitcoin</label>
-              <input
+              <input id="pnp-settingstab-4"
                 type="text"
                 value={btcAddress}
                 onChange={(e) => { setBtcAddress(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1016,7 +1016,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
 
             <div>
               <label className="block text-xs font-semibold text-white mb-1">🥷 Dash</label>
-              <input
+              <input id="pnp-settingstab-5"
                 type="text"
                 value={dashAddress}
                 onChange={(e) => { setDashAddress(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1030,7 +1030,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             {/* USDT — TRON */}
             <div>
               <label className="block text-xs font-semibold text-white mb-1">💵 USDT — TRON (TRC-20)</label>
-              <input
+              <input id="pnp-settingstab-6"
                 type="text"
                 value={usdtTronAddress}
                 onChange={(e) => { setUsdtTronAddress(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1044,7 +1044,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             {/* USDT — Base */}
             <div>
               <label className="block text-xs font-semibold text-white mb-1">💵 USDT — Base (EVM)</label>
-              <input
+              <input id="pnp-settingstab-7"
                 type="text"
                 value={usdtBaseAddress}
                 onChange={(e) => { setUsdtBaseAddress(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1061,7 +1061,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 🇨🇴 {t.settingsBreBKeyLabel} <span className="font-normal text-white/50">{t.settingsBreBKeyRegion}</span>
               </label>
               <div className="flex gap-2">
-                <select
+                <select id="pnp-settingstab-8"
                   value={breBKeyType}
                   onChange={(e) => { setBreBKeyType(e.target.value as "phone" | "cedula" | "email"); setWalletError(null); setWalletSuccess(null); }}
                   className="px-2 py-2 rounded-lg text-xs text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30"
@@ -1070,7 +1070,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                   <option value="cedula">{t.settingsBreBKeyCedula}</option>
                   <option value="email">{t.settingsBreBKeyEmail}</option>
                 </select>
-                <input
+                <input id="pnp-settingstab-9"
                   type="text"
                   value={breBKey}
                   onChange={(e) => { setBreBKey(e.target.value); setWalletError(null); setWalletSuccess(null); }}
@@ -1118,7 +1118,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           <div className="flex items-stretch gap-2">
             <div className="flex items-center rounded-lg px-3 flex-1 gap-2 border" style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.08)" }}>
               <span className="text-sm font-bold text-white/70">$</span>
-              <input
+              <input id="pnp-settingstab-10"
                 type="number"
                 inputMode="decimal"
                 min={PRICE_MIN}
@@ -1264,7 +1264,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
           {t.settingsStreamRulesCardDesc}
         </p>
         <div className="relative">
-          <textarea
+          <textarea id="pnp-settingstab-11"
             value={streamRules}
             onChange={(e) => {
               setStreamRules(e.target.value);
@@ -1429,7 +1429,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                     {editError && (
                       <p className="text-[10px] text-red-400">{editError}</p>
                     )}
-                    <input
+                    <input id="pnp-settingstab-12"
                       type="text"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
@@ -1437,7 +1437,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                       placeholder="Title (optional)"
                       className="w-full px-2.5 py-1.5 rounded text-xs text-white bg-black/30 border border-white/10 focus:outline-none focus:border-white/30"
                     />
-                    <textarea
+                    <textarea id="pnp-settingstab-13"
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
                       maxLength={2000}
@@ -1493,7 +1493,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                           <label className="block text-[10px] font-medium text-white/60 mb-1">
                             Rent price (Ru$h 💎)
                           </label>
-                          <input
+                          <input id="pnp-settingstab-14"
                             type="number"
                             inputMode="numeric"
                             min={6}
@@ -1514,7 +1514,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                           <label className="block text-[10px] font-medium text-white/60 mb-1">
                             Buy price (Ru$h 💎)
                           </label>
-                          <input
+                          <input id="pnp-settingstab-15"
                             type="number"
                             inputMode="numeric"
                             min={30}
@@ -1622,7 +1622,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
                 </>
               )}
             </div>
-            <input
+            <input id="pnp-settingstab-16"
               ref={mediaFileInputRef}
               type="file"
               accept={addType === "photo" ? "image/jpeg,image/png,image/webp,image/heic,image/heif" : "video/mp4,video/quicktime,video/webm"}
@@ -1645,13 +1645,13 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
             />
 
             {/* Caption */}
-            <input type="text" value={addCaption} onChange={(e) => setAddCaption(e.target.value)}
+            <input id="pnp-settingstab-17" type="text" value={addCaption} onChange={(e) => setAddCaption(e.target.value)}
               placeholder="Caption (optional)" maxLength={160}
               className="w-full px-3 py-2 rounded-lg text-sm text-white placeholder-white/30 bg-white/5 border border-white/10 focus:outline-none focus:border-white/30 mb-3" />
 
             {/* Premium toggle */}
             <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
-              <input type="checkbox" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} className="w-4 h-4 rounded accent-pink-600" />
+              <input id="pnp-settingstab-18" type="checkbox" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} className="w-4 h-4 rounded accent-pink-600" />
               <span className="text-xs text-white/80">Premium (solo suscriptores)</span>
             </label>
 
@@ -1811,7 +1811,7 @@ export function SettingsTab({ dashboard, t }: SettingsTabProps) {
         </p>
 
         {aboutTab === "write" ? (
-          <textarea
+          <textarea id="pnp-settingstab-19"
             value={manualMarkdown}
             onChange={(e) => setManualMarkdown(e.target.value.slice(0, MANUAL_MAX))}
             disabled={manualLoading || manualAiLoading}

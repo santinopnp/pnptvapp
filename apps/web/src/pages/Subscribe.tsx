@@ -761,7 +761,7 @@ export default function Subscribe() {
             {s.promoHaveCode}
           </summary>
           <div className="flex gap-2 mt-3">
-            <input
+            <input id="pnp-subscribe-1"
               type="text"
               value={promoInput}
               onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
@@ -1234,7 +1234,7 @@ export default function Subscribe() {
             ) : (
               <>
                 <div className="flex gap-2">
-                  <input
+                  <input id="pnp-subscribe-2"
                     type="text"
                     value={activationCode}
                     onChange={(e) => {

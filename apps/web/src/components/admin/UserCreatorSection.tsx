@@ -540,7 +540,7 @@ export function UserCreatorSection({ user, onUpdated }: UserCreatorSectionProps)
 
           {/* Grant monetization entitlement */}
           <label className="flex items-center gap-3 cursor-pointer">
-            <input
+            <input id="pnp-usercreatorsection-1"
               type="checkbox"
               checked={grantMonetization}
               onChange={(e) => setGrantMonetization(e.target.checked)}
@@ -734,12 +734,12 @@ function CreatorBalancePanel({ userId }: { userId: string }) {
       {showCreditForm && (
         <div className="p-3 rounded-lg bg-pnp-surface border border-pnp-border space-y-2">
           <div className="flex gap-2">
-            <input
+            <input id="pnp-usercreatorsection-2"
               type="number" step="0.01" min="0.01" placeholder="USD amount"
               value={creditAmount} onChange={(e) => setCreditAmount(e.target.value)}
               className="flex-1 px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
             />
-            <input
+            <input id="pnp-usercreatorsection-3"
               type="text" placeholder="Reason (required)"
               value={creditReason} onChange={(e) => setCreditReason(e.target.value)}
               className="flex-[2] px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"

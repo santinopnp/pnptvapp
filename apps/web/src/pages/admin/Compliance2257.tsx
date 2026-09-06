@@ -482,7 +482,7 @@ export default function Compliance2257() {
                   <div className="mt-3">
                     {reRejectingId === rec.user_id ? (
                       <div className="space-y-2">
-                        <textarea
+                        <textarea id="pnp-compliance2257-1"
                           placeholder="Rejection reason (required)"
                           value={reRejectNotes[rec.user_id] || ""}
                           onChange={(e) =>
@@ -527,7 +527,7 @@ export default function Compliance2257() {
                 {tab === "pending" && (
                   <div className="mt-3 space-y-2">
                     {/* Optional approve notes */}
-                    <input
+                    <input id="pnp-compliance2257-2"
                       type="text"
                       placeholder="Approval notes (optional)"
                       value={approveNotes[rec.user_id] || ""}
@@ -567,7 +567,7 @@ export default function Compliance2257() {
 
                     {isRejectOpen && (
                       <div className="space-y-2 pt-1">
-                        <textarea
+                        <textarea id="pnp-compliance2257-3"
                           placeholder="Rejection reason (required)"
                           value={rejectNotes[rec.user_id] || ""}
                           onChange={(e) =>

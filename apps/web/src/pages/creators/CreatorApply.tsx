@@ -458,20 +458,20 @@ export default function CreatorApply() {
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Legal Full Name <span style={{ color: "#D4007A" }}>*</span></label>
-                  <input type="text" value={idLegalName} onChange={e => setIdLegalName(e.target.value)} placeholder="As it appears on your ID" maxLength={255}
+                  <input id="pnp-creatorapply-1" type="text" value={idLegalName} onChange={e => setIdLegalName(e.target.value)} placeholder="As it appears on your ID" maxLength={255}
                     className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-1"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", caretColor: "#D4007A" }} />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Date of Birth <span style={{ color: "#D4007A" }}>*</span></label>
-                  <input type="date" value={idDob} onChange={e => setIdDob(e.target.value)}
+                  <input id="pnp-creatorapply-2" type="date" value={idDob} onChange={e => setIdDob(e.target.value)}
                     max={new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]}
                     className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-1"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", colorScheme: "dark" }} />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">ID Type <span style={{ color: "#D4007A" }}>*</span></label>
-                  <select value={idType} onChange={e => setIdType(e.target.value)}
+                  <select id="pnp-creatorapply-3" value={idType} onChange={e => setIdType(e.target.value)}
                     className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-1"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", colorScheme: "dark" }}>
                     <option value="">Select ID type…</option>
@@ -481,7 +481,7 @@ export default function CreatorApply() {
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Photo of ID Document <span style={{ color: "#D4007A" }}>*</span></label>
                   <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>Clear photo of your government-issued ID. Max 25 MB. JPG, PNG, WebP, or HEIC.</p>
-                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdFile(e.target.files?.[0] || null)} className="hidden" />
+                  <input id="pnp-creatorapply-4" ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdFile(e.target.files?.[0] || null)} className="hidden" />
                   <button type="button" onClick={() => fileInputRef.current?.click()}
                     className="w-full rounded-lg py-2.5 text-sm font-medium transition-colors"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px dashed rgba(255,255,255,0.2)", color: idFile ? "#5ED1C4" : "var(--pnp-text-secondary, #8E8E93)" }}>
@@ -491,7 +491,7 @@ export default function CreatorApply() {
                 <div>
                   <label className="block text-xs font-medium text-white/70 mb-1">Selfie Holding Your ID <span style={{ color: "#D4007A" }}>*</span></label>
                   <p className="text-xs mb-2" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>A photo of you holding your ID document so your face and the ID are both visible. Needed to confirm authenticity.</p>
-                  <input ref={selfieInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdSelfieFile(e.target.files?.[0] || null)} className="hidden" />
+                  <input id="pnp-creatorapply-5" ref={selfieInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => setIdSelfieFile(e.target.files?.[0] || null)} className="hidden" />
                   <button type="button" onClick={() => selfieInputRef.current?.click()}
                     className="w-full rounded-lg py-2.5 text-sm font-medium transition-colors"
                     style={{ background: "rgba(255,255,255,0.05)", border: "1px dashed rgba(255,255,255,0.2)", color: idSelfieFile ? "#5ED1C4" : "var(--pnp-text-secondary, #8E8E93)" }}>

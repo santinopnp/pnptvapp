@@ -1379,7 +1379,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       </div>
       {inChatSearch?.open && (
         <div className="px-3 py-2 border-b border-pnp-border flex items-center gap-2 flex-shrink-0 bg-pnp-background/95 backdrop-blur-sm">
-          <input
+          <input id="pnp-directmessages-1"
             type="text"
             autoFocus
             value={inChatSearch.q}
@@ -1987,9 +1987,9 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
       ) : (
       /* Input bar */
       <div className={`flex items-end gap-2 px-3 py-2 border-t border-pnp-border flex-shrink-0 bg-pnp-background${panelMode ? "" : " pb-safe"}`}>
-        <input ref={mediaInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={handleMediaSelect} multiple />
-        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleMediaSelect} multiple />
-        <input ref={cameraInputRef} type="file" accept="image/*,video/*" capture="environment" className="hidden" onChange={handleMediaSelect} />
+        <input id="pnp-directmessages-2" ref={mediaInputRef} type="file" accept="image/*,video/*,audio/*" className="hidden" onChange={handleMediaSelect} multiple />
+        <input id="pnp-directmessages-3" ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleMediaSelect} multiple />
+        <input id="pnp-directmessages-4" ref={cameraInputRef} type="file" accept="image/*,video/*" capture="environment" className="hidden" onChange={handleMediaSelect} />
         <button type="button" onClick={() => imageInputRef.current?.click()} className="p-2.5 rounded-full text-pnp-textSecondary hover:text-white hover:bg-white/10 active:scale-90 transition-all flex-shrink-0" aria-label="Send picture" title="Send picture">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
@@ -2000,7 +2000,7 @@ function DmChatView({ userId, myDbId, myUserId, isAdmin, onBack, panelMode }: { 
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
           </svg>
         </button>
-        <textarea
+        <textarea id="pnp-directmessages-5"
           ref={messageInputRef}
           value={messageInput}
           onChange={(e) => { setMessageInput(e.target.value); emitTyping(); }}
@@ -2352,7 +2352,7 @@ function ForwardModal({ msg, onClose, onSubmit, myDbId }: { msg: DmMessage; onCl
           </div>
         </div>
         <div className="px-3 py-2 border-b border-white/5">
-          <input
+          <input id="pnp-directmessages-6"
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -2389,7 +2389,7 @@ function ForwardModal({ msg, onClose, onSubmit, myDbId }: { msg: DmMessage; onCl
           })}
         </div>
         <div className="px-3 py-2 border-t border-white/10 flex items-end gap-2">
-          <textarea
+          <textarea id="pnp-directmessages-7"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Add a comment…"
@@ -2445,7 +2445,7 @@ function NewChatModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="px-3 py-2 border-b border-white/5">
-          <input
+          <input id="pnp-directmessages-8"
             autoFocus
             type="text"
             value={q}
@@ -2672,7 +2672,7 @@ function ThreadListView({ myDbId, onThreadSelect, panelMode }: { myDbId: string;
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-pnp-textSecondary pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
-          <input
+          <input id="pnp-directmessages-9"
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

@@ -298,7 +298,7 @@ export default function PrimeChannel() {
             </button>
           ))}
         </div>
-        <input
+        <input id="pnp-primechannel-1"
           type="search"
           placeholder="Search title or description..."
           value={search}
@@ -430,7 +430,7 @@ export default function PrimeChannel() {
                       {genTitleId === item.id ? "Rewriting..." : "Grok"}
                     </button>
                   </div>
-                  <input
+                  <input id="pnp-primechannel-2"
                     type="text"
                     value={draft.title}
                     maxLength={255}
@@ -446,7 +446,7 @@ export default function PrimeChannel() {
                       {(hints[item.id] || "").length}/500
                     </span>
                   </div>
-                  <textarea
+                  <textarea id="pnp-primechannel-3"
                     value={hints[item.id] || ""}
                     rows={2}
                     maxLength={500}
@@ -470,7 +470,7 @@ export default function PrimeChannel() {
                       {isGenerating ? "Generating..." : "Grok"}
                     </button>
                   </div>
-                  <textarea
+                  <textarea id="pnp-primechannel-4"
                     value={draft.description}
                     rows={6}
                     onChange={(e) => setField(item.id, "description", e.target.value)}
@@ -514,7 +514,7 @@ export default function PrimeChannel() {
                 </div>
 
                 <div className="flex items-center justify-between gap-2">
-                  <select
+                  <select id="pnp-primechannel-5"
                     value={["published", "draft"].includes(draft.status) ? draft.status : draft.status}
                     onChange={(e) => setField(item.id, "status", e.target.value)}
                     disabled={!canEditStatus}
@@ -527,7 +527,7 @@ export default function PrimeChannel() {
                     {item.status === "removed" && <option value="removed" disabled>Removed</option>}
                   </select>
                   <label className="flex items-center gap-1.5 text-xs text-pnp-textSecondary">
-                    <input
+                    <input id="pnp-primechannel-6"
                       type="checkbox"
                       checked={draft.is_featured}
                       onChange={(e) => setField(item.id, "is_featured", e.target.checked)}

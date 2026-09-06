@@ -30,7 +30,7 @@ function PreLiveConsentGate({ children }: { children: React.ReactNode }) {
         </div>
         <div className="space-y-3">
           <label className="flex items-start gap-3 p-3 rounded-xl cursor-pointer select-none" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-            <input
+            <input id="pnp-router-1"
               type="checkbox"
               checked={consentScripted}
               onChange={(e) => setConsentScripted(e.target.checked)}
@@ -43,7 +43,7 @@ function PreLiveConsentGate({ children }: { children: React.ReactNode }) {
             </p>
           </label>
           <label className="flex items-start gap-3 p-3 rounded-xl cursor-pointer select-none" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
-            <input
+            <input id="pnp-router-2"
               type="checkbox"
               checked={consentGuidelines}
               onChange={(e) => setConsentGuidelines(e.target.checked)}

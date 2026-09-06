@@ -1363,7 +1363,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
             <p className="text-xs text-gray-400 mb-2">
               {t.describeIssueLabel}
             </p>
-            <textarea
+            <textarea id="pnp-cristinawidget-1"
               value={ticketDescription}
               onChange={(e) =>
                 setTicketDescription(e.target.value.slice(0, 2000))
@@ -1517,7 +1517,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "ID de Usuario" : "User ID"}</label>
-                <input
+                <input id="pnp-cristinawidget-2"
                   value={pvUserId}
                   onChange={(e) => setPvUserId(e.target.value)}
                   placeholder={lang === "es" ? "Ej: 1234567890" : "e.g. 1234567890"}
@@ -1526,7 +1526,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               </div>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "Proveedor" : "Provider"}</label>
-                <select
+                <select id="pnp-cristinawidget-3"
                   value={pvProvider}
                   onChange={(e) => setPvProvider(e.target.value)}
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-cyan-500/50"
@@ -1540,7 +1540,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               </div>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "Referencia / ID Transaccion" : "Reference / Transaction ID"}</label>
-                <input
+                <input id="pnp-cristinawidget-4"
                   value={pvReference}
                   onChange={(e) => setPvReference(e.target.value)}
                   placeholder={lang === "es" ? "Ej: ref_payco o tx hash" : "e.g. ref_payco or tx hash"}
@@ -1550,7 +1550,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "Monto (USD)" : "Amount (USD)"}</label>
-                  <input
+                  <input id="pnp-cristinawidget-5"
                     value={pvAmount}
                     onChange={(e) => setPvAmount(e.target.value)}
                     placeholder="24.99"
@@ -1561,7 +1561,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
                 </div>
                 <div>
                   <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "ID del Plan" : "Plan ID"}</label>
-                  <input
+                  <input id="pnp-cristinawidget-6"
                     value={pvPlanId}
                     onChange={(e) => setPvPlanId(e.target.value)}
                     placeholder="e.g. monthly-pass"
@@ -1571,7 +1571,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               </div>
               <div>
                 <label className="text-xs text-gray-400 mb-1 block">{lang === "es" ? "Notas adicionales (opcional)" : "Additional notes (optional)"}</label>
-                <textarea
+                <textarea id="pnp-cristinawidget-7"
                   value={pvNotes}
                   onChange={(e) => setPvNotes(e.target.value.slice(0, 500))}
                   placeholder={lang === "es" ? "Contexto extra, screenshot info, etc." : "Extra context, screenshot info, etc."}
@@ -1977,7 +1977,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
               <label className="text-xs font-medium text-white/90 mb-1.5 block">
                 {lang === "es" ? "Correo electrónico" : "Email"}
               </label>
-              <input
+              <input id="pnp-cristinawidget-8"
                 type="email"
                 autoComplete="email"
                 value={meruEmail}
@@ -1993,7 +1993,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
                 {lang === "es" ? "Código Meru" : "Meru Code"}
               </label>
               <div className="flex gap-2">
-                <input
+                <input id="pnp-cristinawidget-9"
                   type="text"
                   autoCapitalize="off"
                   autoCorrect="off"
@@ -2123,7 +2123,7 @@ export function CristinaWidget({ mode = "widget", compact = false }: CristinaWid
           }}
         >
           <div className="flex-1 relative">
-            <input
+            <input id="pnp-cristinawidget-10"
               ref={inputRef}
               type="text"
               value={input}

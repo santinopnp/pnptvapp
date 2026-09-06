@@ -416,14 +416,14 @@ export function PerformerDrawer({ performer, liveStreamId, onClose, currentUserI
         )}
 
         {/* Hidden file inputs for edit mode */}
-        <input
+        <input id="pnp-performerdrawer-1"
           ref={avatarInputRef}
           type="file"
           accept="image/*"
           className="hidden"
           onChange={handleAvatarChange}
         />
-        <input
+        <input id="pnp-performerdrawer-2"
           ref={addPhotoInputRef}
           type="file"
           accept="image/*"

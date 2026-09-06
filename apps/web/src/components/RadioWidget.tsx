@@ -474,7 +474,7 @@ export function RadioPanel({ onClose }: { onClose: () => void }) {
         {isAdmin && (
           <div className="px-4 py-2 bg-white/5 border-b border-white/5 space-y-1.5">
             <div className="flex gap-2">
-              <input
+              <input id="pnp-radiowidget-1"
                 type="text"
                 value={scUrl}
                 onChange={(e) => setScUrl(e.target.value)}
@@ -491,7 +491,7 @@ export function RadioPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[9px] text-pnp-textSecondary">Mode:</span>
-              <select
+              <select id="pnp-radiowidget-2"
                 value={importLabel}
                 onChange={(e) => setImportLabel(e.target.value)}
                 className="bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white focus:outline-none focus:border-purple-500"
@@ -677,7 +677,7 @@ export function RadioPanel({ onClose }: { onClose: () => void }) {
             {/* Volume */}
             <div className="flex items-center gap-2 mt-3">
               <VolumeIcon level={volume} className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" />
-              <input
+              <input id="pnp-radiowidget-3"
                 type="range"
                 min="0"
                 max="1"

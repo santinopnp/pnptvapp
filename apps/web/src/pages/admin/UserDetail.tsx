@@ -872,18 +872,18 @@ function UnifiedPaymentPanel({ userId }: { userId: string }) {
       {creditForm && (
         <div className="p-3 rounded-lg bg-pnp-surface border border-pnp-border space-y-2">
           <div className="flex gap-2 items-center">
-            <input
+            <input id="pnp-userdetail-1"
               type="number" min="1" step="1" placeholder="Ru$h 💎 amount"
               value={creditAmt} onChange={(e) => setCreditAmt(e.target.value)}
               className="flex-1 px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
             />
-            <input
+            <input id="pnp-userdetail-2"
               type="text" placeholder="Reason (required)"
               value={creditReason} onChange={(e) => setCreditReason(e.target.value)}
               className="flex-[2] px-3 py-2 rounded-md bg-pnp-background border border-pnp-border text-sm"
             />
             <label className="flex items-center gap-1 text-xs text-pnp-textSecondary whitespace-nowrap">
-              <input type="checkbox" checked={creditAsGifted} onChange={(e) => setCreditAsGifted(e.target.checked)} />
+              <input id="pnp-userdetail-3" type="checkbox" checked={creditAsGifted} onChange={(e) => setCreditAsGifted(e.target.checked)} />
               Gifted (promo)
             </label>
             <button

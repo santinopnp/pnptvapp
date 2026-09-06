@@ -2099,7 +2099,7 @@ function StreamInner() {
                     </p>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <input
+                      <input id="pnp-stream-1"
                         type="text"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
@@ -2883,7 +2883,7 @@ function StreamInner() {
                       </p>
                     ) : (
                       <div className="flex gap-2 items-center">
-                        <input
+                        <input id="pnp-stream-2"
                           type="text"
                           placeholder="Say something…"
                           aria-label="Type a chat message"
@@ -3200,7 +3200,7 @@ function StreamInner() {
                       {/* Add item row */}
                       {myTipMenuItems.length < 10 && (
                         <div className="flex gap-1.5">
-                          <input
+                          <input id="pnp-stream-3"
                             type="number"
                             value={newTipAmount}
                             onChange={(e) => setNewTipAmount(e.target.value)}
@@ -3209,7 +3209,7 @@ function StreamInner() {
                             min={1}
                             max={999999}
                           />
-                          <input
+                          <input id="pnp-stream-4"
                             type="text"
                             value={newTipLabel}
                             onChange={(e) => setNewTipLabel(e.target.value)}
@@ -3272,7 +3272,7 @@ function StreamInner() {
                         </div>
                       )}
                       <div className="space-y-1.5">
-                        <input
+                        <input id="pnp-stream-5"
                           type="number"
                           value={goalAmountInput}
                           onChange={(e) => setGoalAmountInput(e.target.value)}
@@ -3280,7 +3280,7 @@ function StreamInner() {
                           className="w-full px-2.5 py-1.5 rounded-lg bg-pnp-surface border border-pnp-border text-[11px] text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent/60"
                           min={1}
                         />
-                        <input
+                        <input id="pnp-stream-6"
                           type="text"
                           value={goalLabelInput}
                           onChange={(e) => setGoalLabelInput(e.target.value)}

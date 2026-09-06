@@ -363,7 +363,7 @@ export default function UserManagement() {
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">{t.users.emailExact}</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-pnp-textSecondary text-xs select-none">@</span>
-            <input
+            <input id="pnp-usermanagement-1"
               type="email"
               inputMode="email"
               value={filters.emailFilter || ""}
@@ -376,7 +376,7 @@ export default function UserManagement() {
         </div>
         <div className="flex-1 min-w-[120px]">
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">{t.users.tier}</label>
-          <select
+          <select id="pnp-usermanagement-2"
             value={filters.tier || ""}
             onChange={(e) => handleFilterChange("tier", e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -390,7 +390,7 @@ export default function UserManagement() {
         </div>
         <div className="flex-1 min-w-[120px]">
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">{t.users.status}</label>
-          <select
+          <select id="pnp-usermanagement-3"
             value={filters.status || ""}
             onChange={(e) => handleFilterChange("status", e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -404,7 +404,7 @@ export default function UserManagement() {
         </div>
         <div className="flex-1 min-w-[120px]">
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">{t.users.plan}</label>
-          <select
+          <select id="pnp-usermanagement-4"
             value={filters.plan || ""}
             onChange={(e) => handleFilterChange("plan", e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -418,7 +418,7 @@ export default function UserManagement() {
         </div>
         <div className="flex-1 min-w-[120px]">
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">{t.users.role}</label>
-          <select
+          <select id="pnp-usermanagement-5"
             value={filters.role || ""}
             onChange={(e) => handleFilterChange("role", e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -431,7 +431,7 @@ export default function UserManagement() {
         </div>
         <div className="flex-1 min-w-[120px]">
           <label className="block text-[10px] uppercase tracking-wider text-pnp-textSecondary mb-1">Telegram</label>
-          <select
+          <select id="pnp-usermanagement-6"
             value={filters.telegram || ""}
             onChange={(e) => handleFilterChange("telegram", e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -513,7 +513,7 @@ export default function UserManagement() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-pnp-textSecondary mb-1">{t.users.plan}</label>
-              <select
+              <select id="pnp-usermanagement-7"
                 value={upgradeForm.planId}
                 onChange={(e) => setUpgradeForm((prev) => ({ ...prev, planId: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary focus:outline-none focus:border-pnp-accent" style={{ fontSize: "16px" }}
@@ -527,7 +527,7 @@ export default function UserManagement() {
             </div>
             <div>
               <label className="block text-xs text-pnp-textSecondary mb-1">{t.users.expiryDate}</label>
-              <input
+              <input id="pnp-usermanagement-8"
                 type="date"
                 value={upgradeForm.expiry}
                 onChange={(e) => setUpgradeForm((prev) => ({ ...prev, expiry: e.target.value }))}

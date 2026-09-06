@@ -136,19 +136,19 @@ export default function MediaPacks() {
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input
+            <input id="pnp-mediapacks-1"
               placeholder="slug (e.g. pnptv-launch)"
               value={newPack.slug}
               onChange={e => setNewPack(p => ({ ...p, slug: e.target.value.replace(/\s+/g, "-").toLowerCase() }))}
               className="bg-pnp-background border border-pnp-border rounded-lg px-3 py-2 text-sm text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
             />
-            <input
+            <input id="pnp-mediapacks-2"
               placeholder="Display name"
               value={newPack.name}
               onChange={e => setNewPack(p => ({ ...p, name: e.target.value }))}
               className="bg-pnp-background border border-pnp-border rounded-lg px-3 py-2 text-sm text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
             />
-            <select
+            <select id="pnp-mediapacks-3"
               value={newPack.pack_type}
               onChange={e => setNewPack(p => ({ ...p, pack_type: e.target.value }))}
               className="bg-pnp-background border border-pnp-border rounded-lg px-3 py-2 text-sm text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
@@ -158,7 +158,7 @@ export default function MediaPacks() {
               <option value="emoji">{t.mediaPacks.emojiPack}</option>
             </select>
             <label className="flex items-center gap-2 text-sm text-pnp-textSecondary cursor-pointer">
-              <input
+              <input id="pnp-mediapacks-4"
                 type="checkbox"
                 checked={newPack.is_premium}
                 onChange={e => setNewPack(p => ({ ...p, is_premium: e.target.checked }))}

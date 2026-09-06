@@ -311,7 +311,7 @@ export default function EnrollmentsList() {
                     {/* Actions for pending enrollments */}
                     {isPending && (
                       <div className="mt-2 space-y-2">
-                        <input
+                        <input id="pnp-enrollmentslist-1"
                           type="text"
                           placeholder="Notes (required for rejection, optional for approval)"
                           value={notesMap[enrollment.id] || ""}

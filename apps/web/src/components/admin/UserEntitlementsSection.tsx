@@ -432,7 +432,7 @@ function GrantEntitlementForm({ userId, availableAddOns, onGranted }: GrantFormP
 
       <div className="flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 cursor-pointer select-none min-h-[44px]">
-          <input
+          <input id="pnp-userentitlementssection-1"
             type="checkbox"
             checked={isLifetime}
             onChange={(e) => { setIsLifetime(e.target.checked); setErr(null); }}

@@ -186,7 +186,7 @@ export default function PaymentsSettings() {
 
           {showDpnsInput && (
             <div className="mt-3 flex gap-2">
-              <input
+              <input id="pnp-paymentssettings-1"
                 type="text"
                 value={dpnsInput}
                 onChange={(e) => { setDpnsInput(e.target.value); setDpnsError(null); }}

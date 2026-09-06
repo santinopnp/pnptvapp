@@ -224,7 +224,7 @@ export default function InvitePanel() {
       {open && (
         <div className="mt-3 space-y-3">
           {/* Label */}
-          <input
+          <input id="pnp-invitepanel-1"
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
@@ -235,7 +235,7 @@ export default function InvitePanel() {
 
           {/* Expires + max-uses row */}
           <div className="flex gap-2">
-            <select
+            <select id="pnp-invitepanel-2"
               value={expiresHours}
               onChange={(e) => setExpiresHours(Number(e.target.value))}
               className="flex-1 min-w-0 px-2 py-1.5 rounded-xl text-xs text-white bg-white/[0.06] border border-white/10 focus:outline-none"
@@ -245,7 +245,7 @@ export default function InvitePanel() {
                 <option key={o.hours} value={o.hours}>{o.label}</option>
               ))}
             </select>
-            <select
+            <select id="pnp-invitepanel-3"
               value={maxUses}
               onChange={(e) => setMaxUses(Number(e.target.value))}
               className="flex-1 min-w-0 px-2 py-1.5 rounded-xl text-xs text-white bg-white/[0.06] border border-white/10 focus:outline-none"
@@ -294,7 +294,7 @@ export default function InvitePanel() {
                 Ready to share / Listo para compartir
               </p>
               <div className="flex gap-2">
-                <input
+                <input id="pnp-invitepanel-4"
                   ref={generatedUrlRef}
                   type="text"
                   readOnly

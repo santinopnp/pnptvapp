@@ -443,7 +443,7 @@ export default function PlanManagement() {
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M16.5 10.5a6 6 0 11-12 0 6 6 0 0112 0z" />
             </svg>
-            <input
+            <input id="pnp-planmanagement-1"
               type="text"
               value={filters.search}
               onChange={(e) => setFilter("search", e.target.value)}
@@ -471,7 +471,7 @@ export default function PlanManagement() {
           {/* Status */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-pnp-textSecondary whitespace-nowrap">{t.shared.status}</label>
-            <select
+            <select id="pnp-planmanagement-2"
               value={filters.status}
               onChange={(e) => setFilter("status", e.target.value as StatusFilter)}
               className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent transition-colors"
@@ -485,7 +485,7 @@ export default function PlanManagement() {
           {/* Price */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-pnp-textSecondary whitespace-nowrap">Price</label>
-            <select
+            <select id="pnp-planmanagement-3"
               value={filters.price}
               onChange={(e) => setFilter("price", e.target.value as PriceFilter)}
               className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent transition-colors"
@@ -501,7 +501,7 @@ export default function PlanManagement() {
           {/* Plan type / label */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-pnp-textSecondary whitespace-nowrap">{t.plans.type}</label>
-            <select
+            <select id="pnp-planmanagement-4"
               value={filters.label}
               onChange={(e) => setFilter("label", e.target.value as LabelFilter)}
               className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent transition-colors"
@@ -562,7 +562,7 @@ export default function PlanManagement() {
               {/* Name */}
               <div>
                 <label className="block text-xs text-pnp-textSecondary mb-1">{t.plans.planName}</label>
-                <input
+                <input id="pnp-planmanagement-5"
                   type="text"
                   value={form.name}
                   onChange={(e) => setField("name", e.target.value)}
@@ -577,7 +577,7 @@ export default function PlanManagement() {
                 <label className="block text-xs text-pnp-textSecondary mb-1">{t.plans.priceUsd}</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-pnp-textSecondary text-sm">$</span>
-                  <input
+                  <input id="pnp-planmanagement-6"
                     type="number"
                     min="0"
                     step="0.01"
@@ -611,7 +611,7 @@ export default function PlanManagement() {
                           }`}
                         >
                           <label className="flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none">
-                            <input
+                            <input id="pnp-planmanagement-7"
                               type="checkbox"
                               checked={row.enabled}
                               onChange={(e) => toggleAddOn(addOn.id, e.target.checked)}
@@ -633,7 +633,7 @@ export default function PlanManagement() {
                             <div className="px-3 pb-3 pt-0 flex flex-wrap items-center gap-4 border-t border-pnp-border/50">
                               <div className="flex items-center gap-2 mt-2">
                                 <label className="text-xs text-pnp-textSecondary whitespace-nowrap">{t.plans.days}</label>
-                                <input
+                                <input id="pnp-planmanagement-8"
                                   type="number"
                                   min="1"
                                   max="3650"
@@ -644,7 +644,7 @@ export default function PlanManagement() {
                                 />
                               </div>
                               <label className="flex items-center gap-2 cursor-pointer mt-2">
-                                <input
+                                <input id="pnp-planmanagement-9"
                                   type="checkbox"
                                   checked={row.is_lifetime}
                                   onChange={(e) => setAddOnLifetime(addOn.id, e.target.checked)}
@@ -663,7 +663,7 @@ export default function PlanManagement() {
 
               {/* Active toggle */}
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
+                <input id="pnp-planmanagement-10"
                   type="checkbox"
                   checked={form.active}
                   onChange={(e) => setField("active", e.target.checked)}

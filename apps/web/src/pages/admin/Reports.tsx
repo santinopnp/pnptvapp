@@ -394,7 +394,7 @@ function ReportsView({ onPendingCount }: { onPendingCount: (n: number) => void }
 
               <div>
                 <label className="text-[10px] uppercase tracking-wider text-white/40 font-semibold block mb-1">Action notes</label>
-                <textarea
+                <textarea id="pnp-reports-1"
                   value={actionNotes}
                   onChange={(e) => setActionNotes(e.target.value)}
                   rows={3}
@@ -667,7 +667,7 @@ function AppealsView({ onPendingCount }: { onPendingCount: (n: number) => void }
 
               <div>
                 <label className="text-[10px] uppercase tracking-wider text-white/40 font-semibold block mb-1">Admin notes</label>
-                <textarea
+                <textarea id="pnp-reports-2"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}

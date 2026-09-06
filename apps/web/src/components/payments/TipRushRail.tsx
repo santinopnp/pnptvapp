@@ -351,7 +351,7 @@ export function TipRushRail({
           </label>
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold text-white/60">$</span>
-            <input
+            <input id="pnp-tiprushrail-1"
               type="number"
               inputMode="decimal"
               min={1}
@@ -395,7 +395,7 @@ export function TipRushRail({
 
       {/* Message input */}
       {variant === "full" && showMessage && (
-        <textarea
+        <textarea id="pnp-tiprushrail-2"
           value={message}
           onChange={(e) => setMessage(e.target.value.slice(0, 140))}
           placeholder={lang === "es" ? "Agrega un mensaje… (opcional)" : "Add a message… (optional)"}

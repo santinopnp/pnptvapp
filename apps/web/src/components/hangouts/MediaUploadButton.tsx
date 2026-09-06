@@ -433,7 +433,7 @@ export function MediaUploadButton({
 
   return (
     <>
-      <input
+      <input id="pnp-mediauploadbutton-1"
         ref={inputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,video/3gpp,audio/webm,audio/ogg,audio/mp4,audio/mpeg"
@@ -443,7 +443,7 @@ export function MediaUploadButton({
         tabIndex={-1}
         multiple
       />
-      <input
+      <input id="pnp-mediauploadbutton-2"
         ref={imageInputRef}
         type="file"
         accept="image/jpeg,image/png,image/gif,image/webp"

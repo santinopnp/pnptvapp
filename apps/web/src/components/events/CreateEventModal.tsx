@@ -155,7 +155,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
               <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">
                 Hangout Group <span className="normal-case text-white/30">(optional)</span>
               </label>
-              <select
+              <select id="pnp-createeventmodal-1"
                 value={hangoutGroupId}
                 onChange={(e) => setHangoutGroupId(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-white/20 transition-colors"
@@ -173,7 +173,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
 
           {/* Cover image */}
           <div>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleCoverChange} />
+            <input id="pnp-createeventmodal-2" ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleCoverChange} />
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
@@ -196,7 +196,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
           {/* Title */}
           <div>
             <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Title *</label>
-            <input
+            <input id="pnp-createeventmodal-3"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -210,7 +210,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
           {/* Description */}
           <div>
             <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Description</label>
-            <textarea
+            <textarea id="pnp-createeventmodal-4"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What's this event about?"
@@ -225,7 +225,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Date & Time *</label>
-              <input
+              <input id="pnp-createeventmodal-5"
                 type="datetime-local"
                 value={scheduledAt}
                 min={minDate}
@@ -236,7 +236,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
             </div>
             <div>
               <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Duration</label>
-              <select
+              <select id="pnp-createeventmodal-6"
                 value={duration}
                 onChange={(e) => setDuration(parseInt(e.target.value, 10))}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white outline-none focus:border-white/20 transition-colors"
@@ -255,7 +255,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
           {type === "hangout_event" && (
             <div>
               <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Max Attendees <span className="normal-case text-white/30">(optional)</span></label>
-              <input
+              <input id="pnp-createeventmodal-7"
                 type="number"
                 value={maxAttendees}
                 onChange={(e) => setMaxAttendees(e.target.value)}
@@ -271,7 +271,7 @@ export function CreateEventModal({ onClose, onCreated, defaultType, canCreateLiv
           {/* Tags */}
           <div>
             <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">Tags <span className="normal-case text-white/30">(comma separated)</span></label>
-            <input
+            <input id="pnp-createeventmodal-8"
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}

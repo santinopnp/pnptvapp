@@ -408,22 +408,22 @@ function FeaturedOfTheDayTab() {
       <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(28,28,30,0.85)", border: "1px solid rgba(255,255,255,0.08)" }}>
         <div className="text-sm font-bold uppercase tracking-wider">Schedule a pick</div>
         <label className="block text-xs opacity-70">Date (UTC)
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
+          <input id="pnp-pnpfamcrm-1" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
         </label>
         <label className="block text-xs opacity-70">Creator user ID — must be an active Crystal Creator
-          <input type="text" value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="uuid or numeric id…" className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm font-mono" />
+          <input id="pnp-pnpfamcrm-2" type="text" value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="uuid or numeric id…" className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm font-mono" />
         </label>
         <label className="block text-xs opacity-70">Pitch (English) — 1–2 lines
-          <textarea value={pitchEn} onChange={(e) => setPitchEn(e.target.value)} rows={2} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
+          <textarea id="pnp-pnpfamcrm-3" value={pitchEn} onChange={(e) => setPitchEn(e.target.value)} rows={2} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
         </label>
         <label className="block text-xs opacity-70">Pitch (Español)
-          <textarea value={pitchEs} onChange={(e) => setPitchEs(e.target.value)} rows={2} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
+          <textarea id="pnp-pnpfamcrm-4" value={pitchEs} onChange={(e) => setPitchEs(e.target.value)} rows={2} className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm" />
         </label>
         <label className="block text-xs opacity-70">Media URL (optional MP4/WebM loop or image) — falls back to creator cover
-          <input type="text" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://…" className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm font-mono" />
+          <input id="pnp-pnpfamcrm-5" type="text" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://…" className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm font-mono" />
         </label>
         <label className="flex items-center gap-2 text-xs opacity-90 cursor-pointer">
-          <input type="checkbox" checked={ctaIntroCall} onChange={(e) => setCtaIntroCall(e.target.checked)} />
+          <input id="pnp-pnpfamcrm-6" type="checkbox" checked={ctaIntroCall} onChange={(e) => setCtaIntroCall(e.target.checked)} />
           Show "Book a free 15-min intro call" secondary CTA
         </label>
         {error && <div className="text-xs text-red-400">{error}</div>}
@@ -526,7 +526,7 @@ function IntroCallOptInTab() {
           </div>
         </div>
         <div className="flex gap-2">
-          <input
+          <input id="pnp-pnpfamcrm-7"
             type="text"
             value={addId}
             onChange={(e) => setAddId(e.target.value)}

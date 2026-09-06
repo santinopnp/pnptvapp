@@ -298,7 +298,7 @@ export function CrystalServicesPanel({ creatorId, creatorUsername }: Props) {
                         ? (es ? "Describe lo que quieres" : "Describe what you want")
                         : (es ? "Nota para el creador (opcional)" : "Note for the creator (optional)")}
                     </label>
-                    <textarea
+                    <textarea id="pnp-crystalservicespanel-1"
                       value={bookingNote}
                       onChange={(e) => setBookingNote(e.target.value.slice(0, 1000))}
                       rows={s.serviceType === "custom_content" ? 3 : 2}

@@ -243,7 +243,7 @@ export default function CreatorStudioWizard() {
               <span className="text-xs font-semibold" style={{ color: "#D4007A" }}>
                 {photoUploading ? t.wizStep2UploadingLabel : t.wizStep2ChooseLabel}
               </span>
-              <input
+              <input id="pnp-creatorstudiowizard-1"
                 type="file"
                 accept="image/*"
                 multiple

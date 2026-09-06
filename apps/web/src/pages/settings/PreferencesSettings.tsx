@@ -249,7 +249,7 @@ export default function PreferencesSettings() {
               {p.choosePreferredLanguage}
             </p>
           </div>
-          <select
+          <select id="pnp-preferencessettings-1"
             value={selectedLang}
             onChange={(e) => handleLanguageChange(e.target.value as Lang)}
             disabled={langSaving}

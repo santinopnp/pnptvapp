@@ -735,10 +735,10 @@ function SubmitPlaceModal({ myPos, onClose }: { myPos: { lat: number; lng: numbe
           </div>
         ) : (
           <div className="space-y-3">
-            <input placeholder={t.booking.placeName} value={form.name} onChange={e => set("name", e.target.value)}
+            <input id="pnp-nearby-1" placeholder={t.booking.placeName} value={form.name} onChange={e => set("name", e.target.value)}
               style={{ fontSize: "16px" }}
               className="w-full px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
-            <select value={form.categoryId ?? ""} onChange={e => set("categoryId", e.target.value ? Number(e.target.value) : undefined)}
+            <select id="pnp-nearby-2" value={form.categoryId ?? ""} onChange={e => set("categoryId", e.target.value ? Number(e.target.value) : undefined)}
               style={{ fontSize: "16px" }}
               className="w-full px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary focus:outline-none focus:border-pnp-accent">
               <option value="">{t.booking.selectCategory}</option>
@@ -746,24 +746,24 @@ function SubmitPlaceModal({ myPos, onClose }: { myPos: { lat: number; lng: numbe
                 <option key={c.id} value={c.id}>{c.emoji} {t.booking[c.key]}</option>
               ))}
             </select>
-            <input placeholder={t.booking.address} value={form.address ?? ""} onChange={e => set("address", e.target.value)}
+            <input id="pnp-nearby-3" placeholder={t.booking.address} value={form.address ?? ""} onChange={e => set("address", e.target.value)}
               style={{ fontSize: "16px" }}
               className="w-full px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
             <div className="flex gap-2">
-              <input placeholder={t.booking.city} value={form.city ?? ""} onChange={e => set("city", e.target.value)}
+              <input id="pnp-nearby-4" placeholder={t.booking.city} value={form.city ?? ""} onChange={e => set("city", e.target.value)}
                 style={{ fontSize: "16px" }}
                 className="flex-1 min-w-0 px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
-              <input placeholder={t.booking.country} value={form.country ?? ""} onChange={e => set("country", e.target.value)}
+              <input id="pnp-nearby-5" placeholder={t.booking.country} value={form.country ?? ""} onChange={e => set("country", e.target.value)}
                 style={{ fontSize: "16px" }}
                 className="flex-1 min-w-0 px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
             </div>
-            <textarea placeholder={t.booking.descriptionOptional} value={form.description ?? ""} onChange={e => set("description", e.target.value)}
+            <textarea id="pnp-nearby-6" placeholder={t.booking.descriptionOptional} value={form.description ?? ""} onChange={e => set("description", e.target.value)}
               rows={2} style={{ fontSize: "16px" }} className="w-full px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent resize-none" />
             <div className="flex gap-2">
-              <input placeholder={t.booking.instagramOptional} value={form.instagram ?? ""} onChange={e => set("instagram", e.target.value)}
+              <input id="pnp-nearby-7" placeholder={t.booking.instagramOptional} value={form.instagram ?? ""} onChange={e => set("instagram", e.target.value)}
                 style={{ fontSize: "16px" }}
                 className="flex-1 min-w-0 px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
-              <input placeholder={t.booking.websiteOptional} value={form.website ?? ""} onChange={e => set("website", e.target.value)}
+              <input id="pnp-nearby-8" placeholder={t.booking.websiteOptional} value={form.website ?? ""} onChange={e => set("website", e.target.value)}
                 style={{ fontSize: "16px" }}
                 className="flex-1 min-w-0 px-3 py-2.5 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent" />
             </div>
@@ -1399,7 +1399,7 @@ export default function Nearby() {
           /* Region dropdown */
           <div className="mb-1">
             <div className="relative">
-              <select
+              <select id="pnp-nearby-9"
                 value={onlineRegion}
                 onChange={(e) => setOnlineRegion(e.target.value)}
                 className="w-full pl-3 pr-8 py-2 rounded-xl text-pnp-textPrimary border border-white/10 appearance-none focus:outline-none focus:border-pnp-accent transition-colors"

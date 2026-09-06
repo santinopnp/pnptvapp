@@ -698,7 +698,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                 </p>
                 <div className="flex gap-2 items-center">
                   <span className="text-lg text-white/70">$</span>
-                  <input
+                  <input id="pnp-buytokensmodal-1"
                     type="text"
                     inputMode="decimal"
                     value={customUsd}
@@ -918,7 +918,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   </p>
                 ) : (
                   <>
-                    <input
+                    <input id="pnp-buytokensmodal-2"
                       type="text"
                       value={activationCode}
                       onChange={(e) => setActivationCode(e.target.value.toUpperCase())}

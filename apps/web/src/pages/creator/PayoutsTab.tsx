@@ -478,7 +478,7 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
           <p className="text-xs font-semibold text-white mb-1">{t.modalAmountUsd}</p>
           <div className="relative mb-1">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-sm">$</span>
-            <input
+            <input id="pnp-payoutstab-1"
               type="number"
               min={MIN_CASHOUT_USD}
               max={balance.available_usd}
@@ -643,7 +643,7 @@ function LegacyWithdrawCard({ withdrawable, withdrawals, t, onReload }: LegacyWi
             <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
               {t.legacyDashAddressLabel}
             </label>
-            <input
+            <input id="pnp-payoutstab-2"
               type="text"
               value={dashAddress}
               onChange={(e) => { setDashAddress(e.target.value); setDashAddressError(null); }}
@@ -1095,7 +1095,7 @@ function RushCreatorPanel() {
             </p>
           )}
 
-          <input
+          <input id="pnp-payoutstab-3"
             type="number" step="0.01" min="25" placeholder={`Min $25 · Max $${availableUsd.toFixed(2)}`}
             value={wAmount} onChange={(e) => setWAmount(e.target.value)}
             className="w-full px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
@@ -1116,7 +1116,7 @@ function RushCreatorPanel() {
             <button onClick={() => setMode('none')} className="text-[10px] text-white/60">Cancel</button>
           </div>
           <div className="flex gap-2 items-center">
-            <input
+            <input id="pnp-payoutstab-4"
               type="number" step="0.01" min="1" placeholder={`Min $1 · Max $${availableUsd.toFixed(2)}`}
               value={cAmount} onChange={(e) => setCAmount(e.target.value)}
               className="flex-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
@@ -1151,7 +1151,7 @@ function RushCreatorPanel() {
             <div>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40 text-xs">💎</span>
-                <input
+                <input id="pnp-payoutstab-5"
                   type="number"
                   step="1"
                   min={RUSH_TO_USD_MIN}

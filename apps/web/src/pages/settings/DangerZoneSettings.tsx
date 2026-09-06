@@ -158,7 +158,7 @@ export default function DangerZoneSettings() {
             <p className="text-xs mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>
               {p.typeToConfirm.replace("{word}", p.deleteConfirmWord)}
             </p>
-            <input
+            <input id="pnp-dangerzonesettings-1"
               ref={deleteInputRef}
               type="text"
               value={deleteConfirmText}
@@ -266,7 +266,7 @@ export default function DangerZoneSettings() {
                 <p className="text-xs mb-2" style={{ color: "rgba(255,255,255,0.5)" }}>
                   Type <span className="font-mono font-semibold" style={{ color: "#FF3B30" }}>DELETE MY ACCOUNT</span> to confirm
                 </p>
-                <input
+                <input id="pnp-dangerzonesettings-2"
                   ref={eraseInputRef}
                   type="text"
                   value={eraseConfirmText}

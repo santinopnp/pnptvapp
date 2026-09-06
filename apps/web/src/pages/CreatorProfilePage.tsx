@@ -2098,7 +2098,7 @@ export default function CreatorProfilePage() {
                     })}
                   </div>
 
-                  <textarea
+                  <textarea id="pnp-creatorprofilepage-1"
                     value={tipMessage}
                     onChange={(e) => setTipMessage(e.target.value.slice(0, 140))}
                     placeholder="Add a message… (optional)"
@@ -2749,7 +2749,7 @@ export default function CreatorProfilePage() {
                     </button>
                   ))}
                 </div>
-                <textarea
+                <textarea id="pnp-creatorprofilepage-2"
                   value={reportDescription}
                   onChange={(e) => setReportDescription(e.target.value.slice(0, 500))}
                   placeholder="Detalles adicionales (opcional)"

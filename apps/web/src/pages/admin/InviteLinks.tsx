@@ -91,7 +91,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
           {/* Note */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Nota (opcional)</label>
-            <input
+            <input id="pnp-invitelinks-1"
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -105,7 +105,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
           {/* Max uses */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Máximo de usos (vacío = ilimitado)</label>
-            <input
+            <input id="pnp-invitelinks-2"
               type="number"
               value={maxUses}
               onChange={(e) => setMaxUses(e.target.value)}
@@ -119,7 +119,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
           {/* Expires at */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Expira el (vacío = nunca)</label>
-            <input
+            <input id="pnp-invitelinks-3"
               type="datetime-local"
               value={expiresAt}
               onChange={(e) => setExpiresAt(e.target.value)}
@@ -133,7 +133,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
             className="flex items-center gap-3 cursor-pointer select-none"
             style={{ padding: "10px 14px", borderRadius: 12, background: isLifetime ? "rgba(255,180,84,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${isLifetime ? "rgba(255,180,84,0.25)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
           >
-            <input type="checkbox" checked={isLifetime} onChange={(e) => setIsLifetime(e.target.checked)} className="sr-only" />
+            <input id="pnp-invitelinks-4" type="checkbox" checked={isLifetime} onChange={(e) => setIsLifetime(e.target.checked)} className="sr-only" />
             <span
               className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
               style={{ background: isLifetime ? "linear-gradient(135deg,#FFB454,#FF9933)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${isLifetime ? "#FFB454" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
@@ -151,7 +151,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
             className="flex items-center gap-3 cursor-pointer select-none"
             style={{ padding: "10px 14px", borderRadius: 12, background: coOnly ? "rgba(255,200,50,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${coOnly ? "rgba(255,200,50,0.30)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
           >
-            <input type="checkbox" checked={coOnly} onChange={(e) => setCoOnly(e.target.checked)} className="sr-only" />
+            <input id="pnp-invitelinks-5" type="checkbox" checked={coOnly} onChange={(e) => setCoOnly(e.target.checked)} className="sr-only" />
             <span
               className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
               style={{ background: coOnly ? "linear-gradient(135deg,#FFE04B,#FFC107)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${coOnly ? "#FFD700" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
@@ -169,7 +169,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Horas de PRIME gratis (0 = ninguna)</label>
               <div className="flex items-center gap-2">
-                <input
+                <input id="pnp-invitelinks-6"
                   type="number"
                   value={primeHours}
                   onChange={(e) => setPrimeHours(e.target.value)}
@@ -214,7 +214,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
               </div>
             </button>
             {colorEnabled && (
-              <input
+              <input id="pnp-invitelinks-7"
                 type="color"
                 value={color}
                 onChange={(e) => setColor(e.target.value)}
@@ -324,7 +324,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Nota</label>
-            <input
+            <input id="pnp-invitelinks-8"
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -337,7 +337,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Máximo de usos (vacío = ilimitado)</label>
-            <input
+            <input id="pnp-invitelinks-9"
               type="number"
               value={maxUses}
               onChange={(e) => setMaxUses(e.target.value)}
@@ -351,7 +351,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Expira el (vacío = nunca)</label>
-            <input
+            <input id="pnp-invitelinks-10"
               type="datetime-local"
               value={expiresAt}
               onChange={(e) => setExpiresAt(e.target.value)}
@@ -364,7 +364,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
             className="flex items-center gap-3 cursor-pointer select-none"
             style={{ padding: "10px 14px", borderRadius: 12, background: isLifetime ? "rgba(255,180,84,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${isLifetime ? "rgba(255,180,84,0.25)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
           >
-            <input type="checkbox" checked={isLifetime} onChange={(e) => setIsLifetime(e.target.checked)} className="sr-only" />
+            <input id="pnp-invitelinks-11" type="checkbox" checked={isLifetime} onChange={(e) => setIsLifetime(e.target.checked)} className="sr-only" />
             <span
               className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
               style={{ background: isLifetime ? "linear-gradient(135deg,#FFB454,#FF9933)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${isLifetime ? "#FFB454" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
@@ -381,7 +381,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
             className="flex items-center gap-3 cursor-pointer select-none"
             style={{ padding: "10px 14px", borderRadius: 12, background: coOnly ? "rgba(255,200,50,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${coOnly ? "rgba(255,200,50,0.30)" : "rgba(255,255,255,0.08)"}`, transition: "all 0.15s" }}
           >
-            <input type="checkbox" checked={coOnly} onChange={(e) => setCoOnly(e.target.checked)} className="sr-only" />
+            <input id="pnp-invitelinks-12" type="checkbox" checked={coOnly} onChange={(e) => setCoOnly(e.target.checked)} className="sr-only" />
             <span
               className="inline-flex items-center justify-center w-5 h-5 rounded-md flex-shrink-0"
               style={{ background: coOnly ? "linear-gradient(135deg,#FFE04B,#FFC107)" : "rgba(255,255,255,0.08)", border: `1.5px solid ${coOnly ? "#FFD700" : "rgba(255,255,255,0.18)"}`, transition: "all 0.15s" }}
@@ -398,7 +398,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-white/60 uppercase tracking-wider">Horas de PRIME gratis (0 = ninguna)</label>
               <div className="flex items-center gap-2">
-                <input
+                <input id="pnp-invitelinks-13"
                   type="number"
                   value={primeHours}
                   onChange={(e) => setPrimeHours(e.target.value)}
@@ -441,7 +441,7 @@ function EditModal({ link, onClose, onSaved }: EditModalProps) {
               </div>
             </button>
             {colorEnabled && (
-              <input
+              <input id="pnp-invitelinks-14"
                 type="color"
                 value={color}
                 onChange={(e) => setColor(e.target.value)}

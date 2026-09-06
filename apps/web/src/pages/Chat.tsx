@@ -2010,7 +2010,7 @@ function HangoutChatPanel({
 
             {/* Comment input */}
             <div>
-              <textarea
+              <textarea id="pnp-chat-1"
                 value={shareFeedNote}
                 onChange={(e) => setShareFeedNote(e.target.value.slice(0, 500))}
                 rows={3}
@@ -4107,7 +4107,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                                 </div>
                               )}
                             </button>
-                            <input
+                            <input id="pnp-chat-2"
                               ref={avatarInputRef}
                               type="file"
                               accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
@@ -4126,7 +4126,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
 
                           {/* Edit name & description */}
                           <div className="space-y-2 mb-3">
-                            <input
+                            <input id="pnp-chat-3"
                               type="text"
                               value={settingsName}
                               onChange={(e) => setSettingsName(e.target.value)}
@@ -4135,7 +4135,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                               className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-white placeholder-pnp-textSecondary outline-none focus:border-pnp-accent transition-colors"
                             style={{ fontSize: "16px" }}
                             />
-                            <textarea
+                            <textarea id="pnp-chat-4"
                               value={settingsDesc}
                               onChange={(e) => setSettingsDesc(e.target.value)}
                               maxLength={500}
@@ -4148,7 +4148,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                               <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>
                                 Group Rules <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>(optional)</span>
                               </label>
-                              <textarea
+                              <textarea id="pnp-chat-5"
                                 value={settingsRules}
                                 onChange={(e) => setSettingsRules(e.target.value.slice(0, 1000))}
                                 maxLength={1000}
@@ -4417,7 +4417,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                           </div>
                           {/* Member search */}
                           <div className="relative mb-2">
-                            <input
+                            <input id="pnp-chat-6"
                               type="text"
                               placeholder="Search members…"
                               value={memberSearch}
@@ -4672,7 +4672,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 <div className="w-10 h-1 rounded-full bg-white/20" />
               </div>
               <h3 className="text-base font-semibold text-white">{t.chat.newTopicTitle}</h3>
-              <input
+              <input id="pnp-chat-7"
                 autoFocus
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
                 placeholder={t.chat.topicNamePlaceholder}
@@ -4717,7 +4717,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 <div className="w-10 h-1 rounded-full bg-white/20" />
               </div>
               <h3 className="text-base font-semibold text-white">{t.chat.editTopicTitle}</h3>
-              <input
+              <input id="pnp-chat-8"
                 autoFocus
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
                 placeholder={t.chat.topicNamePlaceholder}
@@ -4726,7 +4726,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 onChange={e => setEditTopicName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && editTopicName.trim()) handleUpdateTopic(); }}
               />
-              <input
+              <input id="pnp-chat-9"
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-pnp-accent"
                 placeholder={t.chat.topicDescriptionPlaceholder}
                 maxLength={200}
@@ -5333,7 +5333,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                     ${price}/mo
                   </button>
                 ))}
-                <input
+                <input id="pnp-chat-10"
                   type="number"
                   min="0.99"
                   max="999.99"
@@ -5353,7 +5353,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
             <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', color: 'rgba(255,255,255,0.7)' }}>
               Group Rules <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>(optional, shown to new members)</span>
             </label>
-            <textarea
+            <textarea id="pnp-chat-11"
               value={newRules}
               onChange={e => setNewRules(e.target.value.slice(0, 1000))}
               placeholder="e.g. Respect each other · No sharing outside the group · Keep it consensual"
@@ -6062,7 +6062,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-pnp-textSecondary pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input
+                  <input id="pnp-chat-12"
                     type="text"
                     value={discoverQuery}
                     placeholder="Search groups by name..."
@@ -6280,7 +6280,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
             <div className="flex justify-center -mt-2 mb-2"><div className="w-10 h-1 rounded-full bg-white/20" /></div>
             <h3 className="text-base font-bold text-white">Edit Group</h3>
             <div className="space-y-3">
-              <input
+              <input id="pnp-chat-13"
                 type="text"
                 value={editingName}
                 onChange={(e) => setEditingName(e.target.value)}
@@ -6289,7 +6289,7 @@ export default function Chat({ embeddedMode = false }: { embeddedMode?: boolean 
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-white placeholder-pnp-textSecondary outline-none focus:border-pnp-accent transition-colors"
                 style={{ fontSize: "16px" }}
               />
-              <textarea
+              <textarea id="pnp-chat-14"
                 value={editingDesc}
                 onChange={(e) => setEditingDesc(e.target.value)}
                 maxLength={500}

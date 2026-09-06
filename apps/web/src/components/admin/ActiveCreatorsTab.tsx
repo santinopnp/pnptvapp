@@ -263,7 +263,7 @@ function IssueStrikeForm({
         </span>
         {" "}(currently {creator.creator_strikes}/3)
       </p>
-      <textarea
+      <textarea id="pnp-activecreatorstab-1"
         value={form.reason}
         onChange={(e) => setForm((prev) => ({ ...prev, reason: e.target.value, error: null }))}
         placeholder="Reason for strike (required)..."
@@ -757,7 +757,7 @@ export default function ActiveCreatorsTab() {
             }}
           >
             <div className="flex items-start gap-3">
-              <input
+              <input id="pnp-activecreatorstab-2"
                 type="checkbox"
                 checked={selected.has(creator.id)}
                 onChange={() => toggleSelect(creator.id)}

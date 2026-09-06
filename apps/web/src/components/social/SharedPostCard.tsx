@@ -494,7 +494,7 @@ export function SharedPostCard({ postId, snapshot, isMe = false }: Props) {
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
                   {lang === "es" ? "Volver" : "Back"}
                 </button>
-                <input
+                <input id="pnp-sharedpostcard-1"
                   type="text"
                   value={shareDmInput}
                   onChange={(e) => setShareDmInput(e.target.value)}

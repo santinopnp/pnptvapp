@@ -197,7 +197,7 @@ export function VerificationGate({ children }: VerificationGateProps) {
               <div className="space-y-3">
                 <p className="text-xs text-pnp-textSecondary text-center">{v.photoInstructions}</p>
 
-                <input
+                <input id="pnp-verificationgate-1"
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
@@ -260,7 +260,7 @@ export function VerificationGate({ children }: VerificationGateProps) {
                   <label className="block text-xs font-medium text-pnp-textSecondary mb-1.5">
                     {v.dobLabel}
                   </label>
-                  <input
+                  <input id="pnp-verificationgate-2"
                     type="date"
                     value={dob}
                     onChange={(e) => { setDob(e.target.value); setDobError(null); }}

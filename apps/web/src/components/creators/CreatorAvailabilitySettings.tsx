@@ -294,7 +294,7 @@ export function CreatorAvailabilitySettings() {
             </span>
           </p>
         )}
-        <input
+        <input id="pnp-creatoravailabilitysettings-1"
           type="datetime-local"
           value={nextShowDate}
           onChange={(e) => { setNextShowDateState(e.target.value); setNextShowSaved(false); }}
@@ -329,7 +329,7 @@ export function CreatorAvailabilitySettings() {
         <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Timezone
         </label>
-        <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, width: "100%" }}>
+        <select id="pnp-creatoravailabilitysettings-2" value={timezone} onChange={(e) => setTimezone(e.target.value)} style={{ ...inputStyle, width: "100%" }}>
           {TIMEZONES.map((tz) => (
             <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
           ))}
@@ -341,7 +341,7 @@ export function CreatorAvailabilitySettings() {
         <label className="block text-xs font-semibold mb-1.5" style={{ color: "var(--pnp-text-secondary, #8E8E93)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Break Between Calls
         </label>
-        <select
+        <select id="pnp-creatoravailabilitysettings-3"
           value={breakMinutes}
           onChange={(e) => { setBreakMinutes(Number(e.target.value)); setSaved(false); }}
           style={{ ...inputStyle, width: "100%" }}
@@ -372,7 +372,7 @@ export function CreatorAvailabilitySettings() {
                 border: `1px solid ${schedule[i].enabled ? "rgba(212,0,122,0.2)" : "rgba(255,255,255,0.06)"}`,
               }}
             >
-              <input
+              <input id="pnp-creatoravailabilitysettings-4"
                 type="checkbox"
                 checked={schedule[i].enabled}
                 onChange={(e) => updateSlot(i, "enabled", e.target.checked)}
@@ -383,14 +383,14 @@ export function CreatorAvailabilitySettings() {
               </span>
               {schedule[i].enabled && (
                 <>
-                  <input
+                  <input id="pnp-creatoravailabilitysettings-5"
                     type="time"
                     value={schedule[i].startTime}
                     onChange={(e) => updateSlot(i, "startTime", e.target.value)}
                     style={{ ...inputStyle, width: 110 }}
                   />
                   <span style={{ color: "#636366", fontSize: 12 }}>to</span>
-                  <input
+                  <input id="pnp-creatoravailabilitysettings-6"
                     type="time"
                     value={schedule[i].endTime}
                     onChange={(e) => updateSlot(i, "endTime", e.target.value)}

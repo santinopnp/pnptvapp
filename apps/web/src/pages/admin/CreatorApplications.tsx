@@ -535,7 +535,7 @@ export default function CreatorApplications() {
 
                       {app.status === "pending" && (
                         <div className="mt-2 space-y-2">
-                          <input
+                          <input id="pnp-creatorapplications-1"
                             type="text"
                             placeholder={t.creators.notesPlaceholder}
                             value={castingNotes[app.id] || ""}
@@ -748,7 +748,7 @@ export default function CreatorApplications() {
                       {/* Actions for pending applications */}
                       {app.status === "pending" && (
                         <div className="mt-2 space-y-2">
-                          <input
+                          <input id="pnp-creatorapplications-2"
                             type="text"
                             placeholder={t.creators.notesPlaceholder}
                             value={actionNotes[app.id] || ""}
@@ -758,7 +758,7 @@ export default function CreatorApplications() {
                             style={{ fontSize: "16px" }}
                             className="w-full bg-white/5 text-white rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/20"
                           />
-                          <select
+                          <select id="pnp-creatorapplications-3"
                             value={rejectReasons[app.id] || ""}
                             onChange={(e) =>
                               setRejectReasons((prev) => ({
@@ -923,7 +923,7 @@ function FeaturedModelOfTheDayPanel() {
         <div className="flex flex-wrap gap-3 items-end">
           <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <div className="mb-1">Date (UTC)</div>
-            <input
+            <input id="pnp-creatorapplications-4"
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
@@ -932,7 +932,7 @@ function FeaturedModelOfTheDayPanel() {
           </label>
           <label className="flex-1 min-w-[180px] text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <div className="mb-1">Crystal Creator ({pool.length} eligible)</div>
-            <select
+            <select id="pnp-creatorapplications-5"
               value={creatorId}
               onChange={(e) => setCreatorId(e.target.value)}
               className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white text-sm"
@@ -950,7 +950,7 @@ function FeaturedModelOfTheDayPanel() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <div className="mb-1">Pitch (EN)</div>
-            <textarea
+            <textarea id="pnp-creatorapplications-6"
               value={pitchEn}
               onChange={(e) => setPitchEn(e.target.value)}
               rows={3}
@@ -961,7 +961,7 @@ function FeaturedModelOfTheDayPanel() {
           </label>
           <label className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <div className="mb-1">Pitch (ES)</div>
-            <textarea
+            <textarea id="pnp-creatorapplications-7"
               value={pitchEs}
               onChange={(e) => setPitchEs(e.target.value)}
               rows={3}
@@ -975,7 +975,7 @@ function FeaturedModelOfTheDayPanel() {
         <div className="flex flex-wrap gap-3 items-center">
           <label className="flex-1 min-w-[220px] text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             <div className="mb-1">Media URL override (optional)</div>
-            <input
+            <input id="pnp-creatorapplications-8"
               type="url"
               value={mediaUrl}
               onChange={(e) => setMediaUrl(e.target.value)}
@@ -984,7 +984,7 @@ function FeaturedModelOfTheDayPanel() {
             />
           </label>
           <label className="flex items-center gap-2 text-xs text-white/80 pb-1.5">
-            <input
+            <input id="pnp-creatorapplications-9"
               type="checkbox"
               checked={ctaIntroCall}
               onChange={(e) => setCtaIntroCall(e.target.checked)}

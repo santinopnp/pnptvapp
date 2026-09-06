@@ -149,7 +149,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
       {/* Cover image */}
       <div>
         <label className="block text-xs font-medium text-white/60 mb-1">Cover Image</label>
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleCoverChange} />
+        <input id="pnp-eventdetailmodal-1" ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleCoverChange} />
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
@@ -171,7 +171,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
 
       <div>
         <label className="block text-xs font-medium text-white/60 mb-1">Title</label>
-        <input
+        <input id="pnp-eventdetailmodal-2"
           value={title}
           onChange={e => setTitle(e.target.value)}
           className="w-full rounded-lg px-3 py-2 text-white outline-none"
@@ -180,7 +180,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
       </div>
       <div>
         <label className="block text-xs font-medium text-white/60 mb-1">Description</label>
-        <textarea
+        <textarea id="pnp-eventdetailmodal-3"
           value={description}
           onChange={e => setDescription(e.target.value)}
           rows={3}
@@ -193,7 +193,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="block text-xs font-medium text-white/60 mb-1">Date & Time</label>
-          <input
+          <input id="pnp-eventdetailmodal-4"
             type="datetime-local"
             value={scheduledAt}
             min={toLocalDatetimeValue(new Date(Date.now() + 15 * 60 * 1000))}
@@ -204,7 +204,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
         </div>
         <div>
           <label className="block text-xs font-medium text-white/60 mb-1">Duration</label>
-          <select
+          <select id="pnp-eventdetailmodal-5"
             value={duration}
             onChange={(e) => setDuration(parseInt(e.target.value, 10))}
             className="w-full rounded-lg px-3 py-2 text-white outline-none"
@@ -221,7 +221,7 @@ function EditForm({ event, onSaved, onCancel }: EditFormProps) {
       {event.type === "hangout_event" && (
         <div>
           <label className="block text-xs font-medium text-white/60 mb-1">Link to Hangout Group</label>
-          <select
+          <select id="pnp-eventdetailmodal-6"
             value={hangoutGroupId}
             onChange={e => setHangoutGroupId(e.target.value)}
             className="w-full rounded-lg px-3 py-2 text-white outline-none"

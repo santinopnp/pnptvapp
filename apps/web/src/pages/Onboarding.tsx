@@ -254,7 +254,7 @@ function StepAge({
       </div>
 
       <label className="flex items-start gap-3 p-3 rounded-xl bg-pnp-surface border border-pnp-border cursor-pointer hover:border-pnp-accent/50 transition-colors">
-        <input
+        <input id="pnp-onboarding-1"
           type="checkbox"
           checked={confirmed}
           onChange={(e) => setConfirmed(e.target.checked)}
@@ -416,7 +416,7 @@ function StepRules({
       </div>
 
       <label className="flex items-start gap-3 p-3 rounded-xl bg-pnp-surface border border-pnp-border cursor-pointer hover:border-pnp-accent/50 transition-colors">
-        <input
+        <input id="pnp-onboarding-2"
           type="checkbox"
           checked={accepted}
           onChange={(e) => setAccepted(e.target.checked)}

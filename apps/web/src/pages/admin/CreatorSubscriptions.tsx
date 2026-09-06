@@ -516,7 +516,7 @@ function CreatorDetailPanel({
                   Ver perfil ↗
                 </a>
               </div>
-              <textarea
+              <textarea id="pnp-creatorsubscriptions-1"
                 value={manualNote}
                 onChange={(e) => setManualNote(e.target.value.slice(0, 500))}
                 placeholder="Motivo (opcional) — se muestra al creador en el email"
@@ -763,7 +763,7 @@ function CreatorDetailPanel({
             <label className="block text-xs text-pnp-textSecondary mb-1">
               {t.creatorSubs.daysToAdd}
             </label>
-            <input
+            <input id="pnp-creatorsubscriptions-2"
               type="number"
               min="1"
               max="365"
@@ -887,13 +887,13 @@ function MarkPaidModal({
           {row.balanceCop != null ? ` (≈ COP $${row.balanceCop.toLocaleString("es-CO")})` : ""}
         </p>
         <label className="block text-xs font-semibold text-white/80 mb-1">Referencia de transacción *</label>
-        <input type="text" value={txRef} onChange={(e) => setTxRef(e.target.value)}
+        <input id="pnp-creatorsubscriptions-3" type="text" value={txRef} onChange={(e) => setTxRef(e.target.value)}
           placeholder="Ej: TRX-2026-07-23-001" className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30" />
         <label className="block text-xs font-semibold text-white/80 mt-3 mb-1">Notas del admin (opcional)</label>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+        <textarea id="pnp-creatorsubscriptions-4" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
           className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-white/30" />
         <label className="block text-xs font-semibold text-white/80 mt-3 mb-1">Comprobante (PDF, JPG, PNG · máx 5MB)</label>
-        <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
+        <input id="pnp-creatorsubscriptions-5" type="file" accept="image/png,image/jpeg,image/webp,application/pdf"
           onChange={(e) => setReceipt(e.target.files?.[0] || null)}
           className="w-full text-xs text-white/80 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:text-xs file:bg-white/10 file:text-white" />
         {error && (
@@ -963,9 +963,9 @@ function WeeklyPayoutsLedger() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <label className="text-xs text-pnp-textSecondary">Semana:</label>
-          <input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)}
+          <input id="pnp-creatorsubscriptions-6" type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)}
             className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          <select id="pnp-creatorsubscriptions-7" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent">
             <option value="">Todos</option>
             <option value="proposed">Propuestos</option>
@@ -974,7 +974,7 @@ function WeeklyPayoutsLedger() {
             <option value="rejected">Rechazados</option>
             <option value="expired">Expirados</option>
           </select>
-          <input type="text" placeholder="País (ej. Colombia)" value={countryFilter}
+          <input id="pnp-creatorsubscriptions-8" type="text" placeholder="País (ej. Colombia)" value={countryFilter}
             onChange={(e) => setCountryFilter(e.target.value)}
             className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent w-40" />
           <a
@@ -1348,7 +1348,7 @@ export default function CreatorSubscriptions() {
           </h2>
           <div className="flex items-center gap-2">
             <label className="text-xs text-pnp-textSecondary">{t.creatorSubs.sortBy}</label>
-            <select
+            <select id="pnp-creatorsubscriptions-9"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortKey)}
               className="px-2 py-1.5 rounded-lg border border-pnp-border bg-pnp-background text-pnp-textPrimary text-xs focus:outline-none focus:border-pnp-accent"

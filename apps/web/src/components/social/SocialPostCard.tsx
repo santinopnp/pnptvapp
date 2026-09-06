@@ -1241,7 +1241,7 @@ export default function SocialPostCard({
 
               {isEditing ? (
                 <div className="mt-1.5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                  <textarea
+                  <textarea id="pnp-socialpostcard-1"
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
                     rows={3}
@@ -1251,7 +1251,7 @@ export default function SocialPostCard({
                   />
                   {post.media_type === 'video' && (
                     <>
-                      <input
+                      <input id="pnp-socialpostcard-2"
                         type="text"
                         value={editVideoTitle}
                         onChange={(e) => setEditVideoTitle(e.target.value)}
@@ -1260,7 +1260,7 @@ export default function SocialPostCard({
                         disabled={savingEdit}
                         className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500"
                       />
-                      <textarea
+                      <textarea id="pnp-socialpostcard-3"
                         value={editVideoDescription}
                         onChange={(e) => setEditVideoDescription(e.target.value)}
                         rows={2}
@@ -1285,7 +1285,7 @@ export default function SocialPostCard({
                     )}
                     {showEditTagPicker && (
                       <div className="relative mb-1.5">
-                        <input
+                        <input id="pnp-socialpostcard-4"
                           type="text"
                           value={editTagQuery}
                           onChange={(e) => setEditTagQuery(e.target.value)}

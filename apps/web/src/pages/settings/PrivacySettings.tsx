@@ -228,7 +228,7 @@ export default function PrivacySettings() {
 
         {/* Add-country + Add-US-state selects */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <select
+          <select id="pnp-privacysettings-1"
             value=""
             onChange={(e) => {
               if (e.target.value) addRegion(e.target.value);
@@ -246,7 +246,7 @@ export default function PrivacySettings() {
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
           </select>
-          <select
+          <select id="pnp-privacysettings-2"
             value=""
             onChange={(e) => {
               if (e.target.value) addRegion(e.target.value);

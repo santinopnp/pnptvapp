@@ -1060,7 +1060,7 @@ function ChannelDetailView({
                   {videoAiBusy === "title" ? "…" : "✨ AI title"}
                 </button>
               </div>
-              <input
+              <input id="pnp-channels-1"
                 value={videoEditForm.title}
                 onChange={(e) => setVideoEditForm((p) => ({ ...p, title: e.target.value }))}
                 maxLength={255}
@@ -1075,7 +1075,7 @@ function ChannelDetailView({
                   {videoAiBusy === "description" ? "…" : "✨ AI description"}
                 </button>
               </div>
-              <textarea
+              <textarea id="pnp-channels-2"
                 rows={2}
                 value={videoEditForm.description}
                 onChange={(e) => setVideoEditForm((p) => ({ ...p, description: e.target.value }))}
@@ -1090,7 +1090,7 @@ function ChannelDetailView({
                   {videoAiBusy === "tags" ? "…" : "✨ AI tags"}
                 </button>
               </div>
-              <input
+              <input id="pnp-channels-3"
                 value={videoEditForm.tags}
                 onChange={(e) => setVideoEditForm((p) => ({ ...p, tags: e.target.value }))}
                 className="w-full px-2.5 py-1.5 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
@@ -1117,7 +1117,7 @@ function ChannelDetailView({
               )}
               {taggedCreators.length < 5 && (
                 <div className="relative">
-                  <input
+                  <input id="pnp-channels-4"
                     type="text"
                     value={creatorTagSearch}
                     onChange={async (e) => {
@@ -1413,7 +1413,7 @@ function ChannelDetailView({
                     </div>
                   </div>
                 </div>
-                <input
+                <input id="pnp-channels-5"
                   ref={coverInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
@@ -1431,7 +1431,7 @@ function ChannelDetailView({
               </div>
               <div>
                 <label className="block text-xs text-white/50 mb-1">Channel Name *</label>
-                <input
+                <input id="pnp-channels-6"
                   value={editForm.name}
                   onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg text-sm text-white bg-white/5 border border-white/10 focus:outline-none focus:border-pnp-accent"
@@ -1439,7 +1439,7 @@ function ChannelDetailView({
               </div>
               <div>
                 <label className="block text-xs text-white/50 mb-1">Description</label>
-                <textarea
+                <textarea id="pnp-channels-7"
                   rows={2}
                   value={editForm.description}
                   onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
@@ -1448,7 +1448,7 @@ function ChannelDetailView({
               </div>
               <div>
                 <label className="block text-xs text-white/50 mb-1">Tags (comma-separated)</label>
-                <input
+                <input id="pnp-channels-8"
                   value={editForm.tags}
                   onChange={(e) => setEditForm((p) => ({ ...p, tags: e.target.value }))}
                   placeholder="e.g. exclusive, photos, bts"
@@ -1484,7 +1484,7 @@ function ChannelDetailView({
                   <label className="block text-xs text-white/50 mb-2">Price per 30 days (USD)</label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold" style={{ color: "#E69138" }}>$</span>
-                    <input
+                    <input id="pnp-channels-9"
                       type="number"
                       min="1.99"
                       max="499"
@@ -1504,7 +1504,7 @@ function ChannelDetailView({
                 <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">Telegram Bridge</p>
                 <div className="mb-2">
                   <label className="block text-xs text-white/50 mb-1">Telegram Channel ID or @username</label>
-                  <input
+                  <input id="pnp-channels-10"
                     value={editForm.telegramChannelId}
                     onChange={(e) => setEditForm((p) => ({ ...p, telegramChannelId: e.target.value, bridgeEnabled: p.bridgeEnabled && !!e.target.value.trim() }))}
                     placeholder="-1001234567890 or @mychannel"
@@ -1513,7 +1513,7 @@ function ChannelDetailView({
                 </div>
                 {editForm.telegramChannelId.trim() && (
                   <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input
+                    <input id="pnp-channels-11"
                       type="checkbox"
                       checked={editForm.bridgeEnabled}
                       onChange={(e) => setEditForm((p) => ({ ...p, bridgeEnabled: e.target.checked }))}
@@ -2030,7 +2030,7 @@ function ChannelDetailView({
             {modalHypeOpen && (
               <div className="px-4 py-3 flex-shrink-0 space-y-2" style={{ borderTop: "1px solid rgba(255,149,0,0.2)", background: "rgba(255,149,0,0.04)" }}>
                 <p className="text-[10px] text-orange-400/70 font-medium tracking-wide uppercase">Hype Post</p>
-                <textarea
+                <textarea id="pnp-channels-12"
                   rows={2}
                   value={hypeText}
                   onChange={(e) => setHypeText(e.target.value)}
@@ -2063,7 +2063,7 @@ function ChannelDetailView({
                 {/* Comment input */}
                 <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                   <div className="flex gap-2">
-                    <input
+                    <input id="pnp-channels-13"
                       type="text"
                       value={commentInput}
                       onChange={(e) => setCommentInput(e.target.value)}
@@ -2250,7 +2250,7 @@ function ChannelDetailView({
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
                   Back
                 </button>
-                <input
+                <input id="pnp-channels-14"
                   type="text"
                   value={shareDmInput}
                   onChange={(e) => setShareDmInput(e.target.value)}
@@ -2911,7 +2911,7 @@ function ChannelsInner() {
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
-                <input
+                <input id="pnp-channels-15"
                   type="text"
                   value={channelsSearch}
                   onChange={(e) => setChannelsSearch(e.target.value)}
@@ -2939,7 +2939,7 @@ function ChannelsInner() {
                 <p className="text-sm font-semibold text-pnp-textPrimary">Create New Channel</p>
                 <div>
                   <label className="block text-xs text-white/50 mb-1">Channel Name *</label>
-                  <input
+                  <input id="pnp-channels-16"
                     value={createForm.name}
                     onChange={(e) => setCreateForm((p) => ({ ...p, name: e.target.value }))}
                     placeholder="e.g. Behind the Scenes"
@@ -2948,7 +2948,7 @@ function ChannelsInner() {
                 </div>
                 <div>
                   <label className="block text-xs text-white/50 mb-1">Description</label>
-                  <textarea
+                  <textarea id="pnp-channels-17"
                     rows={2}
                     value={createForm.description}
                     onChange={(e) => setCreateForm((p) => ({ ...p, description: e.target.value }))}
@@ -2958,7 +2958,7 @@ function ChannelsInner() {
                 </div>
                 <div>
                   <label className="block text-xs text-white/50 mb-1">Tags (comma-separated)</label>
-                  <input
+                  <input id="pnp-channels-18"
                     value={createForm.tags}
                     onChange={(e) => setCreateForm((p) => ({ ...p, tags: e.target.value }))}
                     placeholder="e.g. exclusive, photos, bts"
@@ -2991,7 +2991,7 @@ function ChannelsInner() {
                       <label className="block text-xs text-white/50 mb-1.5">Price per 30 days (USD)</label>
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold" style={{ color: "#E69138" }}>$</span>
-                        <input
+                        <input id="pnp-channels-19"
                           type="number"
                           min="1.99"
                           max="499"
@@ -3012,7 +3012,7 @@ function ChannelsInner() {
                   <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-2">Telegram Bridge</p>
                   <div className="mb-2">
                     <label className="block text-xs text-white/50 mb-1">Telegram Channel ID or @username</label>
-                    <input
+                    <input id="pnp-channels-20"
                       value={createForm.telegramChannelId}
                       onChange={(e) => setCreateForm((p) => ({ ...p, telegramChannelId: e.target.value, bridgeEnabled: p.bridgeEnabled && !!e.target.value.trim() }))}
                       placeholder="-1001234567890 or @mychannel"
@@ -3022,7 +3022,7 @@ function ChannelsInner() {
                   </div>
                   {createForm.telegramChannelId.trim() && (
                     <label className="flex items-center gap-2.5 cursor-pointer">
-                      <input
+                      <input id="pnp-channels-21"
                         type="checkbox"
                         checked={createForm.bridgeEnabled}
                         onChange={(e) => setCreateForm((p) => ({ ...p, bridgeEnabled: e.target.checked }))}
@@ -3348,7 +3348,7 @@ function VideoramaInner() {
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-pnp-textSecondary pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <input
+            <input id="pnp-channels-22"
               type="text"
               placeholder="Search channels…"
               value={search}

@@ -285,7 +285,7 @@ export function PostCallSurveyModal({
                         })}
                         <div className="min-h-[44px] flex items-center rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)" }}>
                           <span className="pl-2 text-sm text-white/60">$</span>
-                          <input
+                          <input id="pnp-postcallsurveymodal-1"
                             type="number"
                             inputMode="decimal"
                             min={1}
@@ -353,7 +353,7 @@ export function PostCallSurveyModal({
               <FlameRow label={t.creator.surveyPresentation} value={presentation}       onChange={setPresentation} />
               <FlameRow label={t.creator.surveyPoliteness}   value={politeness}         onChange={setPoliteness} />
 
-              <textarea
+              <textarea id="pnp-postcallsurveymodal-2"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder={t.creator.surveyPlaceholder}

@@ -56,7 +56,7 @@ export function DataTable<T>({
           <tr className="border-b border-pnp-border bg-pnp-surface/50">
             {selectable && (
               <th className="px-4 py-3 text-left w-10">
-                <input
+                <input id="pnp-datatable-1"
                   type="checkbox"
                   checked={allSelected}
                   onChange={onSelectAll}
@@ -95,7 +95,7 @@ export function DataTable<T>({
                     >
                       {selectable && (
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <input
+                          <input id="pnp-datatable-2"
                             type="checkbox"
                             checked={selectedIds?.has(rowId) || false}
                             onChange={() => onSelectToggle?.(rowId)}

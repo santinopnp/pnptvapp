@@ -434,7 +434,7 @@ export default function UploadVideoModal({
             ¿De qué trata en una línea? <span style={{ color: "#FF4DA6" }}>*</span>{" "}
             <span className="text-white/30">— la IA arma título, descripción y tags a partir de esto</span>
           </label>
-          <textarea
+          <textarea id="pnp-uploadvideomodal-1"
             rows={2}
             maxLength={300}
             value={oneLiner}
@@ -561,7 +561,7 @@ export default function UploadVideoModal({
           {/* Title */}
           <div>
             <label className="block text-xs font-semibold text-white/60 mb-1">Título</label>
-            <input
+            <input id="pnp-uploadvideomodal-2"
               type="text"
               maxLength={255}
               value={title}
@@ -575,7 +575,7 @@ export default function UploadVideoModal({
           {/* Description */}
           <div>
             <label className="block text-xs font-semibold text-white/60 mb-1">Descripción</label>
-            <textarea
+            <textarea id="pnp-uploadvideomodal-3"
               rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}

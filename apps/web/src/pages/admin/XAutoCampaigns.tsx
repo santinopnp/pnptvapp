@@ -143,7 +143,7 @@ function GrokActionCard({ action, accounts, onApply, t }: {
         <p className="text-xs text-purple-400 mb-2">&#9654; {t.admin.xCampaigns.form.attachVideos}</p>
       )}
       {accounts.length > 1 ? (
-        <select
+        <select id="pnp-xautocampaigns-1"
           value={selectedHandle}
           onChange={(e) => setSelectedHandle(e.target.value)}
           className="w-full mb-2 px-2 py-1 text-xs rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
@@ -399,7 +399,7 @@ function PnptvAmplificationPanel() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <select id="pnp-xautocampaigns-2"
             value={sinceDays}
             onChange={(e) => setSinceDays(parseInt(e.target.value, 10))}
             className="px-2 py-1 rounded-lg text-xs text-white"
@@ -1134,7 +1134,7 @@ export default function XAutoCampaigns() {
             🔥 {t.admin.xCampaigns.actions.lifetime100}
           </button>
           <div className="flex items-center gap-1.5">
-            <select
+            <select id="pnp-xautocampaigns-3"
               value={oauthApp}
               onChange={(e) => setOauthApp(e.target.value as "generic" | "santino" | "lex")}
               className="px-2 py-2 rounded-lg text-sm bg-pnp-surface border border-pnp-border text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
@@ -1169,7 +1169,7 @@ export default function XAutoCampaigns() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.name}</label>
-                <input
+                <input id="pnp-xautocampaigns-4"
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none" style={{ fontSize: "16px" }}
@@ -1180,7 +1180,7 @@ export default function XAutoCampaigns() {
               {!editingCampaign && (
                 <div>
                   <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.account}</label>
-                  <select
+                  <select id="pnp-xautocampaigns-5"
                     value={form.accountId}
                     onChange={(e) => setForm((f) => ({ ...f, accountId: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none" style={{ fontSize: "16px" }}
@@ -1199,7 +1199,7 @@ export default function XAutoCampaigns() {
 
             <div>
               <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.topic}</label>
-              <textarea
+              <textarea id="pnp-xautocampaigns-6"
                 value={form.topic}
                 onChange={(e) => setForm((f) => ({ ...f, topic: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none min-h-[80px]" style={{ fontSize: "16px" }}
@@ -1211,7 +1211,7 @@ export default function XAutoCampaigns() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.grokMode}</label>
-                <select
+                <select id="pnp-xautocampaigns-7"
                   value={form.grokMode}
                   onChange={(e) => setForm((f) => ({ ...f, grokMode: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none" style={{ fontSize: "16px" }}
@@ -1223,7 +1223,7 @@ export default function XAutoCampaigns() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.language}</label>
-                <select
+                <select id="pnp-xautocampaigns-8"
                   value={form.language}
                   onChange={(e) => setForm((f) => ({ ...f, language: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none" style={{ fontSize: "16px" }}
@@ -1235,7 +1235,7 @@ export default function XAutoCampaigns() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.personas.label}</label>
-                <select
+                <select id="pnp-xautocampaigns-9"
                   value={form.personaType}
                   onChange={(e) => setForm((f) => ({ ...f, personaType: e.target.value as "santino" | "lex" | "generic" }))}
                   className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary focus:border-pnp-accent focus:outline-none" style={{ fontSize: "16px" }}
@@ -1247,7 +1247,7 @@ export default function XAutoCampaigns() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.interval}</label>
-                <input
+                <input id="pnp-xautocampaigns-10"
                   type="number"
                   value={form.intervalMinutes}
                   onChange={(e) => setForm((f) => ({ ...f, intervalMinutes: parseInt(e.target.value) || 240 }))}
@@ -1257,7 +1257,7 @@ export default function XAutoCampaigns() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.maxPosts}</label>
-                <input
+                <input id="pnp-xautocampaigns-11"
                   type="number"
                   value={form.maxPosts}
                   onChange={(e) => setForm((f) => ({ ...f, maxPosts: e.target.value }))}
@@ -1271,7 +1271,7 @@ export default function XAutoCampaigns() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.hoursStart}</label>
-                <input
+                <input id="pnp-xautocampaigns-12"
                   type="time"
                   value={`${String(Math.floor(form.activeHoursStart / 60)).padStart(2, "0")}:${String(form.activeHoursStart % 60).padStart(2, "0")}`}
                   onChange={(e) => {
@@ -1283,7 +1283,7 @@ export default function XAutoCampaigns() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.hoursEnd}</label>
-                <input
+                <input id="pnp-xautocampaigns-13"
                   type="time"
                   value={`${String(Math.floor(form.activeHoursEnd / 60)).padStart(2, "0")}:${String(form.activeHoursEnd % 60).padStart(2, "0")}`}
                   onChange={(e) => {
@@ -1297,7 +1297,7 @@ export default function XAutoCampaigns() {
 
             <div>
               <label className="text-xs text-pnp-textSecondary block mb-1">{t.admin.xCampaigns.form.customPrompt}</label>
-              <textarea
+              <textarea id="pnp-xautocampaigns-14"
                 value={form.customPrompt}
                 onChange={(e) => setForm((f) => ({ ...f, customPrompt: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg bg-pnp-background border border-pnp-border text-pnp-textPrimary placeholder:text-pnp-textSecondary focus:border-pnp-accent focus:outline-none min-h-[60px]" style={{ fontSize: "16px" }}
@@ -1313,7 +1313,7 @@ export default function XAutoCampaigns() {
 
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
+                <input id="pnp-xautocampaigns-15"
                   type="checkbox"
                   checked={form.attachVideos}
                   onChange={async (e) => {
@@ -1525,7 +1525,7 @@ export default function XAutoCampaigns() {
             {/* Input */}
             <div className="px-4 pb-4 pt-2 border-t border-pnp-border/50">
               <div className="flex gap-2 items-end">
-                <textarea
+                <textarea id="pnp-xautocampaigns-16"
                   ref={grokInputRef}
                   value={grokInput}
                   onChange={(e) => setGrokInput(e.target.value)}

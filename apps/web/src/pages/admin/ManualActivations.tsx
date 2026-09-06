@@ -372,7 +372,7 @@ export default function ManualActivations() {
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-pnp-textSecondary font-semibold">User ID (UUID) *</label>
-              <input
+              <input id="pnp-manualactivations-1"
                 type="text"
                 value={vgUserId}
                 onChange={(e) => setVgUserId(e.target.value)}
@@ -384,7 +384,7 @@ export default function ManualActivations() {
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-pnp-textSecondary font-semibold">Video ID (UUID) *</label>
-              <input
+              <input id="pnp-manualactivations-2"
                 type="text"
                 value={vgVideoId}
                 onChange={(e) => setVgVideoId(e.target.value)}
@@ -396,7 +396,7 @@ export default function ManualActivations() {
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-pnp-textSecondary font-semibold">Expiry date (blank = permanent)</label>
-              <input
+              <input id="pnp-manualactivations-3"
                 type="datetime-local"
                 value={vgExpiresAt}
                 onChange={(e) => setVgExpiresAt(e.target.value)}
@@ -406,7 +406,7 @@ export default function ManualActivations() {
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-pnp-textSecondary font-semibold">Reason *</label>
-              <input
+              <input id="pnp-manualactivations-4"
                 type="text"
                 value={vgReason}
                 onChange={(e) => setVgReason(e.target.value)}
@@ -431,14 +431,14 @@ export default function ManualActivations() {
           {/* Recent grants table */}
           <div className="mb-3 flex flex-wrap items-end gap-2">
             <h2 className="text-sm font-bold text-white mr-2">Recent admin grants</h2>
-            <input
+            <input id="pnp-manualactivations-5"
               type="text"
               value={vgFilterUserId}
               onChange={(e) => setVgFilterUserId(e.target.value)}
               placeholder="Filter by user ID"
               className="rounded-lg px-3 py-1.5 text-xs bg-pnp-background border border-pnp-border text-white placeholder:text-pnp-textSecondary focus:outline-none focus:border-pnp-accent w-48"
             />
-            <input
+            <input id="pnp-manualactivations-6"
               type="text"
               value={vgFilterVideoId}
               onChange={(e) => setVgFilterVideoId(e.target.value)}

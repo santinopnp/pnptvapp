@@ -909,7 +909,7 @@ export function PostComposer({
         <div className="flex-1 min-w-0">
 
           {/* Hidden file inputs */}
-          <input
+          <input id="pnp-postcomposer-1"
             ref={imageInputRef}
             type="file"
             accept={ACCEPTED_IMAGE_TYPES.join(",")}
@@ -919,7 +919,7 @@ export function PostComposer({
             aria-hidden="true"
             tabIndex={-1}
           />
-          <input
+          <input id="pnp-postcomposer-2"
             ref={videoInputRef}
             type="file"
             accept={ACCEPTED_VIDEO_TYPES.join(",")}
@@ -994,7 +994,7 @@ export function PostComposer({
                   Type a short description, and AI will auto-generate your Title, Description, and Tags!
                 </p>
                 <div className="flex gap-2">
-                  <input
+                  <input id="pnp-postcomposer-3"
                     type="text"
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
@@ -1025,7 +1025,7 @@ export function PostComposer({
           {hasVideo && (
             <div className="mb-3 space-y-2">
               <div>
-                <input
+                <input id="pnp-postcomposer-4"
                   type="text"
                   value={videoTitle}
                   onChange={(e) => setVideoTitle(e.target.value.slice(0, 150))}
@@ -1044,7 +1044,7 @@ export function PostComposer({
                 </div>
               </div>
               <div>
-                <textarea
+                <textarea id="pnp-postcomposer-5"
                   value={videoDescription}
                   onChange={(e) => setVideoDescription(e.target.value.slice(0, 500))}
                   placeholder="Video description (optional)"
@@ -1130,7 +1130,7 @@ export function PostComposer({
               </div>
 
               <div className="flex gap-2">
-                <input
+                <input id="pnp-postcomposer-6"
                   type="url"
                   value={xEmbedUrl}
                   onChange={(e) => { setXEmbedUrl(e.target.value); setXEmbedError(null); }}
@@ -1228,7 +1228,7 @@ export function PostComposer({
               {/* Search input */}
               {showTagPicker && (
                 <div className="relative">
-                  <input
+                  <input id="pnp-postcomposer-7"
                     type="text"
                     value={tagQuery}
                     onChange={(e) => setTagQuery(e.target.value)}

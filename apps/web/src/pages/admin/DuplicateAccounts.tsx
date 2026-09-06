@@ -257,7 +257,7 @@ function PreviewModal({ preview, candidate, onClose, onMerge, onRename, merging,
               {mode === "confirm_merge" && (
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1">{t.reasonLabel}</label>
-                  <input
+                  <input id="pnp-duplicateaccounts-1"
                     type="text"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
@@ -269,7 +269,7 @@ function PreviewModal({ preview, candidate, onClose, onMerge, onRename, merging,
 
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">{t.confirmMergePlaceholder}</label>
-                <input
+                <input id="pnp-duplicateaccounts-2"
                   type="text"
                   value={confirmInput}
                   onChange={(e) => setConfirmInput(e.target.value)}

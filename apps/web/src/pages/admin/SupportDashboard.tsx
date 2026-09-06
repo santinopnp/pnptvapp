@@ -214,7 +214,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
   return (
     <div className="p-3 border-b border-pnp-border flex flex-col gap-2">
       <div className="flex gap-2">
-        <select
+        <select id="pnp-supportdashboard-1"
           value={filters.status}
           onChange={(e) => onChange({ ...filters, status: e.target.value })}
           className="flex-1 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary text-xs px-2 py-1.5 focus:outline-none focus:border-pnp-accent"
@@ -224,7 +224,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
           <option value="resolved">Resolved</option>
           <option value="closed">Closed</option>
         </select>
-        <select
+        <select id="pnp-supportdashboard-2"
           value={filters.priority}
           onChange={(e) => onChange({ ...filters, priority: e.target.value })}
           className="flex-1 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary text-xs px-2 py-1.5 focus:outline-none focus:border-pnp-accent"
@@ -235,7 +235,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
-        <select
+        <select id="pnp-supportdashboard-3"
           value={filters.category}
           onChange={(e) => onChange({ ...filters, category: e.target.value })}
           className="flex-1 rounded-lg bg-pnp-surface border border-pnp-border text-pnp-textPrimary text-xs px-2 py-1.5 focus:outline-none focus:border-pnp-accent"
@@ -256,7 +256,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
-        <input
+        <input id="pnp-supportdashboard-4"
           type="text"
           placeholder="Search tickets..."
           value={filters.search}
@@ -667,7 +667,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-pnp-textSecondary">Status:</span>
             <div className="relative inline-flex items-center gap-1">
-              <select
+              <select id="pnp-supportdashboard-5"
                 value={ticket.status}
                 onChange={(e) => handleStatusChange(e.target.value)}
                 disabled={actionLoading}
@@ -683,7 +683,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-pnp-textSecondary">Priority:</span>
             <div className="relative inline-flex items-center gap-1">
-              <select
+              <select id="pnp-supportdashboard-6"
                 value={ticket.priority}
                 onChange={(e) => handlePriorityChange(e.target.value)}
                 disabled={actionLoading}
@@ -700,7 +700,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-pnp-textSecondary">Category:</span>
             <div className="relative inline-flex items-center">
-              <select
+              <select id="pnp-supportdashboard-7"
                 value={ticket.category}
                 onChange={(e) => handleCategoryChange(e.target.value)}
                 disabled={actionLoading}
@@ -802,7 +802,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
 
             {grantTab === "plan" && (
               <div className="flex flex-wrap items-center gap-2">
-                <select
+                <select id="pnp-supportdashboard-8"
                   value={grantPlanId}
                   onChange={(e) => setGrantPlanId(e.target.value)}
                   disabled={grantLoading || plans.length === 0}
@@ -834,7 +834,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
             {grantTab === "addon" && (
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
+                  <select id="pnp-supportdashboard-9"
                     value={grantAddOnId}
                     onChange={(e) => setGrantAddOnId(e.target.value)}
                     disabled={grantLoading}
@@ -845,7 +845,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
                     ))}
                   </select>
                   <div className="flex items-center gap-2">
-                    <input
+                    <input id="pnp-supportdashboard-10"
                       type="number"
                       min={1}
                       max={3650}
@@ -856,7 +856,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
                     />
                     <span className="text-xs text-pnp-textSecondary">days</span>
                     <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                      <input
+                      <input id="pnp-supportdashboard-11"
                         type="checkbox"
                         checked={grantLifetime}
                         onChange={(e) => setGrantLifetime(e.target.checked)}
@@ -1018,7 +1018,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
           )}
 
           {/* Hidden file input */}
-          <input
+          <input id="pnp-supportdashboard-12"
             ref={replyFileRef}
             type="file"
             multiple
@@ -1026,7 +1026,7 @@ function TicketDetail({ ticket, onUpdate }: TicketDetailProps) {
             className="sr-only"
             onChange={handleFileChange}
           />
-          <textarea
+          <textarea id="pnp-supportdashboard-13"
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={handleKeyDown}

@@ -634,7 +634,7 @@ function InviteLinksPanel() {
           {form.resourceType === "channel" && (
             <div>
               <label className="text-xs text-pnp-textSecondary mb-1 block">{t.inviteChannel}</label>
-              <select
+              <select id="pnp-creatorlayout-1"
                 value={form.resourceId}
                 onChange={e => setForm(f => ({ ...f, resourceId: e.target.value }))}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
@@ -648,13 +648,13 @@ function InviteLinksPanel() {
           )}
 
           {form.resourceType === "creator" && (
-            <input type="hidden" value={form.resourceId} />
+            <input id="pnp-creatorlayout-2" type="hidden" value={form.resourceId} />
           )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-pnp-textSecondary mb-1 block">{t.inviteDurationHours}</label>
-              <input
+              <input id="pnp-creatorlayout-3"
                 type="number" min={1} max={720}
                 value={form.durationHours}
                 onChange={e => setForm(f => ({ ...f, durationHours: e.target.value }))}
@@ -663,7 +663,7 @@ function InviteLinksPanel() {
             </div>
             <div>
               <label className="text-xs text-pnp-textSecondary mb-1 block">{t.inviteMaxUsesLabel}</label>
-              <input
+              <input id="pnp-creatorlayout-4"
                 type="number" min={1}
                 placeholder="∞"
                 value={form.maxUses}
@@ -675,7 +675,7 @@ function InviteLinksPanel() {
 
           <div>
             <label className="text-xs text-pnp-textSecondary mb-1 block">{t.inviteLabelOptional}</label>
-            <input
+            <input id="pnp-creatorlayout-5"
               type="text" maxLength={200} placeholder={t.inviteLabelPlaceholder}
               value={form.note}
               onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
@@ -2203,7 +2203,7 @@ export function CreatorMyAITools() {
             <div className="mt-5 space-y-4">
               <div>
                 <label className="text-xs font-semibold text-white/80">Name</label>
-                <input
+                <input id="pnp-creatorlayout-6"
                   value={formName}
                   onChange={e => setFormName(e.target.value)}
                   maxLength={200}
@@ -2215,7 +2215,7 @@ export function CreatorMyAITools() {
 
               <div>
                 <label className="text-xs font-semibold text-white/80">Topic / Instructions</label>
-                <textarea
+                <textarea id="pnp-creatorlayout-7"
                   value={formTopic}
                   onChange={e => setFormTopic(e.target.value)}
                   maxLength={2000}
@@ -2258,7 +2258,7 @@ export function CreatorMyAITools() {
 
               <div>
                 <label className="text-xs font-semibold text-white/80">Language</label>
-                <select
+                <select id="pnp-creatorlayout-8"
                   value={formLanguage}
                   onChange={e => setFormLanguage(e.target.value)}
                   className="mt-1.5 w-full px-3 py-2 rounded-lg text-sm text-white"
@@ -2273,7 +2273,7 @@ export function CreatorMyAITools() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-white/80">Interval (minutes)</label>
-                  <input
+                  <input id="pnp-creatorlayout-9"
                     type="number"
                     min={30}
                     max={1440}
@@ -2287,7 +2287,7 @@ export function CreatorMyAITools() {
                 <div>
                   <label className="text-xs font-semibold text-white/80">Active hours</label>
                   <div className="mt-1.5 flex items-center gap-2">
-                    <input
+                    <input id="pnp-creatorlayout-10"
                       type="number"
                       min={0}
                       max={23}
@@ -2297,7 +2297,7 @@ export function CreatorMyAITools() {
                       style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
                     />
                     <span className="text-xs text-pnp-textSecondary">to</span>
-                    <input
+                    <input id="pnp-creatorlayout-11"
                       type="number"
                       min={0}
                       max={23}

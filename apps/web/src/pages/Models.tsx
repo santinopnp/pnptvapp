@@ -116,7 +116,7 @@ export default function Models() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35m0 0A7 7 0 104.65 4.65a7 7 0 0011.9 11.9z" />
           </svg>
         </div>
-        <input
+        <input id="pnp-models-1"
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}

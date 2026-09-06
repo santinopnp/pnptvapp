@@ -130,7 +130,7 @@ export default function EditProfileModal({
             <label className="block text-xs text-pnp-textSecondary mb-1">Username</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-pnp-textSecondary select-none">@</span>
-              <input
+              <input id="pnp-editprofilemodal-1"
                 type="text"
                 value={profile.username}
                 readOnly
@@ -197,7 +197,7 @@ export default function EditProfileModal({
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-pnp-textSecondary select-none">@</span>
-                <input
+                <input id="pnp-editprofilemodal-2"
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 30))}
@@ -232,7 +232,7 @@ export default function EditProfileModal({
         </div>
         <div>
           <label className="block text-xs text-pnp-textSecondary mb-1">{p.bio}</label>
-          <textarea
+          <textarea id="pnp-editprofilemodal-3"
             value={bio}
             onChange={(e) => setBio(e.target.value.slice(0, 160))}
             placeholder={p.bioPlaceholder}
@@ -257,7 +257,7 @@ export default function EditProfileModal({
             {p.dateOfBirth} <span className="text-pnp-textSecondary/50">{p.dobRequired}</span>
           </label>
           <div className="flex items-center gap-2">
-            <input
+            <input id="pnp-editprofilemodal-4"
               type="date"
               value={dob}
               onChange={(e) => setDob(e.target.value)}
@@ -289,7 +289,7 @@ export default function EditProfileModal({
             {p.countryLabel ?? "Country"}
           </label>
           <div className="flex gap-2 mb-2">
-            <input
+            <input id="pnp-editprofilemodal-5"
               type="text"
               placeholder={p.countryPlaceholder}
               value={country}
@@ -320,7 +320,7 @@ export default function EditProfileModal({
           <label className="block text-xs text-pnp-textSecondary mb-1">X (Twitter) Account</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-pnp-textSecondary select-none">@</span>
-            <input
+            <input id="pnp-editprofilemodal-6"
               type="text"
               value={xHandle}
               onChange={(e) => setXHandle(e.target.value.replace(/^@/, "").replace(/\s/g, "").slice(0, 50))}

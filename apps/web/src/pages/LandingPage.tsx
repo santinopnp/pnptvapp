@@ -1130,7 +1130,7 @@ export function LandingPage() {
                 </div>
 
                 <form onSubmit={handleSubmitRecoveryEmail} className="space-y-2" noValidate>
-                  <input
+                  <input id="pnp-landingpage-1"
                     type="email"
                     inputMode="email"
                     autoComplete="email"
@@ -1316,7 +1316,7 @@ export function LandingPage() {
 
           {(magicState === "form" || magicState === "sending") && (
             <form onSubmit={handleSendMagicLink} className="w-full space-y-2 -mt-1" noValidate>
-              <input
+              <input id="pnp-landingpage-2"
                 type="email"
                 inputMode="email"
                 autoComplete="email"
@@ -1472,7 +1472,7 @@ export function LandingPage() {
           {(regState === "form" || regState === "submitting") && (
             <form onSubmit={handleRegister} className="w-full space-y-2" noValidate>
               <p className="text-xs font-semibold text-white text-center">Create your account</p>
-              <input
+              <input id="pnp-landingpage-3"
                 type="email"
                 inputMode="email"
                 autoComplete="email"
@@ -1485,7 +1485,7 @@ export function LandingPage() {
                 className="w-full py-3 px-4 rounded-xl text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 transition-all disabled:opacity-60"
                 style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontSize: "16px" }}
               />
-              <input
+              <input id="pnp-landingpage-4"
                 type="text"
                 autoComplete="username"
                 value={regUsername}

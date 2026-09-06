@@ -435,7 +435,7 @@ export function AdminPanelContent({
           <h3 className="text-white/50 text-[10px] font-bold uppercase tracking-widest mb-2.5">{t.live.mainStageAdminSectionCustomUrl}</h3>
           <div className="space-y-3">
             <div className="flex gap-2">
-              <input
+              <input id="pnp-admindrawer-1"
                 type="url"
                 value={mediaUrl}
                 onChange={(e) => setMediaUrl(e.target.value)}
@@ -639,7 +639,7 @@ function PinPanel() {
         </div>
       )}
 
-      <textarea
+      <textarea id="pnp-admindrawer-2"
         value={text}
         onChange={(e) => setText(e.target.value.slice(0, 500))}
         placeholder={pin ? "Replace pin…" : "New pinned message (max 500 chars)"}
@@ -649,7 +649,7 @@ function PinPanel() {
 
       <div className="flex items-center gap-2">
         <label className="text-[10px] text-white/50 flex-shrink-0">TTL</label>
-        <select
+        <select id="pnp-admindrawer-3"
           value={ttlHours}
           onChange={(e) => setTtlHours(parseFloat(e.target.value))}
           className="flex-1 min-w-0 px-2 py-1.5 rounded-lg text-[11px] text-white bg-white/[0.06] border border-white/10 focus:outline-none"
@@ -850,7 +850,7 @@ function GatePanel() {
           <div className="text-white/50 text-[10px] uppercase tracking-widest">Windows (UTC)</div>
           {state.windows?.map((w, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input
+              <input id="pnp-admindrawer-4"
                 type="time"
                 value={w.start_utc}
                 onChange={(e) => updateWindow(i, { start_utc: e.target.value })}
@@ -858,7 +858,7 @@ function GatePanel() {
                 className="bg-black/40 border border-white/10 rounded px-2 py-1 text-white text-sm"
               />
               <span className="text-white/40 text-xs">for</span>
-              <input
+              <input id="pnp-admindrawer-5"
                 type="number"
                 min={1}
                 max={1440}

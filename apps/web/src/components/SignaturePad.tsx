@@ -69,7 +69,7 @@ export function SignaturePad({ onSave, width = 320, height = 120 }: SignaturePad
       <canvas ref={canvasRef} width={width} height={height} style={{ display: "none" }} />
 
       {/* Signature-style text input */}
-      <input
+      <input id="pnp-signaturepad-1"
         type="text"
         value={typedName}
         onChange={handleChange}

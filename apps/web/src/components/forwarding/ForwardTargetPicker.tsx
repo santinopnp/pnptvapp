@@ -291,7 +291,7 @@ export function ForwardTargetPicker({
           </button>
         </div>
 
-        <input
+        <input id="pnp-forwardtargetpicker-1"
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -371,7 +371,7 @@ export function ForwardTargetPicker({
         </div>
 
         <div>
-          <textarea
+          <textarea id="pnp-forwardtargetpicker-2"
             value={note}
             onChange={(e) => setNote(e.target.value.slice(0, MAX_NOTE))}
             rows={2}

@@ -655,7 +655,7 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
 
       {/* Input bar */}
       <div className="flex items-end gap-1.5 px-2 py-2 border-t border-pnp-border flex-shrink-0" style={{ background: "var(--pnp-surface, #1C1C1E)" }}>
-        <input
+        <input id="pnp-layout-1"
           ref={mediaInputRef}
           type="file"
           accept="image/*,video/*,audio/*"
@@ -673,7 +673,7 @@ function SidebarDmChat({ userId, myDbId, onBack }: SidebarDmChatProps) {
           </svg>
         </button>
 
-        <textarea
+        <textarea id="pnp-layout-2"
           value={messageInput}
           onChange={(e) => { setMessageInput(e.target.value); emitTyping(); }}
           onKeyDown={(e) => {
@@ -1876,7 +1876,7 @@ export function Layout() {
               <svg className="w-4 h-4 text-pnp-textSecondary flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
-              <input
+              <input id="pnp-layout-3"
                 autoFocus
                 type="search"
                 enterKeyHint="search"

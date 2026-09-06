@@ -953,7 +953,7 @@ export default function PostCard({
           {/* Post body — inline editor when editing, otherwise @mentions/URLs clickable */}
           {isEditing ? (
             <div className="mt-1.5 space-y-2">
-              <textarea
+              <textarea id="pnp-postcard-1"
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
                 className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 resize-none"
@@ -964,7 +964,7 @@ export default function PostCard({
               />
               {post.media_type === 'video' && (
                 <>
-                  <input
+                  <input id="pnp-postcard-2"
                     type="text"
                     value={editVideoTitle}
                     onChange={(e) => setEditVideoTitle(e.target.value)}
@@ -973,7 +973,7 @@ export default function PostCard({
                     disabled={savingEdit}
                     className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-1.5 outline-none border border-white/10 focus:border-white/30"
                   />
-                  <textarea
+                  <textarea id="pnp-postcard-3"
                     value={editVideoDescription}
                     onChange={(e) => setEditVideoDescription(e.target.value)}
                     rows={2}
@@ -998,7 +998,7 @@ export default function PostCard({
                 )}
                 {showEditTagPicker && (
                   <div className="relative mb-1.5">
-                    <input
+                    <input id="pnp-postcard-4"
                       type="text"
                       value={editTagQuery}
                       onChange={(e) => setEditTagQuery(e.target.value)}

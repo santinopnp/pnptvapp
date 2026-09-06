@@ -126,7 +126,7 @@ function FileUploadBox({
       className="border-2 border-dashed border-pnp-border rounded-lg p-4 text-center cursor-pointer hover:border-pnp-accent/50 transition-colors"
       onClick={() => inputRef.current?.click()}
     >
-      <input
+      <input id="pnp-apply-1"
         ref={inputRef}
         type="file"
         accept={accept}
@@ -514,7 +514,7 @@ export default function Apply() {
           />
           <div className="space-y-1">
             <label className="block text-sm text-pnp-textSecondary">{t.bioLabel}</label>
-            <textarea
+            <textarea id="pnp-apply-2"
               className="w-full rounded-lg bg-pnp-surface border border-pnp-border px-3 py-2 text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:ring-2 focus:ring-pnp-accent focus:border-transparent transition-colors min-h-[80px] resize-y"
               placeholder={t.bioPLaceholder}
               value={data.bio}
@@ -641,7 +641,7 @@ export default function Apply() {
             <p><strong>{t.agreementSection7Title}</strong> {t.agreementSection7}</p>
           </div>
           <label className="flex items-start gap-3 cursor-pointer">
-            <input
+            <input id="pnp-apply-3"
               type="checkbox"
               checked={data.termsAgreed}
               onChange={(e) => update({ termsAgreed: e.target.checked })}

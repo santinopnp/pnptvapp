@@ -193,7 +193,7 @@ export function PnpFamFeedCustomizer({ open, initialShortcuts = [], onSave, onSk
                 <div className="text-xs uppercase tracking-wider" style={{ color: "rgba(255,232,214,0.8)" }}>
                   {typeLabels[pickingType]}
                 </div>
-                <input
+                <input id="pnp-pnpfamfeedcustomizer-1"
                   type="text"
                   value={refInput}
                   onChange={(e) => setRefInput(e.target.value)}
@@ -214,7 +214,7 @@ export function PnpFamFeedCustomizer({ open, initialShortcuts = [], onSave, onSk
                   }}
                   autoFocus
                 />
-                <input
+                <input id="pnp-pnpfamfeedcustomizer-2"
                   type="text"
                   value={labelInput}
                   onChange={(e) => setLabelInput(e.target.value)}

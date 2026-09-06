@@ -366,14 +366,14 @@ export default function NearbyPlaces() {
 
       {/* Search & Category Filter */}
       <div className="flex flex-wrap gap-3 items-center">
-        <input
+        <input id="pnp-nearbyplaces-1"
           type="text"
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           placeholder={t.places.searchPlaceholder}
           className="px-3 py-2 text-sm rounded-lg border border-pnp-border bg-pnp-surface text-pnp-textPrimary placeholder-pnp-textSecondary focus:outline-none focus:border-pnp-accent w-64"
         />
-        <select
+        <select id="pnp-nearbyplaces-2"
           value={categoryFilter ?? ""}
           onChange={(e) => handleCategoryFilter(e.target.value ? Number(e.target.value) : undefined)}
           className="px-3 py-2 text-sm rounded-lg border border-pnp-border bg-pnp-surface text-pnp-textPrimary focus:outline-none focus:border-pnp-accent"
@@ -459,7 +459,7 @@ export default function NearbyPlaces() {
           >
             <h3 className="text-lg font-bold text-pnp-textPrimary mb-2">{t.places.rejectPlace}</h3>
             <p className="text-sm text-pnp-textSecondary mb-4">{getConfirmMessage()}</p>
-            <textarea
+            <textarea id="pnp-nearbyplaces-3"
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
               placeholder={t.places.rejectReason}

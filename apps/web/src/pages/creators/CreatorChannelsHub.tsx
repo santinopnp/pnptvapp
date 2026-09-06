@@ -305,7 +305,7 @@ export function CreatorChannelsHub() {
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">Channel name</label>
-                <input
+                <input id="pnp-creatorchannelshub-1"
                   type="text"
                   required
                   maxLength={80}
@@ -317,7 +317,7 @@ export function CreatorChannelsHub() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">Description <span className="opacity-50">(optional)</span></label>
-                <textarea
+                <textarea id="pnp-creatorchannelshub-2"
                   maxLength={300}
                   rows={2}
                   value={createForm.description}
@@ -328,7 +328,7 @@ export function CreatorChannelsHub() {
               </div>
               <div>
                 <label className="text-xs text-pnp-textSecondary block mb-1">Access type</label>
-                <select
+                <select id="pnp-creatorchannelshub-3"
                   value={createForm.accessType}
                   onChange={e => setCreateForm(f => ({ ...f, accessType: e.target.value as typeof f.accessType }))}
                   className="w-full px-3 py-2.5 rounded-xl text-sm text-white bg-pnp-surface border border-pnp-border focus:outline-none focus:border-pnp-primary"

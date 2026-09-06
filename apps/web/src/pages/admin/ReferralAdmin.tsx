@@ -153,7 +153,7 @@ export default function ReferralAdmin() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-5">
-        <select
+        <select id="pnp-referraladmin-1"
           value={status}
           onChange={(e) => handleStatusChange(e.target.value as "all" | "pending" | "completed")}
           className="rounded-xl px-3 py-2 text-sm text-white focus:outline-none"
@@ -166,7 +166,7 @@ export default function ReferralAdmin() {
           <option value="pending">Pending</option>
           <option value="completed">Completed</option>
         </select>
-        <input
+        <input id="pnp-referraladmin-2"
           type="text"
           placeholder="Search by username..."
           value={search}
