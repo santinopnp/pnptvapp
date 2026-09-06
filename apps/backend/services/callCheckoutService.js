@@ -39,6 +39,10 @@ const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
   ? 'https://api-sandbox.nowpayments.io/v1'
   : 'https://api.nowpayments.io/v1';
 
+function nowpaymentsWidgetUrl(invoiceId) {
+  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
+}
+
 /**
  * Escape user-supplied values before interpolation into HTML templates.
  * Prevents HTML/script injection in email bodies and Telegram HTML messages.
@@ -817,7 +821,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
   if (reusableDso) {
     const rMeta = typeof reusableDso.metadata === 'object' ? reusableDso.metadata : JSON.parse(reusableDso.metadata || '{}');
     const existingInvoiceId = rMeta.nowpaymentsInvoiceId;
-    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? `https://nowpayments.io/payment/?iid=${existingInvoiceId}` : null);
+    const existingUrl = rMeta.checkoutUrl || (existingInvoiceId ? nowpaymentsWidgetUrl(existingInvoiceId) : null);
     if (existingUrl) {
       logger.info('[callCheckoutService] Reusing pending NowPayments call DSO', { userId, packageId, dsoOrderId: reusableDso.btcpay_invoice_id });
       return {
@@ -982,7 +986,7 @@ async function createCallCheckoutNowPayments({ userId, packageId, startTimeUtc, 
     );
     const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('NowPayments returned no invoice id');
-    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
     npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validCallPayCurrency };
   } catch (invoiceErr) {
     if (booking?.id) {

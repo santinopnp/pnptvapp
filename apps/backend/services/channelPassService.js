@@ -34,6 +34,10 @@ const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
 const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://pnptv.app';
 
+function nowpaymentsWidgetUrl(invoiceId) {
+  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
+}
+
 // 14-coin allowlist (mirrors tokenCheckoutService line 560 post-fix).
 const ALLOWED_NP_CURRENCIES = new Set([
   'btc', 'eth', 'ltc', 'doge', 'xmr', 'sol', 'trx', 'bnbbsc', 'matic',
@@ -620,7 +624,7 @@ async function purchaseWithFiat({ userId, creatorId, provider, payCurrency }) {
       if (!npId) throw new Error('No invoice id returned by NowPayments');
 
       nowpaymentsInvoiceId = String(npId);
-      invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+      invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
     } catch (invoiceErr) {
       logger.error('[channelPassService] purchaseWithFiat nowpayments: invoice creation failed', {
         userId, creatorId, orderId,

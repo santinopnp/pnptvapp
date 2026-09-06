@@ -57,7 +57,7 @@ jest.mock('../config/btcpay', () => ({
   getInvoice:               jest.fn(),
   getInvoicePaymentMethods: jest.fn(async () => []),
   isConfigured:             jest.fn(() => true),
-}));
+}), { virtual: true });
 
 // NowPayments HTTP — mock axios used by the route
 const mockAxiosPost = jest.fn();
@@ -212,6 +212,8 @@ function buildApp(sessionUser = null) {
       const npUrl = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
         ? 'https://api-sandbox.nowpayments.io/v1'
         : 'https://api.nowpayments.io/v1';
+      const nowpaymentsWidgetUrl = (invoiceId) =>
+        `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
       try {
         const orderId = `pnptv-nowp-channel-${userId}-${channel.id}-test`;
         const paymentResp = await axios.post(`${npUrl}/invoice`, {
@@ -228,7 +230,7 @@ function buildApp(sessionUser = null) {
         });
         const { id: npInvoiceId } = paymentResp.data;
         if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-        const invoiceUrl = `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+        const invoiceUrl = nowpaymentsWidgetUrl(npInvoiceId);
         const insertRes = await getPool().query(
           `INSERT INTO dash_subscription_orders
              (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -482,7 +484,7 @@ describe('POST /api/webapp/channels/:channelId/purchase — NowPayments happy pa
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.paymentId).toBe('99');
-    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/payment/?iid=np-inv-ch-1');
+    expect(res.body.checkoutUrl).toBe('https://nowpayments.io/embeds/payment-widget?iid=np-inv-ch-1');
   });
 
   it('returns 502 when NowPayments API call fails', async () => {

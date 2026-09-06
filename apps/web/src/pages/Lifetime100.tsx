@@ -208,7 +208,8 @@ function ModalOverlay({
 //
 // Two-step flow inside one modal:
 //   1. Email + currency picker → POST /api/public/lifetime100/np-invoice
-//   2. On success, swap in an NP widget iframe + MetaMask/Trust Wallet chips
+//   2. On success, open NowPayments payment widget in a popup window.
+//      MetaMask/Trust Wallet deep-link chips are shown as alternatives.
 //
 // PRIME activates automatically via the shared NP IPN webhook once payment
 // confirms — no code, no activation step.

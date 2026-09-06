@@ -10836,7 +10836,7 @@ app.post('/api/webapp/hangouts/groups/:id/purchase', requireSessionAuth, asyncHa
       });
       const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+      const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
            (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -10934,7 +10934,7 @@ app.post('/api/webapp/channels/:channelId/purchase', requireSessionAuth, channel
       });
       const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-      const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+      const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
       const insertRes = await getPool().query(
         `INSERT INTO dash_subscription_orders
            (user_id, plan_id, email, usd_amount, btcpay_invoice_id, status, metadata)
@@ -13751,6 +13751,8 @@ const NOWPAYMENTS_URL = process.env.NOWPAYMENTS_ENVIRONMENT === 'sandbox'
   ? 'https://api-sandbox.nowpayments.io/v1'
   : 'https://api.nowpayments.io/v1';
 const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
+const nowpaymentsWidgetUrl = (invoiceId) =>
+  `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
 
 function validateNowpaymentsIpn(body, signature) {
   const secret = process.env.NOWPAYMENTS_IPN_SECRET || '';
@@ -13971,7 +13973,7 @@ app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyn
     nowpaymentsInvoiceId = paymentResp.data?.id;
     invoiceUrl = paymentResp.data?.invoice_url;
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    if (!invoiceUrl) invoiceUrl = `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+    if (!invoiceUrl) invoiceUrl = nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
   } catch (err) {
     logger.error('[LT100-NP] NowPayments invoice creation failed', {
       email, payCurrency, error: err.response?.data || err.message,
@@ -14130,7 +14132,7 @@ app.post('/__np_retired_stub__usdc-subscribe', requireSessionAuth, usdcSubscribe
     });
     const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
     npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
   } catch (err) {
     logger.error('[NOWPayments] Subscription payment creation failed', { userId, planId, payCurrency: validPayCurrency, error: err.response?.data || err.message });
@@ -14313,7 +14315,7 @@ app.post('/api/webapp/payments/usdc/prepare', requireSessionAuth, usdcPrepareLim
     });
     const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-    invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+    invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
     npPayInfo2 = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency || 'usdcsol' };
   } catch (err) {
     logger.error('[NOWPayments] Payment creation failed', { userId, planId, orderId, payCurrency: validPayCurrency, error: err.message });
@@ -14817,7 +14819,7 @@ app.post('/api/webapp/creators/:creatorId/tip', requireSessionAuth, creatorTipLi
 
   const nowpaymentsInvoiceId = invoiceData?.id || invoiceData?.invoice_id || null;
   const invoiceUrl = invoiceData?.invoice_url
-    || (nowpaymentsInvoiceId ? `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}` : null);
+    || (nowpaymentsInvoiceId ? nowpaymentsWidgetUrl(nowpaymentsInvoiceId) : null);
 
   // Insert into dash_subscription_orders
   await dbQuery(
@@ -15615,27 +15617,30 @@ app.post('/api/webhooks/nowpayments', webhookLimiter, express.json(), asyncHandl
     }
   }
 
-  // ── Creator tip: 100% goes to creator (no platform commission) ─────────────
+  // ── Creator tip settlement ────────────────────────────────────────────────
   if (order.plan_id === 'creator_tip') {
     const { TIP_CREATOR_RATE } = require('../../config/monetizationConfig');
     const grossAmount = parseFloat(order.usd_amount) || 0;
     const tipCreatorId = order.creator_id ? String(order.creator_id) : null;
 
     try {
-      // Insert creator earnings — is_tip=true, 100% to creator
+      // Insert creator earnings. Idempotent on the partial unique index:
+      // (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL.
       if (grossAmount > 0 && tipCreatorId) {
+        const amountCreator = Math.round(grossAmount * TIP_CREATOR_RATE * 100) / 100;
+        const amountPlatform = Math.round((grossAmount - amountCreator) * 100) / 100;
         const earningsInsert = await dbQuery(
           `INSERT INTO creator_earnings
              (creator_id, amount_gross, amount_creator, amount_platform, status,
               available_at, source_payment_id, period_month, is_tip)
            VALUES ($1, $2, $3, $4, 'available', NOW(), $5, date_trunc('month', CURRENT_DATE), true)
-           ON CONFLICT DO NOTHING
+           ON CONFLICT (source_payment_id, creator_id) WHERE source_payment_id IS NOT NULL DO NOTHING
            RETURNING id`,
           [
             tipCreatorId,
             grossAmount,
-            Math.round(grossAmount * TIP_CREATOR_RATE * 100) / 100,
-            0,
+            amountCreator,
+            amountPlatform,
             order_id,
           ]
         );
@@ -18560,7 +18565,7 @@ app.post('/api/creator/crystal/self/checkout', requireSessionAuth, crystalSelfCh
     });
     const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-    const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+    const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
 
     await dbQuery(
       `INSERT INTO dash_subscription_orders
@@ -18686,7 +18691,7 @@ app.post('/api/creators/:id/crystal/gift/checkout', crystalGiftCheckoutLimiter, 
     });
     const { id: npInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
     if (!npInvoiceId) throw new Error('No invoice id in NowPayments response');
-    const invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+    const invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(npInvoiceId);
 
     await dbQuery(
       `INSERT INTO dash_subscription_orders
@@ -19494,7 +19499,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
       });
       const npInvoiceId = paymentResp.data?.id;
       if (!npInvoiceId) throw new Error('no invoice id from NP');
-      const invoiceUrl = paymentResp.data?.invoice_url || `https://nowpayments.io/payment/?iid=${npInvoiceId}`;
+      const invoiceUrl = paymentResp.data?.invoice_url || nowpaymentsWidgetUrl(npInvoiceId);
 
       await query(
         `INSERT INTO dash_subscription_orders

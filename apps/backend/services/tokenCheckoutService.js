@@ -43,6 +43,10 @@ const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function nowpaymentsWidgetUrl(invoiceId) {
+  return `https://nowpayments.io/embeds/payment-widget?iid=${encodeURIComponent(String(invoiceId))}`;
+}
+
 /**
  * Resolve a validated token package from the shared catalogue.
  * @param {string} packageId
@@ -595,7 +599,7 @@ class TokenCheckoutService {
       }
       const { id: nowpaymentsInvoiceId, invoice_url: npInvoiceUrl } = paymentResp.data;
       if (!nowpaymentsInvoiceId) throw new Error('No invoice id in response');
-      invoiceUrl = npInvoiceUrl || `https://nowpayments.io/payment/?iid=${nowpaymentsInvoiceId}`;
+      invoiceUrl = npInvoiceUrl || nowpaymentsWidgetUrl(nowpaymentsInvoiceId);
       npPayInfo = { nowpaymentsInvoiceId: String(nowpaymentsInvoiceId), payCurrency: validPayCurrency };
     } catch (invoiceErr) {
       logger.error('TokenCheckoutService.createNowPaymentsCheckout: NowPayments error', {

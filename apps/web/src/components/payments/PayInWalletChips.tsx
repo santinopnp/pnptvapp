@@ -319,6 +319,10 @@ function usePrivyRecovery() {
 
   if (!ready && elapsedMs < 5000) return { status: "initializing" as const, elapsedMs, wallets, serverWalletAddr };
   if (ready && !authenticated) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
+  // SDK never became ready after 5s — total hang (iOS Safari storage partitioning,
+  // network failure during Privy init). Route to recovery UI instead of showing a
+  // broken "ready" state with null wallets.
+  if (!ready && elapsedMs >= 5000) return { status: "needs_login" as const, elapsedMs, wallets, serverWalletAddr };
   // Authenticated but no wallets — only alarming when server says user should have one
   if (authenticated && wallets.length === 0 && serverHasPrivy === true && elapsedMs > 5000) {
     return { status: "no_wallet" as const, elapsedMs, wallets, serverWalletAddr };
@@ -414,12 +418,12 @@ export function WalletPayCard({
     setLoading(true);
     Promise.all([
       getWalletUsdcBalance(activeWallet.address).catch(() => null),
-      isEmbedded ? Promise.resolve(null) : getWalletEthBalance(activeWallet.address).catch(() => null),
+      getWalletEthBalance(activeWallet.address).catch(() => null),
     ]).then(([usdcR, ethR]) => {
       setUsdc(usdcR?.hasWallet ? usdcR.usdc : null);
       setEth(ethR?.hasWallet ? ethR.eth : null);
     }).finally(() => setLoading(false));
-  }, [authenticated, activeWallet?.address, isEmbedded]);
+  }, [authenticated, activeWallet?.address]);
 
   // Not signed into Privy yet — frame as card-primary so a card-only user
   // doesn't bail thinking this is a new-account onboarding step. The Privy
@@ -763,7 +767,9 @@ export function WalletPayCard({
                 ? (es ? `${usdc.toFixed(2)} USDC · Necesitas ~$0.01 ETH para gas` : `${usdc.toFixed(2)} USDC · Need ~$0.01 ETH for gas`)
                 : usdc == null || usdc === 0
                   ? (es ? "Sin saldo USDC" : "No USDC balance")
-                  : `${usdc.toFixed(2)} USDC · Base · ${gasLabel}`}
+                  : eth != null
+                    ? `${usdc!.toFixed(2)} USDC · ${eth.toFixed(4)} ETH · Base · ${gasLabel}`
+                    : `${usdc!.toFixed(2)} USDC · Base · ${gasLabel}`}
           </p>
         </div>
       </div>

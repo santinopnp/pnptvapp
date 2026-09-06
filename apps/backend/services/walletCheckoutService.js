@@ -31,6 +31,16 @@ const RECEIVING_ADDRESS = () => process.env.CRYPTO_RECEIVING_ADDRESS;
 const GAS_MANAGER_POLICY_ID = () => process.env.ALCHEMY_GAS_MANAGER_POLICY_ID || null;
 const INTENT_EXPIRY_MINUTES = 20;
 const TOKENS_PER_USD = 6;  // See memory: feedback_token_rate.md
+// Crystal Creator Pass prices are enforced server-side for every wallet rail.
+// Client-supplied amountUsd is ignored for these fixed-price surfaces.
+const {
+  CRYSTAL_CREATOR_SELF_PRICE_CENTS,
+  CRYSTAL_CREATOR_GIFT_PRICE_CENTS,
+} = require('../config/monetizationConfig');
+const CRYSTAL_PRICES = {
+  crystal_self: CRYSTAL_CREATOR_SELF_PRICE_CENTS / 100,
+  crystal_gift: CRYSTAL_CREATOR_GIFT_PRICE_CENTS / 100,
+};
 
 const VALID_SURFACES = new Set([
   'donation', 'membership', 'prime', 'creator_sub', 'call', 'rush', 'channel', 'hangout',
@@ -191,9 +201,6 @@ async function initiateUsdcPurchase(opts) {
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
-  // Crystal Pass es de compra abierta desde 2026-09-05 (antes invite-only).
-  // El precio lo impone el servidor: llegaba como amountUsd desde el cliente,
-  // así que se podía pedir un pase de $1.
   if (surface === 'crystal_self' || surface === 'crystal_gift') {
     amountUsd = CRYSTAL_PRICES[surface];
   }
@@ -257,6 +264,10 @@ async function initiateEthPurchase(opts) {
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
   _validateEntitlementSpecForIntent(surface, entitlementSpec);
   if (!Number.isFinite(ethUsdPrice) || ethUsdPrice <= 0) throw new Error('walletCheckout: ethUsdPrice must be > 0');
+
+  if (surface === 'crystal_self' || surface === 'crystal_gift') {
+    amountUsd = CRYSTAL_PRICES[surface];
+  }
 
   const receivingAddress = RECEIVING_ADDRESS();
   if (!receivingAddress) throw new Error('CRYPTO_RECEIVING_ADDRESS not configured');
@@ -647,14 +658,14 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
   }
 
   // Zoho revenue log + CRM sync — fire-and-forget, never blocks fulfillment.
-  // Skips wallet_usdc calls when the amount is zero (e.g. founder grants) or
-  // when the surface is 'rush' (Ru$h purchases are logged separately via
-  // _fulfillRush's own hook to include the token count).
+  // Skips zero-dollar grants and Ru$h token purchases; _fulfillRush logs those
+  // separately with the token count.
   setImmediate(async () => {
     try {
       const zohoBooks = require('./zohoBooksService');
       if (!zohoBooks.isConfigured()) return;
       if (Number(amountUsd) <= 0) return;
+      if (surface === 'rush') return;
 
       // Build a human-readable SKU per surface so P&L breaks down by product.
       const spec = entitlementSpec || {};
@@ -687,7 +698,7 @@ async function _fulfill(client, { userId, entitlementSpec, surface, provider, in
         buyerUsername: u.username || null,
         sku,
         priceCents: Math.round((Number(amountUsd) || 0) * 100),
-        provider: `wallet_${(entitlementSpec?.rail || 'usdc')}`,
+        provider,
         reference: `checkout_intent:${intentId}`,
         notes: spec.creatorId || spec.creator_id
           ? `Recipient creator: ${spec.creatorId || spec.creator_id}`
@@ -1137,7 +1148,7 @@ async function _fulfillCallBooking(client, { userId, entitlementSpec, provider, 
 
 /**
  * Fulfill a wallet-USDC tip to a creator. Credits creator_earnings with
- * TIP_CREATOR_RATE (100% to creator per monetizationConfig) and NO entitlement.
+ * TIP_CREATOR_RATE and NO entitlement.
  * The `source_payment_id` = `wallet_tip:<intentId>` guarantees a unique row
  * so a replayed webhook is a no-op via the unique constraint.
  */
@@ -1467,13 +1478,6 @@ async function _resolvePlanNameForNotify(surface, entitlementSpec) {
  */
 function requireWalletForSurface(surface) {
   const flags = require('../config/checkoutFlags');
-
-// Tarifa del Crystal Creator Pass, en dólares. Vive en el servidor a propósito:
-// es un producto de precio fijo y el importe no puede depender del cliente.
-const CRYSTAL_PRICES = {
-  crystal_self: 100,   // lo compra el creador
-  crystal_gift: 150,   // se lo regala un cliente
-};
   return async function requireWalletMw(req, res, next) {
     if (!flags.isSurfaceWalletEnabled(surface)) return next();  // legacy path
     const userId = req.session?.user?.id;

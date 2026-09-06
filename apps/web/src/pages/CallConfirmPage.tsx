@@ -74,11 +74,11 @@ export default function CallConfirmPage() {
             </div>
 
             <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "flex-start", gap: 14, textAlign: "left" }}>
-              <span style={{ fontSize: "1.3rem", flexShrink: 0, marginTop: 2 }}>📩</span>
+              <span style={{ fontSize: "1.3rem", flexShrink: 0, marginTop: 2 }}>✅</span>
               <div>
-                <p style={{ color: "#fff", fontWeight: 600, margin: "0 0 4px", fontSize: "0.9rem" }}>Envía tu comprobante</p>
+                <p style={{ color: "#fff", fontWeight: 600, margin: "0 0 4px", fontSize: "0.9rem" }}>Sin pasos adicionales</p>
                 <p style={{ color: "rgba(255,255,255,.55)", margin: 0, fontSize: "0.82rem", lineHeight: 1.5 }}>
-                  Si aún no lo has hecho, envía la captura de tu pago por DM en PNPtv! para acelerar la confirmación.
+                  Nuestro equipo confirmará tu pago en los próximos 15 minutos. No es necesario hacer nada más.
                 </p>
               </div>
             </div>

@@ -249,7 +249,7 @@ async function getBookingOptions(req, res) {
 
     // Sin huecos: anotar el intento para avisar cuando vuelva a estar disponible.
     if (!slots.length && !nearTermSlots.length) {
-      const viewerId = String(req.user?.id || req.user?.userId || '');
+      const viewerId = String(req.session?.user?.id || req.user?.id || req.user?.userId || '');
       if (viewerId) {
         require('../../../services/callWaitlistService')
           .recordMiss({ memberId: viewerId, creatorId, durationMinutes })
@@ -327,13 +327,29 @@ async function bookCall(req, res) {
       return res.status(400).json({ error: 'Cannot book more than 90 days in advance' });
     }
 
-    // BC-C-03: Re-verify creator online status from Redis before booking
+    // BC-C-03: Re-verify near-term/live availability from Redis before booking.
+    // Scheduled future slots are allowed while offline; "available now" slots
+    // depend on the creator still being online and accepting calls at submit.
     const { getRedis } = require('../../../config/redis');
     const redis = getRedis();
-    const creatorOnline = await redis.get(`user:${creatorId}:active`);
-    if (!creatorOnline) {
-      logger.warn('bookCall: creator offline at booking time', { creatorId, memberId });
-      // Not blocking — scheduled bookings are valid even if creator is offline
+    const [creatorOnline, acceptingRaw] = await Promise.all([
+      redis.get(`user:${creatorId}:active`),
+      redis.get(`user:${creatorId}:accepting_calls`),
+    ]);
+    const isNearTermSlot = moment.utc(startAt).isBefore(moment.utc().add(65, 'minutes'));
+    if (isNearTermSlot && (!creatorOnline || creatorOnline === '0' || acceptingRaw === '0')) {
+      logger.warn('bookCall: near-term slot rejected; creator no longer available', {
+        creatorId,
+        memberId,
+        startAt,
+        creatorOnline,
+        acceptingRaw,
+      });
+      return res.status(409).json({
+        success: false,
+        error: 'Creator is no longer available. Please choose another time.',
+        code: 'CREATOR_NOT_AVAILABLE',
+      });
     }
 
     const booking = await CallBookingService.createBooking({
