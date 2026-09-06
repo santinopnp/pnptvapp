@@ -41,6 +41,26 @@ const VALID_SURFACES = new Set([
   'channel_pass',    // Channel Pass — fan monthly sub to a creator ($5-$50/30d)
 ]);
 
+/**
+ * Reject intents that would fail at fulfill time due to a missing shape.
+ * Historically the shape check lived only inside _fulfill* functions — but
+ * once the tx is on-chain, throwing at fulfill leaves the payer's funds moved
+ * with no delivery. Fail-fast at intent creation instead.
+ */
+function _validateEntitlementSpecForIntent(surface, spec) {
+  const s = spec || {};
+  if (surface === 'call') {
+    if (!s.packageId) throw new Error('walletCheckout: entitlementSpec.packageId required for surface="call"');
+    if (!s.creator_id) throw new Error('walletCheckout: entitlementSpec.creator_id required for surface="call"');
+  }
+  if (surface === 'tip' && !s.creator_id) {
+    throw new Error('walletCheckout: entitlementSpec.creator_id required for surface="tip"');
+  }
+  if (surface === 'channel_pass' && !s.creator_id) {
+    throw new Error('walletCheckout: entitlementSpec.creator_id required for surface="channel_pass"');
+  }
+}
+
 // ── Ru$h rail ──────────────────────────────────────────────────────────────
 /**
  * Debit Ru$h from a user's wallet + grant the entitlement in one transaction.
@@ -65,6 +85,7 @@ async function initiateRushPurchase(opts) {
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
   const tokenCost = Math.round(amountUsd * TOKENS_PER_USD);
   const pool = getPool();
@@ -168,6 +189,7 @@ async function initiateUsdcPurchase(opts) {
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  _validateEntitlementSpecForIntent(surface, entitlementSpec);
 
   // Crystal Pass es de compra abierta desde 2026-09-05 (antes invite-only).
   // El precio lo impone el servidor: llegaba como amountUsd desde el cliente,
@@ -233,6 +255,7 @@ async function initiateEthPurchase(opts) {
   if (!userId) throw new Error('walletCheckout: userId required');
   if (!VALID_SURFACES.has(surface)) throw new Error(`walletCheckout: invalid surface "${surface}"`);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw new Error('walletCheckout: amountUsd must be > 0');
+  _validateEntitlementSpecForIntent(surface, entitlementSpec);
   if (!Number.isFinite(ethUsdPrice) || ethUsdPrice <= 0) throw new Error('walletCheckout: ethUsdPrice must be > 0');
 
   const receivingAddress = RECEIVING_ADDRESS();
