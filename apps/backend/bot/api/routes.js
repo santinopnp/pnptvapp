@@ -4646,7 +4646,7 @@ app.get('/api/webapp/admin/service-status', adminGuard, asyncHandler(async (_req
         0                                                                                AS open_tickets,
         0                                                                                AS new_tickets_24h,
         (SELECT COUNT(*)::int FROM social_posts WHERE is_deleted = false AND created_at > NOW() - INTERVAL '24 hours') AS posts_24h,
-        (SELECT COUNT(*)::int FROM hangouts WHERE is_active = true)                      AS active_hangouts,
+        (SELECT COUNT(*)::int FROM hangout_groups WHERE is_public = true)                AS active_hangouts,
         (SELECT COUNT(*)::int FROM live_streams WHERE status = 'live')                   AS live_streams_active,
         (SELECT COUNT(*)::int FROM users WHERE creator_status = 'active' AND role IN ('model','creator')) AS active_creators,
         (SELECT COUNT(*)::int FROM model_applications WHERE status = 'pending')           AS creator_apps_pending

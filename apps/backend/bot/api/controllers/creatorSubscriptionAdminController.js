@@ -17,7 +17,12 @@ const creatorSubscriptionAdminController = {
           u.id                            AS creator_id,
           u.username                      AS creator_username,
           u.first_name                    AS creator_first_name,
-          u.avatar_url                    AS creator_avatar,
+          CASE
+            WHEN u.photo_file_id IS NULL THEN NULL
+            WHEN u.photo_file_id LIKE 'http%' THEN u.photo_file_id
+            WHEN u.photo_file_id LIKE '/%' THEN u.photo_file_id
+            ELSE '/uploads/avatars/' || u.photo_file_id
+          END                             AS creator_avatar,
           u.creator_type,
           u.creator_price_usd,
           u.crystal_creator_active_until,
@@ -79,7 +84,14 @@ const creatorSubscriptionAdminController = {
 
       const { rows: creatorRows } = await query(
         `SELECT
-           id, username, first_name, avatar_url, creator_type, creator_price_usd,
+           id, username, first_name,
+           CASE
+             WHEN photo_file_id IS NULL THEN NULL
+             WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+             WHEN photo_file_id LIKE '/%' THEN photo_file_id
+             ELSE '/uploads/avatars/' || photo_file_id
+           END AS avatar_url,
+           creator_type, creator_price_usd,
            creator_subscriber_count, creator_dash_address, payout_method,
            fiat_payout_method, fiat_payout_account, email
          FROM users
@@ -97,7 +109,12 @@ const creatorSubscriptionAdminController = {
            cs.subscriber_id,
            u.username          AS subscriber_username,
            u.first_name        AS subscriber_first_name,
-           u.avatar_url        AS subscriber_avatar,
+           CASE
+             WHEN u.photo_file_id IS NULL THEN NULL
+             WHEN u.photo_file_id LIKE 'http%' THEN u.photo_file_id
+             WHEN u.photo_file_id LIKE '/%' THEN u.photo_file_id
+             ELSE '/uploads/avatars/' || u.photo_file_id
+           END                AS subscriber_avatar,
            cs.started_at,
            cs.expires_at,
            cs.status,
