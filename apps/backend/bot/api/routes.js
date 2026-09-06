@@ -119,6 +119,19 @@ const TokenCheckoutService = require('../../services/tokenCheckoutService');
  * Use this before multer on upload routes to reject unauthenticated
  * requests before any file processing begins.
  */
+/**
+ * Rutas que SIRVEN para cruzar la puerta de consentimiento. No pueden exigir
+ * haberla cruzado: /api/verify-age estaba detras de su propio requisito, y por
+ * eso la verificacion por foto no ha funcionado nunca.
+ * Siguen exigiendo sesion, baneo, cuenta activa y version de sesion.
+ */
+const CONSENT_GATE_EXEMPT = new Set([
+  '/api/verify-age',
+  '/api/verify-age-self',
+  '/api/accept-terms',
+  '/api/complete-onboarding',
+]);
+
 const requireSessionAuth = async (req, res, next) => {
   if (!req.session?.user?.id) return res.status(401).json({ error: 'Not authenticated' });
   req.user = req.session.user;
@@ -157,7 +170,8 @@ const requireSessionAuth = async (req, res, next) => {
     // the VerificationGate (age self-declaration + terms acceptance).
     // Note: this bypass does NOT honour the God Mode toggle — a super-god who
     // toggles off shouldn't get bounced to a re-verification screen mid-session.
-    if (userRow && userRow.role !== 'admin' && userRow.role !== 'superadmin') {
+    const exentaDeConsentimiento = CONSENT_GATE_EXEMPT.has(req.path);
+    if (!exentaDeConsentimiento && userRow && userRow.role !== 'admin' && userRow.role !== 'superadmin') {
       if (!userRow.age_verified) {
         return res.status(403).json({ success: false, error: 'Age verification required.', code: 'AGE_VERIFICATION_REQUIRED' });
       }
