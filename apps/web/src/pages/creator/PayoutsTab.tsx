@@ -23,17 +23,11 @@ const POLL_INTERVAL_MS = 60_000;
 type CashoutLane = PayoutLane; // re-export for local readability
 type PayoutMethod = "bank_transfer" | "dash";
 
-// Display metadata for each cashout lane. Order here drives the lane picker.
-// Aligned with backend cashoutService.js (migration 364, 2026-08-08). The
-// previous lanes (meru/btc/dash/usdt_*) are permanently retired — the backend
-// rejects them with 400 INVALID_LANE, which is why cashout requests were
-// silently failing in the wild before this fix.
-const LANE_META: { id: PayoutLane; label: string; icon: string; destField: "address" | "handle" | "email" }[] = [
-  { id: "usdc_erc20", label: "USDC — Ethereum",  icon: "💵", destField: "address" },
-  { id: "eth",        label: "ETH — Ethereum",   icon: "⟠",  destField: "address" },
-  { id: "bre_b",      label: "Bre-B (Colombia)", icon: "🇨🇴", destField: "handle"  },
-  { id: "cashapp",    label: "Cash App",         icon: "💰", destField: "handle"  },
-  { id: "wise",       label: "Wise",             icon: "🌍", destField: "email"   },
+// Single-lane payout — USDC on Base to the creator's Privy embedded wallet.
+// Simplified 2026-09-05 (previously we had 5 lanes with per-provider quirks).
+// From here creators bridge / swap / off-ramp to any exchange themselves.
+const LANE_META: { id: PayoutLane; label: string; icon: string; destField: "address" }[] = [
+  { id: "privy_wallet", label: "USDC on Base — my wallet", icon: "💎", destField: "address" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -58,21 +52,12 @@ function laneLabelKey(lane: CashoutLane, _t: CreatorStrings): string {
   return meta?.label ?? lane;
 }
 
-// Pull the destination payload (e.g. {address}, {handle}, or {email}) for a
-// lane from the saved destinations blob. Returns null when the creator has not
-// saved this lane yet — the modal disables that lane in the picker.
+// Legacy helper kept only for the RushCreatorPanel modal's live-preview logic
+// while the multi-lane UI is being unwound. Now returns just the address entry.
 function destForLane(lane: PayoutLane, destinations: PayoutDestinations): Record<string, string> | null {
-  const meta = LANE_META.find((l) => l.id === lane);
-  if (!meta) return null;
-  const entry = (destinations as Record<string, { handle?: string; address?: string; email?: string } | undefined>)[lane];
-  if (!entry) return null;
-  if (meta.destField === "handle") {
-    return entry.handle ? { handle: entry.handle } : null;
-  }
-  if (meta.destField === "email") {
-    return entry.email ? { email: entry.email } : null;
-  }
-  return entry.address ? { address: entry.address } : null;
+  const entry = (destinations as Record<string, { address?: string } | undefined>)[lane];
+  if (!entry?.address) return null;
+  return { address: entry.address };
 }
 
 function statusLabelKey(status: string, t: CreatorStrings): string {
@@ -315,10 +300,12 @@ interface CashoutModalProps {
 }
 
 function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProps) {
-  const [lane, setLane] = useState<CashoutLane>("meru");
+  // Single-lane Privy wallet mode — no picker, no per-lane state.
+  const lane: CashoutLane = "privy_wallet";
   const [amountStr, setAmountStr] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [destinations, setDestinations] = useState<PayoutDestinations>({});
   const [destLoading, setDestLoading] = useState(true);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -349,7 +336,8 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Load saved destinations from creator profile + reset modal state on open
+  // Load the creator's Privy wallet + reset modal state on open.
+  // Backend now returns { wallet_address, chain, token } as the single destination.
   useEffect(() => {
     if (!open) return;
     setSubmitError(null);
@@ -358,10 +346,8 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
     getCreatorWallet()
       .then((res) => {
         if (res.success) {
+          setWalletAddress(res.wallet_address || null);
           setDestinations(res.destinations || {});
-          // Pre-select the first lane that has a saved destination
-          const firstAvailable = LANE_META.find((m) => destForLane(m.id, res.destinations || {}));
-          if (firstAvailable) setLane(firstAvailable.id);
         }
       })
       .catch(() => {})
@@ -370,16 +356,16 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
 
   if (!open) return null;
 
-  const selectedDest = destForLane(lane, destinations);
-  const selectedMeta = LANE_META.find((m) => m.id === lane);
+  const selectedMeta = LANE_META[0];
   const amountNum = parseFloat(amountStr) || 0;
+  const hasWallet = !!walletAddress && walletAddress.startsWith("0x");
   const amountValid =
+    hasWallet &&
     amountNum >= MIN_CASHOUT_USD &&
-    amountNum <= balance.available_usd &&
-    !!selectedDest;
+    amountNum <= balance.available_usd;
 
   const handleSubmit = async () => {
-    if (!selectedDest) {
+    if (!hasWallet) {
       setSubmitError(t.modalAddDestFirst(selectedMeta?.label || lane));
       return;
     }
@@ -396,10 +382,11 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // Backend derives the destination from the server-side wallet lookup —
+      // no client-supplied destination needed.
       await requestCashout({
         amount_usd: amountNum,
         lane,
-        destination: selectedDest,
       });
       onSuccess();
       onClose();
@@ -409,6 +396,8 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
       setSubmitting(false);
     }
   };
+  // Suppress unused-var warnings for legacy state kept for compat.
+  void destinations;
 
   return (
     <div
@@ -448,41 +437,41 @@ function CashoutModal({ open, balance, onClose, onSuccess, t }: CashoutModalProp
         </div>
 
         <div className="px-5 pb-6 overflow-y-auto flex-1">
-          {/* Lane picker */}
+          {/* Single-lane Privy wallet display (no picker) */}
           <p className="text-xs font-semibold text-white mb-2">{t.modalPayoutMethod}</p>
-          <div className="space-y-2 mb-4">
-            {LANE_META.map((meta) => {
-              const dest = destForLane(meta.id, destinations);
-              const enabled = !!dest;
-              const isSelected = lane === meta.id;
-              const destPreview = dest ? (dest.handle || dest.address) : null;
-              return (
-                <button
-                  key={meta.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={isSelected}
-                  disabled={!enabled || destLoading}
-                  onClick={() => { setLane(meta.id); setSubmitError(null); }}
-                  className="w-full flex items-center justify-between px-3 py-3 rounded-lg text-left transition-colors disabled:opacity-40"
-                  style={{
-                    background: isSelected ? "rgba(212,0,122,0.15)" : "rgba(255,255,255,0.04)",
-                    border: isSelected ? "1px solid #D4007A" : "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-base">{meta.icon}</span>
-                    <span className="text-sm font-semibold text-white">{meta.label}</span>
+          <div className="mb-4">
+            <div
+              className="flex items-center justify-between px-3 py-3 rounded-lg"
+              style={{
+                background: hasWallet ? "rgba(212,0,122,0.15)" : "rgba(255,255,255,0.04)",
+                border: hasWallet ? "1px solid #D4007A" : "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-base">💎</span>
+                <span className="flex flex-col">
+                  <span className="text-sm font-semibold text-white">USDC on Base</span>
+                  <span className="text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                    Your Privy wallet
                   </span>
-                  <span className="text-xs font-mono truncate max-w-[180px]"
-                    style={{ color: enabled ? "#8E8E93" : "rgba(142,142,147,0.5)" }}>
-                    {destPreview
-                      ? (destPreview.length > 18 ? destPreview.slice(0, 8) + "…" + destPreview.slice(-6) : destPreview)
-                      : t.modalAddInSettings}
-                  </span>
-                </button>
-              );
-            })}
+                </span>
+              </span>
+              <span
+                className="text-xs font-mono truncate max-w-[180px]"
+                style={{ color: hasWallet ? "#8E8E93" : "rgba(142,142,147,0.6)" }}
+              >
+                {walletAddress
+                  ? walletAddress.slice(0, 6) + "…" + walletAddress.slice(-4)
+                  : destLoading
+                    ? "…"
+                    : "Connect wallet first"}
+              </span>
+            </div>
+            {!hasWallet && !destLoading && (
+              <p className="mt-2 text-[11px]" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                Log in with Privy to link your embedded wallet — from there you can bridge or off-ramp to any exchange.
+              </p>
+            )}
           </div>
 
           {/* Amount input */}
@@ -914,11 +903,10 @@ const RUSH_TO_USD_MIN = 60; // must match backend RUSH_TO_USD_MIN
 function RushCreatorPanel() {
   const [summary, setSummary] = useState<EarningsSummary | null>(null);
   const [reqs, setReqs] = useState<WithdrawRequestRow[]>([]);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<'none' | 'withdraw' | 'convert' | 'rush_to_usd'>('none');
   const [wAmount, setWAmount] = useState('');
-  const [wCurrency, setWCurrency] = useState('usdttrc20');
-  const [wAddress, setWAddress] = useState('');
   const [cAmount, setCAmount] = useState('');
   const [rushConvertAmount, setRushConvertAmount] = useState('');
   const [busy, setBusy] = useState(false);
@@ -927,35 +915,42 @@ function RushCreatorPanel() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const [s, r] = await Promise.all([
+      const [s, r, w] = await Promise.all([
         fetch('/api/webapp/creators/earnings-summary', { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))),
         fetch('/api/webapp/creators/withdraw', { credentials: 'include' }).then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))),
+        getCreatorWallet().catch(() => null),
       ]);
       setSummary(s);
       setReqs(r.requests || []);
+      setWalletAddress(w?.wallet_address || null);
     } catch (e) { setErr(e instanceof Error ? e.message : 'Load failed'); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const availableUsd = summary ? parseFloat(String(summary.earnings.available_usd || 0)) : 0;
+  const hasWallet = !!walletAddress && /^0x[a-fA-F0-9]{40}$/.test(walletAddress || '');
 
   const submitWithdraw = async () => {
     const amt = parseFloat(wAmount);
-    if (!(amt >= 50)) { setErr('Minimum $50'); return; }
+    if (!(amt >= 25)) { setErr('Minimum $25'); return; }
     if (amt > availableUsd) { setErr(`You only have $${availableUsd.toFixed(2)} available`); return; }
-    if (wAddress.trim().length < 20) { setErr('Invalid destination address'); return; }
+    if (!hasWallet) {
+      setErr('Connect your Privy wallet first — log in with Privy and finish the wallet setup.');
+      return;
+    }
     setBusy(true); setErr(null);
     try {
+      // Backend derives destination server-side from the creator's Privy wallet.
       const res = await fetch('/api/webapp/creators/withdraw', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountUsd: amt, destinationAddress: wAddress.trim(), destinationCurrency: wCurrency }),
+        body: JSON.stringify({ amountUsd: amt }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
       setOkMsg(`Withdrawal request for $${amt.toFixed(2)} submitted. Admin will review shortly.`);
-      setMode('none'); setWAmount(''); setWAddress('');
+      setMode('none'); setWAmount('');
       await load();
       setTimeout(() => setOkMsg(null), 8000);
     } catch (e) { setErr(e instanceof Error ? e.message : 'Withdrawal failed'); }
@@ -1043,11 +1038,11 @@ function RushCreatorPanel() {
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => { setMode('withdraw'); setErr(null); }}
-              disabled={availableUsd < 50}
+              disabled={availableUsd < 25}
               className="p-3 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
             >
-              💵 Withdraw to crypto
-              <div className="text-[10px] opacity-70 mt-1">Min $50 to USDT-TRC20 or others</div>
+              💎 Withdraw to my wallet
+              <div className="text-[10px] opacity-70 mt-1">Min $25 · USDC on Base to your Privy wallet</div>
             </button>
             <button
               onClick={() => { setMode('convert'); setErr(null); }}
@@ -1075,34 +1070,39 @@ function RushCreatorPanel() {
       {mode === 'withdraw' && (
         <div className="space-y-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
           <div className="flex items-center justify-between">
-            <div className="text-xs text-blue-200 font-semibold">Withdraw to crypto</div>
+            <div className="text-xs text-blue-200 font-semibold">💎 Withdraw to my Privy wallet</div>
             <button onClick={() => setMode('none')} className="text-[10px] text-white/60">Cancel</button>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <input
-              type="number" step="0.01" min="50" placeholder={`Min $50 · Max $${availableUsd.toFixed(2)}`}
-              value={wAmount} onChange={(e) => setWAmount(e.target.value)}
-              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
-            />
-            <select
-              value={wCurrency} onChange={(e) => setWCurrency(e.target.value)}
-              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
-            >
-              <option value="usdttrc20">USDT (TRON)</option>
-              <option value="usdterc20">USDT (ERC-20)</option>
-              <option value="usdtbsc">USDT (BSC)</option>
-              <option value="usdcsol">USDC (Solana)</option>
-              <option value="btc">Bitcoin</option>
-              <option value="dash">Dash</option>
-            </select>
-            <input
-              type="text" placeholder="Destination address"
-              value={wAddress} onChange={(e) => setWAddress(e.target.value)}
-              className="col-span-1 px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
-            />
+
+          {/* Single wallet destination — read-only */}
+          <div
+            className="flex items-center justify-between px-3 py-2 rounded-md"
+            style={{
+              background: hasWallet ? 'rgba(59,130,246,0.10)' : 'rgba(255,255,255,0.04)',
+              border: hasWallet ? '1px solid rgba(59,130,246,0.35)' : '1px solid rgba(255,255,255,0.10)',
+            }}
+          >
+            <span className="text-[11px] text-white/70">USDC on Base →</span>
+            <span className="text-[11px] font-mono text-white/90">
+              {walletAddress
+                ? walletAddress.slice(0, 6) + '…' + walletAddress.slice(-4)
+                : 'Not connected'}
+            </span>
           </div>
+          {!hasWallet && (
+            <p className="text-[10px] text-amber-300">
+              Log in with Privy and finish the wallet setup to unlock cashouts. From there you can bridge or off-ramp anywhere.
+            </p>
+          )}
+
+          <input
+            type="number" step="0.01" min="25" placeholder={`Min $25 · Max $${availableUsd.toFixed(2)}`}
+            value={wAmount} onChange={(e) => setWAmount(e.target.value)}
+            className="w-full px-2 py-2 rounded-md bg-black/40 border border-white/10 text-xs text-white"
+          />
+
           <button
-            onClick={submitWithdraw} disabled={busy}
+            onClick={submitWithdraw} disabled={busy || !hasWallet}
             className="w-full py-2 rounded-md bg-blue-500/25 border border-blue-500/40 text-blue-100 hover:bg-blue-500/35 disabled:opacity-50 text-sm"
           >{busy ? 'Submitting…' : 'Request withdrawal'}</button>
           <p className="text-[10px] text-white/50">Admin will review your request within 72 hours. You cannot cancel once approved.</p>
