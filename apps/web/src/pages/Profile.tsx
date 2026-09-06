@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Helmet } from "react-helmet-async";
+import { AdSlot } from "@/components/AdSlot";
 import { useAuth } from "@/hooks/useAuth";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
@@ -1081,6 +1082,10 @@ export default function Profile() {
         <meta name="description" content={profile ? `${profile.display_name || profile.username}'s profile on PNPtv.` : "User profile on PNPtv."} />
       </Helmet>
       {isOwnProfile && showTutorial && <TutorialOverlay section="profile" onDismiss={dismissTutorial} onDismissForever={dismissForever} />}
+      {/* Solo en perfiles ajenos: en el propio, un anuncio no aporta nada. */}
+      {!isOwnProfile && (
+        <div className="my-3 flex justify-center"><AdSlot slot="sidebar_desktop" /></div>
+      )}
       {!isOwnProfile && showCreatorTutorial && <TutorialOverlay section="creatorProfile" onDismiss={dismissCreatorTutorial} onDismissForever={dismissCreatorForever} />}
       {/* ── Back button for public profiles — sticky so it stays visible while scrolling ── */}
       {effectiveParamId && (

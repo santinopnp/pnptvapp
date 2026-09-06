@@ -481,6 +481,10 @@ export default function Home() {
         <div className="my-2 flex justify-center"><AdSlot slot="multi_format" /></div>
         </>
       ) : (
+        <>
+        {/* Anuncios de la vista de hangouts. Los del feed viven en la rama de
+            arriba, asi que esta vista no monetizaba nada propio. */}
+        <div className="my-2 flex justify-center"><AdSlot slot="feed_native" /></div>
         <Suspense
           fallback={
             <div className="flex items-center justify-center py-16">
@@ -490,6 +494,8 @@ export default function Home() {
         >
           <ChatEmbedded embeddedMode />
         </Suspense>
+        <div className="my-4 flex justify-center"><AdSlot slot="multi_format" /></div>
+        </>
       )}
       </>}
     </div>

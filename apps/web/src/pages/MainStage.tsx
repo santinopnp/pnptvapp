@@ -35,6 +35,7 @@ import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
 import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
 import { FreeTierEntryCard } from "@/components/mainstage/FreeTierEntryCard";
 import { AdUnlockButton } from "@/components/mainstage/AdUnlockButton";
+import { AdSlot } from "@/components/AdSlot";
 import { BuyTokensModal } from "@/components/BuyTokensModal";
 import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
 import { BookCallModal } from "@/components/creators/BookCallModal";
@@ -1317,11 +1318,16 @@ export default function MainStage() {
           connecting={viewerConnecting}
           lang={uiLang}
           adUnlockSlot={
-            <AdUnlockButton
-              surface="mainstage_extend"
-              lang={uiLang}
-              onGranted={() => { void handleViewerWatch(); }}
-            />
+            <>
+              <AdUnlockButton
+                surface="mainstage_extend"
+                lang={uiLang}
+                onGranted={() => { void handleViewerWatch(); }}
+              />
+              {/* El anuncio va aqui, en la antesala, y no sobre la emision:
+                  un banner encima del video en vivo cuesta mas de lo que da. */}
+              <div className="mt-4 flex justify-center"><AdSlot slot="instant_message" /></div>
+            </>
           }
         />
       </div>
