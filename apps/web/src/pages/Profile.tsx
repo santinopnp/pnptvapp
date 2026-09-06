@@ -1135,6 +1135,8 @@ export default function Profile() {
           {isOwnProfile && (
             <>
               <input
+                id="profile-cover-upload"
+                name="cover"
                 ref={coverInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif"
@@ -1221,6 +1223,8 @@ export default function Profile() {
             {isOwnProfile && (
               <>
                 <input
+                  id="profile-avatar-upload"
+                  name="avatar"
                   ref={fileInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"

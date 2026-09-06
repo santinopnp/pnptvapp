@@ -1127,6 +1127,8 @@ export default function CreatorProfilePage() {
           {isOwnProfile && (
             <>
               <input
+                id="creator-profile-cover-upload"
+                name="cover"
                 ref={coverInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif"
