@@ -14,16 +14,6 @@ async function listPackages(req, res) {
   try {
     const { creatorId } = req.params;
     const packages = await callPackageService.getPackages(creatorId);
-    // Sin huecos: anotar el intento para avisar cuando vuelva a estar disponible.
-    if (!slots.length && !nearTermSlots.length) {
-      const viewerId = String(req.user?.id || req.user?.userId || '');
-      if (viewerId) {
-        require('../../../services/callWaitlistService')
-          .recordMiss({ memberId: viewerId, creatorId, durationMinutes })
-          .catch(() => {});
-      }
-    }
-
     res.json({ success: true, packages });
   } catch (err) {
     logger.error('listPackages error', { error: err.message });
@@ -256,6 +246,16 @@ async function getBookingOptions(req, res) {
     const allSlots = [...nearTermSlots, ...slots].sort(
       (a, b) => new Date(a.startUtc).getTime() - new Date(b.startUtc).getTime()
     );
+
+    // Sin huecos: anotar el intento para avisar cuando vuelva a estar disponible.
+    if (!slots.length && !nearTermSlots.length) {
+      const viewerId = String(req.user?.id || req.user?.userId || '');
+      if (viewerId) {
+        require('../../../services/callWaitlistService')
+          .recordMiss({ memberId: viewerId, creatorId, durationMinutes })
+          .catch(() => {});
+      }
+    }
 
     const PAGE_SIZE = 5;
     const pageSlots = allSlots.slice(offset, offset + PAGE_SIZE);
