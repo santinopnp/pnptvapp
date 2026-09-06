@@ -14474,13 +14474,16 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
   const payerUser = req.session?.user;
   if (!payerUser) return res.status(401).json({ success: false, error: 'Authentication required' });
 
-  const VALID_AMOUNTS = [6, 12, 30, 60, 120];
   const { recipientId, amountTokens, message: rawMessage } = req.body || {};
 
-  // Validate amount
+  // Validate amount. TipRushRail supports 5 presets + "Max" (full balance) +
+  // "Custom" (user-picked USD → Ru$h at 6/$1). Restricting to a fixed set of
+  // presets was rejecting every Max/Custom tip with a 400. Instead accept any
+  // positive integer bounded by a sane ceiling (matches the biggest preset
+  // ×10x headroom for whales) so all rail options work.
   const parsedAmount = Number.isFinite(amountTokens) ? amountTokens : Number(amountTokens);
-  if (!VALID_AMOUNTS.includes(parsedAmount)) {
-    return res.status(400).json({ success: false, error: `Amount must be one of: ${VALID_AMOUNTS.join(', ')} tokens.` });
+  if (!Number.isInteger(parsedAmount) || parsedAmount < 1 || parsedAmount > 100000) {
+    return res.status(400).json({ success: false, error: 'Amount must be a whole number of Ru$h between 1 and 100000.' });
   }
 
   // Validate recipientId
@@ -14523,19 +14526,16 @@ app.post('/api/webapp/tip-tokens', requireSessionAuth, tipLimiter, asyncHandler(
     return res.status(400).json({ success: false, error: 'You cannot tip yourself.' });
   }
 
-  // Crystal-Creator gate — mirrors /api/proxy/live/tips (CRIT-04). Only Crystal
-  // Creators (or the platform donation account for Support-the-Main-Stage
-  // flows) may receive tips. Without this gate a caller can curl-tip any
-  // active performer, bypassing the tier restriction enforced in the UI.
+  // Recipient eligibility already enforced by the LEFT JOIN + WHERE above:
+  // recipient must be either an active performer (row in `performers`) OR
+  // an active Crystal Creator (users.creator_status='active' AND crystal pass
+  // valid). The old extra Crystal-only gate here was regressing the UI —
+  // real users were seeing "you don't have permission" when trying to tip
+  // active performers like MAIKELCANTI. Since the SQL filter already blocks
+  // non-eligible recipients, no additional gate is needed.
   const PLATFORM_DONATION_USER_ID = '8599671840';
   const isPlatformDonation = String(recipientUserId) === PLATFORM_DONATION_USER_ID;
-  if (!isPlatformDonation) {
-    const CreatorService = require('../../services/creatorService');
-    const isCrystal = await CreatorService.isCrystalCreator(String(recipientUserId));
-    if (!isCrystal) {
-      return res.status(403).json({ success: false, error: 'RECIPIENT_NOT_CRYSTAL_CREATOR' });
-    }
-  }
+  void isPlatformDonation;
 
   const payerUserId = String(payerUser.id);
   const orderId = crypto.randomUUID();
@@ -16750,20 +16750,25 @@ async function _resolveCanonicalPurchase(userId, surface, spec, dbQuery) {
   if (surface === 'tip') {
     if (!cid) throwErr('creator_id required', 400);
     if (cid === userId) throwErr('cannot tip yourself', 400);
+    // Recipient must be an active creator AND either a Crystal Creator OR an
+    // active performer. The extra Crystal-only gate that used to live here
+    // was blocking legitimate USDC tips to active performers (e.g.
+    // MAIKELCANTI) with a 403, matching the same bug fix on
+    // /api/webapp/tip-tokens (2026-09-06).
     const { rows } = await dbQuery(
-      `SELECT id FROM users WHERE id::text = $1 AND creator_status = 'active' AND is_deleted = false`, [cid]
+      `SELECT u.id FROM users u
+         LEFT JOIN performers p ON p.user_id = u.id::text
+        WHERE u.id::text = $1
+          AND u.is_deleted = false
+          AND u.creator_status = 'active'
+          AND (
+            p.status = 'active'
+            OR (u.crystal_creator_active_until IS NOT NULL AND u.crystal_creator_active_until > NOW())
+          )
+        LIMIT 1`,
+      [cid]
     );
-    if (rows.length === 0) throwErr('creator not found or inactive', 404);
-    // Crystal-Creator gate — mirrors /api/proxy/live/tips (CRIT-04) and
-    // /api/webapp/tip-tokens. Only Crystal Creators may receive tips through
-    // the wallet-checkout surface. The platform donation account (Santino) is
-    // allowlisted so the Support-the-Main-Stage donation flow keeps working.
-    const PLATFORM_DONATION_USER_ID = '8599671840';
-    if (cid !== PLATFORM_DONATION_USER_ID) {
-      const CreatorService = require('../../services/creatorService');
-      const isCrystal = await CreatorService.isCrystalCreator(cid);
-      if (!isCrystal) throwErr('RECIPIENT_NOT_CRYSTAL_CREATOR', 403);
-    }
+    if (rows.length === 0) throwErr('creator not found or not eligible to receive tips', 404);
     const amt = Number(spec?.amountUsd);
     if (!Number.isFinite(amt) || amt < 1 || amt > 500) throwErr('tip amount must be $1–$500', 400);
     return {
