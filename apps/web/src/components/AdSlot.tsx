@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { useTier } from "@/hooks/useTier";
-import { getAdsConfig, type AdSlotConfig, type AdSlotFormat } from "@/lib/api";
+import { getAdsConfig, type AdSlotConfig, type AdSlotFormat, type AdsUxFlags } from "@/lib/api";
+import { UpgradeChip } from "@/components/UpgradeChip";
+import { UpgradeModal } from "@/components/UpgradeModal";
 
 interface Props {
   slot: string;
   className?: string;
   style?: React.CSSProperties;
   onVastUrl?: (url: string) => void;
+  /** Set to false when the surrounding layout has its own upgrade CTA and we
+   *  don't want the pill to duplicate it (default: true). */
+  showChip?: boolean;
 }
 
 const loadedScripts = new Set<string>();
@@ -50,9 +56,6 @@ const NO_AD_ROUTE_PATTERNS: RegExp[] = [
   /^\/auth/,
 ];
 
-// Live pages get 60 seconds of grace at the top (viewer just landed — don't
-// interrupt engagement). Also suppresses during an active tipping session
-// (last tip < 5 min ago) to protect the highest-revenue moment.
 const LIVE_GRACE_MS = 60 * 1000;
 const TIP_GRACE_MS = 5 * 60 * 1000;
 
@@ -62,15 +65,13 @@ function isRouteSuppressed(pathname: string): boolean {
 
 function isLiveActivelyEngaged(pathname: string): boolean {
   if (!/^\/(live|stream)(\/|$)/.test(pathname)) return false;
-  // Landing on live: use sessionStorage marker set on first mount by the page
   const landedAtStr = sessionStorage.getItem(`pnpapp:live:landed_at:${pathname}`);
   if (!landedAtStr) {
     sessionStorage.setItem(`pnpapp:live:landed_at:${pathname}`, String(Date.now()));
-    return true; // first mount ⇒ grace window
+    return true;
   }
   const landedAt = parseInt(landedAtStr, 10);
   if (Date.now() - landedAt < LIVE_GRACE_MS) return true;
-  // Active tipping window
   const lastTipStr = sessionStorage.getItem("pnpapp:live:last_tip_at");
   if (lastTipStr) {
     const lastTip = parseInt(lastTipStr, 10);
@@ -79,8 +80,6 @@ function isLiveActivelyEngaged(pathname: string): boolean {
   return false;
 }
 
-// Cache the anonymous/user session id so all events share it. Persisted in
-// sessionStorage so it survives navigation but resets per browser session.
 function getOrCreateSessionId(): string {
   const KEY = "pnpapp:ads:sid";
   let sid = sessionStorage.getItem(KEY);
@@ -91,9 +90,7 @@ function getOrCreateSessionId(): string {
   return sid;
 }
 
-// Client-side batched analytics — collects impression/click events, flushes
-// every 15s or on visibilityChange=hidden, whichever comes first. Silent
-// failures — instrumentation must never break rendering.
+// ── Analytics batching ────────────────────────────────────────────────────
 interface QueuedEvent { slot: string; type: string; metadata?: Record<string, unknown> }
 const eventQueue: QueuedEvent[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
@@ -126,9 +123,61 @@ export function trackAdEvent(slot: string, type: string, metadata?: Record<strin
   if (eventQueue.length >= 20) flushEvents();
 }
 
+// ── Session-scoped impression counter for interstitial trigger ─────────────
+const SESSION_IMP_KEY = "pnpapp:ads:session_impressions";
+const INTERSTITIAL_SHOWN_KEY = "pnpapp:ads:interstitial_shown_at";
+const INTERSTITIAL_WEEK_KEY = "pnpapp:ads:interstitial_week_count";
+
+function incrementSessionImpressions(): number {
+  const cur = parseInt(sessionStorage.getItem(SESSION_IMP_KEY) || "0", 10) + 1;
+  sessionStorage.setItem(SESSION_IMP_KEY, String(cur));
+  return cur;
+}
+
+function canShowInterstitial(capPerWeek: number): boolean {
+  if (capPerWeek <= 0) return false;
+  const shownAtStr = sessionStorage.getItem(INTERSTITIAL_SHOWN_KEY);
+  if (shownAtStr) return false; // already shown this session
+  try {
+    const weekRaw = localStorage.getItem(INTERSTITIAL_WEEK_KEY);
+    const week = weekRaw ? JSON.parse(weekRaw) as { weekStart: number; count: number } : null;
+    const now = Date.now();
+    const weekStart = week?.weekStart ?? 0;
+    if (!week || now - weekStart > 7 * 24 * 60 * 60 * 1000) return true; // fresh week
+    return week.count < capPerWeek;
+  } catch { return true; }
+}
+
+function recordInterstitialShown() {
+  sessionStorage.setItem(INTERSTITIAL_SHOWN_KEY, String(Date.now()));
+  try {
+    const weekRaw = localStorage.getItem(INTERSTITIAL_WEEK_KEY);
+    const week = weekRaw ? JSON.parse(weekRaw) as { weekStart: number; count: number } : null;
+    const now = Date.now();
+    if (!week || now - week.weekStart > 7 * 24 * 60 * 60 * 1000) {
+      localStorage.setItem(INTERSTITIAL_WEEK_KEY, JSON.stringify({ weekStart: now, count: 1 }));
+    } else {
+      localStorage.setItem(INTERSTITIAL_WEEK_KEY, JSON.stringify({ ...week, count: week.count + 1 }));
+    }
+  } catch { /* silent */ }
+}
+
+// Fires an actual ExoClick popunder (fallback when user dismisses the upgrade modal).
+function mountRealPopunder(zoneId: string, className: string) {
+  loadScriptOnce("https://a.magsrv.com/ad-provider.js", { "data-cfasync": "false" });
+  const ins = document.createElement("ins");
+  ins.className = className;
+  ins.setAttribute("data-zoneid", String(zoneId));
+  document.body.appendChild(ins);
+  const push = document.createElement("script");
+  push.type = "application/javascript";
+  push.textContent = `(AdProvider = window.AdProvider || []).push({"serve": {}});`;
+  document.body.appendChild(push);
+}
+
 function sessionCapKey(slot: string) { return `pnpapp:adslot:${slot}:shown`; }
 
-export function AdSlot({ slot, className, style, onVastUrl }: Props) {
+export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: Props) {
   const { isPrime, isAdmin } = useTier();
   const location = useLocation();
   const routeSuppressed = isRouteSuppressed(location.pathname);
@@ -137,6 +186,8 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [cfg, setCfg] = useState<AdSlotConfig | null>(null);
   const [scriptUrl, setScriptUrl] = useState<string | null>(null);
+  const [ux, setUx] = useState<AdsUxFlags | null>(null);
+  const [modalMode, setModalMode] = useState<"popunder_replacement" | "interstitial" | null>(null);
 
   useEffect(() => {
     if (adsBlocked) { setCfg(null); return; }
@@ -144,15 +195,23 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
     getAdsConfig().then((r) => {
       if (cancelled) return;
       if (!r.showAds) return;
-      // Server filters slots by tier — member only receives sticky_footer_*.
-      // If this slot isn't in the response for the user's tier, it's silently skipped.
       const s = r.slots?.[slot];
       if (!s || !s.zoneId) return;
       setCfg(s);
       setScriptUrl(r.scriptUrl);
+      setUx(r.ux || null);
     });
     return () => { cancelled = true; };
   }, [slot, adsBlocked]);
+
+  const dismissModal = useCallback((reason: "closed" | "fallback_popunder") => {
+    setModalMode(null);
+    if (reason === "fallback_popunder" && cfg && POPUNDER_FORMATS.has(cfg.format)) {
+      const insClass = "eas6a97888e17";
+      mountRealPopunder(String(cfg.zoneId), insClass);
+    }
+    trackAdEvent(slot, "dismiss", { reason });
+  }, [cfg, slot]);
 
   useEffect(() => {
     if (!cfg || adsBlocked) return;
@@ -165,18 +224,14 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
 
     if (POPUNDER_FORMATS.has(cfg.format)) {
       if (cfg.capPerSession > 0 && sessionStorage.getItem(sessionCapKey(slot))) return;
-      loadScriptOnce(
-        `https://a.magsrv.com/ad-provider.js`,
-        { "data-cfasync": "false" },
-      );
-      const ins = document.createElement("ins");
-      ins.className = "eas6a97888e17";
-      ins.setAttribute("data-zoneid", String(cfg.zoneId));
-      document.body.appendChild(ins);
-      const push = document.createElement("script");
-      push.type = "application/javascript";
-      push.textContent = `(AdProvider = window.AdProvider || []).push({"serve": {}});`;
-      document.body.appendChild(push);
+      // Replace popunder with UpgradeModal for logged-in free users.
+      if (ux?.upgradeModalMode === "replace_popunder") {
+        if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
+        setModalMode("popunder_replacement");
+        return;
+      }
+      // Otherwise fire the real popunder (default legacy path for anon).
+      mountRealPopunder(String(cfg.zoneId), "eas6a97888e17");
       if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
       trackAdEvent(slot, "popunder_fired", { format: cfg.format });
       return;
@@ -197,29 +252,54 @@ export function AdSlot({ slot, className, style, onVastUrl }: Props) {
       host.appendChild(push);
       if (cfg.capPerSession > 0) sessionStorage.setItem(sessionCapKey(slot), "1");
       trackAdEvent(slot, "impression", { format: cfg.format, size: cfg.size });
+
+      // Bump session impression count + maybe fire the interstitial upgrade
+      // modal (fresh, not this ad). Cap: 1/session + N/week per user.
+      const total = incrementSessionImpressions();
+      const threshold = ux?.interstitialAfterN ?? 0;
+      const capWeek = ux?.interstitialCapPerWeek ?? 0;
+      if (threshold > 0 && total >= threshold && canShowInterstitial(capWeek)) {
+        recordInterstitialShown();
+        setModalMode("interstitial");
+      }
+
       // Any click within the ad container counts as a click event.
       const onClick = () => trackAdEvent(slot, "click", { format: cfg.format });
       host.addEventListener("click", onClick, { once: false });
     }
-  }, [cfg, scriptUrl, slot, adsBlocked, onVastUrl]);
+  }, [cfg, scriptUrl, slot, adsBlocked, onVastUrl, ux]);
 
   if (adsBlocked) return null;
-  if (!cfg) return null;
-  if (cfg.format === "vast") return null;
-  if (POPUNDER_FORMATS.has(cfg.format)) return null;
+
+  const modalPortal = modalMode
+    ? createPortal(
+        <UpgradeModal slot={slot} mode={modalMode} onDismiss={dismissModal} />,
+        document.body,
+      )
+    : null;
+
+  if (!cfg) return modalPortal;
+  if (cfg.format === "vast") return modalPortal;
+  if (POPUNDER_FORMATS.has(cfg.format)) return modalPortal;
 
   const [w, h] = (cfg.size || "").split("x").map((n) => parseInt(n, 10));
   const dimStyle: React.CSSProperties =
     Number.isFinite(w) && Number.isFinite(h) ? { minWidth: w, minHeight: h } : {};
 
   return (
-    <div
-      ref={ref}
-      className={className}
-      style={{ ...dimStyle, ...style }}
-      data-ad-slot={slot}
-      aria-hidden="true"
-    />
+    <>
+      <div className="inline-flex flex-col items-center gap-1">
+        <div
+          ref={ref}
+          className={className}
+          style={{ ...dimStyle, ...style }}
+          data-ad-slot={slot}
+          aria-hidden="true"
+        />
+        {showChip && ux?.showUpgradeChip ? <UpgradeChip slot={slot} /> : null}
+      </div>
+      {modalPortal}
+    </>
   );
 }
 

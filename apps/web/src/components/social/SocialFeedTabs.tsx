@@ -343,7 +343,10 @@ export default function SocialFeedTabs({
           >
             <span className="text-sm font-semibold" style={{ color: "#D4007A" }}>#</span>
             <input
+              id="feed-hashtag-filter"
+              name="hashtag"
               type="text"
+              autoComplete="off"
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value.replace(/^#+/, ""))}
               onKeyDown={(e) => { if (e.key === "Enter") submitTagFilter(); }}

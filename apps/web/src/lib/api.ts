@@ -11188,11 +11188,20 @@ export interface AdSlotConfig {
   capPerSession: number;
 }
 
+export interface AdsUxFlags {
+  showUpgradeChip: boolean;
+  upgradeModalMode: "replace_popunder" | "off";
+  interstitialAfterN: number;
+  interstitialCapPerWeek: number;
+}
+
 export interface AdsConfigResponse {
   ok: boolean;
   showAds: boolean;
+  adLevel?: "full" | "light" | "minimal" | "none";
   slots: Record<string, AdSlotConfig>;
   scriptUrl: string | null;
+  ux?: AdsUxFlags;
 }
 
 let adsConfigCache: Promise<AdsConfigResponse> | null = null;

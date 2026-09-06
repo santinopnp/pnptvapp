@@ -11094,7 +11094,7 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       if (allTaggedIds.length > 0) {
         const tcRes = await getPool().query(
           `SELECT id::text AS id, username, first_name,
-                  CASE WHEN photo_file_id IS NULL THEN NULL WHEN photo_file_id LIKE 'http%' THEN photo_file_id ELSE '/uploads/avatars/' || photo_file_id END AS avatar_url
+                  CASE WHEN photo_file_id IS NULL THEN NULL WHEN photo_file_id LIKE 'http%' THEN photo_file_id WHEN photo_file_id LIKE '/%' THEN photo_file_id ELSE '/uploads/avatars/' || photo_file_id END AS avatar_url
            FROM users WHERE id::text = ANY($1)`,
           [allTaggedIds]
         );
@@ -18014,12 +18014,31 @@ app.get('/api/ads/rewarded/active', requireSessionAuth, adCallbackLimiter, async
 //   slots       display/popunder/push zones keyed by slot id (ExoClick)
 app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const adUnlockService = require('../../services/adUnlockService');
+  const adAnalytics = require('../../services/adAnalyticsService');
   const enabled = await adUnlockService.isFeatureEnabled();
   const user = req.session?.user;
+  // Fetch user meta (created_at + engagement) for dynamic intensity — cached
+  // in Redis 15 min so we don't hit Postgres on every ad config request.
+  let userMeta = null;
+  if (user?.id) {
+    try {
+      const { cache } = require('../../config/redis');
+      const cacheKey = `ads:meta:${user.id}`;
+      userMeta = await cache.get(cacheKey);
+      if (!userMeta) {
+        const { rows } = await query('SELECT created_at FROM users WHERE id = $1 LIMIT 1', [String(user.id)]);
+        const createdAt = rows[0]?.created_at || null;
+        const exposureLast7d = await adAnalytics.getUserExposureDays(user.id, 7).catch(() => 0);
+        userMeta = { createdAt, exposureLast7d, sessionsLast30d: 0 };
+        await cache.set(cacheKey, userMeta, 900).catch(() => {});
+      }
+    } catch { userMeta = null; }
+  }
   // Anonymous visitors (no session) are treated as free-tier ('full' ad level).
   // Prime/admin get 'none', member gets 'minimal' (sticky footer only).
+  // Free users pass through dynamic intensity (full/light/none based on age + engagement).
   const adLevel = user
-    ? adUnlockService.getTierAdLevel(user.tier, user.role)
+    ? adUnlockService.getTierAdLevel(user.tier, user.role, userMeta)
     : 'full';
   const eligible = adLevel !== 'none';
   const showAds = enabled && eligible;
@@ -18081,12 +18100,18 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   } catch { /* fail open — global flag is authoritative */ }
 
   const slots = {};
-  // Member tier gets only the passive sticky footer — everything else is silent.
+  // Slot sets by intensity level. Member = minimal (2 slots). Light = the
+  // safest, non-invasive subset. Full = everything.
   const MINIMAL_SLOTS = new Set(['sticky_footer_desktop', 'sticky_footer_mobile']);
+  const LIGHT_SLOTS = new Set([
+    'sticky_footer_desktop', 'sticky_footer_mobile',
+    'landing_hero', 'feed_native', 'sidebar_desktop',
+  ]);
   for (const s of slotDefs) {
     if (!s.zone) continue;
     if (perSlotDisabled[s.id]) continue;
     if (adLevel === 'minimal' && !MINIMAL_SLOTS.has(s.id)) continue;
+    if (adLevel === 'light'   && !LIGHT_SLOTS.has(s.id))   continue;
     slots[s.id] = {
       zoneId: s.zone,
       format: s.format,
@@ -18096,14 +18121,41 @@ app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
     };
   }
 
+  // UX policy for the client. All flags respect the same global kill switch —
+  // if showAds is false, the whole block collapses to safe defaults.
+  //
+  // showUpgradeChip: render the "Sin ads con PRIME →" pill next to each display
+  //   ad. Only meaningful for logged-in free/light/full users (member is already
+  //   paying; skip the noise).
+  // upgradeModalMode: 'replace_popunder' | 'off'. When 'replace_popunder', the
+  //   client shows an internal PRIME upsell modal instead of the ExoClick popunder;
+  //   on dismiss it falls back to the actual popunder (or logs the dismiss).
+  // interstitialAfterN: show a full-screen PRIME upsell after N ad impressions
+  //   in this session (client counts locally). Cap 1/session, 3/week per user
+  //   (enforced client-side via localStorage — best-effort).
+  const isLoggedFree = !!user && adLevel !== 'none' && adLevel !== 'minimal';
+  const uxFlags = showAds ? {
+    showUpgradeChip: isLoggedFree || !user, // logged-in free/light/full users + anonymous
+    upgradeModalMode: (isLoggedFree || !user) ? 'replace_popunder' : 'off',
+    interstitialAfterN: isLoggedFree ? 20 : 0,
+    interstitialCapPerWeek: 3,
+  } : {
+    showUpgradeChip: false,
+    upgradeModalMode: 'off',
+    interstitialAfterN: 0,
+    interstitialCapPerWeek: 0,
+  };
+
   return res.json({
     ok: true,
     showAds,
+    adLevel,
     capPerDay: adUnlockService.ALLOWED_GRANTS_PER_DAY,
     surfaces,
     networks: showAds ? networks : null,
     slots: showAds ? slots : {},
     scriptUrl: showAds ? EXO_PROVIDER : null,
+    ux: uxFlags,
   });
 }));
 

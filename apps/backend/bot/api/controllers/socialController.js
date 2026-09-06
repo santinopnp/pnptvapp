@@ -231,6 +231,7 @@ async function resolveTaggedPerformers(ids) {
         CASE
           WHEN photo_file_id IS NULL THEN NULL
           WHEN photo_file_id LIKE 'http%' THEN photo_file_id
+          WHEN photo_file_id LIKE '/%' THEN photo_file_id
           ELSE '/uploads/avatars/' || photo_file_id
         END AS avatar_url
       FROM users WHERE id = ANY($1::text[]) AND subscription_status != 'banned' LIMIT 10`,
