@@ -89,7 +89,7 @@ function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: stri
                 loading={i === 0 ? undefined : "lazy"}
                 onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
                 onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
-                style={onImageClick ? { cursor: "zoom-in" } : undefined}
+                style={onImageClick ? { cursor: "zoom-in", aspectRatio: "4 / 5" } : { aspectRatio: "4 / 5" }}
               />
             )}
           </div>
@@ -1229,6 +1229,7 @@ export default function SocialPostCard({
                     src={post.promoted_thumbnail}
                     alt="Featured content"
                     className="w-full max-h-56 object-cover"
+                    style={{ aspectRatio: "16 / 9" }}
                     loading="lazy"
                     onError={(e) => {
                       (e.target as HTMLImageElement).parentElement!.style.display =
@@ -1437,6 +1438,7 @@ export default function SocialPostCard({
                             src={post.media_url || post.video_thumbnail_url || undefined}
                             alt={channelName || "Channel promo"}
                             className="w-full object-cover rounded-xl"
+                            style={{ aspectRatio: "16 / 9" }}
                             loading="lazy"
                             onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
                           />
@@ -1650,7 +1652,7 @@ export default function SocialPostCard({
                           className="w-full rounded-lg object-cover"
                           loading="lazy"
                           onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
-                          style={{ cursor: "zoom-in" }}
+                          style={{ cursor: "zoom-in", aspectRatio: "4 / 5" }}
                           onError={(e) => {
                             (e.target as HTMLImageElement).parentElement!.style.display = "none";
                           }}

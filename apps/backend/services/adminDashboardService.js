@@ -564,6 +564,7 @@ class AdminDashboardService {
           CASE
             WHEN u.photo_file_id IS NULL THEN NULL
             WHEN u.photo_file_id LIKE 'http%' THEN u.photo_file_id
+            WHEN u.photo_file_id LIKE '/%' THEN u.photo_file_id
             ELSE '/uploads/avatars/' || u.photo_file_id
           END AS photo,
           COALESCE(ce.total_earnings_usd, 0)::numeric   AS total_earnings_usd,

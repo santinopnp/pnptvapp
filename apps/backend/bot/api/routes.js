@@ -11094,7 +11094,7 @@ app.get('/api/webapp/channels/:channelId', softAuth, asyncHandler(async (req, re
       if (allTaggedIds.length > 0) {
         const tcRes = await getPool().query(
           `SELECT id::text AS id, username, first_name,
-                  CASE WHEN photo_file_id IS NULL THEN NULL WHEN photo_file_id LIKE 'http%' THEN photo_file_id ELSE '/uploads/avatars/' || photo_file_id END AS avatar_url
+                  CASE WHEN photo_file_id IS NULL THEN NULL WHEN photo_file_id LIKE 'http%' THEN photo_file_id WHEN photo_file_id LIKE '/%' THEN photo_file_id ELSE '/uploads/avatars/' || photo_file_id END AS avatar_url
            FROM users WHERE id::text = ANY($1)`,
           [allTaggedIds]
         );
@@ -18014,12 +18014,34 @@ app.get('/api/ads/rewarded/active', requireSessionAuth, adCallbackLimiter, async
 //   slots       display/popunder/push zones keyed by slot id (ExoClick)
 app.get('/api/ads/config', softAuth, asyncHandler(async (req, res) => {
   const adUnlockService = require('../../services/adUnlockService');
+  const adAnalytics = require('../../services/adAnalyticsService');
   const enabled = await adUnlockService.isFeatureEnabled();
   const user = req.session?.user;
+  // Fetch user meta (created_at + engagement) for dynamic intensity — cached
+  // in Redis 15 min so we don't hit Postgres on every ad config request.
+  let userMeta = null;
+  if (user?.id) {
+    try {
+      const { cache } = require('../../config/redis');
+      const cacheKey = `ads:meta:${user.id}`;
+      const cached = await cache.get(cacheKey);
+      if (cached) {
+        try { userMeta = JSON.parse(cached); } catch { userMeta = null; }
+      }
+      if (!userMeta) {
+        const { rows } = await query('SELECT created_at FROM users WHERE id = $1 LIMIT 1', [String(user.id)]);
+        const createdAt = rows[0]?.created_at || null;
+        const exposureLast7d = await adAnalytics.getUserExposureDays(user.id, 7).catch(() => 0);
+        userMeta = { createdAt, exposureLast7d, sessionsLast30d: 0 };
+        await cache.setex(cacheKey, 900, JSON.stringify(userMeta)).catch(() => {});
+      }
+    } catch { userMeta = null; }
+  }
   // Anonymous visitors (no session) are treated as free-tier ('full' ad level).
   // Prime/admin get 'none', member gets 'minimal' (sticky footer only).
+  // Free users pass through dynamic intensity (full/light/none based on age + engagement).
   const adLevel = user
-    ? adUnlockService.getTierAdLevel(user.tier, user.role)
+    ? adUnlockService.getTierAdLevel(user.tier, user.role, userMeta)
     : 'full';
   const eligible = adLevel !== 'none';
   const showAds = enabled && eligible;

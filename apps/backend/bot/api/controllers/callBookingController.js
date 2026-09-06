@@ -1480,6 +1480,7 @@ async function getUpcomingBookings(req, res) {
          CASE
            WHEN u_creator.photo_file_id IS NULL THEN NULL
            WHEN u_creator.photo_file_id LIKE 'http%' THEN u_creator.photo_file_id
+           WHEN u_creator.photo_file_id LIKE '/%' THEN u_creator.photo_file_id
            ELSE '/uploads/avatars/' || u_creator.photo_file_id
          END AS performer_photo,
          b.start_time_utc,
