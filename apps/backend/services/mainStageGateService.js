@@ -8,6 +8,7 @@
  *
  * Redis config (all keys prefixed by the shared cache client):
  *   mainstage:gate:enabled    "1" | "0"   (default: "0" — gate OFF)
+ *   Ambas claves se escriben SIN caducidad: son configuracion, no cache.
  *   mainstage:gate:windows    JSON array of { start_utc: "HH:MM", duration_min: N }
  *                             default: [{start:"03:00",dur:60}, {start:"15:00",dur:60}]
  *
@@ -15,8 +16,18 @@
  * match the "1h available, 12h cooldown" product requirement.
  */
 
-const { cache } = require('../config/redis');
+const { cache, getRedis } = require('../config/redis');
 const logger = require('../utils/logger');
+
+/**
+ * Escribe sin caducidad. cache.set aplica siempre un TTL (REDIS_TTL, 300 s por
+ * defecto), y esto es configuracion, no cache: si expira, la puerta se cierra
+ * sola y nadie se entera. Se serializa igual que cache.set para que cache.get
+ * siga leyendo estas claves sin cambios.
+ */
+async function setPersistente(key, value) {
+  await getRedis().set(key, JSON.stringify(value));
+}
 
 const KEY_ENABLED = 'mainstage:gate:enabled';
 const KEY_WINDOWS = 'mainstage:gate:windows';
@@ -37,7 +48,7 @@ async function isEnabled() {
 }
 
 async function setEnabled(enabled) {
-  await cache.set(KEY_ENABLED, enabled ? '1' : '0');
+  await setPersistente(KEY_ENABLED, enabled ? '1' : '0');
 }
 
 async function getWindows() {
@@ -58,7 +69,7 @@ async function getWindows() {
 
 async function setWindows(windows) {
   if (!Array.isArray(windows)) throw new Error('windows must be array');
-  await cache.set(KEY_WINDOWS, JSON.stringify(windows));
+  await setPersistente(KEY_WINDOWS, JSON.stringify(windows));
 }
 
 // Turn "HH:MM" into today's UTC epoch ms.
