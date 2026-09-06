@@ -689,7 +689,7 @@ export function WalletPayCard({
         </div>
         <button
           type="button"
-          onClick={() => login().catch(() => reportWalletClientError("privyLoginFromRecovery", "login failed", { surface }))}
+          onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { surface }); } }}
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
         >
@@ -1736,7 +1736,7 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
           </div>
           <button
             type="button"
-            onClick={() => login().catch(() => reportWalletClientError("privyLoginFromRecovery", "login failed", { source: "WalletHomeSheet" }))}
+            onClick={() => { try { login(); } catch (e) { reportWalletClientError("privyLoginFromRecovery", e, { source: "WalletHomeSheet" }); } }}
             className="w-full py-3 rounded-xl text-sm font-bold text-white transition active:scale-[0.98]"
             style={{ background: "linear-gradient(135deg,#D4007A,#FF6B9D)" }}
           >Iniciar sesión</button>
@@ -1802,7 +1802,14 @@ export function WalletHomeSheet({ onClose }: { onClose: () => void }) {
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {(!authenticated || !activeWallet) && !sessionWalletAddress ? (() => {
+          {/* Recovery panel — takes precedence when Privy is stuck AND the
+              server knows the user has a linked wallet. Kobton1 case: iOS 18
+              Safari SDK doesn't finish auth, sessionWalletAddress IS set (his
+              wallet is linked server-side), so the existing "sign in" fallback
+              skipped and he saw an empty broken sheet. This makes the recovery
+              step explicit. */}
+          {recovery.status !== "ready" && (recovery.serverWalletAddr || sessionWalletAddress) ? renderRecoveryPanel() :
+          (!authenticated || !activeWallet) && !sessionWalletAddress ? (() => {
             // No local Privy session AND no session-linked wallet: truly new
             // user. Copy is inclusive for both returning users (whose Privy
             // session is fresh on this browser — e.g. desktop when they usually
