@@ -794,8 +794,11 @@ export default function Live() {
             )}
 
             <input
+              id="live-performer-search"
+              name="performer-search"
               type="search"
               inputMode="search"
+              autoComplete="off"
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder={
