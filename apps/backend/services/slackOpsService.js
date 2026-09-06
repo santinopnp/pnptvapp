@@ -33,6 +33,7 @@ const _moderationChannel = () => process.env.SLACK_MODERATION_CHANNEL
   || process.env.SLACK_OPS_MODERATION_CHANNEL
   || process.env.SLACK_OPS_ADMIN_CHANNEL
   || '';
+const _adsChannel        = () => process.env.SLACK_OPS_ADS_CHANNEL             || '';
 
 function _nowTs() {
   return new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
@@ -970,6 +971,31 @@ function _wrap(fnName, origFn) {
   };
 }
 
+/**
+ * Posts an ads-health failure alert to #ops-ads-monitor.
+ * Silent-on-OK contract: callers only invoke this when a check fails.
+ * @param {object} opts
+ * @param {string} opts.reason             short label: 'http_status', 'showAds_off', 'slots_short', 'script_missing', 'exception'
+ * @param {number|string} [opts.httpStatus]
+ * @param {any} [opts.showAds]
+ * @param {number} [opts.slotsCount]
+ * @param {any} [opts.scriptUrl]
+ * @param {string} [opts.detail]           1-2 line human explanation
+ */
+async function notifyAdsHealthFail(opts) {
+  const channel = _adsChannel();
+  if (!channel) return;
+  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const text = `🚨 Ads health FAIL — ${ts}\n\n`
+    + `• Reason: \`${opts.reason || 'unknown'}\`\n`
+    + `• Endpoint: ${opts.httpStatus != null ? opts.httpStatus : 'n/a'}\n`
+    + `• showAds: ${opts.showAds != null ? opts.showAds : 'n/a'}\n`
+    + `• slots count: ${opts.slotsCount != null ? opts.slotsCount : 'n/a'}\n`
+    + `• scriptUrl: ${opts.scriptUrl ? 'presente' : 'nulo'}\n\n`
+    + `Detalle: ${opts.detail || '(sin detalle)'}`;
+  await _post(channel, text);
+}
+
 module.exports = {
   // Queued wrappers (used by callers)
   notifyPaymentSuccess: _wrap('notifyPaymentSuccess', notifyPaymentSuccess),
@@ -987,6 +1013,7 @@ module.exports = {
   notifyBan: _wrap('notifyBan', notifyBan),
   notifyNewTelegramUser: _wrap('notifyNewTelegramUser', notifyNewTelegramUser),
   notifyLeakageDetected: _wrap('notifyLeakageDetected', notifyLeakageDetected),
+  notifyAdsHealthFail: _wrap('notifyAdsHealthFail', notifyAdsHealthFail),
   // Direct originals — used ONLY by the BullMQ worker to avoid infinite loops
   _direct_notifyPaymentSuccess: notifyPaymentSuccess,
   _direct_notifyPaymentFailed: notifyPaymentFailed,
@@ -1003,4 +1030,5 @@ module.exports = {
   _direct_notifyBan: notifyBan,
   _direct_notifyNewTelegramUser: notifyNewTelegramUser,
   _direct_notifyLeakageDetected: notifyLeakageDetected,
+  _direct_notifyAdsHealthFail: notifyAdsHealthFail,
 };

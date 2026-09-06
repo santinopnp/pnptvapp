@@ -397,6 +397,57 @@ async function cronProcessor(job) {
       return;
     }
 
+    case 'ads-health-check': {
+      // In-process health check for /api/ads/config. Silent on OK; posts to
+      // #ops-ads-monitor via slackOpsService on any anomaly. Anonymous view
+      // (no session) exercises the same code path a public visitor hits.
+      const adUnlockService = _safeRequire('../adUnlockService');
+      const slackOps = _safeRequire('../slackOpsService');
+      if (!adUnlockService || !slackOps) { logger.warn('[BullMQ] ads-health-check: dependency missing'); return; }
+      const notify = slackOps._direct_notifyAdsHealthFail || (() => {});
+      try {
+        const flagOn = await adUnlockService.isFeatureEnabled();
+        if (!flagOn) return; // operator disabled ads on purpose — silent
+        const expectedSlots = 16;
+        const port = process.env.PORT || 3001;
+        const url = `http://127.0.0.1:${port}/api/ads/config`;
+        let status = 0, body = null;
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          status = res.status;
+          body = await res.json().catch(() => null);
+        } catch (netErr) {
+          await notify({ reason: 'exception', detail: `fetch failed: ${netErr.message}` });
+          return;
+        }
+        if (status !== 200) {
+          await notify({ reason: 'http_status', httpStatus: status, detail: `Endpoint returned HTTP ${status}` });
+          return;
+        }
+        if (!body || body.ok !== true) {
+          await notify({ reason: 'exception', httpStatus: status, detail: 'Response body missing or ok=false' });
+          return;
+        }
+        if (body.showAds !== true) {
+          await notify({ reason: 'showAds_off', httpStatus: status, showAds: body.showAds, detail: 'Flag Redis está ON pero endpoint devuelve showAds=false — desync entre config del bot y estado real' });
+          return;
+        }
+        const slotsCount = Object.keys(body.slots || {}).length;
+        if (slotsCount < expectedSlots) {
+          await notify({ reason: 'slots_short', httpStatus: status, showAds: body.showAds, slotsCount, scriptUrl: body.scriptUrl, detail: `Se esperaban ${expectedSlots} slots, llegaron ${slotsCount}. Chequear env vars EXO_ZONE_* y per-slot kill switches en Redis.` });
+          return;
+        }
+        if (!body.scriptUrl) {
+          await notify({ reason: 'script_missing', httpStatus: status, showAds: body.showAds, slotsCount, detail: 'scriptUrl vacío — EXO_AD_PROVIDER_URL no seteado o purgado del env' });
+          return;
+        }
+        // All good — silent
+      } catch (err) {
+        await notify({ reason: 'exception', detail: `worker threw: ${err.message}` });
+      }
+      return;
+    }
+
     case 'lifetime100-rescue': {
       try {
         const path = require('path');

@@ -200,6 +200,13 @@ async function initializeQueues() {
     jobId: 'cron-lifetime100-rescue',
   });
 
+  // Ads-endpoint health check — every hour at :50 (posts to #ops-ads-monitor only on failure)
+  await cronQueue.add('ads-health-check', {}, {
+    repeat: { pattern: '50 * * * *', tz: 'UTC' },
+    attempts: 1, removeOnFail: false,
+    jobId: 'cron-ads-health-check',
+  });
+
   // Meru lifetime100 reconciliation — 7/22/37/52 of each hour
   await cronQueue.add('meru-reconcile', {}, {
     repeat: { pattern: '7,22,37,52 * * * *', tz: 'UTC' },
