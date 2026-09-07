@@ -1,0 +1,2317 @@
+const { query } = require('../config/postgres');
+const logger = require('../utils/logger');
+const axios = require('axios');
+const path = require('path');
+const fs = require('fs/promises');
+const { spawn } = require('child_process');
+const MediaCleanupService = require('./mediaCleanupService');
+const CreatorService = require('./creatorService');
+const { normalizeImageUrl } = require('./imageUrlHelper');
+
+// Blurred preview GIF for the exclusive-video paywall. Fire-and-forget from
+// createPost + reusable by the one-shot backfill script. Source file is either
+// a /uploads/... local path or a remote http(s) URL; ffmpeg accepts both.
+//
+// Concurrency capped at MAX_PREVIEW_GIF_JOBS to protect the bot container
+// from OOM during creator-upload bursts (ffmpeg is memory-heavy per process).
+// Excess requests are skipped and re-runnable via the backfill script.
+const MAX_PREVIEW_GIF_JOBS = 2;
+let activePreviewGifJobs = 0;
+
+async function generateBlurredPreviewGif(postId, mediaUrl) {
+  if (!postId || !mediaUrl) return null;
+  if (activePreviewGifJobs >= MAX_PREVIEW_GIF_JOBS) {
+    logger.warn('generateBlurredPreviewGif skipped (concurrency cap)', { postId, activePreviewGifJobs });
+    return null;
+  }
+  const publicRoot = path.resolve(path.join(__dirname, '../../../public'));
+  const outDir = path.join(publicRoot, 'uploads', 'preview-gifs');
+  const outFile = `preview-${postId}.gif`;
+  const outPath = path.join(outDir, outFile);
+  const publicUrl = `/uploads/preview-gifs/${outFile}`;
+
+  let source;
+  if (mediaUrl.startsWith('/')) {
+    const candidate = path.resolve(path.join(publicRoot, mediaUrl.replace(/^\/+/, '')));
+    // Containment: reject any path that escapes /public via ../ traversal
+    if (!candidate.startsWith(publicRoot + path.sep) && candidate !== publicRoot) {
+      logger.warn('generateBlurredPreviewGif: path traversal blocked', { postId, mediaUrl });
+      return null;
+    }
+    source = candidate;
+  } else if (/^https?:\/\//i.test(mediaUrl)) {
+    source = mediaUrl;
+  } else {
+    logger.warn('generateBlurredPreviewGif: unrecognized media URL', { postId, mediaUrl });
+    return null;
+  }
+
+  activePreviewGifJobs++;
+  try {
+    await fs.mkdir(outDir, { recursive: true });
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-loglevel', 'error',
+        '-y',
+        '-ss', '1',
+        '-i', source,
+        '-t', '5',
+        '-vf', 'fps=12,scale=240:-1:flags=lanczos,gblur=sigma=10',
+        '-loop', '0',
+        outPath,
+      ];
+      const ff = spawn('nice', ['-n', '19', 'ffmpeg', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      ff.stderr.on('data', (d) => { stderr += String(d); });
+      ff.on('error', reject);
+      ff.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(0, 200)}`));
+      });
+    });
+    await query(
+      `UPDATE social_posts
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('preview_gif_url', $1::text)
+       WHERE id = $2`,
+      [publicUrl, postId]
+    );
+    return publicUrl;
+  } catch (err) {
+    logger.warn('generateBlurredPreviewGif failed', { postId, mediaUrl, err: err.message });
+    return null;
+  } finally {
+    activePreviewGifJobs--;
+  }
+}
+
+/**
+ * Deprecated local check. Kept as an alias to `normalizeImageUrl(x) != null` so
+ * existing callers still work, but new code should call normalizeImageUrl
+ * directly and use its return value (which rewrites external CDN URLs through
+ * /api/img/proxy so the frontend allow-list never blocks them).
+ */
+const isValidPhotoUrl = (photo) => normalizeImageUrl(photo) != null;
+
+/**
+ * Sanitize + hydrate post rows.
+ *
+ * 1. Convert Telegram file IDs to null so the frontend shows a gradient
+ *    fallback instead of a broken <img> tag.
+ * 2. For community_hype posts, hydrate `original_*` fields (media_url,
+ *    media_type, video_thumbnail_url, is_deleted, is_exclusive, author info)
+ *    from the ORIGINAL post via one batched query — never trust a copy of
+ *    media on the hyper's row. Root cause fix for the "hype steals content"
+ *    bug: hype posts no longer duplicate media, they reference it live.
+ * 3. Optional `hideDeletedHypeOriginals` filters out hypes whose original
+ *    was deleted (used by the community feed, NOT by profile feeds — a
+ *    profile keeps the row with an "eliminated by author" placeholder).
+ */
+/**
+ * Batch-hydrate `resolved_mentions` onto a list of posts. Each post gets an
+ * array of `{ username: string, user_id: string | null }`. Sources are:
+ *   1. `post_mentions` rows LEFT JOIN users — canonical, ordered by created_at
+ *   2. Any `@username` still visible in `content` that has no row in (1) —
+ *      appended as `{ username, user_id: null }` so the frontend renders it as
+ *      plain text (the mention row could be missing if create/edit failed
+ *      partway, or if the mentioned account was renamed).
+ *
+ * One SQL round-trip regardless of how many posts are passed in.
+ */
+const _hydrateResolvedMentions = async (posts) => {
+  if (!Array.isArray(posts) || posts.length === 0) return posts;
+
+  const ids = posts.map(p => p?.id).filter(Number.isFinite);
+  if (ids.length === 0) {
+    for (const p of posts) if (p) p.resolved_mentions = [];
+    return posts;
+  }
+
+  let rows = [];
+  try {
+    const res = await query(
+      `SELECT pm.post_id,
+              LOWER(u.username) AS username,
+              u.id::text AS user_id,
+              pm.created_at
+         FROM post_mentions pm
+         JOIN users u ON u.id = pm.mentioned_user_id
+        WHERE pm.post_id = ANY($1::int[])
+          AND pm.mention_type IN ('mention', 'tag')
+        ORDER BY pm.post_id, pm.created_at ASC`,
+      [ids]
+    );
+    rows = res.rows;
+  } catch (err) {
+    logger.warn('_hydrateResolvedMentions: DB fetch failed, falling back to content-only parse', { error: err.message });
+  }
+
+  const byPost = new Map();
+  for (const r of rows) {
+    if (!byPost.has(r.post_id)) byPost.set(r.post_id, []);
+    byPost.get(r.post_id).push({ username: r.username, user_id: String(r.user_id) });
+  }
+
+  // Content-parse fallback so unresolved / deleted / renamed mentions still
+  // surface to the frontend (rendered as plain text, not clickable).
+  const usernameRe = /@([a-zA-Z0-9_]{2,32})/g;
+  for (const p of posts) {
+    if (!p) continue;
+    const fromRows = byPost.get(p.id) || [];
+    const seen = new Set(fromRows.map(m => m.username));
+    const merged = [...fromRows];
+    const content = typeof p.content === 'string' ? p.content : '';
+    if (content) {
+      const parsed = content.match(usernameRe) || [];
+      for (const m of parsed) {
+        const uname = m.slice(1).toLowerCase();
+        if (!seen.has(uname)) {
+          seen.add(uname);
+          merged.push({ username: uname, user_id: null });
+        }
+      }
+    }
+    p.resolved_mentions = merged;
+  }
+  return posts;
+};
+
+const sanitizePostRows = async (rows, opts = {}) => {
+  const { hideDeletedHypeOriginals = false } = opts;
+  const base = rows.map(row => ({
+    ...row,
+    author_photo: normalizeImageUrl(row.author_photo),
+  }));
+
+  // Collect original_post_ids from community_hype rows (metadata may be a
+  // string when it round-trips through JSON.stringify in some code paths).
+  const origIds = new Set();
+  for (const r of base) {
+    const meta = typeof r.metadata === 'string'
+      ? (() => { try { return JSON.parse(r.metadata); } catch { return null; } })()
+      : r.metadata;
+    if (meta && meta.kind === 'community_hype' && meta.original_post_id) {
+      const id = parseInt(meta.original_post_id, 10);
+      if (Number.isFinite(id)) origIds.add(id);
+    }
+  }
+
+  let origMap = new Map();
+  if (origIds.size > 0) {
+    const { rows: origs } = await query(
+      `SELECT sp.id,
+              sp.media_url, sp.media_type, sp.video_thumbnail_url,
+              sp.is_deleted, sp.is_exclusive, sp.content_tier,
+              sp.user_id AS author_id,
+              u.username AS author_username, u.first_name AS author_first_name,
+              u.photo_file_id AS author_photo
+         FROM social_posts sp
+         JOIN users u ON u.id = sp.user_id
+        WHERE sp.id = ANY($1::int[])`,
+      [[...origIds]]
+    );
+    for (const o of origs) origMap.set(o.id, o);
+  }
+
+  const hydrated = [];
+  for (const r of base) {
+    const meta = typeof r.metadata === 'string'
+      ? (() => { try { return JSON.parse(r.metadata); } catch { return null; } })()
+      : r.metadata;
+    if (meta && meta.kind === 'community_hype' && meta.original_post_id) {
+      const origId = parseInt(meta.original_post_id, 10);
+      const orig = origMap.get(origId);
+      if (!orig) {
+        // Original was hard-deleted or never existed — treat as removed.
+        if (hideDeletedHypeOriginals) continue;
+        r.original_deleted = true;
+        r.original_media_url = null;
+        r.original_media_type = null;
+        r.original_video_thumbnail_url = null;
+        r.original_author_username = null;
+        r.original_author_first_name = null;
+        r.original_author_photo = null;
+        r.original_is_exclusive = false;
+      } else if (orig.is_deleted) {
+        if (hideDeletedHypeOriginals) continue;
+        r.original_deleted = true;
+        r.original_media_url = null;
+        r.original_media_type = null;
+        r.original_video_thumbnail_url = null;
+        r.original_author_username = orig.author_username;
+        r.original_author_first_name = orig.author_first_name;
+        r.original_author_photo = normalizeImageUrl(orig.author_photo);
+        r.original_is_exclusive = false;
+      } else {
+        // If original became exclusive AFTER the hype, suppress media —
+        // the paywall on the original applies transitively to its hype.
+        const wentExclusive = orig.is_exclusive || String(orig.content_tier || '').toLowerCase() === 'prime';
+        r.original_deleted = false;
+        r.original_media_url = wentExclusive ? null : orig.media_url;
+        r.original_media_type = wentExclusive ? null : orig.media_type;
+        r.original_video_thumbnail_url = wentExclusive ? null : orig.video_thumbnail_url;
+        r.original_author_username = orig.author_username;
+        r.original_author_first_name = orig.author_first_name;
+        r.original_author_photo = normalizeImageUrl(orig.author_photo);
+        r.original_is_exclusive = wentExclusive;
+      }
+    }
+    hydrated.push(r);
+  }
+  // Attach resolved_mentions so every feed-shaped endpoint returns the
+  // frontend-agreed contract without each caller re-hydrating separately.
+  await _hydrateResolvedMentions(hydrated);
+  // Refresh channel_promo media URLs from the live channel_videos row so
+  // stale Mux playback IDs (baked into metadata at post-creation time) don't
+  // break the card when Mux ingest later errors out or the asset is deleted.
+  await _hydrateChannelPromoMedia(hydrated);
+  return hydrated;
+};
+
+/**
+ * For channel_promo posts, the metadata snapshotted at post creation can go
+ * stale when the underlying Mux asset is regenerated, deleted, or the ingest
+ * errors after publish. Symptom: thumbnail 404, video player 404, card shows
+ * "unavailable". Fix: on every read, look up the current channel_videos row
+ * and override the media URLs with either fresh Mux (when playback_id is
+ * usable) or Directus (when Mux is dead).
+ *
+ * One SQL round-trip regardless of how many posts.
+ */
+const _hydrateChannelPromoMedia = async (posts) => {
+  if (!Array.isArray(posts) || posts.length === 0) return posts;
+
+  const videoIds = [];
+  const promos = [];
+  for (const p of posts) {
+    if (!p) continue;
+    const md = typeof p.metadata === 'string'
+      ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })()
+      : p.metadata;
+    if (!md || md.kind !== 'channel_promo') continue;
+    const vid = md.video_id != null ? parseInt(md.video_id, 10) : NaN;
+    if (!Number.isFinite(vid)) continue;
+    p.__promoMeta = md;
+    p.__promoVideoId = vid;
+    promos.push(p);
+    videoIds.push(vid);
+  }
+  if (promos.length === 0) return posts;
+
+  let rows = [];
+  try {
+    const res = await query(
+      `SELECT id, mux_playback_id, mux_status, directus_file_id, thumbnail_url
+         FROM channel_videos
+        WHERE id = ANY($1::int[])`,
+      [videoIds]
+    );
+    rows = res.rows;
+  } catch (err) {
+    logger.warn('_hydrateChannelPromoMedia: DB fetch failed, leaving stale URLs', { error: err.message });
+    for (const p of promos) { delete p.__promoMeta; delete p.__promoVideoId; }
+    return posts;
+  }
+
+  const byId = new Map();
+  for (const r of rows) byId.set(Number(r.id), r);
+
+  for (const p of promos) {
+    const live = byId.get(p.__promoVideoId);
+    delete p.__promoMeta;
+    delete p.__promoVideoId;
+    if (!live) continue;
+
+    const muxUsable = !!live.mux_playback_id
+      && live.mux_status !== 'errored'
+      && live.mux_status !== 'cancelled';
+    const directusId = live.directus_file_id || null;
+
+    // Playback URL — prefer working Mux HLS, else Directus asset.
+    let freshVideoUrl = null;
+    if (muxUsable) {
+      freshVideoUrl = `https://stream.mux.com/${live.mux_playback_id}.m3u8`;
+    } else if (directusId) {
+      freshVideoUrl = `https://cms.pnptv.app/assets/${directusId}`;
+    }
+
+    // Thumbnail URL — prefer working Mux thumbnail, else Directus asset
+    // (which returns the raw file; frontend <video preload> uses first frame).
+    let freshThumbUrl = null;
+    if (muxUsable) {
+      freshThumbUrl = `https://image.mux.com/${live.mux_playback_id}/thumbnail.jpg?width=640&fit_mode=smartcrop&percentage=25`;
+    } else if (directusId) {
+      // Directus thumbnail transformation is available; still points to the
+      // asset UUID which is world-readable. Falls through to the raw asset
+      // if the transformation isn't cached.
+      freshThumbUrl = `https://cms.pnptv.app/assets/${directusId}?width=640&height=360&fit=cover&format=jpg`;
+    }
+
+    if (freshThumbUrl) {
+      p.media_url = freshThumbUrl;
+      p.video_thumbnail_url = freshThumbUrl;
+    }
+    if (freshVideoUrl) {
+      const md = typeof p.metadata === 'string'
+        ? (() => { try { return JSON.parse(p.metadata); } catch { return {}; } })()
+        : (p.metadata || {});
+      md.video_url = freshVideoUrl;
+      if (directusId && !md.video_directus_id) md.video_directus_id = directusId;
+      p.metadata = md;
+    }
+  }
+  return posts;
+};
+
+class SocialPostService {
+  // ── Feed ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Full paginated feed for the Social page (/api/webapp/social/feed).
+   * Requires userId for the liked_by_me subquery.
+   * Uses ID-based cursor pagination for consistent, index-friendly fetching.
+   */
+  /**
+   * @param {number}   userId      - Authenticated viewer's user ID
+   * @param {string}   cursor      - Opaque cursor (post ID) for pagination
+   * @param {number}   limit       - Page size (max 50)
+   * @param {string}   viewerTier  - Viewer's subscription tier ('free'|'member'|'prime')
+   * @param {boolean}  isAdmin     - True when the viewer has an admin/superadmin role
+   * @param {number[]} blockedIds  - Array of user IDs the viewer has blocked (C-08)
+   */
+  static async getFeed(userId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = [], viewerGeoTags = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const fetchLimit = lim + 10;
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+
+    // Build parameterized query — $1=userId, $2=fetchLimit, [$3=cursorId], $N=blockedIds, $N+1=viewerGeoTags
+    const params = [userId, fetchLimit];
+    if (cursorId) params.push(cursorId);
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const geoTagsParam = Array.isArray(viewerGeoTags) ? viewerGeoTags : [];
+    params.push(geoTagsParam);
+    const geoParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $3` : '';
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+              sp.promoted_link2, sp.promoted_link2_label,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+       FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         ${cursorClause}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+         AND (
+           u.role NOT IN ('model', 'creator')
+           OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
+           OR u.role IN ('admin', 'superadmin')
+         )
+         AND (sp.category IS NULL OR sp.category != 'slam')
+       ORDER BY
+         CASE WHEN sp.pinned_at IS NOT NULL AND sp.is_deleted = false THEN 0 ELSE 1 END,
+         sp.pinned_at DESC NULLS LAST,
+         sp.id DESC
+       LIMIT $2`,
+      params
+    );
+    // Fire live/online pin fetch in parallel with post-processing (first page only)
+    const pinsPromise = cursorId
+      ? Promise.resolve([])
+      : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+    }
+    if (viewerTier !== undefined) {
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+    posts = SocialPostService._diversifyFeed(posts);
+    posts = await SocialPostService._applyDiscoveryBoost(posts);
+
+    // Prepend guaranteed live/online pins — they always appear regardless of feed cursor age
+    const rawPins = await pinsPromise;
+    if (rawPins.length > 0) {
+      let pins = rawPins;
+      if (viewerTier !== undefined) {
+        pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
+        pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
+      }
+      pins = await SocialPostService._applyChannelAccessLock(pins, userId, { isAdmin });
+      const pinnedIds = new Set(pins.map(p => p.id));
+      posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
+    }
+
+    posts = await SocialPostService.hydrateTopHypers(posts);
+    const page = posts.slice(0, lim);
+    const nextCursor = posts.length > lim ? String(page[page.length - 1].id) : null;
+
+    return { posts: page, nextCursor };
+  }
+
+  /**
+   * Stable re-sort by discovery score, combining author state + post engagement.
+   * Canonical ranking (per 2026-07-23 rewrite):
+   *   live (8)  — set upstream when author is currently streaming
+   *   creator (3) — author.creator_status='active'  ← bumped from 0.5 to 3.0
+   *   online (2) — Redis presence
+   *   PRIME (1)  — tier=PRIME
+   * plus a decayed engagement term. Creators sit above online/PRIME because
+   * follow-a-creator was removed and this is their only discovery boost.
+   * Cursor pagination is unaffected — we only re-order the fetched window.
+   */
+  static async _applyDiscoveryBoost(posts) {
+    if (!Array.isArray(posts) || posts.length <= 1) return posts;
+    try {
+      const { getRedis } = require('../config/redis');
+      const redis = getRedis();
+      const distinctIds = [...new Set(posts.map(p => p.author_id).filter(Boolean).map(String))];
+      if (distinctIds.length === 0) return posts;
+      const pipeline = redis.pipeline();
+      for (const id of distinctIds) pipeline.get(`presence:online:${id}`);
+      const replies = await pipeline.exec();
+      const onlineIds = new Set();
+      replies.forEach(([err, val], idx) => {
+        if (!err && val) onlineIds.add(distinctIds[idx]);
+      });
+      const now = Date.now();
+      const decorated = posts.map((p, idx) => {
+        const isOnline = p.author_id && onlineIds.has(String(p.author_id));
+        const isPrime = String(p.author_tier || '').toUpperCase() === 'PRIME';
+        const isCreator = p.author_creator_status === 'active';
+        const likes = Number(p.likes_count) || 0;
+        const reposts = Number(p.reposts_count) || 0;
+        const replies_ct = Number(p.replies_count) || 0;
+        const hypes = Number(p.hype_score) || 0;
+        // Hype is a viewer-cast "boost this" vote (YouTube-Hype style). Weight
+        // it heavier than likes but capped via log1p so a swarm doesn't
+        // dominate the whole page window.
+        const engage = Math.log1p(likes + reposts * 2 + replies_ct * 3 + hypes * 4);
+        const ageHours = p.created_at
+          ? Math.max(0, (now - new Date(p.created_at).getTime()) / 3600000)
+          : 24;
+        const popularity = (engage / Math.pow(ageHours + 2, 0.6)) * 3;
+        const hypeBoost = hypes > 0 ? Math.min(4, Math.log1p(hypes) * 1.5) : 0;
+        const score =
+          (isCreator ? 3 : 0) +
+          (isOnline ? 2 : 0) +
+          (isPrime ? 1 : 0) +
+          hypeBoost +
+          popularity;
+        return { p, idx, score };
+      });
+      decorated.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+      return decorated.map(d => d.p);
+    } catch (err) {
+      logger.warn('_applyDiscoveryBoost failed (non-fatal)', { error: err.message });
+      return posts;
+    }
+  }
+
+  /**
+   * Fetch the most-recent post from each currently-live or currently-online
+   * active creator. These are prepended to every feed tab on the first page so
+   * live/online creators are always visible regardless of how old their post is.
+   *
+   * Priority: live (streaming) > online-only; within each group, most recent post first.
+   * Cap: up to 3 live + up to 5 online-only = 8 pins max.
+   */
+  static async _fetchLiveOnlinePins(userId, blockedIds = []) {
+    try {
+      const { getRedis } = require('../config/redis');
+      const redis = getRedis();
+
+      // Step 1: live creator IDs from the shared Restreamer cache (5s TTL)
+      let liveCreatorIds = [];
+      try {
+        const cached = await redis.get('featured:live-channels');
+        if (cached) {
+          const channels = JSON.parse(cached);
+          if (channels.length > 0) {
+            const { rows: ownerRows } = await query(
+              `SELECT id::text AS user_id FROM users
+               WHERE live_channel = ANY($1::text[])
+                 AND creator_status = 'active' AND creator_locked = FALSE`,
+              [channels]
+            );
+            liveCreatorIds = ownerRows.map(r => r.user_id).slice(0, 3);
+          }
+        }
+      } catch (_) {}
+
+      // Step 2: online active creators via Redis pipeline
+      const blockedStr = blockedIds.map(String);
+      const { rows: activeCreators } = await query(
+        `SELECT id::text AS user_id FROM users
+         WHERE creator_status = 'active' AND creator_locked = FALSE
+           AND id != ALL($1::text[])
+         LIMIT 150`,
+        [blockedStr.length > 0 ? blockedStr : ['']]
+      );
+      const creatorIds = activeCreators.map(r => r.user_id);
+      const onlineIds = new Set(liveCreatorIds);
+      if (creatorIds.length > 0) {
+        const pipeline = redis.pipeline();
+        for (const id of creatorIds) pipeline.get(`presence:online:${id}`);
+        const replies = await pipeline.exec();
+        creatorIds.forEach((id, i) => {
+          const [err, val] = replies[i];
+          if (!err && val) onlineIds.add(id);
+        });
+      }
+
+      const liveSet = new Set(liveCreatorIds);
+      const onlineOnly = [...onlineIds].filter(id => !liveSet.has(id)).slice(0, 5);
+      const pinnedIds = [...liveCreatorIds, ...onlineOnly];
+      if (pinnedIds.length === 0) return [];
+
+      // Step 3: most recent post per creator (DISTINCT ON guarantees one per user)
+      const { rows } = await query(
+        `SELECT DISTINCT ON (sp.user_id)
+                sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls,
+                sp.video_thumbnail_url, sp.video_title, sp.video_description,
+                sp.metadata, sp.mux_playback_id, sp.mux_status,
+                sp.content_type, sp.x_embed_url, sp.channel_id,
+                sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
+                sp.reply_to_id, sp.repost_of_id,
+                sp.likes_count, sp.reposts_count, sp.replies_count,
+                sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+                sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+                sp.promoted_link2, sp.promoted_link2_label,
+                COALESCE(sp.content_tier, 'free') as content_tier,
+                u.id as author_id, u.username as author_username,
+                u.first_name as author_first_name, u.photo_file_id as author_photo,
+                u.city as author_city, u.country as author_country,
+                u.tier as author_tier,
+                u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+                u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+                (
+                  (SELECT COUNT(*)::int FROM channel_videos cv
+                     JOIN creator_channels cc ON cc.id = cv.channel_id
+                   WHERE cc.creator_id = u.id AND cv.status = 'published')
+                  +
+                  (SELECT COUNT(*)::int FROM social_posts sp2
+                   WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                     AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+                ) AS author_exclusive_video_count,
+                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+                rp.content as repost_content, rp.created_at as repost_created_at,
+                ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+                hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+                (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+         FROM social_posts sp
+         JOIN users u ON sp.user_id = u.id
+         LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+         LEFT JOIN users ru ON rp.user_id = ru.id
+         LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+         WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+           AND sp.user_id = ANY($2::text[])
+           AND sp.created_at > NOW() - INTERVAL '7 days'
+           AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+           AND sp.user_id != ALL($3::text[])
+         ORDER BY sp.user_id, sp.id DESC`,
+        [String(userId), pinnedIds, blockedStr.length > 0 ? blockedStr : ['']]
+      );
+
+      // Sort: live first, then online-only; within each group newest post first
+      rows.sort((a, b) => {
+        const aLive = liveSet.has(String(a.author_id)) ? 0 : 1;
+        const bLive = liveSet.has(String(b.author_id)) ? 0 : 1;
+        if (aLive !== bLive) return aLive - bLive;
+        return Number(b.id) - Number(a.id);
+      });
+
+      const pins = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+      return pins;
+    } catch (err) {
+      logger.warn('_fetchLiveOnlinePins failed (non-fatal)', { error: err.message });
+      return [];
+    }
+  }
+
+  // ── PRIME video carousel injection ────────────────────────────────────────
+
+  /**
+   * Build a synthetic promoted post containing the 10 most recently
+   * published PRIME videos, plus a count of uploads in the last 7 days.
+   * Returned as a virtual feed item (negative ID, is_carousel=true) so the
+   * frontend can render it as a horizontal scrollable row instead of a
+   * traditional card. Returns null if the carousel can't be built.
+   */
+  static async _buildPrimeCarouselPost() {
+    try {
+      const directusUrl = (process.env.DIRECTUS_INTERNAL_URL || 'http://directus:8055').replace(/\/$/, '');
+      // Single request: filter_count meta gives us the total published count
+      // for free, so we don't need a second aggregate query (the previous
+      // $NOW(-7 days) filter was returning the wrong number).
+      const resp = await axios.get(`${directusUrl}/items/prime_videos`, {
+        params: {
+          filter: JSON.stringify({ status: { _eq: 'published' } }),
+          fields: 'id,title,video_file,duration',
+          sort: '-date_created',
+          limit: 20,
+          meta: 'filter_count',
+        },
+        timeout: 4_000,
+      });
+
+      const items = (resp.data?.data || [])
+        .filter(v => v?.id && v.video_file)
+        .map(v => ({
+          id: v.id,
+          title: v.title || 'Untitled',
+          duration: v.duration || null,
+          // The Directus /video-thumb/ generator was never wired up so
+          // its endpoint 404s. Prefer the Directus row's own thumbnail
+          // field when present, else null (frontend shows a placeholder).
+          thumbnail_url: v.thumbnail ? `https://cms.pnptv.app/assets/${v.thumbnail}` : null,
+          link: `/media?play=${v.id}`,
+        }));
+
+      if (items.length === 0) return null;
+
+      const totalCount = parseInt(resp.data?.meta?.filter_count, 10) || items.length;
+
+      return {
+        id: -1, // synthetic — won't collide with real social_posts.id
+        is_promoted: true,
+        is_carousel: true,
+        carousel_total: totalCount,
+        carousel_items: items,
+        content: `${totalCount} video${totalCount === 1 ? '' : 's'} on PNPtv PRIME — latest drops`,
+        promoted_link: '/media',
+        promoted_link_label: 'Browse all videos',
+        author_id: 'pnptv-official',
+        author_username: 'pnptv',
+        author_first_name: 'PNPtv PRIME',
+        author_photo: null,
+        created_at: new Date().toISOString(),
+        likes_count: 0,
+        reposts_count: 0,
+        replies_count: 0,
+        liked_by_me: false,
+        is_exclusive: false,
+        is_shareable: false,
+        content_tier: 'free',
+        content_locked: false,
+      };
+    } catch (err) {
+      logger.warn('_buildPrimeCarouselPost failed', { error: err.message });
+      return null;
+    }
+  }
+
+  /**
+   * Blur posts whose content_tier exceeds the viewer's tier.
+   * Blurred posts retain metadata but have content and media_url set to null,
+   * and gain a `content_locked: true` flag so the frontend can render a paywall.
+   * Tier hierarchy: free < member < PRIME
+   *
+   * @param {Array}   posts       - Array of post rows
+   * @param {string}  viewerTier  - Viewer's subscription tier string
+   * @param {boolean} isAdmin     - When true, bypass all tier blurring (H-08 fix)
+   */
+  static _applyContentTierBlur(posts, viewerTier, isAdmin = false) {
+    // Admins can see all content regardless of tier (H-08: tier string never equals 'admin')
+    if (isAdmin) {
+      return posts.map(post => ({ ...post, content_locked: false }));
+    }
+
+    const normalizedViewer = (viewerTier || 'free').toLowerCase();
+    // Determine which content tiers the viewer can see in full
+    const allowedTiers = new Set(['free']);
+    if (normalizedViewer === 'member') {
+      allowedTiers.add('member');
+    } else if (normalizedViewer === 'prime') {
+      allowedTiers.add('member');
+      allowedTiers.add('prime');
+      allowedTiers.add('PRIME');
+    }
+
+    return posts.map(post => {
+      // filterFeedExclusivePosts runs first for exclusive posts and either
+      // unlocks or produces an enriched paywall payload (preview_gif_url,
+      // plan_slug, unlock_target, creator_channel_url). Do NOT reprocess those
+      // rows or we wipe the fields the paywall UI depends on.
+      if (post.exclusive_status === 'locked' || post.exclusive_status === 'unlocked') {
+        return post;
+      }
+      const postTier = (post.content_tier || 'free').toLowerCase();
+      const isAllowed = allowedTiers.has(post.content_tier) || allowedTiers.has(postTier);
+      if (isAllowed) {
+        // channel_promo hype posts are content_tier='free' by design (teaser is
+        // public), but metadata.video_url / metadata.video_directus_id point at
+        // the raw CDN asset for the gated video. Redact those fields when the
+        // viewer isn't entitled — otherwise a determined user can inspect the
+        // DOM and open the URL directly, bypassing the UI gate.
+        const meta = typeof post.metadata === 'string'
+          ? (() => { try { return JSON.parse(post.metadata); } catch { return null; } })()
+          : post.metadata;
+        if (meta && meta.kind === 'channel_promo') {
+          const accessType = (meta.access_type || 'free').toLowerCase();
+          let redact = false;
+          if (accessType === 'prime' && normalizedViewer !== 'prime') redact = true;
+          // sub/paid: we don't resolve per-channel entitlement here (would need
+          // an async DB round-trip per post). Redact by default — entitled
+          // viewers still play the video from the channel page itself.
+          if (accessType === 'subscription' || accessType === 'paid') redact = true;
+          if (redact) {
+            const safeMeta = { ...meta, video_url: '', video_directus_id: '' };
+            return {
+              ...post,
+              content_locked: false,
+              metadata: safeMeta,
+            };
+          }
+        }
+        return { ...post, content_locked: false };
+      }
+      // Blur: keep metadata, null out content and media, set content_locked flag
+      return {
+        id: post.id,
+        author_id: post.author_id,
+        author_username: post.author_username,
+        author_first_name: post.author_first_name,
+        author_photo: post.author_photo,
+        created_at: post.created_at,
+        likes_count: post.likes_count,
+        reposts_count: post.reposts_count,
+        replies_count: post.replies_count,
+        content_tier: post.content_tier,
+        reply_to_id: post.reply_to_id,
+        repost_of_id: post.repost_of_id,
+        is_wof: post.is_wof,
+        liked_by_me: post.liked_by_me,
+        is_exclusive: post.is_exclusive,
+        blurred: true,
+        content_locked: true,
+        content: null,
+        media_url: null,
+        media_type: null,
+        media_urls: null,
+        video_thumbnail_url: null,
+      };
+    });
+  }
+
+  /**
+   * Gate posts whose channel has a non-free access_type and the viewer lacks
+   * the required entitlement. Runs after _applyContentTierBlur so it never
+   * overwrites an existing exclusive lock.
+   *
+   * Prerequisites: post rows must carry channel_access_type + channel_creator_id
+   * (SELECTed via LEFT JOIN creator_channels cc_gate in getFeed / getFeedFiltered).
+   *
+   * @param {Array}   posts       - Post rows (already through sanitizePostRows)
+   * @param {string}  viewerId    - Authenticated viewer's user ID
+   * @param {object}  viewerCtx   - { isAdmin: boolean }
+   * @returns {Promise<Array>}
+   */
+  static async _applyChannelAccessLock(posts, viewerId, viewerCtx = {}) {
+    if (!posts || posts.length === 0) return posts;
+    const { isAdmin = false } = viewerCtx;
+    if (isAdmin) return posts;
+
+    const EntitlementAccessService = require('./entitlementAccessService');
+
+    // Collect unique channel IDs that are non-free and not authored by viewer,
+    // then resolve entitlements in parallel to avoid serial DB round-trips.
+    const channelIdsToCheck = new Set();
+    for (const post of posts) {
+      const accessType = post.channel_access_type;
+      if (!accessType || accessType === 'free') continue;
+      // Skip if already locked by a prior gate
+      if (post.content_locked === true || post.exclusive_status === 'locked') continue;
+      // Author bypass
+      if (String(post.user_id || post.author_id) === String(viewerId)) continue;
+      // Channel owner bypass
+      if (post.channel_creator_id != null && String(post.channel_creator_id) === String(viewerId)) continue;
+      if (post.channel_id != null) channelIdsToCheck.add(post.channel_id);
+    }
+
+    if (channelIdsToCheck.size === 0) return posts;
+
+    // Resolve all channel entitlements in parallel
+    const decisions = new Map();
+    await Promise.all(
+      [...channelIdsToCheck].map(async (channelId) => {
+        try {
+          const decision = await EntitlementAccessService.hasResourceAccess(viewerId, 'channel', channelId);
+          decisions.set(channelId, decision);
+        } catch (err) {
+          logger.warn('_applyChannelAccessLock: hasResourceAccess failed (non-fatal)', { channelId, error: err.message });
+          // Fail open: don't lock if the check itself errored
+          decisions.set(channelId, { allowed: true, reason: 'check_error' });
+        }
+      })
+    );
+
+    return posts.map(post => {
+      const accessType = post.channel_access_type;
+      if (!accessType || accessType === 'free') return post;
+      if (post.content_locked === true || post.exclusive_status === 'locked') return post;
+      if (String(post.user_id || post.author_id) === String(viewerId)) return post;
+      if (post.channel_creator_id != null && String(post.channel_creator_id) === String(viewerId)) return post;
+      if (post.channel_id == null) return post;
+
+      const decision = decisions.get(post.channel_id);
+      if (!decision || decision.allowed) return post;
+
+      // Determine unlock_target from access_type
+      let unlockTarget;
+      if (accessType === 'prime') unlockTarget = 'prime';
+      else if (accessType === 'paid') unlockTarget = 'paid';
+      else unlockTarget = 'creator_sub';
+
+      // Null out media fields; preserve preview_gif_url for blurred previews
+      const meta = post.metadata
+        ? (typeof post.metadata === 'string'
+            ? (() => { try { return JSON.parse(post.metadata); } catch { return post.metadata; } })()
+            : post.metadata)
+        : null;
+      const safeMeta = meta
+        ? { ...meta, video_url: null, video_directus_id: null }
+        : meta;
+
+      return {
+        ...post,
+        content_locked: true,
+        locked_reason: 'channel_gated',
+        unlock_target: unlockTarget,
+        media_url: null,
+        media_urls: null,
+        video_thumbnail_url: null,
+        video_title: null,
+        video_description: null,
+        metadata: safeMeta,
+        // preserve preview_gif_url so blurred preview still renders
+      };
+    });
+  }
+
+  // Keyword-based auto-classifier. Returns a category string for the post.
+  static _classifyByKeywords(content) {
+    if (!content || typeof content !== 'string') return 'social';
+    const t = content.toLowerCase();
+    const has = (terms) => terms.some(w => t.includes(w));
+
+    if (has(['harm reduction', 'naloxone', 'narcan', 'recovery', ' sober', 'clean time',
+              'mental health', 'reducción de daños', 'bienestar', 'salud mental',
+              'prep ', ' hiv', ' sti ', ' pep ', 'safe sex', 'fentanyl test', 'clinic',
+              'therapy', 'harm reduc'])) return 'wellness';
+
+    if (has(['announcement', 'join us', 'bienvenid', ' evento ', 'meetup', 'community news',
+              'esta noche join', 'anyone know', 'alguien sabe', 'help needed',
+              'necesito ayuda', 'looking for info'])) return 'community';
+
+    if (has(['slam', 'slamming', 'slammed', 'iv ', 'needle', 'jeringa', 'inyect', 'shoot up',
+              'booty bump bb', 'boofing'])) return 'slam';
+
+    if (has(['cloud', 'nube', 'smoke', 'tina', 'meth', 'crystal', 'tweak', 'pipe', 'bowl',
+              'railing', 'foil', 'vapori', 'burbuja'])) return 'clouds';
+
+    if (has(['chemsex', 'chem sex', 'pnp', 'party and play', 'partyhost', 'g ', ' ghb', 'gbl',
+              'mdma', 'coke', 'cocaína', 'poppers', 'sexo con drogas'])) return 'chemsex';
+
+    if (has(['no drugs', 'sin drogas', 'sober', 'drug free', 'libre de drogas', 'non pnp',
+              'non-pnp', 'no pnp', 'vanilla'])) return 'non_pnp';
+
+    if (has(['party', 'fiesta', 'hookup', 'let\'s play', 'juguemos', 'hookup'])) return 'fun';
+
+    if (has([' video', 'música', 'music', 'playlist', 'podcast', 'watch this',
+              'escucha', 'listen to', 'new track', 'nueva canción'])) return 'media';
+
+    return 'social';
+  }
+
+  // Reorder a page of posts for category variety + engagement relevance.
+  // All posts are returned (no skipping), just reordered within the page.
+  static _diversifyFeed(posts) {
+    if (posts.length <= 4) return posts;
+
+    // Group by author — posts already arrive newest-first from the DB query
+    const byAuthor = new Map();
+    for (const p of posts) {
+      const key = p.author_id;
+      if (!byAuthor.has(key)) byAuthor.set(key, []);
+      byAuthor.get(key).push(p);
+    }
+
+    // Order authors by their most recent post so the overall feed stays recency-first
+    const authorKeys = [...byAuthor.keys()].sort(
+      (a, b) => (byAuthor.get(b)[0].id - byAuthor.get(a)[0].id)
+    );
+
+    // Round-robin: 1 post per author before anyone gets a second slot
+    const indices = {};
+    authorKeys.forEach(k => { indices[k] = 0; });
+    const result = [];
+    while (result.length < posts.length) {
+      let added = false;
+      for (const key of authorKeys) {
+        const arr = byAuthor.get(key);
+        if (indices[key] < arr.length) {
+          result.push(arr[indices[key]++]);
+          added = true;
+        }
+      }
+      if (!added) break;
+    }
+    return result;
+  }
+
+  /**
+   * Home page preview feed (/api/webapp/social/home-feed).
+   * Returns the latest N posts without a liked_by_me check.
+   * Does NOT require authentication — the home page shows this before/after login.
+   * liked_by_me is always false; the Social page full feed provides accurate state.
+   */
+  static async getHomeFeed(limit = 10) {
+    const lim = Math.min(Number(limit) || 10, 10);
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_wof, sp.created_at,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              false as liked_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name
+       FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       WHERE sp.is_deleted = false
+         AND sp.reply_to_id IS NULL
+         AND sp.is_exclusive = false
+         -- Defensive: home dashboard preview is unauthenticated and applies
+         -- no per-viewer tier blur, so we hard-filter any post whose
+         -- content_tier is gated. is_exclusive should already cover this on
+         -- properly-authored posts, but a missing/forgotten is_exclusive flag
+         -- on a PRIME-tier post would otherwise leak unblurred to free
+         -- viewers. See 2026-05-01 backfill.
+         AND COALESCE(sp.content_tier, 'free') = 'free'
+         -- Same reasoning for paywalled channels: unauthenticated preview
+         -- cannot resolve entitlements, so drop any post that belongs to a
+         -- prime/paid/subscription channel.
+         AND (
+           sp.channel_id IS NULL
+           OR sp.channel_id IN (SELECT id FROM creator_channels WHERE access_type IS NULL OR access_type = 'free')
+         )
+       ORDER BY sp.id DESC
+       LIMIT $1`,
+      [lim]
+    );
+    const sanitized = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    // Unauthenticated preview: force redaction of gated channel_promo media URLs.
+    const redacted = SocialPostService._applyContentTierBlur(sanitized, 'free', false);
+    return { posts: redacted };
+  }
+
+  // ── Wall of Fame Feed ───────────────────────────────────────────────────────
+
+  /**
+   * Paginated WoF sub-feed for the Social page (/api/webapp/social/wof-feed).
+   * Same pattern as getFeed but filters WHERE is_wof = true.
+   *
+   * @param {number}   userId     - Authenticated viewer's user ID
+   * @param {string}   cursor     - Opaque cursor for pagination
+   * @param {number}   limit      - Page size (max 50)
+   * @param {number[]} blockedIds - User IDs the viewer has blocked (C-08)
+   */
+  // ── Hashtag Feed ──────────────────────────────────────────────────────────
+
+  /**
+   * Paginated feed filtered by a single hashtag present in post content.
+   * Uses a case-insensitive word-boundary match so #pnp does not match #pnplive.
+   *
+   * @param {number}   userId     - Authenticated viewer's user ID (for liked_by_me)
+   * @param {string}   tag        - Hashtag without the leading # character
+   * @param {string}   cursor     - Opaque pagination cursor (last seen post id)
+   * @param {number}   limit      - Page size (max 50)
+   * @param {string}   viewerTier - Viewer's current access tier
+   * @param {boolean}  isAdmin    - True for admin/superadmin roles
+   * @param {number[]} blockedIds - IDs the viewer has blocked
+   */
+  static async getHashtagFeed(userId, tag, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    if (!tag || typeof tag !== 'string') return { posts: [], nextCursor: null };
+    // Sanitize: only allow word chars + accented letters, 1-64 chars
+    const cleanTag = tag.replace(/[^a-zA-Z0-9_\u00C0-\u024F]/g, '').slice(0, 64);
+    if (!cleanTag) return { posts: [], nextCursor: null };
+
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    // Param order: $1=userId, $2=pattern, $3=lim, [$4=cursorId], $N=blockedParam
+    const params = [userId, `#${cleanTag}`, lim];
+    if (cursorId) params.push(cursorId);
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $4` : '';
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id  AS channel_creator_id
+       FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND sp.content ILIKE '%' || $2 || '%'
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         ${cursorClause}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+       ORDER BY sp.id DESC
+       LIMIT $3`,
+      params
+    );
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+    const nextCursor = rows.length === lim ? String(rows[rows.length - 1].id) : null;
+    return { posts, nextCursor };
+  }
+
+  // ── Hangout Feed ─────────────────────────────────────────────────────────
+
+  /**
+   * Paginated feed scoped to a specific hangout group.
+   * Only returns posts where hangout_group_id matches.
+   */
+  static async getHangoutFeed(hangoutGroupId, userId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    const params = [userId, hangoutGroupId, lim];
+    if (cursorId) params.push(cursorId);
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $4` : '';
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.source_message_id,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id  AS channel_creator_id
+       FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND sp.hangout_group_id = $2
+         ${cursorClause}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+       ORDER BY sp.id DESC
+       LIMIT $3`,
+      params
+    );
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+    const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
+    return { posts, nextCursor };
+  }
+
+  // ── Wall ──────────────────────────────────────────────────────────────────
+
+  /**
+   * @param {number}   userId      - Profile owner's user ID
+   * @param {number}   viewerId    - Authenticated viewer's user ID
+   * @param {string}   cursor      - Opaque cursor for pagination
+   * @param {number}   limit       - Page size (max 50)
+   * @param {string}   viewerTier  - Viewer's subscription tier ('free'|'member'|'prime')
+   * @param {boolean}  isAdmin     - True when viewer has admin/superadmin role (H-08)
+   * @param {number[]} blockedIds  - User IDs the viewer has blocked (C-08)
+   */
+  static async getWall(userId, viewerId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    // Param order: $1=viewerId, $2=userId, $3=lim, [$4=cursorId], $N=blockedParam
+    const params = [viewerId, userId, lim];
+    if (cursorId) params.push(cursorId);
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $4` : '';
+
+    const [postsRes, profileRes] = await Promise.all([
+      query(
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+                sp.content_type, sp.x_embed_url, sp.channel_id,
+                sp.source_channel,
+                sp.reply_to_id, sp.repost_of_id,
+                sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+                COALESCE(sp.content_tier, 'free') as content_tier,
+                u.id as author_id, u.username as author_username,
+                u.first_name as author_first_name, u.photo_file_id as author_photo,
+                u.city as author_city, u.country as author_country,
+                EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+                cc_gate.access_type AS channel_access_type,
+                cc_gate.creator_id  AS channel_creator_id
+         FROM social_posts sp
+         JOIN users u ON sp.user_id = u.id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+         WHERE sp.is_deleted = false
+           AND (
+             sp.user_id = $2
+             OR (sp.channel_id IS NOT NULL AND sp.channel_id IN (SELECT id FROM creator_channels WHERE creator_id = $2::varchar))
+           )
+           AND sp.reply_to_id IS NULL
+           ${cursorClause}
+           AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         ORDER BY sp.id DESC LIMIT $3`,
+        params
+      ),
+      query(
+        `SELECT id, username, first_name, last_name, bio, photo_file_id, pnptv_id,
+                subscription_status, created_at
+         FROM users WHERE id = $1`,
+        [userId]
+      ),
+    ]);
+    const profile = profileRes.rows[0] || null;
+    if (profile) profile.photo_file_id = normalizeImageUrl(profile.photo_file_id);
+
+    // Hype is now a vote (post_hypes table), not a wrapper post. Any leftover
+    // community_hype rows from the pre-347 model are dropped so the wall is as
+    // clean as the community feed — no more "removed by author" placeholders.
+    let posts = await sanitizePostRows(postsRes.rows, { hideDeletedHypeOriginals: true });
+    // Filter exclusive creator posts the viewer hasn't subscribed to (mirrors getFeed behaviour)
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
+    }
+    // Apply content_tier blurring so exclusive posts are locked for non-PRIME viewers (H-03, H-08)
+    if (viewerTier !== undefined) {
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
+    return { profile, posts, nextCursor };
+  }
+
+  // ── Posts tagging a specific user ─────────────────────────────────────────
+  /**
+   * Chronologically desc list of posts where `targetUserId` appears in
+   * post_mentions with mention_type IN ('mention','tag'). Same visibility
+   * gates as the main feed (channel access, content_tier blur, soft-delete,
+   * block filter, hangout privacy).
+   *
+   * @param {string} targetUserId  who is tagged/mentioned
+   * @param {string} viewerId      authenticated viewer
+   * @param {string} [cursor]      opaque cursor (post ID)
+   * @param {number} [limit=20]    page size (max 50)
+   * @param {string} [viewerTier]  'free' | 'member' | 'prime'
+   * @param {boolean} [isAdmin=false]
+   * @param {number[]} [blockedIds=[]]  from users.blocked (numeric)
+   */
+  static async getPostsTaggingUser(targetUserId, viewerId, cursor, limit = 20, viewerTier, isAdmin = false, blockedIds = []) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+
+    // Param order: $1=viewerId, $2=targetUserId, $3=lim, [$4=cursorId], $N=blockedParam,
+    //              [$N+1=viewerIdForBlockJoin — same as $1, used inside NOT EXISTS]
+    const params = [viewerId, String(targetUserId), lim];
+    if (cursorId) params.push(cursorId);
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    const cursorClause = cursorId ? `AND sp.id < $4` : '';
+
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers
+       FROM social_posts sp
+       JOIN post_mentions pm ON pm.post_id = sp.id
+        AND pm.mentioned_user_id = $2::varchar
+        AND pm.mention_type IN ('mention', 'tag')
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+       WHERE sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         ${cursorClause}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM blocked_users bu
+            WHERE (bu.user_id = $1::varchar AND bu.blocked_user_id = sp.user_id)
+               OR (bu.user_id = sp.user_id AND bu.blocked_user_id = $1::varchar)
+         )
+       ORDER BY sp.id DESC LIMIT $3`,
+      params
+    );
+
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
+    return { posts, nextCursor };
+  }
+
+  // ── Create Post ───────────────────────────────────────────────────────────
+
+  static async createPost(userId, content, mediaUrl, mediaType, replyToId, repostOfId, isWof = false, isExclusive = false, isShareable = true, videoThumbnailUrl = null, videoTitle = null, videoDescription = null, hangoutGroupId = null, sourceMessageId = null, category = null, isAiGenerated = false) {
+    // Ephemeral Telegram bot file URLs expire in ~1 hour. Force callers to
+    // download to /uploads/ first so the post keeps working long-term.
+    if (mediaUrl && /^https?:\/\/api\.telegram\.org\/file\//i.test(mediaUrl)) {
+      const err = new Error('EPHEMERAL_TELEGRAM_URL');
+      err.code = 'EPHEMERAL_TELEGRAM_URL';
+      throw err;
+    }
+    const contentTier = isExclusive ? 'PRIME' : 'free';
+    const VALID_CATEGORIES = new Set(['fun', 'wellness', 'chemsex', 'slam', 'clouds', 'non_pnp', 'community', 'social', 'media', 'adult']);
+    const resolvedCategory = (category && VALID_CATEGORIES.has(category))
+      ? category
+      : SocialPostService._classifyByKeywords(content);
+    const { rows } = await query(
+      `INSERT INTO social_posts (user_id, content, media_url, media_type, reply_to_id, repost_of_id, is_wof, is_exclusive, is_shareable, video_thumbnail_url, content_tier, video_title, video_description, hangout_group_id, source_message_id, category, is_ai_generated)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       RETURNING id, content, media_url, media_type, video_thumbnail_url, video_title, video_description, reply_to_id, repost_of_id,
+                 likes_count, reposts_count, replies_count, is_wof, is_exclusive, is_shareable, content_tier, created_at, hangout_group_id, source_message_id, category, is_ai_generated`,
+      [userId, content, mediaUrl, mediaType, replyToId || null, repostOfId || null, isWof, isExclusive, isShareable, videoThumbnailUrl || null, contentTier, videoTitle || null, videoDescription || null, hangoutGroupId || null, sourceMessageId || null, resolvedCategory, isAiGenerated === true]
+    );
+    const post = rows[0];
+
+    // Super-god actors: skip target counter bumps so their QA browsing doesn't
+    // inflate reply/repost engagement metrics on other users' posts. This is
+    // the single choke point — every code path that creates a reply/repost
+    // funnels through here (media posts, text-only replies, tag-friend, Mux
+    // uploads, Cristina, bot commands, routes.js:14850, etc.).
+    const EntitlementAccessService = require('./entitlementAccessService');
+    const actorIsSuperGod = EntitlementAccessService.isSuperGod(userId);
+
+    // replies_count is now trigger-maintained (migration 388) — trigger fires
+    // on INSERT/UPDATE/DELETE and covers cases the app-side +1 missed (bulk
+    // SQL deletes, admin cascades). Do not increment here or count doubles.
+    if (repostOfId && !actorIsSuperGod) {
+      await query('UPDATE social_posts SET reposts_count = reposts_count + 1 WHERE id = $1 AND is_deleted = false', [repostOfId]);
+    }
+
+    if (isExclusive && mediaUrl && typeof mediaType === 'string' && mediaType.toLowerCase().startsWith('video')) {
+      setImmediate(() => { generateBlurredPreviewGif(post.id, mediaUrl).catch(() => {}); });
+    }
+
+    return post;
+  }
+
+  /**
+   * Auto-drop a hangout chat message to the hangout feed.
+   * Only syncs messages that are "feed-worthy":
+   *   - Text content >= 50 chars  OR  has media attached
+   *   - Not a reply (conversational noise)
+   *   - Group's feed_visibility is not 'ghost'
+   *   - Not already dropped (source_message_id unique constraint)
+   *
+   * @param {Object}  msg      - The chat_messages row (from INSERT RETURNING)
+   * @param {number}  groupId  - Hangout group ID
+   * @param {Object}  io       - Socket.IO instance (optional, for real-time broadcast)
+   * @returns {Object|null}    - The created post, or null if skipped
+   */
+  static async autoDropToFeed(msg, groupId, io) {
+    try {
+      if (!msg || !groupId) return null;
+
+      // Skip replies — they're conversational, not feed-worthy
+      if (msg.reply_to_id) return null;
+
+      const hasMedia = !!msg.media_url;
+      const textLength = (msg.content || '').trim().length;
+
+      // Only sync meaningful messages: 50+ chars or has media
+      if (!hasMedia && textLength < 50) return null;
+
+      // Check feed_visibility
+      const { rows: groupRows } = await query(
+        'SELECT feed_visibility, name FROM hangout_groups WHERE id = $1',
+        [groupId]
+      );
+      if (!groupRows.length || groupRows[0].feed_visibility === 'ghost') return null;
+
+      // Check not already dropped (avoids unique constraint violation)
+      const { rows: existing } = await query(
+        'SELECT id FROM social_posts WHERE source_message_id = $1',
+        [msg.id]
+      );
+      if (existing.length) return null;
+
+      // Create the feed post
+      const post = await SocialPostService.createPost(
+        msg.user_id,
+        msg.content || '',
+        msg.media_url || null,
+        msg.media_type || null,
+        null, null, false, false, true,
+        msg.media_thumb_url || null,
+        null, null,
+        groupId,
+        msg.id  // source_message_id
+      );
+
+      // Broadcast to hangout feed room
+      if (io && post) {
+        const fullPost = {
+          ...post,
+          author_id: msg.user_id,
+          author_username: msg.username || '',
+          author_first_name: msg.first_name || '',
+          author_photo: msg.photo_url || null,
+          liked_by_me: false,
+          hangout_group_id: groupId,
+          hangout_group_name: groupRows[0].name,
+        };
+        io.to(`hangout:${groupId}`).emit('hangout:feed:new_post', fullPost);
+      }
+
+      return post;
+    } catch (err) {
+      // Log but don't throw — auto-drop is non-critical
+      logger.error('autoDropToFeed error', { messageId: msg?.id, groupId, error: err.message });
+      return null;
+    }
+  }
+
+  /**
+   * Insert a post migrated/mirrored from a Telegram channel.
+   * Accepts a custom created_at and telegram_message_id for deduplication.
+   * Returns the new row, or null if it already existed (ON CONFLICT).
+   */
+  static async createMigratedPost(userId, content, mediaUrl, mediaType, telegramMessageId, sourceChannel, originalDate) {
+    const { rows } = await query(
+      `INSERT INTO social_posts
+         (user_id, content, media_url, media_type, telegram_message_id, source_channel,
+          is_wof, is_exclusive, is_shareable, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, false, false, true, $7, $7)
+       ON CONFLICT (telegram_message_id) WHERE telegram_message_id IS NOT NULL DO NOTHING
+       RETURNING id, content, media_url, media_type, telegram_message_id, source_channel, created_at`,
+      [userId, content || '', mediaUrl || null, mediaType || null, telegramMessageId, sourceChannel, originalDate]
+    );
+    return rows[0] || null;
+  }
+
+  // ── Toggle Like ───────────────────────────────────────────────────────────
+
+  static async toggleLike(postId, userId) {
+    // Super-god: skip the INSERT/DELETE so the count trigger never fires.
+    // Return synthetic liked=true + current count so the heart animates in UI.
+    const EntitlementAccessService = require('./entitlementAccessService');
+    if (EntitlementAccessService.isSuperGod(userId)) {
+      const { rows } = await query(
+        `SELECT likes_count FROM social_posts WHERE id=$1`,
+        [postId]
+      );
+      return { liked: true, likes_count: rows[0]?.likes_count ?? 0, superGod: true };
+    }
+    // likes_count is maintained by trigger trg_social_post_likes_count
+    // (migration 222). We only insert/delete the row here; the trigger
+    // keeps social_posts.likes_count in sync on INSERT and DELETE.
+    await query(
+      `WITH del AS (
+        DELETE FROM social_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id
+      )
+      INSERT INTO social_post_likes (post_id, user_id)
+        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM del)
+      ON CONFLICT DO NOTHING`,
+      [postId, userId]
+    );
+
+    // Separate query = fresh snapshot so trigger's count update is visible.
+    const { rows } = await query(
+      `SELECT
+         EXISTS(SELECT 1 FROM social_post_likes WHERE post_id=$1 AND user_id=$2) AS liked,
+         likes_count
+         FROM social_posts WHERE id=$1`,
+      [postId, userId]
+    );
+    if (!rows[0]) return { liked: false, likes_count: 0 };
+    return { liked: rows[0].liked ?? false, likes_count: rows[0].likes_count };
+  }
+
+  // ── Hype vote (post_hypes, migration 347) ────────────────────────────────
+  //
+  // Hype is a viewer-cast boost, NOT a repost. Each vote lives in post_hypes
+  // with a 7-day TTL; expired votes stop counting toward hype_score and stop
+  // showing in the "Hyped by" attribution. We denormalize hype_score on the
+  // post row for fast read-time boost application; the true source of truth
+  // is `SELECT SUM(weight) FROM post_hypes WHERE post_id=$1 AND expires_at>NOW()`.
+  static async toggleHype(postId, userId) {
+    const EntitlementAccessService = require('./entitlementAccessService');
+    // Super-god actors don't move real numbers (mirrors toggleLike behavior).
+    if (EntitlementAccessService.isSuperGod(userId)) {
+      const { rows } = await query(
+        `SELECT COALESCE(hype_score, 0) AS hype_score FROM social_posts WHERE id=$1 AND is_deleted=false`,
+        [postId]
+      );
+      if (!rows[0]) return { hyped: false, hype_score: 0, superGod: true };
+      return { hyped: true, hype_score: rows[0].hype_score, superGod: true };
+    }
+
+    // Reject hyping deleted posts, exclusive posts (paywall bypass surface),
+    // or posts whose author has disabled sharing.
+    const { rows: chk } = await query(
+      `SELECT user_id, is_deleted, is_exclusive, is_shareable, COALESCE(content_tier,'free') AS content_tier
+         FROM social_posts WHERE id=$1`,
+      [postId]
+    );
+    if (!chk[0] || chk[0].is_deleted) {
+      const err = new Error('Post not found'); err.code = 'POST_NOT_FOUND'; err.status = 404; throw err;
+    }
+    if (chk[0].is_exclusive || String(chk[0].content_tier).toLowerCase() === 'prime') {
+      const err = new Error('Cannot hype exclusive content'); err.code = 'EXCLUSIVE'; err.status = 403; throw err;
+    }
+    if (chk[0].is_shareable === false) {
+      const err = new Error('Author disabled hype for this post'); err.code = 'NOT_SHAREABLE'; err.status = 403; throw err;
+    }
+
+    // Daily quota: prime=10, everyone else (free + member)=3. Rolling 24h window.
+    // Enforced via atomic Redis INCR to prevent race between COUNT and INSERT
+    // that would allow concurrent hypes on different posts to bypass the limit.
+    // Un-hype does NOT decrement (a hype consumed the quota; un-doing the
+    // engagement doesn't refund it — otherwise un-hype-and-rehype leaks budget).
+    // Fail-closed on Redis error: without atomic counter, quota can't be
+    // enforced correctly, so we reject the request rather than let it through.
+    const { rows: tierRows } = await query(
+      `SELECT LOWER(COALESCE(tier,'free')) AS tier FROM users WHERE id=$1`,
+      [String(userId)]
+    );
+    const tier = tierRows[0]?.tier || 'free';
+    const dailyLimit = tier === 'prime' ? 10 : 3;
+
+    // Toggle: remove the vote if present + active; otherwise upsert a fresh
+    // 7-day vote. `expires_at` is refreshed on re-hype so repeat engagement
+    // extends the boost window (mirrors YouTube Hype).
+    const { rows: existing } = await query(
+      `SELECT weight, expires_at FROM post_hypes WHERE user_id=$1::text AND post_id=$2`,
+      [String(userId), postId]
+    );
+
+    const { getRedis } = require('../config/redis');
+    let hyped;
+    let dailyUsed;
+    let dailyResetsAt = null;
+
+    if (existing[0] && new Date(existing[0].expires_at).getTime() > Date.now()) {
+      // Un-hype path — no quota check, no counter mutation.
+      await query(`DELETE FROM post_hypes WHERE user_id=$1::text AND post_id=$2`, [String(userId), postId]);
+      hyped = false;
+      // Return current counter state (best-effort; if Redis is down, return null quota)
+      try {
+        const redis = getRedis();
+        const qKey = `hype:quota:${String(userId)}`;
+        const curr = Number(await redis.get(qKey)) || 0;
+        const ttl = await redis.ttl(qKey);
+        dailyUsed = curr;
+        dailyResetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+      } catch (_readErr) {
+        dailyUsed = 0;
+      }
+    } else {
+      // NEW hype path — atomic quota check via Redis INCR.
+      let redis;
+      try {
+        redis = getRedis();
+      } catch (redisSetupErr) {
+        const err = new Error('Hype quota service unavailable, try again shortly.');
+        err.code = 'HYPE_QUOTA_UNAVAILABLE';
+        err.status = 503;
+        throw err;
+      }
+      const qKey = `hype:quota:${String(userId)}`;
+      let newCount;
+      try {
+        newCount = await redis.incr(qKey);
+        if (newCount === 1) {
+          await redis.expire(qKey, 86400); // 24h TTL only on first hit
+        }
+      } catch (redisErr) {
+        // Fail closed — cannot enforce quota atomically without Redis
+        const err = new Error('Hype quota service unavailable, try again shortly.');
+        err.code = 'HYPE_QUOTA_UNAVAILABLE';
+        err.status = 503;
+        throw err;
+      }
+
+      if (newCount > dailyLimit) {
+        // Roll back the increment so a rejected hype doesn't consume budget.
+        try { await redis.decr(qKey); } catch (_decrErr) { /* best-effort */ }
+        const ttl = await redis.ttl(qKey);
+        const resetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+        const err = new Error(`Daily hype limit reached (${dailyLimit}/day). Cupo se libera 24h después de tu primer hype.`);
+        err.code = 'HYPE_QUOTA_EXCEEDED';
+        err.status = 429;
+        err.data = { dailyLimit, dailyUsed: dailyLimit, dailyRemaining: 0, resetsAt };
+        throw err;
+      }
+
+      // Quota reserved — commit the hype write.
+      try {
+        await query(
+          `INSERT INTO post_hypes (user_id, post_id, weight, created_at, expires_at)
+           VALUES ($1::text, $2, 1, NOW(), NOW() + INTERVAL '7 days')
+           ON CONFLICT (user_id, post_id) DO UPDATE
+             SET weight = 1, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'`,
+          [String(userId), postId]
+        );
+      } catch (insertErr) {
+        // Insert failed — release the reserved quota slot.
+        try { await redis.decr(qKey); } catch (_decrErr) { /* best-effort */ }
+        throw insertErr;
+      }
+      hyped = true;
+      dailyUsed = newCount;
+      const ttl = await redis.ttl(qKey);
+      dailyResetsAt = ttl > 0 ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+    }
+
+    // Resync denormalized hype_score from the vote table (cheap — indexed).
+    const { rows: scoreRows } = await query(
+      `UPDATE social_posts
+          SET hype_score = COALESCE(
+            (SELECT SUM(weight)::int FROM post_hypes WHERE post_id=$1 AND expires_at > NOW()),
+            0)
+        WHERE id=$1
+        RETURNING COALESCE(hype_score, 0) AS hype_score`,
+      [postId]
+    );
+
+    return {
+      hyped,
+      hype_score: scoreRows[0]?.hype_score ?? 0,
+      dailyLimit,
+      dailyUsed,
+      dailyRemaining: Math.max(0, dailyLimit - dailyUsed),
+      dailyResetsAt,
+    };
+  }
+
+  // Top hypers for the "🔥 Hyped by @a, @b and N others" chip. Returns
+  // { hypers: [{id, username, first_name, photo_file_id}], total }.
+  static async getHypers(postId, limit = 10) {
+    const lim = Math.min(Math.max(1, Number(limit) || 10), 50);
+    const [hypersRes, countRes] = await Promise.all([
+      query(
+        `SELECT u.id, u.username, u.first_name, u.photo_file_id
+           FROM post_hypes ph
+           JOIN users u ON u.id = ph.user_id
+          WHERE ph.post_id = $1 AND ph.expires_at > NOW()
+          ORDER BY ph.created_at DESC
+          LIMIT $2`,
+        [postId, lim]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS n FROM post_hypes WHERE post_id=$1 AND expires_at > NOW()`,
+        [postId]
+      ),
+    ]);
+    return {
+      hypers: hypersRes.rows.map(r => ({
+        ...r,
+        photo_file_id: normalizeImageUrl(r.photo_file_id),
+      })),
+      total: countRes.rows[0]?.n || 0,
+    };
+  }
+
+  // Batched hydrator: attach `top_hypers` (array of up to 3 handles/avatars)
+  // to each post that has any active votes. One SQL round-trip regardless of
+  // page size. Called by feed queries after sanitizePostRows so the frontend
+  // can render attribution without a per-card fetch.
+  static async hydrateTopHypers(posts, perPost = 3) {
+    if (!Array.isArray(posts) || posts.length === 0) return posts;
+    const ids = posts.filter(p => Number(p?.hype_score) > 0).map(p => p.id);
+    if (ids.length === 0) return posts;
+    const { rows } = await query(
+      `SELECT * FROM (
+         SELECT
+           ph.post_id,
+           u.id AS user_id, u.username, u.first_name, u.photo_file_id,
+           ROW_NUMBER() OVER (PARTITION BY ph.post_id ORDER BY ph.created_at DESC) AS rn
+         FROM post_hypes ph
+         JOIN users u ON u.id = ph.user_id
+         WHERE ph.post_id = ANY($1::int[]) AND ph.expires_at > NOW()
+       ) t
+       WHERE t.rn <= $2`,
+      [ids, perPost]
+    );
+    const byPost = new Map();
+    for (const r of rows) {
+      if (!byPost.has(r.post_id)) byPost.set(r.post_id, []);
+      byPost.get(r.post_id).push({
+        id: r.user_id,
+        username: r.username,
+        first_name: r.first_name,
+        photo_file_id: normalizeImageUrl(r.photo_file_id),
+      });
+    }
+    return posts.map(p => byPost.has(p.id) ? { ...p, top_hypers: byPost.get(p.id) } : p);
+  }
+
+  // ── Delete Post ───────────────────────────────────────────────────────────
+
+  /**
+   * FIX 8 (audit 2026-09-04): cascade notifications + post_mentions cleanup
+   * on soft-delete. Notifications are hard-deleted so the user's inbox
+   * doesn't keep pointing at gone content. post_mentions rows are also
+   * removed so future reads don't need to join on posts.is_deleted=false
+   * to filter them out.
+   */
+  static async _cascadeDeleteDependents(postId) {
+    let notifDeleted = 0;
+    let mentionsDeleted = 0;
+    try {
+      const nr = await query(
+        `DELETE FROM notifications WHERE entity_type = 'post' AND entity_id = $1::text`,
+        [String(postId)]
+      );
+      notifDeleted = nr.rowCount || 0;
+    } catch (err) {
+      logger.warn('deletePost: notifications cascade failed', { postId, err: err.message });
+    }
+    try {
+      const mr = await query(
+        `DELETE FROM post_mentions WHERE post_id = $1`,
+        [postId]
+      );
+      mentionsDeleted = mr.rowCount || 0;
+    } catch (err) {
+      logger.warn('deletePost: post_mentions cascade failed', { postId, err: err.message });
+    }
+    if (notifDeleted || mentionsDeleted) {
+      logger.info('deletePost cascade', { postId, notifDeleted, mentionsDeleted });
+    }
+  }
+
+  static async deletePost(postId, userId, isAdmin = false) {
+    if (isAdmin) {
+      const { rows, rowCount } = await query(
+        'UPDATE social_posts SET is_deleted=true, updated_at=NOW() WHERE id=$1 RETURNING reply_to_id, repost_of_id, channel_id',
+        [postId]
+      );
+      if (rowCount > 0) {
+        await MediaCleanupService.deletePostMedia(postId);
+        await SocialPostService._cascadeDeleteDependents(postId);
+        const { reply_to_id, repost_of_id, channel_id } = rows[0];
+        // replies_count trigger (migration 388) auto-decrements on soft-delete.
+        if (reply_to_id) { /* handled by trigger */ }
+        if (repost_of_id) {
+          await query('UPDATE social_posts SET reposts_count = GREATEST(reposts_count - 1, 0) WHERE id = $1', [repost_of_id]);
+        }
+        if (channel_id) {
+          await query('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channel_id]);
+        }
+      }
+      return rowCount > 0;
+    }
+    const { rows, rowCount } = await query(
+      'UPDATE social_posts SET is_deleted=true WHERE id=$1 AND user_id=$2 RETURNING reply_to_id, repost_of_id, channel_id',
+      [postId, userId]
+    );
+    if (rowCount > 0) {
+      await MediaCleanupService.deletePostMedia(postId);
+      await SocialPostService._cascadeDeleteDependents(postId);
+      const { reply_to_id, repost_of_id, channel_id } = rows[0];
+      if (reply_to_id) {
+        await query('UPDATE social_posts SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1', [reply_to_id]);
+      }
+      if (repost_of_id) {
+        await query('UPDATE social_posts SET reposts_count = GREATEST(reposts_count - 1, 0) WHERE id = $1', [repost_of_id]);
+      }
+      if (channel_id) {
+        await query('UPDATE creator_channels SET post_count = (SELECT COUNT(*) FROM social_posts WHERE channel_id = $1 AND is_deleted = false) WHERE id = $1', [channel_id]);
+      }
+    }
+    return rowCount > 0;
+  }
+
+  // ── Delete WoF Post (user requesting removal of their own WoF content) ────
+
+  // ── Replies ───────────────────────────────────────────────────────────────
+
+  static async getReplies(postId, viewerId, cursor) {
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    // Fetch limit + 1 so we can detect "more available" without a second
+    // round trip. The extra row is sliced off before returning.
+    const lim = 20;
+    // CRIT-2 FIX: Exclude replies from users the viewer has blocked and from
+    // users who have blocked the viewer, using the users.blocked text[] column.
+    // $1 = viewerId, $2 = postId, $3 (optional) = cursorId
+    const params = cursorId ? [viewerId, postId, cursorId] : [viewerId, postId];
+    const { rows } = await query(
+      `SELECT sp.id, sp.content, sp.likes_count, sp.replies_count, sp.created_at,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me
+       FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       -- Exclude replies where the viewer has blocked the reply author
+       LEFT JOIN users viewer ON viewer.id = $1::text
+       WHERE sp.reply_to_id = $2 AND sp.is_deleted = false
+         -- Filter: viewer has not blocked the reply author
+         AND NOT COALESCE(viewer.blocked @> ARRAY[u.id::text], false)
+         -- Filter: reply author has not blocked the viewer
+         AND NOT COALESCE(u.blocked @> ARRAY[$1::text], false)
+         ${cursorId ? 'AND sp.id > $3' : ''}
+       ORDER BY sp.id ASC LIMIT ${lim + 1}`,
+      params
+    );
+    const page = rows.slice(0, lim);
+    const nextCursor = rows.length > lim ? String(page[page.length - 1].id) : null;
+    return { replies: await sanitizePostRows(page), nextCursor };
+  }
+
+  // ── Public Profile ────────────────────────────────────────────────────────
+
+  static async getPublicProfile(userId, viewerId, cursor, limit = 20, viewerTier, isAdmin = false) {
+    const lim = Math.min(Number(limit) || 20, 50);
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const params = [userId, lim];
+    let likedSubquery = '';
+    let cursorClause = '';
+
+    if (viewerId) {
+      params.push(viewerId);
+      likedSubquery = `, EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$${params.length}) as liked_by_me`
+        + `, EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$${params.length}::text AND ph.expires_at > NOW()) as hyped_by_me`;
+    }
+    if (cursorId) {
+      params.push(cursorId);
+      cursorClause = `AND sp.id < $${params.length}`;
+    }
+
+    // FIX 1 (audit 2026-09-04): the profile wall is strictly posts authored
+    // by the profile owner. The previous OR-branch on channel_id leaked ANY
+    // user's posts into the wall if they had posted into a channel the owner
+    // happens to own. Channel-detail lives at its own endpoint.
+    //
+    // FIX 5: also apply the bidirectional block filter for authenticated
+    // viewers — if the viewer blocked the owner OR the owner blocked the
+    // viewer we return zero posts (403 is handled at the controller level,
+    // but the SQL still needs to be safe for the anonymous / same-person
+    // paths where the outer 403 doesn't fire).
+    let blockClause = '';
+    if (viewerId && String(viewerId) !== String(userId)) {
+      params.push(String(viewerId));
+      const viewerIdx = params.length;
+      blockClause = `AND NOT EXISTS (
+        SELECT 1 FROM blocked_users bu
+         WHERE (bu.user_id = $${viewerIdx} AND bu.blocked_user_id = sp.user_id)
+            OR (bu.user_id = sp.user_id AND bu.blocked_user_id = $${viewerIdx})
+      )`;
+    }
+    const [postsRes, profileRes, postCountRes, performerRes, exclusiveCountRes] = await Promise.all([
+      query(
+        `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+                sp.content_type, sp.x_embed_url, sp.source_channel, sp.channel_id,
+                sp.reply_to_id, sp.repost_of_id,
+                sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+                COALESCE(sp.content_tier, 'free') as content_tier,
+                u.id as author_id, u.username as author_username,
+                u.first_name as author_first_name, u.photo_file_id as author_photo,
+                COALESCE(sp.hype_score, 0) AS hype_score,
+                cc_gate.access_type AS channel_access_type,
+                cc_gate.creator_id  AS channel_creator_id
+                ${likedSubquery}
+         FROM social_posts sp
+         JOIN users u ON sp.user_id = u.id
+         LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id
+         WHERE sp.is_deleted = false
+           AND sp.user_id = $1
+           AND sp.reply_to_id IS NULL
+           ${cursorClause}
+           ${blockClause}
+         ORDER BY sp.id DESC LIMIT $2`,
+        params
+      ),
+      query(
+        `SELECT id, username, first_name, last_name, bio, photo_file_id, pnptv_id,
+                created_at, privacy, date_of_birth, city, country,
+                creator_status, creator_type, creator_price_usd, creator_verified, creator_featured, creator_subscriber_count,
+                wellness_days_accumulated,
+                colombia_badge, is_pnptv_fam, pnptv_fam_since,
+                crystal_creator_active_until, partner_badge_color,
+                (SELECT il.color FROM invite_link_uses ilu JOIN invite_links il ON il.code = ilu.code
+                  WHERE ilu.user_id = users.id AND il.color IS NOT NULL ORDER BY ilu.redeemed_at ASC LIMIT 1) AS profile_color
+         FROM users WHERE id = $1 AND is_deleted = false`,
+        [userId]
+      ),
+      query(
+        // FIX 1: count only posts authored by the profile owner — the OR-branch
+        // on channel ownership over-counted anyone who ever posted in a channel
+        // this user owns.
+        `SELECT COUNT(*)::int as count FROM social_posts
+          WHERE is_deleted = false AND reply_to_id IS NULL
+            AND user_id = $1`,
+        [userId]
+      ),
+      query(
+        `SELECT id, is_available, base_price, total_calls, total_rating, rating_count, availability_message
+         FROM performers WHERE user_id = $1 AND status = 'active' LIMIT 1`,
+        [userId]
+      ),
+      query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END), 0)::int AS exclusive_videos,
+           COALESCE(SUM(CASE WHEN media_type IS NOT NULL AND media_type != 'video' THEN 1 ELSE 0 END), 0)::int AS exclusive_photos
+         FROM social_posts
+         WHERE user_id = $1 AND is_exclusive = true AND is_deleted = false`,
+        [userId]
+      ),
+    ]);
+
+    // Batch-fetch tagged_performers for all returned posts in a single query,
+    // replacing the N+1 correlated subquery that was embedded in the main SELECT.
+    const postIds = postsRes.rows.map(r => r.id);
+    const mentionsByPost = new Map();
+    if (postIds.length > 0) {
+      const { rows: mentionRows } = await query(
+        `SELECT pm.post_id, u.id, u.username, u.first_name,
+                CASE
+                  WHEN u.photo_file_id IS NULL THEN NULL
+                  WHEN u.photo_file_id LIKE '/uploads/%' THEN u.photo_file_id
+                  ELSE u.photo_file_id
+                END AS photo_file_id,
+                u.creator_verified
+           FROM post_mentions pm
+           JOIN users u ON u.id = pm.mentioned_user_id
+          WHERE pm.post_id = ANY($1::int[])
+            AND pm.mention_type = 'tag'
+          ORDER BY pm.post_id, pm.created_at`,
+        [postIds]
+      );
+      for (const r of mentionRows) {
+        if (!mentionsByPost.has(r.post_id)) mentionsByPost.set(r.post_id, []);
+        mentionsByPost.get(r.post_id).push({
+          id: String(r.id),
+          username: r.username,
+          avatar_url: normalizeImageUrl(r.photo_file_id),
+          creator_verified: r.creator_verified || false,
+        });
+      }
+    }
+    for (const row of postsRes.rows) {
+      row.tagged_performers = mentionsByPost.get(row.id) || [];
+    }
+
+    const profile = profileRes.rows[0] || null;
+    if (profile) profile.photo_file_id = normalizeImageUrl(profile.photo_file_id);
+
+    // --- PRIVACY SETTINGS ENFORCEMENT ---
+    // Only apply to third-party viewers (not the profile owner themselves).
+    if (profile && String(viewerId) !== String(userId)) {
+      const privacy = (typeof profile.privacy === 'object' && profile.privacy !== null)
+        ? profile.privacy
+        : {};
+      if (privacy.showLocation === false) {
+        profile.location_name = null;
+        profile.location_lat = null;
+        profile.location_lng = null;
+      }
+      if (privacy.showBio === false) {
+        profile.bio = null;
+      }
+      if (privacy.showInterests === false) {
+        profile.interests = null;
+      }
+      if (privacy.showDob === false) {
+        profile.date_of_birth = null;
+      }
+    }
+
+    // Hype-as-vote (post_hypes, migration 347) — drop any legacy community_hype
+    // wrapper rows so the profile wall stays as clean as the community feed.
+    let posts = (await sanitizePostRows(postsRes.rows, { hideDeletedHypeOriginals: true })).map(p => ({
+      ...p,
+      liked_by_me: viewerId ? p.liked_by_me : false,
+      hyped_by_me: viewerId ? Boolean(p.hyped_by_me) : false,
+    }));
+
+    if (viewerTier) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, viewerId, viewerTier);
+    }
+    // Apply content_tier blurring for PRIME-gated posts (CRIT-02)
+    if (viewerTier !== undefined) {
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, viewerId, { isAdmin });
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const nextCursor = posts.length === lim ? String(posts[posts.length - 1].id) : null;
+    const postCount = postCountRes.rows[0]?.count || 0;
+    const performerData = performerRes.rows[0] || null;
+    const exclusiveVideoCount = exclusiveCountRes.rows[0]?.exclusive_videos || 0;
+    const exclusivePhotoCount = exclusiveCountRes.rows[0]?.exclusive_photos || 0;
+
+    return { profile, posts, nextCursor, postCount, performerData, exclusiveVideoCount, exclusivePhotoCount };
+  }
+
+  // ── Admin List Posts ──────────────────────────────────────────────────────
+
+  static async adminListPosts(page = 1, limit = 20) {
+    const offset = (page - 1) * limit;
+    const [result, countResult] = await Promise.all([
+      query(
+        `SELECT p.id, p.user_id, p.content, p.media_url, p.media_type,
+                p.likes_count, p.replies_count, p.created_at,
+                u.username, u.first_name, u.photo_file_id
+         FROM social_posts p
+         JOIN users u ON p.user_id = u.id
+         WHERE p.is_deleted = false
+         ORDER BY p.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      query('SELECT COUNT(*)::int as count FROM social_posts WHERE is_deleted = false'),
+    ]);
+
+    const total = countResult.rows[0]?.count || 0;
+    const totalPages = Math.ceil(total / limit);
+    return { posts: result.rows, pagination: { page, limit, total, totalPages } };
+  }
+
+  // ── Mastodon Mirror ───────────────────────────────────────────────────────
+
+  static mirrorToMastodon(content, postId) {
+    const token = process.env.MASTODON_ACCESS_TOKEN;
+    const baseUrl = process.env.MASTODON_BASE_URL;
+    if (!token || !baseUrl) return;
+
+    axios.post(
+      `${baseUrl}/api/v1/statuses`,
+      { status: content },
+      { headers: { Authorization: `Bearer ${token}` } }
+    ).then(r => {
+      query('UPDATE social_posts SET mastodon_id = $1 WHERE id = $2', [r.data.id, postId]).catch(() => {});
+    }).catch(() => {});
+  }
+
+  // ── Filtered feed dispatcher (2026-07-23) ─────────────────────────────────
+  // Powers the 5-tab feed. `filter` in {all, subscribed, following, new, nearby, hot}.
+  // Shares the SELECT column list with getFeed; per-filter WHERE/JOIN additions.
+  static async getFeedFiltered({
+    userId, filter = 'all', cursor, limit = 20,
+    viewerTier, isAdmin = false, blockedIds = [], viewerGeoTags = [],
+  }) {
+    const valid = ['all', 'subscribed', 'following', 'new', 'nearby', 'hot', 'latest', 'slam'];
+    const f = valid.includes(filter) ? filter : 'all';
+
+    // All-branch delegates to the original getFeed for backwards compat + boost.
+    if (f === 'all') {
+      return SocialPostService.getFeed(userId, cursor, limit, viewerTier, isAdmin, blockedIds, viewerGeoTags);
+    }
+
+    const lim = Math.min(Number(limit) || 20, 50);
+    const fetchLimit = lim + 10;
+    const cursorId = cursor ? parseInt(cursor, 10) : null;
+    const blockedParam = blockedIds.length > 0 ? blockedIds.map(Number) : [];
+    const geoTagsParam = Array.isArray(viewerGeoTags) ? viewerGeoTags : [];
+
+    // ── SELECT + FROM template (shared) ────────────────────────────────────
+    const SELECT = `SELECT sp.id, sp.content, sp.media_url, sp.media_type, sp.media_urls, sp.video_thumbnail_url, sp.video_title, sp.video_description, sp.metadata, sp.mux_playback_id, sp.mux_status,
+              sp.content_type, sp.x_embed_url, sp.channel_id,
+              sp.source_channel, sp.hangout_group_id, sp.category, sp.is_ai_generated,
+              sp.reply_to_id, sp.repost_of_id,
+              sp.likes_count, sp.reposts_count, sp.replies_count, sp.is_exclusive, sp.is_shareable, sp.is_wof, sp.created_at,
+              sp.is_promoted, sp.promoted_link, sp.promoted_link_label, sp.promoted_thumbnail,
+              sp.promoted_link2, sp.promoted_link2_label,
+              COALESCE(sp.content_tier, 'free') as content_tier,
+              cc_gate.access_type AS channel_access_type,
+              cc_gate.creator_id AS channel_creator_id,
+              u.id as author_id, u.username as author_username,
+              u.first_name as author_first_name, u.photo_file_id as author_photo,
+              u.city as author_city, u.country as author_country,
+              u.tier as author_tier,
+              u.creator_status as author_creator_status, u.creator_type as author_creator_type,
+              u.creator_verified as author_creator_verified, u.creator_price_usd as author_creator_price,
+              (
+                (SELECT COUNT(*)::int FROM channel_videos cv
+                   JOIN creator_channels cc ON cc.id = cv.channel_id
+                 WHERE cc.creator_id = u.id AND cv.status = 'published')
+                +
+                (SELECT COUNT(*)::int FROM social_posts sp2
+                 WHERE sp2.user_id = u.id AND sp2.is_exclusive = true
+                   AND sp2.media_type = 'video' AND sp2.is_deleted = false)
+              ) AS author_exclusive_video_count,
+              EXISTS(SELECT 1 FROM social_post_likes l WHERE l.post_id=sp.id AND l.user_id=$1) as liked_by_me,
+              COALESCE(sp.hype_score, 0) AS hype_score,
+              EXISTS(SELECT 1 FROM post_hypes ph WHERE ph.post_id=sp.id AND ph.user_id=$1::text AND ph.expires_at > NOW()) AS hyped_by_me,
+              rp.content as repost_content, rp.created_at as repost_created_at,
+              ru.username as repost_author_username, ru.first_name as repost_author_first_name,
+              hg.name as hangout_group_name, hg.avatar_url as hangout_group_avatar,
+              (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', u2.id::text, 'username', u2.username, 'avatar_url', u2.photo_file_id) ORDER BY pm2.created_at), '[]'::json) FROM post_mentions pm2 JOIN users u2 ON u2.id = pm2.mentioned_user_id WHERE pm2.post_id = sp.id AND pm2.mention_type = 'tag') AS tagged_performers`;
+
+    const FROM_JOIN = `FROM social_posts sp
+       JOIN users u ON sp.user_id = u.id
+       LEFT JOIN social_posts rp ON sp.repost_of_id = rp.id
+       LEFT JOIN users ru ON rp.user_id = ru.id
+       LEFT JOIN hangout_groups hg ON sp.hangout_group_id = hg.id
+       LEFT JOIN creator_channels cc_gate ON cc_gate.id = sp.channel_id`;
+
+    const BASE_WHERE = `sp.is_deleted = false AND sp.reply_to_id IS NULL
+         AND (sp.hangout_group_id IS NULL OR hg.feed_visibility = 'public')
+         AND (
+           u.role NOT IN ('model', 'creator')
+           OR (u.creator_status = 'active' AND u.creator_locked = FALSE)
+           OR u.role IN ('admin', 'superadmin')
+         )`;
+
+    // ── Per-filter overrides ──────────────────────────────────────────────
+    const params = [userId, fetchLimit];
+    let extraJoin = '';
+    let extraWhere = '';
+    let orderBy = `ORDER BY sp.id DESC`;
+    const cursorClause = cursorId ? `AND sp.id < $${(() => { params.push(cursorId); return params.length; })()}` : '';
+
+    if (f === 'subscribed') {
+      // Only posts from creators the viewer has an active subscription to.
+      extraJoin = `JOIN creator_subscriptions cs ON cs.creator_id = sp.user_id AND cs.subscriber_id = $1 AND cs.status = 'active' AND cs.expires_at > NOW()`;
+    } else if (f === 'following') {
+      extraJoin = `JOIN user_follows uf ON uf.following_id = sp.user_id AND uf.follower_id = $1`;
+    } else if (f === 'new') {
+      // Regular members (non-creators) created within the last 14 days.
+      extraWhere = `AND u.created_at > NOW() - INTERVAL '14 days'
+        AND (u.creator_status IS NULL OR u.creator_status != 'active')`;
+    } else if (f === 'nearby') {
+      // Posts from users within ~50km using bounding-box haversine approx.
+      // Source: user_locations (the table nearbyService writes to on location share).
+      // users.location_lat/lng is legacy — never populated by the current share flow.
+      const viewerLocRes = await query(
+        `SELECT latitude::float AS lat, longitude::float AS lng
+           FROM user_locations
+          WHERE user_id = $1 AND last_seen > NOW() - INTERVAL '365 days'`,
+        [userId]
+      );
+      const vLat = viewerLocRes.rows[0]?.lat;
+      const vLng = viewerLocRes.rows[0]?.lng;
+      if (vLat == null || vLng == null) {
+        return { posts: [], nextCursor: null, needsLocation: true };
+      }
+      // Bounding box: ±0.45° lat (~50 km), ±0.45/cos(lat) lng
+      const dLat = 0.45;
+      const dLng = 0.45 / Math.max(0.2, Math.cos(vLat * Math.PI / 180));
+      params.push(vLat - dLat, vLat + dLat, vLng - dLng, vLng + dLng);
+      const iLatMin = params.length - 3;
+      const iLatMax = params.length - 2;
+      const iLngMin = params.length - 1;
+      const iLngMax = params.length;
+      extraJoin = `JOIN user_locations ul_near ON ul_near.user_id = u.id
+        AND ul_near.latitude::float  BETWEEN $${iLatMin} AND $${iLatMax}
+        AND ul_near.longitude::float BETWEEN $${iLngMin} AND $${iLngMax}
+        AND ul_near.last_seen > NOW() - INTERVAL '365 days'`;
+    } else if (f === 'hot') {
+      // Last 48h; ordered by engagement score (server-side). Ignore cursor —
+      // 'hot' is a bounded window of ~30 posts, no infinite scroll.
+      extraWhere = `AND sp.created_at > NOW() - INTERVAL '48 hours'`;
+      orderBy = `ORDER BY (COALESCE(sp.likes_count,0) + COALESCE(sp.reposts_count,0)*2 + COALESCE(sp.replies_count,0)*3) DESC, sp.id DESC`;
+    } else if (f === 'slam') {
+      // Opt-in tab — shows only slam-tagged posts chronologically.
+      extraWhere = `AND sp.category = 'slam'`;
+    }
+
+    // Slam is opt-in: exclude from every feed except the dedicated slam tab.
+    if (f !== 'slam') {
+      extraWhere += ` AND (sp.category IS NULL OR sp.category != 'slam')`;
+    }
+
+    // Append blockedIds param, then viewerGeoTags — always.
+    params.push(blockedParam);
+    const blockedParamIdx = params.length;
+    params.push(geoTagsParam);
+    const geoParamIdx = params.length;
+
+    const sql = `${SELECT}
+       ${FROM_JOIN}
+       ${extraJoin}
+       WHERE ${BASE_WHERE}
+         ${cursorClause}
+         ${extraWhere}
+         AND sp.user_id != ALL($${blockedParamIdx}::text[])
+         AND NOT (COALESCE(u.hide_from_regions, '{}') && $${geoParamIdx}::text[])
+       ${orderBy}
+       LIMIT $2`;
+
+    // Fire live/online pin fetch alongside the main query (first page only).
+    // Skip pins on tabs whose contract is an explicit sort — pins used to
+    // prepend ancient posts from live-but-inactive creators above real recent
+    // content, making "Latest" show month-old items. Latest/hot/slam are
+    // meant to be pure by their sort key.
+    const skipPins = cursorId || f === 'latest' || f === 'hot' || f === 'slam';
+    const pinsPromise = skipPins
+      ? Promise.resolve([])
+      : SocialPostService._fetchLiveOnlinePins(userId, blockedIds);
+
+    const { rows } = await query(sql, params);
+    let posts = await sanitizePostRows(rows, { hideDeletedHypeOriginals: true });
+
+    if (viewerTier !== undefined) {
+      posts = await CreatorService.filterFeedExclusivePosts(posts, userId, viewerTier);
+      posts = SocialPostService._applyContentTierBlur(posts, viewerTier, isAdmin);
+    }
+    posts = await SocialPostService._applyChannelAccessLock(posts, userId, { isAdmin });
+
+    if (f !== 'hot' && f !== 'latest') {
+      posts = SocialPostService._diversifyFeed(posts);
+      posts = await SocialPostService._applyDiscoveryBoost(posts);
+    }
+
+    // Prepend guaranteed live/online pins at the top of every tab, first page only
+    const rawPins = await pinsPromise;
+    if (rawPins.length > 0) {
+      let pins = rawPins;
+      if (viewerTier !== undefined) {
+        pins = await CreatorService.filterFeedExclusivePosts(pins, userId, viewerTier);
+        pins = SocialPostService._applyContentTierBlur(pins, viewerTier, isAdmin);
+      }
+      pins = await SocialPostService._applyChannelAccessLock(pins, userId, { isAdmin });
+      const pinnedIds = new Set(pins.map(p => p.id));
+      posts = [...pins, ...posts.filter(p => !pinnedIds.has(p.id))];
+    }
+
+    posts = await SocialPostService.hydrateTopHypers(posts);
+
+    const page = posts.slice(0, lim);
+    const nextCursor = f === 'hot' ? null
+      : (posts.length > lim ? String(page[page.length - 1].id) : null);
+
+    return { posts: page, nextCursor };
+  }
+}
+
+module.exports = SocialPostService;
+module.exports.generateBlurredPreviewGif = generateBlurredPreviewGif;
+// Exported for controllers that build post responses OUTSIDE sanitizePostRows
+// (e.g. getPost single-post handler) so the resolved_mentions contract is
+// applied everywhere the frontend expects it.
+module.exports.hydrateResolvedMentions = _hydrateResolvedMentions;
+module.exports.hydrateChannelPromoMedia = _hydrateChannelPromoMedia;

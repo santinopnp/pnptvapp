@@ -1,0 +1,182 @@
+import React, { useState, useEffect, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
+import { ConfirmModal } from "@/components/admin/ConfirmModal";
+import { Badge } from "@pnptv/ui-kit";
+import {
+  getAdminHangouts,
+  endAdminHangout,
+  type AdminHangout,
+} from "@/lib/api";
+
+function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const UsersIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+
+const CalendarIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+  </svg>
+);
+
+export default function HangoutModeration() {
+  const t = useI18n().admin;
+  const [hangouts, setHangouts] = useState<AdminHangout[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [endTarget, setEndTarget] = useState<AdminHangout | null>(null);
+  const [endLoading, setEndLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getAdminHangouts();
+      setHangouts(res.hangouts);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.hangoutMod.failedToLoad);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleEnd = async () => {
+    if (!endTarget) return;
+    setEndLoading(true);
+    try {
+      await endAdminHangout(endTarget.id);
+      setEndTarget(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.hangoutMod.failedToLoad);
+      setEndTarget(null);
+    } finally {
+      setEndLoading(false);
+    }
+  };
+
+  const memberCount = (hangout: AdminHangout): number => hangout.currentParticipants ?? 0;
+
+  return (
+    <div className="page-container space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-pnp-textPrimary">{t.hangoutMod.title}</h1>
+          <p className="text-sm text-pnp-textSecondary mt-1">
+            {t.hangoutMod.subtitle}
+          </p>
+        </div>
+        <button
+          onClick={load}
+          className="text-xs text-pnp-textSecondary hover:text-pnp-textPrimary border border-pnp-border rounded-lg px-3 py-1.5 transition-colors"
+        >
+          {t.shared.refresh}
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-2 hover:text-red-300">Dismiss</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-36 rounded-xl bg-pnp-surface border border-pnp-border animate-pulse" />
+          ))}
+        </div>
+      ) : hangouts.length === 0 ? (
+        <div className="rounded-xl bg-pnp-surface border border-pnp-border py-16 text-center">
+          <svg className="w-12 h-12 mx-auto mb-4 text-pnp-textSecondary/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <p className="text-pnp-textSecondary font-medium">{t.hangoutMod.noHangouts}</p>
+          <p className="text-sm text-pnp-textSecondary/60 mt-1">
+            {t.hangoutMod.noHangoutsDesc}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {hangouts.map((hangout) => (
+            <div
+              key={hangout.id}
+              className="rounded-xl bg-pnp-surface border border-pnp-border p-4 flex flex-col gap-3"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-pnp-textPrimary truncate">{hangout.title || t.hangoutMod.untitledRoom}</h3>
+                  <p className="text-xs text-pnp-textSecondary mt-0.5">
+                    {t.hangoutMod.byCreator.replace("{0}", hangout.creatorName)}
+                  </p>
+                </div>
+                <Badge variant={hangout.isPublic ? "success" : "warning"}>
+                  {hangout.isPublic ? t.hangoutMod.public : t.hangoutMod.private}
+                </Badge>
+              </div>
+
+              {/* Description */}
+              {hangout.description && (
+                <p className="text-xs text-pnp-textSecondary line-clamp-2">{hangout.description}</p>
+              )}
+
+              {/* Member count + capacity */}
+              <div className="flex items-center gap-1.5 text-xs text-pnp-textSecondary">
+                <UsersIcon />
+                <span>{memberCount(hangout).toLocaleString()} / {hangout.maxParticipants || 200} {t.hangoutMod.members}</span>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs text-pnp-textSecondary">
+                  <CalendarIcon />
+                  <span>{formatDate(hangout.createdAt)}</span>
+                </div>
+                <button
+                  onClick={() => setEndTarget(hangout)}
+                  className="px-3 py-1.5 text-xs rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors font-medium"
+                >
+                  {t.hangoutMod.deleteGroup}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ConfirmModal
+        open={!!endTarget}
+        title={t.hangoutMod.deleteGroup}
+        message={t.hangoutMod.deleteConfirm
+          .replace("{0}", endTarget?.title ?? "")
+          .replace("{1}", String(endTarget?.currentParticipants ?? 0))}
+        confirmLabel={t.hangoutMod.deleteGroup}
+        variant="danger"
+        onConfirm={handleEnd}
+        onCancel={() => setEndTarget(null)}
+        loading={endLoading}
+      />
+    </div>
+  );
+}

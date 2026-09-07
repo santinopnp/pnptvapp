@@ -1,0 +1,357 @@
+'use strict';
+const { query } = require('../config/postgres');
+const logger = require('../utils/logger');
+
+/** Extract @usernames from a content string. Returns unique lowercase array. */
+function parseMentions(content) {
+  if (!content || typeof content !== 'string') return [];
+  const matches = content.match(/@([a-zA-Z0-9_]{2,32})/g) || [];
+  return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
+}
+
+/**
+ * Resolve the "origin" of a post — the piece of content that spawned it.
+ * Cheap SELECT that lets mention notifications carry a link back to the
+ * source when the mentioned-in post is a reply, repost, hype, or promo.
+ *
+ * Returns { originalPostId, originalKind, channelVideoId, channelId } — any
+ * field may be null. `originalKind` is one of:
+ *   'reply_to'       — this is a reply; originalPostId is the parent
+ *   'repost_of'      — this is a repost/quote; originalPostId is the origin
+ *   'community_hype' — this is a hype re-share; originalPostId from metadata
+ *   'channel_promo'  — system-generated video promo; channelVideoId set
+ *   null             — top-level standalone post; no origin
+ */
+async function _resolvePostOrigin(postId) {
+  try {
+    const { rows } = await query(
+      `SELECT reply_to_id, repost_of_id, channel_id, metadata
+         FROM social_posts WHERE id = $1`,
+      [postId]
+    );
+    const row = rows[0];
+    if (!row) return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: null };
+    const meta = (row.metadata && typeof row.metadata === 'object') ? row.metadata : {};
+    if (row.repost_of_id) {
+      return { originalPostId: Number(row.repost_of_id), originalKind: 'repost_of', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (row.reply_to_id) {
+      return { originalPostId: Number(row.reply_to_id), originalKind: 'reply_to', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (meta.kind === 'community_hype' && meta.original_post_id) {
+      return { originalPostId: Number(meta.original_post_id), originalKind: 'community_hype', channelVideoId: null, channelId: row.channel_id ?? null };
+    }
+    if (meta.kind === 'channel_promo' && meta.video_id) {
+      return { originalPostId: null, originalKind: 'channel_promo', channelVideoId: Number(meta.video_id) || null, channelId: Number(meta.channel_id) || row.channel_id || null };
+    }
+    return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: row.channel_id ?? null };
+  } catch (err) {
+    logger.warn('_resolvePostOrigin failed', { postId, error: err.message });
+    return { originalPostId: null, originalKind: null, channelVideoId: null, channelId: null };
+  }
+}
+
+/** Resolve usernames to user rows. Returns only matched active users. */
+async function resolveUsernames(usernames) {
+  if (!usernames.length) return [];
+  const { rows } = await query(
+    `SELECT id, username
+     FROM users
+     WHERE LOWER(username) = ANY($1) AND subscription_status != 'banned'`,
+    [usernames]
+  );
+  return rows;
+}
+
+/**
+ * Look up bidirectional block state between two users. Returns true if
+ * either A blocks B or B blocks A. One SQL call per pair.
+ * FIX 5 (audit 2026-09-04): mention notifications must respect blocks.
+ * We still write the `post_mentions` row (data integrity) — only the
+ * user-facing notification is suppressed.
+ */
+async function _isBlockedEitherWay(userA, userB) {
+  if (!userA || !userB || String(userA) === String(userB)) return false;
+  try {
+    const { rows } = await query(
+      `SELECT 1 FROM blocked_users
+        WHERE (user_id = $1 AND blocked_user_id = $2)
+           OR (user_id = $2 AND blocked_user_id = $1)
+        LIMIT 1`,
+      [String(userA), String(userB)]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    // Fail-open on infra errors: better to over-notify than to silently
+    // drop a legitimate mention alert. We already write the row above.
+    logger.warn('mentionService: block-check failed, allowing notify', { err: err.message });
+    return false;
+  }
+}
+
+/**
+ * Save mention records for a social post and fire notifications.
+ * Call after post is saved to DB.
+ *
+ * @param {number} postId
+ * @param {string} mentionerId
+ * @param {string} content
+ * @param {Object} [opts]
+ * @param {Set<string>} [opts.notifySkipUserIds]  usernames (lower) OR user ids to
+ *        skip when firing notifications — used by editPost so re-parsing a
+ *        post doesn't re-notify users who were already mentioned in the
+ *        prior version. Row inserts still happen (ON CONFLICT DO NOTHING).
+ */
+async function createPostMentions(postId, mentionerId, content, opts = {}) {
+  const usernames = parseMentions(content);
+  if (!usernames.length) return;
+
+  const users = await resolveUsernames(usernames);
+  if (!users.length) return;
+
+  const NotificationEmitter = require('./notificationEmitter');
+  const actorRow = await query('SELECT username FROM users WHERE id=$1', [mentionerId]);
+  const actorName = actorRow.rows[0]?.username || 'Someone';
+
+  // Resolve the "origin" of the post once (reply parent, repost source, hype
+  // origin, channel-promo video). Attached to every notification so the UI
+  // can link back to the real content, not just the derived mention wrapper.
+  const origin = await _resolvePostOrigin(postId);
+
+  const skipNotify = opts.notifySkipUserIds instanceof Set ? opts.notifySkipUserIds : null;
+
+  for (const user of users) {
+    if (String(user.id) === String(mentionerId)) continue; // skip self-mention
+    try {
+      await query(
+        'INSERT INTO post_mentions (post_id, mentioned_user_id, mentioner_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+        [postId, user.id, mentionerId]
+      );
+      // Suppress notify if this user was already mentioned in a prior version
+      // (edit re-parse) — they got the alert the first time around.
+      if (skipNotify && (skipNotify.has(String(user.id)) || skipNotify.has(String(user.username || '').toLowerCase()))) {
+        continue;
+      }
+      // FIX 5: skip notify (not the DB row) when either party blocks the other.
+      if (await _isBlockedEitherWay(mentionerId, user.id)) continue;
+      await NotificationEmitter.emit({
+        type: 'mention_post',
+        category: 'social',
+        priority: 'normal',
+        actorId: mentionerId,
+        targetUserId: user.id,
+        entityType: 'post',
+        entityId: String(postId),
+        message: `@${actorName} mentioned you in a post`,
+        metadata: {
+          post_id: postId,
+          original_post_id: origin.originalPostId,
+          original_kind: origin.originalKind,
+          ...(origin.channelVideoId ? { channel_video_id: origin.channelVideoId } : {}),
+          ...(origin.channelId ? { channel_id: origin.channelId } : {}),
+        },
+      });
+    } catch (err) {
+      logger.warn('mentionService: post mention failed', { err: err.message, user: user.id });
+    }
+  }
+}
+
+/**
+ * Re-parse mentions for an existing post (used after editPost).
+ *
+ * 1. Snapshot the current mentioned_user_ids (mention_type='mention') — these
+ *    are the "already-notified" set that we won't re-alert.
+ * 2. Delete existing mention-type rows for the post (leaves 'tag' rows alone —
+ *    performer tags are managed by createPostTags/UI, not by text parsing).
+ * 3. Re-insert from the new content via createPostMentions, passing the
+ *    snapshot as `notifySkipUserIds` so only NEW mentions fire notifications.
+ */
+async function syncPostMentions(postId, mentionerId, newContent) {
+  if (!postId) return;
+  let previouslyMentioned = new Set();
+  try {
+    const { rows } = await query(
+      `SELECT mentioned_user_id::text AS uid FROM post_mentions
+        WHERE post_id = $1 AND mention_type = 'mention'`,
+      [postId]
+    );
+    previouslyMentioned = new Set(rows.map(r => String(r.uid)));
+  } catch (err) {
+    logger.warn('syncPostMentions: snapshot failed, will still re-parse', { postId, err: err.message });
+  }
+
+  try {
+    await query(
+      `DELETE FROM post_mentions WHERE post_id = $1 AND mention_type = 'mention'`,
+      [postId]
+    );
+  } catch (err) {
+    logger.warn('syncPostMentions: delete failed', { postId, err: err.message });
+    return;
+  }
+
+  await createPostMentions(postId, mentionerId, newContent, { notifySkipUserIds: previouslyMentioned });
+}
+
+/**
+ * Save mention records for a chat message and fire notifications.
+ * Call after message is saved to DB.
+ */
+async function createChatMentions(messageId, mentionerId, content, room) {
+  const usernames = parseMentions(content);
+  if (!usernames.length) return;
+
+  const users = await resolveUsernames(usernames);
+  if (!users.length) return;
+
+  // Hangout privacy: only notify users who are non-banned members of the hangout
+  // (or its parent group if this is a topic). Prevents leaking private-hangout
+  // context to arbitrary users via @mention notifications.
+  let allowedMemberIds = null;
+  const hangoutMatch = typeof room === 'string' && room.match(/^hangout:(\d+)$/);
+  if (hangoutMatch) {
+    const gid = parseInt(hangoutMatch[1], 10);
+    if (Number.isFinite(gid)) {
+      try {
+        const { rows: memberRows } = await query(
+          `SELECT user_id FROM hangout_group_members
+             WHERE group_id = COALESCE(
+                     (SELECT parent_group_id FROM hangout_groups WHERE id = $1 AND parent_group_id IS NOT NULL),
+                     $1
+                   )
+               AND user_id = ANY($2::text[])
+               AND (is_banned = false OR is_banned IS NULL)`,
+          [gid, users.map(u => String(u.id))]
+        );
+        allowedMemberIds = new Set(memberRows.map(r => String(r.user_id)));
+      } catch (memberErr) {
+        logger.warn('mentionService: membership lookup failed, dropping notifications', { err: memberErr.message, room });
+        return;
+      }
+    }
+  }
+
+  const NotificationEmitter = require('./notificationEmitter');
+  const actorRow = await query('SELECT username FROM users WHERE id=$1', [mentionerId]);
+  const actorName = actorRow.rows[0]?.username || 'Someone';
+
+  for (const user of users) {
+    if (String(user.id) === String(mentionerId)) continue;
+    if (allowedMemberIds && !allowedMemberIds.has(String(user.id))) continue;
+    try {
+      await query(
+        'INSERT INTO chat_message_mentions (message_id, mentioned_user_id, mentioner_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+        [messageId, user.id, mentionerId]
+      );
+      // FIX 5: skip notify (row still written) when either party blocks the other.
+      if (await _isBlockedEitherWay(mentionerId, user.id)) continue;
+      await NotificationEmitter.emit({
+        type: 'mention_chat',
+        category: 'social',
+        priority: 'normal',
+        actorId: mentionerId,
+        targetUserId: user.id,
+        entityType: 'chat_message',
+        entityId: String(messageId),
+        message: `@${actorName} mentioned you in a chat`,
+        metadata: { room, message_id: messageId },
+      });
+    } catch (err) {
+      logger.warn('mentionService: chat mention failed', { err: err.message, user: user.id });
+    }
+  }
+}
+
+/**
+ * User search for @mention autocomplete.
+ * Returns top matches ordered by followers descending.
+ */
+async function searchUsersForMention(searchQuery, limit = 8) {
+  if (!searchQuery || searchQuery.length < 1) return [];
+  const { rows } = await query(
+    `SELECT id, username, photo_file_id AS avatar_url, creator_status
+     FROM users
+     WHERE LOWER(username) LIKE $1 AND subscription_status != 'banned'
+     ORDER BY (creator_status = 'active') DESC, (tier = 'PRIME') DESC, COALESCE(followers_count, 0) DESC, username
+     LIMIT $2`,
+    [`${searchQuery.toLowerCase()}%`, limit]
+  );
+  return rows;
+}
+
+/**
+ * Save explicit performer tag records for a post and fire notifications.
+ * Different from createPostMentions: tags are UI-selected, not text-parsed.
+ */
+async function createPostTags(postId, taggerId, performerIds) {
+  if (!performerIds || !performerIds.length) return;
+
+  const { rows: performers } = await query(
+    `SELECT id, username FROM users WHERE id = ANY($1::text[]) AND subscription_status != 'banned'`,
+    [performerIds.map(String)]
+  );
+  if (!performers.length) return;
+
+  const NotificationEmitter = require('./notificationEmitter');
+  const actorRow = await query('SELECT username FROM users WHERE id=$1', [taggerId]);
+  const actorName = actorRow.rows[0]?.username || 'Someone';
+
+  const origin = await _resolvePostOrigin(postId);
+
+  for (const performer of performers) {
+    if (String(performer.id) === String(taggerId)) continue;
+    try {
+      await query(
+        'INSERT INTO post_mentions (post_id, mentioned_user_id, mentioner_id, mention_type) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+        [postId, performer.id, taggerId, 'tag']
+      );
+      // FIX 5: skip notify (row still written) when either party blocks the other.
+      if (await _isBlockedEitherWay(taggerId, performer.id)) continue;
+      await NotificationEmitter.emit({
+        type: 'tag_post',
+        category: 'social',
+        priority: 'normal',
+        actorId: taggerId,
+        targetUserId: performer.id,
+        entityType: 'post',
+        entityId: String(postId),
+        message: `@${actorName} tagged you in a post`,
+        metadata: {
+          post_id: postId,
+          original_post_id: origin.originalPostId,
+          original_kind: origin.originalKind,
+          ...(origin.channelVideoId ? { channel_video_id: origin.channelVideoId } : {}),
+          ...(origin.channelId ? { channel_id: origin.channelId } : {}),
+        },
+      });
+    } catch (err) {
+      logger.warn('mentionService: post tag failed', { err: err.message, performer: performer.id });
+    }
+  }
+}
+
+/** Search only active creators — used by the tag-performers picker in the composer. */
+async function searchCreatorsForTag(searchQuery, limit = 8) {
+  if (!searchQuery || searchQuery.length < 1) return [];
+  const { rows } = await query(
+    `SELECT id, username, photo_file_id AS avatar_url, creator_status
+     FROM users
+     WHERE LOWER(username) LIKE $1 AND subscription_status != 'banned' AND creator_status = 'active'
+     ORDER BY (tier = 'PRIME') DESC, COALESCE(followers_count, 0) DESC, username
+     LIMIT $2`,
+    [`${searchQuery.toLowerCase()}%`, limit]
+  );
+  return rows;
+}
+
+module.exports = {
+  parseMentions,
+  resolveUsernames,
+  createPostMentions,
+  syncPostMentions,
+  createChatMentions,
+  createPostTags,
+  searchUsersForMention,
+  searchCreatorsForTag,
+};

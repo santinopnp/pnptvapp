@@ -1,0 +1,121 @@
+/**
+ * Shared deep-link resolver for notifications.
+ * Mirrors the backend buildNotificationUrl() logic so in-app clicks
+ * navigate to the same destination as push notification taps.
+ */
+export function getNotificationDeepLink(notif: {
+  type?: string;
+  entityType?: string;
+  entityId?: string;
+  actorId?: string;
+  metadata?: Record<string, unknown>;
+}): string {
+  const { type, entityType, entityId, actorId, metadata } = notif;
+
+  // Route by notification type first (most specific)
+  switch (type) {
+    case "follow":
+      return entityId ? `/profile/${entityId}` : "/social";
+
+    case "like":
+    case "reply":
+    case "reaction_post":
+    case "mention_post":
+    case "tag_post": {
+      // If the mention is on a reply / repost / hype, the entityId points at
+      // that derived post — which shows the comment "in a vacuum". Prefer the
+      // original post so the user sees the full parent context, and pass the
+      // derived post id via ?highlight= so PostDetail can scroll to it.
+      const originalPostId = metadata?.original_post_id as number | string | undefined;
+      const originalKind = metadata?.original_kind as string | undefined;
+      const rewriteToOriginal =
+        originalPostId != null &&
+        (originalKind === "reply_to" || originalKind === "repost_of" || originalKind === "community_hype");
+      if (rewriteToOriginal) {
+        const highlightId = entityId || (metadata?.post_id as string | number | undefined);
+        const base = `/social/post/${originalPostId}`;
+        return highlightId != null ? `${base}?highlight=${highlightId}` : base;
+      }
+      const postId = entityId || (metadata?.postId as string);
+      return postId ? `/social/post/${postId}` : "/social";
+    }
+
+    case "dm":
+      if (actorId && /^\d+$/.test(String(actorId))) {
+        return `/dm/${actorId}`;
+      }
+      return entityId ? `/dm/${entityId}` : "/dm";
+
+    case "group_message":
+    case "group_join":
+    case "group_join_request":
+    case "group_request_accepted":
+    case "reaction_chat":
+    case "mention_chat":
+    case "hangout_call":
+    case "hangout_creator_joined":
+      return entityId ? `/chat/${entityId}` : "/chat";
+
+    case "payment":
+      return "/subscribe";
+
+    case "wof_winner":
+      return "/social";
+
+    case "live_stream_started":
+      return entityId ? `/live/${entityId}` : "/live";
+
+    case "availability_expiring":
+      return "/creators/availability";
+
+    case "announcement":
+    case "system": {
+      const raw = metadata?.url as string | undefined;
+      if (raw) {
+        // Only strip origin for URLs pointing at our own app. External URLs
+        // (e.g. sag.efipay.co checkouts, third-party landing pages) must be
+        // returned intact so the caller can open them in a new tab.
+        try {
+          const p = new URL(raw, "https://pnptv.app");
+          const isInternal = /(^|\.)pnptv\.app$/i.test(p.host);
+          return isInternal ? (p.pathname + p.search + p.hash) : raw;
+        } catch {
+          return raw;
+        }
+      }
+      return "/";
+    }
+  }
+
+  // Fallback: route by entity type
+  switch (entityType) {
+    case "post": {
+      const originalPostId = metadata?.original_post_id as number | string | undefined;
+      const originalKind = metadata?.original_kind as string | undefined;
+      const rewriteToOriginal =
+        originalPostId != null &&
+        (originalKind === "reply_to" || originalKind === "repost_of" || originalKind === "community_hype");
+      if (rewriteToOriginal) {
+        const highlightId = entityId || (metadata?.post_id as string | number | undefined);
+        const base = `/social/post/${originalPostId}`;
+        return highlightId != null ? `${base}?highlight=${highlightId}` : base;
+      }
+      const postId = entityId || (metadata?.postId as string);
+      return postId ? `/social/post/${postId}` : "/social";
+    }
+    case "message":
+      if (actorId && /^\d+$/.test(String(actorId))) {
+        return `/dm/${actorId}`;
+      }
+      return "/dm";
+    case "group":
+    case "hangout":
+      return entityId ? `/chat/${entityId}` : "/chat";
+    case "stream":
+      return entityId ? `/live/${entityId}` : "/live";
+    case "payment":
+      return "/subscribe";
+    default:
+      return "/";
+  }
+}

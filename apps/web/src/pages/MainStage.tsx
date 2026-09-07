@@ -1,0 +1,2951 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  LiveKitRoom,
+  ParticipantTile,
+  RoomAudioRenderer,
+  useLocalParticipant,
+  useRoomContext,
+  useTracks,
+} from "@livekit/components-react";
+import { ConnectionState, RoomEvent, Track } from "livekit-client";
+import { useMainStage, type MainStageState } from "@/hooks/useMainStage";
+import { useMainStageRoom } from "@/components/mainstage/MainStageProvider";
+import { getMainStageJoinCheck, acceptMainStageConsents, getWalletBalance, getMainStageViewerToken, getMainStageFreeViewerToken, getMainStageGateState, getMainStageState, voteSkipMainStage, playNextMainStage, getHangoutGroup, getMainStagePin, type MainStageJoinCheck, type MainStagePin, type TopicLite, type MainStageGateState } from "@/lib/api";
+import { getSocket } from "@/lib/socket";
+import { useAuth } from "@/hooks/useAuth";
+import { useMusicPlayer } from "@/hooks/useMusicPlayer";
+import { useTutorial } from "@/hooks/useTutorial";
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
+import { SpotlightGrid } from "@/components/mainstage/SpotlightGrid";
+import { CinemaGrid } from "@/components/mainstage/CinemaGrid";
+import { EqualGrid } from "@/components/mainstage/EqualGrid";
+import { MEDIA_IDENTITY, UrlMediaPlayer } from "@/components/mainstage/CinemaGrid";
+import { useI18n } from "@/lib/i18n";
+import { GUEST_SESSION_KEY } from "@/pages/MainStageGuestJoin";
+
+// Extracted sub-components
+import { ParticipantCollector, type CammerInfo } from "@/components/mainstage/ParticipantCollector";
+import { BottomBarInner } from "@/components/mainstage/BottomBar";
+import { ConnectionOverlay } from "@/components/mainstage/ConnectionOverlay";
+import { ForceCamMicEnforcer } from "@/components/mainstage/ForceCamMicEnforcer";
+import { WellnessTipsOverlay } from "@/components/mainstage/WellnessTipsOverlay";
+import { NowPlayingChip } from "@/components/mainstage/NowPlayingChip";
+import { FullscreenToggle } from "@/components/mainstage/FullscreenToggle";
+import { AdminDrawer, AdminPanelContent, type ModeId } from "@/components/mainstage/AdminDrawer";
+import { FreeTierEntryCard } from "@/components/mainstage/FreeTierEntryCard";
+import { AdUnlockButton } from "@/components/mainstage/AdUnlockButton";
+import { AdSlot } from "@/components/AdSlot";
+import { BuyTokensModal } from "@/components/BuyTokensModal";
+import { WalletPayCard, TIP_PRESETS_USD, TIP_PRESETS_RUSH } from "@/components/payments/PayInWalletChips";
+import { BookCallModal } from "@/components/creators/BookCallModal";
+import type { CreatorCardCreator } from "@/components/creators/CreatorCard";
+import { TipRushRail } from "@/components/payments/TipRushRail";
+import { usePrivy } from "@privy-io/react-auth";
+
+// ── Guest credential shape (written by MainStageGuestJoin, consumed once here) ─
+
+interface GuestCredentials {
+  token:               string;
+  livekitUrl:          string;
+  roomName:            string;
+  displayName:         string;
+  identity:            string;
+  sessionStartedAt?:   number;
+  sessionLimitSeconds?: number;
+}
+
+function readAndClearGuestCredentials(): GuestCredentials | null {
+  try {
+    const raw = sessionStorage.getItem(GUEST_SESSION_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(GUEST_SESSION_KEY);
+    const parsed = JSON.parse(raw) as Partial<GuestCredentials>;
+    if (
+      typeof parsed.token       === "string" &&
+      typeof parsed.livekitUrl  === "string" &&
+      typeof parsed.roomName    === "string" &&
+      typeof parsed.displayName === "string"
+    ) {
+      return parsed as GuestCredentials;
+    }
+  } catch {
+    // sessionStorage blocked or JSON corrupt
+  }
+  return null;
+}
+
+const MODE_LABELS: Record<ModeId, string> = {
+  cinema: "Cinema",
+  spotlight: "Spotlight",
+  grid3x3: "3×3 Grid",
+  hotpicks: "Hot Picks!",
+};
+
+const MODE_ICONS: Record<ModeId, JSX.Element> = {
+  cinema: (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path strokeLinecap="round" d="M8 10l4 2.5L8 15z" fill="currentColor" />
+    </svg>
+  ),
+  spotlight: (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <circle cx="12" cy="10" r="4" />
+      <path strokeLinecap="round" d="M12 14v5M8 19h8" />
+    </svg>
+  ),
+  grid3x3: (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <rect x="3" y="3" width="5" height="5" rx="1" />
+      <rect x="9.5" y="3" width="5" height="5" rx="1" />
+      <rect x="16" y="3" width="5" height="5" rx="1" />
+      <rect x="3" y="9.5" width="5" height="5" rx="1" />
+      <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+      <rect x="16" y="9.5" width="5" height="5" rx="1" />
+      <rect x="3" y="16" width="5" height="5" rx="1" />
+      <rect x="9.5" y="16" width="5" height="5" rx="1" />
+      <rect x="16" y="16" width="5" height="5" rx="1" />
+    </svg>
+  ),
+  hotpicks: (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 3l-2 9h6l-8 9 2-9H5l8-9z" />
+    </svg>
+  ),
+};
+
+// Cycle order on the mode-cycle button. Cinema → Spotlight → 3×3 → Hot Picks → Cinema.
+const NEXT_MODE: Record<ModeId, ModeId> = {
+  cinema: "spotlight",
+  spotlight: "grid3x3",
+  grid3x3: "hotpicks",
+  hotpicks: "cinema",
+};
+
+interface RoomListenerProps {
+  onConnectionStateChange: (state: ConnectionState) => void;
+}
+
+function RoomListener({ onConnectionStateChange }: RoomListenerProps) {
+  const room = useRoomContext();
+
+  useEffect(() => {
+    const handleState = (nextState: ConnectionState) => {
+      onConnectionStateChange(nextState);
+    };
+
+    room.on(RoomEvent.ConnectionStateChanged, handleState);
+    handleState(room.state);
+
+    return () => {
+      room.off(RoomEvent.ConnectionStateChanged, handleState);
+    };
+  }, [onConnectionStateChange, room]);
+
+  return null;
+}
+
+/**
+ * HotPicksView — personal viewer mode. Shows ONE random cammer full-screen
+ * with the viewer's own self-cam as a small PiP (if broadcasting). Tap
+ * "Next" to reroll to another cammer. Creators/performers are weighted first
+ * in the random pool; the last N picks are excluded so consecutive rerolls
+ * don't repeat immediately.
+ *
+ * Global mode is unaffected — this is a client-side layout override.
+ */
+const HOT_PICKS_EXCLUDE_RECENT = 3;
+
+function HotPicksView() {
+  const t = useI18n().live;
+  const { localParticipant } = useLocalParticipant();
+  const allTracks = useTracks(
+    [{ source: Track.Source.Camera, withPlaceholder: false }],
+    { onlySubscribed: false }
+  );
+
+  // Candidate cammers: exclude the media bot, guests, viewers, and the local
+  // participant themselves — the whole point is to feature someone ELSE.
+  const localIdentity = localParticipant?.identity ?? "";
+  const candidates = allTracks.filter((tr) => {
+    const id = tr.participant.identity;
+    if (id === MEDIA_IDENTITY) return false;
+    if (id === localIdentity) return false;
+    if (id.startsWith("guest_") || id.startsWith("viewer_")) return false;
+    return true;
+  });
+
+  const [pickedIdentity, setPickedIdentity] = useState<string | null>(null);
+  const recentRef = useRef<string[]>([]);
+
+  const pickNext = useCallback(() => {
+    if (candidates.length === 0) {
+      setPickedIdentity(null);
+      return;
+    }
+    if (candidates.length === 1) {
+      setPickedIdentity(candidates[0].participant.identity);
+      return;
+    }
+    const excluded = new Set(recentRef.current);
+    let pool = candidates.filter((c) => !excluded.has(c.participant.identity));
+    if (pool.length === 0) {
+      // Whole pool was recently shown — drop the oldest exclusion.
+      recentRef.current = recentRef.current.slice(1);
+      pool = candidates.filter((c) => !new Set(recentRef.current).has(c.participant.identity));
+      if (pool.length === 0) pool = candidates;
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const nextIdentity = pick.participant.identity;
+    recentRef.current = [...recentRef.current, nextIdentity].slice(-HOT_PICKS_EXCLUDE_RECENT);
+    setPickedIdentity(nextIdentity);
+  }, [candidates]);
+
+  // Auto-pick the first time we have candidates + whenever the current pick
+  // disappears from the room.
+  useEffect(() => {
+    if (candidates.length === 0) {
+      if (pickedIdentity !== null) setPickedIdentity(null);
+      return;
+    }
+    if (!pickedIdentity || !candidates.some((c) => c.participant.identity === pickedIdentity)) {
+      pickNext();
+    }
+  }, [candidates, pickedIdentity, pickNext]);
+
+  const focusedTrack = candidates.find((c) => c.participant.identity === pickedIdentity) ?? null;
+
+  // Self-cam preview — mirrored, mounted only when the viewer has a live camera track.
+  const selfVideoRef = useRef<HTMLVideoElement>(null);
+  const [hasSelfTrack, setHasSelfTrack] = useState(false);
+  useEffect(() => {
+    if (!localParticipant || !selfVideoRef.current) {
+      setHasSelfTrack(false);
+      return;
+    }
+    const pub = localParticipant.getTrackPublication(Track.Source.Camera);
+    const track = pub?.track;
+    if (track && selfVideoRef.current) {
+      track.attach(selfVideoRef.current);
+      setHasSelfTrack(true);
+      return () => {
+        if (selfVideoRef.current) track.detach(selfVideoRef.current);
+        setHasSelfTrack(false);
+      };
+    }
+    setHasSelfTrack(false);
+  }, [localParticipant, focusedTrack]);
+
+  if (candidates.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center bg-pnp-background">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center animate-pulse bg-pnp-accent/10 border border-pnp-accent/20">
+          <svg className="w-8 h-8 text-pnp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 3l-2 9h6l-8 9 2-9H5l8-9z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-semibold text-sm">{t.mainStageHotPicksEmpty}</p>
+          <p className="text-white/50 text-xs mt-1">{t.mainStageHotPicksEmptyHint}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-full w-full bg-black">
+      {focusedTrack && (
+        <ParticipantTile
+          trackRef={focusedTrack}
+          disableSpeakingIndicator={false}
+          style={{ height: "100%", width: "100%" }}
+        />
+      )}
+
+      {/* Self-cam PiP — only when viewer is broadcasting */}
+      {hasSelfTrack && (
+        <div
+          className="absolute z-10 rounded-2xl overflow-hidden shadow-2xl border"
+          style={{
+            width: 120,
+            height: 160,
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+            borderColor: "rgba(212,0,122,0.55)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,0,122,0.30)",
+            background: "#0A0A0F",
+          }}
+        >
+          <video
+            ref={selfVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: "scaleX(-1)" }}
+          />
+          <div
+            className="absolute top-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold text-white/90 uppercase tracking-wider"
+            style={{ background: "rgba(212,0,122,0.70)", backdropFilter: "blur(4px)" }}
+          >
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white" />
+            </span>
+            You
+          </div>
+        </div>
+      )}
+
+      {/* Next button */}
+      <div
+        className="absolute z-20 left-1/2 -translate-x-1/2 flex items-center gap-2"
+        style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom, 0px))" }}
+      >
+        <button
+          type="button"
+          onClick={pickNext}
+          disabled={candidates.length <= 1}
+          className="min-h-[48px] px-6 flex items-center justify-center gap-2 rounded-full text-white text-sm font-bold shadow-2xl transition-all active:scale-[0.96] disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            background: "linear-gradient(135deg,#D4007A,#7B61FF)",
+            border: "1px solid rgba(255,255,255,0.25)",
+            boxShadow: "0 8px 24px rgba(212,0,122,0.5)",
+          }}
+          aria-label={t.mainStageHotPicksNext}
+          title={candidates.length <= 1 ? t.mainStageHotPicksOnlyOne : t.mainStageHotPicksNext}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+          </svg>
+          {t.mainStageHotPicksNext}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface MainStageInnerProps {
+  mode: ModeId;
+  spotlightCammer: string | null;
+  spotlightNextAt: number | null;
+  mediaKind: "video" | "music" | "off";
+  mediaSrc: string | null;
+  mediaPlaying: boolean;
+  mediaVolume: number;
+  mediaStartedAt: number | null;
+  isParticipant: boolean;
+  isAdmin: boolean;
+  onSpotlightPick: (identity: string) => void;
+  onConnectionStateChange: (state: ConnectionState) => void;
+  onCammersChange: (cammers: CammerInfo[]) => void;
+  onLeave: () => void;
+  spotlight?: MainStageState["spotlight"];
+  showTips: boolean;
+  showBottomBar?: boolean;
+  onSendReaction?: (emoji: string) => void;
+  canScreenShare?: boolean;
+  hasMic?: boolean;
+  skipVoteCount?: number;
+  skipVoteThreshold?: number;
+  hasVotedSkip?: boolean;
+  onVoteSkip?: () => void;
+  onPlayNext?: () => void;
+  playNextCooldown?: number;
+}
+
+function MainStageInner({
+  mode,
+  spotlightCammer,
+  spotlightNextAt,
+  mediaKind,
+  mediaSrc,
+  mediaPlaying,
+  mediaVolume,
+  mediaStartedAt,
+  isParticipant,
+  isAdmin,
+  onSpotlightPick,
+  onConnectionStateChange,
+  onCammersChange,
+  onLeave,
+  spotlight,
+  showTips,
+  showBottomBar = true,
+  onSendReaction,
+  canScreenShare,
+  hasMic,
+  skipVoteCount,
+  skipVoteThreshold,
+  hasVotedSkip,
+  onVoteSkip,
+  onPlayNext,
+  playNextCooldown,
+}: MainStageInnerProps) {
+  const [modeTransitioning, setModeTransitioning] = useState(false);
+  const prevModeRef = useRef(mode);
+  useEffect(() => {
+    if (prevModeRef.current === mode) return;
+    prevModeRef.current = mode;
+    setModeTransitioning(true);
+    const t = setTimeout(() => setModeTransitioning(false), 220);
+    return () => clearTimeout(t);
+  }, [mode]);
+
+  return (
+    <>
+      <ParticipantCollector onCammersChange={onCammersChange} />
+      <RoomListener onConnectionStateChange={onConnectionStateChange} />
+
+      <div className="flex-1 min-h-0 relative overflow-hidden" style={{ transition: "background 0.3s, opacity 0.22s", opacity: modeTransitioning ? 0 : 1 }}>
+        {mode === "cinema" && (
+          <CinemaGrid
+            mediaIdentity={MEDIA_IDENTITY}
+            mediaKind={mediaKind}
+            mediaSrc={mediaSrc}
+            mediaPlaying={mediaPlaying}
+            mediaVolume={mediaVolume}
+            mediaStartedAt={mediaStartedAt}
+          />
+        )}
+        {mode === "spotlight" && (
+          <SpotlightGrid
+            focusIdentity={spotlightCammer}
+            nextAt={spotlightNextAt}
+            onTileClick={isAdmin ? onSpotlightPick : undefined}
+          />
+        )}
+        {mode === "grid3x3" && <EqualGrid />}
+        {mode === "hotpicks" && <HotPicksView />}
+
+        {/* Admin-set music in non-cinema modes intentionally has no widget
+            here — Cristina's radio (useMusicPlayer, auto-starts on page
+            mount) is the single music source outside cinema mode. Avoids
+            double audio and simplifies the surface. Admin music still plays
+            in cinema mode via CinemaGrid's inline UrlMediaPlayer. */}
+      </div>
+
+      {/* Slim positive-tips ribbon — sits between cam grid and bottom bar
+          so it is never in front of cammer video tiles. */}
+      {showTips && <WellnessTipsOverlay />}
+
+      {showBottomBar && (
+        <BottomBarInner
+          isParticipant={isParticipant}
+          isAdmin={isAdmin}
+          onLeave={onLeave}
+          spotlight={spotlight}
+          onSendReaction={onSendReaction}
+          canScreenShare={canScreenShare}
+          hasMic={hasMic}
+          skipVoteCount={skipVoteCount}
+          skipVoteThreshold={skipVoteThreshold}
+          hasVotedSkip={hasVotedSkip}
+          onVoteSkip={onVoteSkip}
+          onPlayNext={onPlayNext}
+          playNextCooldown={playNextCooldown}
+        />
+      )}
+
+    </>
+  );
+}
+
+interface ChatMessage {
+  id: string;
+  userId: string | number;
+  displayName: string;
+  text: string;
+  timestamp: number;
+  kind?: 'auto';
+  cta?: { label: string; action?: 'open-tip'; href?: string; recipientUserId?: string } | null;
+}
+interface FloatingReaction { id: string; emoji: string; x: number; }
+
+function fmtMmSs(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// Smart cooldown formatter — shows Xh Ym when > 1h, MM:SS when < 1h.
+// Handles the new 24-hour cooldown gracefully.
+function fmtCooldown(secs: number): string {
+  if (secs >= 3600) {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  return fmtMmSs(secs);
+}
+
+export default function MainStage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const t = useI18n();
+  const { showTutorial, dismissTutorial, dismissForever, openTutorial } = useTutorial("mainstage");
+
+  // Read guest credentials exactly once on mount (before useMainStage runs).
+  const wasGuestParam = searchParams.get("guest") === "1";
+  const guestCredsRef = useRef<GuestCredentials | null>(
+    wasGuestParam ? readAndClearGuestCredentials() : null
+  );
+  const isGuestMode = guestCredsRef.current !== null;
+  // Guest param present but session storage was cleared (page reload or new tab) —
+  // sessionStorage is tab-scoped so this always happens after a reload.
+  const isGuestSessionExpired = wasGuestParam && !isGuestMode;
+
+  const {
+    state:       hookedState,
+    isAdmin,
+    role:        hookedRole,
+    livekitUrl,
+    loading:     hookedLoading,
+    error:       hookedError,
+    leave,
+    shuffle,
+    admin,
+  } = useMainStage();
+
+  // Pull the shared Room instance from the provider. Members use the
+  // provider-managed connection (persistent across route changes). Guests
+  // bypass the provider entirely and use their own short-lived <LiveKitRoom>
+  // with the guest token.
+  const { room, isJoined, join, cooldownSeconds, clearCooldown, sessionStartedAt, sessionLimitSeconds, canScreenShare, participantTier } = useMainStageRoom();
+
+  // Auth state — viewer mode covers unauthenticated visitors AND free-tier
+  // logged-in users (who can watch during the gate window but never publish).
+  const { user, isLoading: isAuthLoading } = useAuth();
+  const hasMemberAccess = !!user && (
+    user.role === "admin" || user.role === "superadmin"
+    || user.tier === "PRIME" || user.tier === "prime"
+    || user.tier === "member"
+  );
+  const canParticipate = hasMemberAccess;
+  const isViewerMode = !isGuestMode && !isAuthLoading && !canParticipate;
+  const isFreeTierViewer = isViewerMode && !!user;
+
+  // Gate state — free-tier viewer needs to know when the window opens/closes
+  // so the countdown UI + auto-disconnect at close both work. Null until fetched.
+  const [gateState, setGateState] = useState<MainStageGateState | null>(null);
+
+  // Viewer-mode state
+  const [viewerLkToken, setViewerLkToken] = useState<string | null>(null);
+  const [viewerLkUrl, setViewerLkUrl] = useState<string | null>(null);
+  const [viewerAgeConfirmed, setViewerAgeConfirmed] = useState(false);
+  const [viewerConnecting, setViewerConnecting] = useState(false);
+  const [viewerConnState, setViewerConnState] = useState<ConnectionState>(ConnectionState.Disconnected);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  // Viewer REST state override — unauthenticated viewers don't receive socket state updates.
+  const [viewerStateOverride, setViewerStateOverride] = useState<MainStageState | null>(null);
+  // Viewer token refresh timer (2h TTL — refresh 15 min early).
+  const viewerRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resolve effective values: guest path overrides everything from the hook.
+  const state       = hookedState;
+  const role        = isGuestMode ? ("guest" as const) : hookedRole;
+  const loading     = isGuestMode ? false              : hookedLoading;
+  const error       = isGuestMode ? null               : hookedError;
+
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [connState, setConnState] = useState<ConnectionState>(ConnectionState.Connecting);
+  const [hasEverConnected, setHasEverConnected] = useState(false);
+  const [cammerInfos, setCammerInfos] = useState<CammerInfo[]>([]);
+  const [camError, setCamError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(!isGuestMode);
+  const [joinCheck, setJoinCheck] = useState<MainStageJoinCheck | null>(null);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const [acceptingConsents, setAcceptingConsents] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
+  const [confirmAge, setConfirmAge] = useState(false);
+  const isParticipant = isGuestMode || role === "member" || role === "admin";
+
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [giftedBalance, setGiftedBalance] = useState<number>(0);
+  const [bonusGiftBalance, setBonusGiftBalance] = useState<number>(0);
+  const [showBuyTokens, setShowBuyTokens] = useState(false);
+  const [showTipSheet, setShowTipSheet] = useState(false);
+  // Tracks which crystal creator is selected in the multi-cammer tip sheet.
+  // null = use the first crystal creator in onStage (or donation account if none).
+  const [tipSelectedCreatorId, setTipSelectedCreatorId] = useState<string | null>(null);
+  // Book-a-call target — when non-null, BookCallModal opens over the stage
+  // WITHOUT unmounting the LiveKit viewer. Any redirect away from MainStage
+  // kills the viewer's presence, so book/tip flows must stay inline.
+  const [bookCallCreator, setBookCallCreator] = useState<CreatorCardCreator | null>(null);
+  // Persist last-selected tip amount across sessions (localStorage) so a $10
+  // repeat-tipper doesn't have to re-click every time. Falls back to the first
+  // unified preset ($5) if storage is unreadable or empty.
+  const [tipAmount, setTipAmount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem('pnptv:lastTipUsd');
+      const n = parseInt(raw ?? '', 10);
+      if (Number.isFinite(n) && n > 0 && n <= 500) return n;
+    } catch { /* storage blocked */ }
+    return TIP_PRESETS_USD[0];
+  });
+  // Rail selector — "rush" pays from the user's Ru$h balance (instant, no fees,
+  // fires MainStage tip animations). "usdc" pays gasless USDC on Base via
+  // WalletPayCard. Default = rush when the user's Ru$h balance covers the
+  // selected preset (converted to Rush at 6 = $1); otherwise usdc.
+  const [tipRailMode, setTipRailMode] = useState<'rush' | 'usdc'>('usdc');
+  const [tipMessage, setTipMessage] = useState<string>("");
+  const { authenticated: privyAuthenticated, login: privyLogin } = usePrivy();
+
+  // When the tip sheet opens, pick the smartest default rail: Ru$h if the
+  // user's Ru$h + gifted balance already covers the selected preset (6 = $1),
+  // else USDC so they don't hit an "insufficient" wall. Recomputes when the
+  // sheet is (re)opened or the selected amount changes.
+  useEffect(() => {
+    if (!showTipSheet) return;
+    const needRush = tipAmount * 6;
+    const haveRush = (tokenBalance ?? 0) + (giftedBalance ?? 0);
+    setTipRailMode(haveRush >= needRush ? 'rush' : 'usdc');
+  }, [showTipSheet, tipAmount, tokenBalance, giftedBalance]);
+  // Seed with known community topics so the strip is always visible immediately,
+  // even before the fetch resolves or if both network calls fail.
+  const [mainTopics, setMainTopics] = useState<TopicLite[]>([
+    { id: 1, name: "General",      description: "General community chat", position: 0 },
+    { id: 2, name: "New Members",  description: "Welcome newcomers",      position: 1 },
+    { id: 3, name: "PNP Media",    description: "Media and streams",       position: 2 },
+  ]);
+  useEffect(() => {
+    // Use the public endpoint as primary — works for guests, viewers, and members
+    // without a session-cookie roundtrip. Fall back to the auth-gated endpoint
+    // only if the public call fails (e.g. network error).
+    fetch('/api/webapp/hangouts/groups/26/public', { credentials: 'omit' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res?.group?.topics?.length) setMainTopics(res.group.topics);
+        else {
+          // Public endpoint returned no topics — try authenticated endpoint.
+          return getHangoutGroup(26).then((res2) => {
+            if (res2.group?.topics?.length) setMainTopics(res2.group.topics);
+          });
+        }
+      })
+      .catch(() => {
+        // Both failed — hardcoded seed above stays in place.
+      });
+  }, []);
+
+  useEffect(() => {
+    if (isGuestMode) return;
+    getWalletBalance().then((res) => {
+      if (typeof res.balance === "number") setTokenBalance(res.balance);
+      setGiftedBalance(res.giftedBalance ?? 0);
+      setBonusGiftBalance(Number(res.creatorGifts?.['8599671840'] ?? 0));
+    }).catch(() => {});
+  }, [isGuestMode]);
+
+  // ── In-room chat ─────────────────────────────────────────────────────────────
+  const [chatOverlayVisible, setChatOverlayVisible] = useState(true);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const sidebarScrollRef = useRef<HTMLDivElement>(null);
+
+  // Pinned admin announcement — persists for late-joiners. Backend delivers
+  // via GET /api/main-stage/pin on mount AND a `mainstage:chat-pinned` socket
+  // event on connect / when admin edits. Users can dismiss it locally.
+  const [pin, setPin] = useState<MainStagePin | null>(null);
+  const [dismissedPinId, setDismissedPinId] = useState<string | null>(() => {
+    try { return localStorage.getItem("mainstage:pin:dismissed"); } catch { return null; }
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    getMainStagePin().then((p) => { if (!cancelled) setPin(p); }).catch(() => {});
+    const socket = getSocket();
+    const onPinned = (p: MainStagePin | null) => setPin(p || null);
+    socket.on('mainstage:chat-pinned', onPinned);
+    return () => { cancelled = true; socket.off('mainstage:chat-pinned', onPinned); };
+  }, []);
+
+  const dismissPin = useCallback(() => {
+    if (!pin) return;
+    try { localStorage.setItem("mainstage:pin:dismissed", pin.id); } catch {}
+    setDismissedPinId(pin.id);
+  }, [pin]);
+
+  const visiblePin = pin && pin.id !== dismissedPinId && Date.now() < pin.expiresAt ? pin : null;
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onChatMessage = (msg: ChatMessage) => {
+      setChatMessages((prev) => {
+        const next = [...prev, msg];
+        return next.length > 200 ? next.slice(next.length - 200) : next;
+      });
+    };
+    socket.on('mainstage:chat-message', onChatMessage);
+    return () => { socket.off('mainstage:chat-message', onChatMessage); };
+  }, []);
+
+  const handleChatSend = useCallback(() => {
+    const text = chatInput.trim();
+    if (!text) return;
+    getSocket().emit('mainstage:chat-send', { text });
+    setChatInput("");
+  }, [chatInput]);
+
+  useEffect(() => {
+    const el = sidebarScrollRef.current;
+    if (!el || el.offsetParent === null) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages]);
+
+  // ── Floating emoji reactions ──────────────────────────────────────────────────
+  const [reactions, setReactions] = useState<FloatingReaction[]>([]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onReaction = (payload: { id: string; emoji: string; userId: string | number }) => {
+      const x = 20 + Math.random() * 60; // 20-80% of screen width
+      setReactions((prev) => [...prev, { id: payload.id, emoji: payload.emoji, x }]);
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== payload.id));
+      }, 3000);
+    };
+    socket.on('mainstage:reaction', onReaction);
+    return () => { socket.off('mainstage:reaction', onReaction); };
+  }, []);
+
+  const handleSendReaction = useCallback((emoji: string) => {
+    getSocket().emit('mainstage:reaction-send', { emoji });
+  }, []);
+
+  // ── Tip animation toasts — one per tip, stacked bottom-right ────────────────
+  // Each toast lives independently for 4 s then removes itself.
+  // Multiple performers' tips stack simultaneously (max 4 visible).
+  interface TipItem { amount: number; username: string; performerName: string; message?: string; key: number; }
+  const [tipQueue, setTipQueue] = useState<TipItem[]>([]);
+  const tipTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onTipAnimation = (data: { amount: number; username: string; performerName: string; message?: string }) => {
+      const key = Date.now() + Math.random();
+      setTipQueue(prev => [...prev.slice(-3), { ...data, key }]);
+      const timer = setTimeout(() => {
+        setTipQueue(prev => prev.filter(t => t.key !== key));
+        tipTimersRef.current.delete(key);
+      }, 4000);
+      tipTimersRef.current.set(key, timer);
+    };
+    socket.on('mainstage:tip-animation', onTipAnimation);
+    return () => {
+      socket.off('mainstage:tip-animation', onTipAnimation);
+      tipTimersRef.current.forEach(t => clearTimeout(t));
+      tipTimersRef.current.clear();
+    };
+  }, []);
+
+  // ── Skip-vote & Play-next ─────────────────────────────────────────────────────
+  const [skipVoteCount, setSkipVoteCount] = useState(0);
+  const [skipVoteThreshold, setSkipVoteThreshold] = useState(3);
+  const [hasVotedSkip, setHasVotedSkip] = useState(false);
+  const [playNextCooldown, setPlayNextCooldown] = useState(0);
+  const playNextTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Reset skip-vote state whenever the playing video src changes
+  const lastMediaSrc = useRef<string | null>(null);
+  useEffect(() => {
+    const src = state?.media?.src ?? null;
+    if (src !== lastMediaSrc.current) {
+      lastMediaSrc.current = src;
+      setSkipVoteCount(0);
+      setHasVotedSkip(false);
+    }
+  }, [state?.media?.src]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const onSkipVoteUpdate = (payload: { count: number; threshold: number }) => {
+      setSkipVoteCount(payload.count);
+      setSkipVoteThreshold(payload.threshold);
+    };
+    socket.on('mainstage:skip-vote-update', onSkipVoteUpdate);
+    return () => { socket.off('mainstage:skip-vote-update', onSkipVoteUpdate); };
+  }, []);
+
+  const hasMic = isAdmin || participantTier === 'member' || participantTier === 'prime';
+  const canPlayNext = isAdmin || participantTier === 'prime';
+
+  const handleVoteSkip = useCallback(async () => {
+    if (hasVotedSkip) return;
+    try {
+      const result = await voteSkipMainStage();
+      setHasVotedSkip(true);
+      setSkipVoteCount(result.count);
+      setSkipVoteThreshold(result.threshold);
+      if (result.triggered) {
+        setSkipVoteCount(0);
+        setHasVotedSkip(false);
+      }
+    } catch {
+      // silently ignore
+    }
+  }, [hasVotedSkip]);
+
+  const handlePlayNext = useCallback(async () => {
+    if (playNextCooldown > 0) return;
+    try {
+      const result = await playNextMainStage();
+      if (result.cooldownSeconds) {
+        setPlayNextCooldown(result.cooldownSeconds);
+      } else {
+        setPlayNextCooldown(300); // default 5 min
+      }
+    } catch {
+      // silently ignore
+    }
+  }, [playNextCooldown]);
+
+  // Count down play-next cooldown every second
+  useEffect(() => {
+    if (playNextCooldown <= 0) {
+      if (playNextTimerRef.current) { clearInterval(playNextTimerRef.current); playNextTimerRef.current = null; }
+      return;
+    }
+    playNextTimerRef.current = setInterval(() => {
+      setPlayNextCooldown((n) => {
+        if (n <= 1) { clearInterval(playNextTimerRef.current!); playNextTimerRef.current = null; return 0; }
+        return n - 1;
+      });
+    }, 1000);
+    return () => { if (playNextTimerRef.current) clearInterval(playNextTimerRef.current); };
+  }, [playNextCooldown > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // canScreenShare is already destructured from useMainStageRoom() above
+
+  // ── Countdown timers ────────────────────────────────────────────────────────
+  // For authenticated free users: remaining seconds of their 1h session.
+  const [sessionSecsLeft, setSessionSecsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sessionStartedAt || !sessionLimitSeconds) { setSessionSecsLeft(null); return; }
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - sessionStartedAt) / 1000);
+      const left = Math.max(0, sessionLimitSeconds - elapsed);
+      setSessionSecsLeft(left);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [sessionStartedAt, sessionLimitSeconds]);
+
+  // For guest mode: remaining seconds of their 15-min session.
+  const guestSessionLimit = guestCredsRef.current?.sessionLimitSeconds ?? 900;
+  const guestSessionStart = guestCredsRef.current?.sessionStartedAt ?? 0;
+  const [guestSecsLeft, setGuestSecsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isGuestMode || !guestSessionStart) return;
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - guestSessionStart) / 1000);
+      const left = Math.max(0, guestSessionLimit - elapsed);
+      setGuestSecsLeft(left);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isGuestMode, guestSessionStart, guestSessionLimit]);
+
+  // Cooldown countdown (ticks down from cooldownSeconds)
+  const [cooldownLeft, setCooldownLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (cooldownSeconds === null) { setCooldownLeft(null); return; }
+    setCooldownLeft(cooldownSeconds);
+    const id = setInterval(() => {
+      setCooldownLeft((prev) => {
+        if (prev === null || prev <= 1) { clearInterval(id); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldownSeconds]);
+
+  // When guest timer hits 0, redirect to /register with a prompt.
+  useEffect(() => {
+    if (guestSecsLeft === 0 && isGuestMode) {
+      navigate("/register?from=mainstage-guest", { replace: true });
+    }
+  }, [guestSecsLeft, isGuestMode, navigate]);
+
+  // Refs so effect closures always read current values without stale captures.
+  const hasEverConnectedRef = useRef(hasEverConnected);
+  useEffect(() => { hasEverConnectedRef.current = hasEverConnected; }, [hasEverConnected]);
+
+  // Clear stale camera-permission banners whenever the user leaves the room.
+  useEffect(() => {
+    if (!isParticipant) setCamError(null);
+  }, [isParticipant]);
+
+  // Allow landscape orientation while on Main Stage — the portrait-only overlay
+  // in globals.css blocks the stage on landscape mobile without this class.
+  // Mirrors what LiveKitCallDock does for hangout video calls.
+  useEffect(() => {
+    document.body.classList.add("allow-landscape");
+    return () => { document.body.classList.remove("allow-landscape"); };
+  }, []);
+
+  useEffect(() => {
+    if (isGuestMode || isViewerMode || isAuthLoading) return;
+    let cancelled = false;
+    getMainStageJoinCheck()
+      .then((check) => {
+        if (!cancelled) {
+          setJoinCheck(check);
+          if (!check.requiresAgeVerification) setConfirmAge(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setConsentError("We couldn't verify Main Stage access requirements. Please try again.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuestMode, isViewerMode, isAuthLoading]);
+
+  useEffect(() => {
+    if (isGuestMode || isViewerMode) return;
+    if (!joinCheck?.canJoin) {
+      setJoining(false);
+      return;
+    }
+    let cancelled = false;
+    const attemptJoin = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        setJoining(false);
+        return;
+      }
+      // If the room is already connected the join() short-circuit will fire immediately.
+      // Skip the loading spinner to avoid a flash on navigation-back-to-stage.
+      if (room.state === ConnectionState.Connected) {
+        join().catch(() => {});
+        return;
+      }
+      setJoining(true);
+      join()
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setJoining(false);
+        });
+    };
+
+    attemptJoin();
+
+    const onVisibilityChange = () => {
+      if (cancelled) return;
+      if (document.visibilityState !== "visible") return;
+      // After the first successful connect, tab-focus events must NOT trigger
+      // an auto-rejoin. The ConnectionOverlay shows "Connection lost" with a
+      // manual "Reintentar" button for post-connect drops. Auto-rejoin here
+      // creates a kick loop when the user has multiple tabs open.
+      if (hasEverConnectedRef.current) return;
+      attemptJoin();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isGuestMode, isViewerMode, join, joinCheck?.canJoin, room]);
+
+  useEffect(() => {
+    if (connState === ConnectionState.Connected) {
+      setHasEverConnected(true);
+    }
+  }, [connState]);
+
+  useEffect(() => {
+    if (!isParticipant) {
+      setHasEverConnected(false);
+      setConnState(ConnectionState.Connecting);
+    }
+  }, [isParticipant]);
+
+  // Ref to the MainStage root container, used by FullscreenToggle so we
+  // fullscreen just the stage (not the whole document, which fails on iOS).
+  const stageRootRef = useRef<HTMLDivElement>(null);
+
+  // Local view-mode override. Each user can pick their preferred layout
+  // without affecting anyone else. When null, we fall back to the server's
+  // mode (admin-controlled default). Persisted in localStorage so the
+  // choice survives reloads. Admin writes still go to the server via the
+  // AdminDrawer; those change the default for un-overridden users.
+  const LOCAL_MODE_KEY = "mainstage:localViewMode";
+  const [localViewMode, setLocalViewMode] = useState<ModeId | null>(() => {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(LOCAL_MODE_KEY);
+    const isValid = raw === "cinema" || raw === "spotlight" || raw === "grid3x3" || raw === "hotpicks";
+    return isValid ? (raw as ModeId) : null;
+  });
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    if (localViewMode === null) localStorage.removeItem(LOCAL_MODE_KEY);
+    else localStorage.setItem(LOCAL_MODE_KEY, localViewMode);
+  }, [localViewMode]);
+
+  // Auto-start Cristina's radio when entering Main Stage so the room has
+  // music over the silent video. Fires at most once per page mount. If the
+  // user pauses, we don't restart. If tracks refetch after a pause, we
+  // don't restart. Ref guard is the source of truth.
+  const { play: playMusic, pause: pauseMusic, isPlaying: musicIsPlaying, tracks: musicTracks } = useMusicPlayer();
+  const hasAutoStartedMusicRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoStartedMusicRef.current) return;
+    if (musicIsPlaying) { hasAutoStartedMusicRef.current = true; return; }
+    if (!musicTracks || musicTracks.length === 0) return; // provider still loading
+    // Skip if the admin has music streaming via LiveKit ingress — playing our
+    // local radio on top would double-up audio.
+    if (state?.media?.kind === "music" && state?.media?.playing === true) {
+      hasAutoStartedMusicRef.current = true;
+      return;
+    }
+    hasAutoStartedMusicRef.current = true;
+    playMusic();
+  }, [musicTracks, musicIsPlaying, playMusic, state?.media?.kind, state?.media?.playing]);
+
+  // Background radio yields to live cammers — once anyone is on stage, the
+  // Cristina radio pauses so it doesn't compete with cam audio. Manual: no
+  // auto-resume when cammers leave (admin/user restarts if desired).
+  useEffect(() => {
+    if (cammerInfos.length > 0 && musicIsPlaying) pauseMusic();
+  }, [cammerInfos.length, musicIsPlaying, pauseMusic]);
+
+  // Background radio also yields to admin-set music (cinema mode's inline
+  // player). Prevents Cristina + admin-music playing at once mid-session.
+  useEffect(() => {
+    if (state?.media?.kind === "music" && state?.media?.playing && musicIsPlaying) {
+      pauseMusic();
+    }
+  }, [state?.media?.kind, state?.media?.playing, musicIsPlaying, pauseMusic]);
+
+  const handleCammersChange = useCallback((infos: CammerInfo[]) => {
+    setCammerInfos(infos);
+  }, []);
+
+  const handleLeave = useCallback(() => {
+    if (!isGuestMode && !isViewerMode) leave();
+    navigate(-1);
+  }, [isGuestMode, isViewerMode, leave, navigate]);
+
+  const handleViewerWatch = useCallback(async () => {
+    setViewerConnecting(true);
+    setViewerError(null);
+    try {
+      // Free-tier logged-in users use the gated teaser endpoint; unauthenticated
+      // visitors fall through to the legacy viewer-token (member-only guard).
+      const res = isFreeTierViewer
+        ? await getMainStageFreeViewerToken()
+        : await getMainStageViewerToken();
+      setViewerLkToken(res.token);
+      setViewerLkUrl(res.livekitUrl);
+      if ('gateState' in res && res.gateState) {
+        setGateState(res.gateState as MainStageGateState);
+      }
+      // Refresh timer: free-tier tokens expire at window close (< 1h), so
+      // don't schedule a refresh — the whole point is that access ends.
+      // Paid viewers get 24h tokens, so refresh 15 min before expiry.
+      if (viewerRefreshRef.current) clearTimeout(viewerRefreshRef.current);
+      if (!isFreeTierViewer) {
+        viewerRefreshRef.current = setTimeout(async () => {
+          try {
+            const refreshed = await getMainStageViewerToken();
+            setViewerLkToken(refreshed.token);
+            setViewerLkUrl(refreshed.livekitUrl);
+          } catch {
+            // On failure, let the connection expire naturally.
+          }
+        }, (24 * 60 - 15) * 60 * 1000);
+      }
+    } catch (err: unknown) {
+      // Free-tier gate closed → surface gate info so the UI renders the
+      // countdown instead of a generic error toast.
+      const errObj = err as { status?: number; code?: string; data?: { gateState?: MainStageGateState } };
+      if (isFreeTierViewer && errObj?.status === 403 && errObj?.code === 'MAIN_STAGE_GATED') {
+        if (errObj.data?.gateState) setGateState(errObj.data.gateState);
+        setViewerError(null); // gated view is its own render branch, not an error
+      } else {
+        setViewerError("Couldn't connect to Main Stage. Please try again.");
+      }
+    } finally {
+      setViewerConnecting(false);
+    }
+  }, [isFreeTierViewer]);
+
+  // Fetch gate state on mount for free-tier viewers so we can render the
+  // countdown even before they click "Watch" (or if the gate is currently
+  // closed, we show it immediately instead of after a failed watch attempt).
+  useEffect(() => {
+    if (!isFreeTierViewer) return;
+    getMainStageGateState()
+      .then((r) => setGateState(r.gateState))
+      .catch(() => { /* silent — countdown UI shows "loading" state */ });
+    const id = setInterval(() => {
+      getMainStageGateState().then(r => setGateState(r.gateState)).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [isFreeTierViewer]);
+
+  // Auto-disconnect at window close for free-tier viewers so an expired
+  // LiveKit connection doesn't sit there showing a frozen frame.
+  useEffect(() => {
+    if (!isFreeTierViewer || !viewerLkToken || !gateState?.currentCloseAt) return;
+    const msUntilClose = gateState.currentCloseAt - Date.now();
+    if (msUntilClose <= 0) {
+      setViewerLkToken(null);
+      return;
+    }
+    const t = setTimeout(() => setViewerLkToken(null), msUntilClose);
+    return () => clearTimeout(t);
+  }, [isFreeTierViewer, viewerLkToken, gateState?.currentCloseAt]);
+
+  // Cleanup viewer refresh timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (viewerRefreshRef.current) clearTimeout(viewerRefreshRef.current);
+    };
+  }, []);
+
+  // Fix 1-D: Poll state via REST for viewers (unauthenticated viewers don't
+  // receive socket state updates from the provider).
+  useEffect(() => {
+    if (!isViewerMode || !viewerLkToken) return;
+    // Fetch initial state immediately.
+    getMainStageState().then(s => setViewerStateOverride(s)).catch(() => {});
+    const id = setInterval(() => {
+      getMainStageState().then(s => setViewerStateOverride(s)).catch(() => {});
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [isViewerMode, viewerLkToken]);
+
+  // Fix 1-F: Mid-session tier upgrade — reload to promote viewer to participant.
+  useEffect(() => {
+    if (!isViewerMode) return;
+    const socket = getSocket();
+    const onEntitlementChange = () => {
+      // User's entitlements changed — reload so the new tier is picked up.
+      window.location.reload();
+    };
+    socket.on('user:entitlement-change', onEntitlementChange);
+    return () => {
+      socket.off('user:entitlement-change', onEntitlementChange);
+    };
+  }, [isViewerMode]);
+
+  const handleAcceptConsents = useCallback(async () => {
+    setConsentError(null);
+    if (!acceptTerms || !acceptPrivacy || !confirmAge) {
+      setConsentError("You must accept the Terms, Privacy Policy, and confirm you are 18+ to join Main Stage.");
+      return;
+    }
+    try {
+      setAcceptingConsents(true);
+      const check = await acceptMainStageConsents({
+        acceptTerms: true,
+        acceptPrivacy: true,
+        ageConfirmed: true,
+      });
+      setJoinCheck(check);
+    } catch (err) {
+      setConsentError(err instanceof Error ? err.message : "Failed to save Main Stage consents");
+    } finally {
+      setAcceptingConsents(false);
+    }
+  }, [acceptPrivacy, acceptTerms, confirmAge]);
+
+  // Cycle the *local* view mode — each user's personal preference. The
+  // server's mode remains the default for anyone who hasn't overridden.
+  const handleCycleMode = useCallback(() => {
+    const currentEffective: ModeId =
+      (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
+    const next = NEXT_MODE[currentEffective] ?? "cinema";
+    setLocalViewMode(next);
+  }, [localViewMode, state?.mode]);
+
+  const handleResetViewMode = useCallback(() => {
+    setLocalViewMode(null);
+  }, []);
+
+  const handleShuffle = useCallback(() => {
+    shuffle();
+  }, [shuffle]);
+
+  // ── Guest session expired (page reload cleared sessionStorage) ───────────────
+  if (isGuestSessionExpired) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center"
+          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}
+        >
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-bold text-xl mb-1">Guest session expired</p>
+          <p className="text-white/70 text-sm max-w-xs mx-auto">
+            Your guest session ended. Ask the host for a new invite link to rejoin.
+          </p>
+          <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
+            Tu sesión de invitado expiró. Pide al anfitrión un nuevo enlace para unirte.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="min-h-[44px] px-8 rounded-2xl text-sm font-semibold text-white/60 transition-all active:scale-[0.97]"
+          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+        >
+          Go back
+        </button>
+      </div>
+    );
+  }
+
+  // ── Free-user cooldown screen ────────────────────────────────────────────────
+  if (!isGuestMode && cooldownSeconds !== null) {
+    const mins = cooldownLeft !== null ? Math.ceil(cooldownLeft / 60) : Math.ceil(cooldownSeconds / 60);
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center"
+          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}
+        >
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-bold text-xl mb-1">Loved having you on stage 💎</p>
+          <p className="text-white/70 text-sm max-w-xs mx-auto">
+            Come back in{" "}
+            <span className="text-pink-400 font-bold tabular-nums">
+              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
+            </span>
+            , or skip the wait and become a Member — cam + mic all day.
+          </p>
+          <p className="text-white/35 text-xs mt-1 max-w-xs mx-auto">
+            Nos encantó tenerte 💎 Vuelve en{" "}
+            <span className="tabular-nums">
+              {cooldownLeft !== null ? fmtCooldown(cooldownLeft) : `${Math.ceil(mins/60)}h`}
+            </span>
+            {" "}o únete como Miembro — cámara + mic todo el día.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            type="button"
+            onClick={() => navigate("/subscribe")}
+            className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97]"
+            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            Become a Member — Cam + Mic, 4h Sessions
+          </button>
+          <button
+            type="button"
+            onClick={() => { clearCooldown(); navigate(-1); }}
+            className="min-h-[40px] w-full rounded-xl text-xs font-semibold text-white/40 transition-all active:scale-[0.97]"
+          >
+            Leave Main Stage
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show the skeleton while auth is resolving (can't determine viewer vs member yet).
+  if (!isGuestMode && isAuthLoading) {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-pnp-background"
+        role="status"
+        aria-label={t.live.mainStageLoading}
+      >
+        <div
+          className="flex-shrink-0 flex items-center justify-between px-4 h-14"
+          style={{
+            background: "rgba(10,10,15,0.9)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            paddingTop: "env(safe-area-inset-top, 0px)",
+          }}
+        >
+          <div className="w-20 h-4 rounded animate-pulse bg-white/[0.08]" />
+          <div className="w-24 h-5 rounded animate-pulse bg-white/[0.06]" />
+          <div className="w-8 h-8 rounded-full animate-pulse bg-white/[0.08]" />
+        </div>
+        <div className="flex-1 animate-pulse bg-white/[0.03]">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div
+              className="w-10 h-10 rounded-full border-2 animate-spin"
+              style={{ borderColor: "rgba(212,0,122,0.2)", borderTopColor: "#D4007A" }}
+            />
+          </div>
+        </div>
+        <div
+          className="flex-shrink-0 h-16 animate-pulse"
+          style={{ background: "rgba(10,10,15,0.9)", borderTop: "1px solid rgba(255,255,255,0.06)" }}
+        />
+      </div>
+    );
+  }
+
+  // Free-tier entry card — logged-in free-tier user with no viewer token.
+  // Covers all 3 states (window open, upcoming, gate disabled) + null gateState
+  // fallback + ad-unlock slot. Replaced the old "Main Stage is closed" screen
+  // 2026-09-05 to fix the broken UX free users hit when the gate is disabled.
+  if (isFreeTierViewer && !viewerLkToken) {
+    const uiLang: "es" | "en" = t.lang === "es" ? "es" : "en";
+    return (
+      <div className="fixed inset-0 flex items-center justify-center px-4 bg-pnp-background">
+        <FreeTierEntryCard
+          gateState={gateState as unknown as {
+            enabled: boolean;
+            isOpen: boolean;
+            currentCloseAt: number | null;
+            nextOpenAt: number | null;
+            windows?: { start_utc: string; duration_min: number }[];
+          } | null}
+          onWatchLive={handleViewerWatch}
+          connecting={viewerConnecting}
+          lang={uiLang}
+          adUnlockSlot={
+            <>
+              <AdUnlockButton
+                surface="mainstage_extend"
+                lang={uiLang}
+                onGranted={() => { void handleViewerWatch(); }}
+              />
+              {/* El anuncio va aqui, en la antesala, y no sobre la emision:
+                  un banner encima del video en vivo cuesta mas de lo que da. */}
+              <div className="mt-4 flex justify-center"><AdSlot slot="instant_message" /></div>
+            </>
+          }
+        />
+      </div>
+    );
+  }
+
+  // Viewer age gate — shown before the viewer fetches a LiveKit token.
+  if (isViewerMode && !viewerLkToken) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-6 px-6 text-center bg-pnp-background">
+        <img src="/logo-login.png" alt="PNPtv!" className="h-10 w-auto object-contain brightness-110 mb-2" />
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center"
+          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.18),rgba(123,97,255,0.18))", border: "1px solid rgba(212,0,122,0.3)" }}
+        >
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#D4007A" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9A2.25 2.25 0 004.5 18.75z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-white font-bold text-xl mb-1">Main Stage · Live Now</p>
+          <p className="text-white/55 text-sm max-w-xs mx-auto">
+            Watch live for free — or sign up and get 1 hour on cam, no subscription needed.
+          </p>
+          <p className="text-white/35 text-xs mt-2 max-w-xs mx-auto">
+            Ver gratis, o regístrate y obtén 1 hora de cámara sin pagar.
+          </p>
+        </div>
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <input id="pnp-mainstage-1"
+            type="checkbox"
+            checked={viewerAgeConfirmed}
+            onChange={(e) => setViewerAgeConfirmed(e.target.checked)}
+            className="w-4 h-4 accent-pink-500"
+          />
+          <span className="text-sm text-white/80">I confirm I'm 18+ / Confirmo que tengo 18+</span>
+        </label>
+        {viewerError && <p className="text-sm text-red-400">{viewerError}</p>}
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            type="button"
+            onClick={handleViewerWatch}
+            disabled={!viewerAgeConfirmed || viewerConnecting}
+            className="min-h-[50px] w-full rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            {viewerConnecting ? "Connecting…" : "Watch Live"}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/register")}
+            className="min-h-[44px] w-full rounded-2xl text-sm font-semibold text-white transition-all active:scale-[0.97]"
+            style={{ background: "rgba(123,97,255,0.15)", border: "1px solid rgba(123,97,255,0.40)" }}
+          >
+            Sign Up Free — Get 1 Hour on Cam
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/subscribe")}
+            className="min-h-[44px] w-full rounded-2xl text-sm font-semibold text-white transition-all active:scale-[0.97]"
+            style={{ background: "rgba(212,0,122,0.12)", border: "1px solid rgba(212,0,122,0.35)" }}
+          >
+            ⭐ Go Member — Cam + Mic, All Day
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="min-h-[40px] w-full rounded-xl text-xs font-semibold text-white/40 transition-all active:scale-[0.97]"
+          >
+            {t.live.mainStageGoBack}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Member skeleton — PRIME user waiting for join-check to resolve.
+  if (!isGuestMode && !isViewerMode && !error && (!joinCheck && !consentError)) {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-pnp-background"
+        role="status"
+        aria-label={t.live.mainStageLoading}
+      >
+        <div
+          className="flex-shrink-0 flex items-center justify-between px-4 h-14"
+          style={{
+            background: "rgba(10,10,15,0.9)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            paddingTop: "env(safe-area-inset-top, 0px)",
+          }}
+        >
+          <div className="w-20 h-4 rounded animate-pulse bg-white/[0.08]" />
+          <div className="w-24 h-5 rounded animate-pulse bg-white/[0.06]" />
+          <div className="w-8 h-8 rounded-full animate-pulse bg-white/[0.08]" />
+        </div>
+        <div className="flex-1 animate-pulse bg-white/[0.03]">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div
+              className="w-10 h-10 rounded-full border-2 animate-spin"
+              style={{ borderColor: "rgba(212,0,122,0.2)", borderTopColor: "#D4007A" }}
+            />
+          </div>
+        </div>
+        <div
+          className="flex-shrink-0 h-16 animate-pulse"
+          style={{ background: "rgba(10,10,15,0.9)", borderTop: "1px solid rgba(255,255,255,0.06)" }}
+        />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center bg-pnp-background">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-pnp-error/[0.12] border border-pnp-error/25">
+          <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-pnp-text-primary font-semibold text-sm mb-1">{t.live.mainStageFailedToConnect}</p>
+          <p className="text-white/50 text-xs">{error}</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="min-h-[44px] px-5 rounded-2xl text-sm font-semibold text-white transition-all active:scale-[0.97]"
+            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            {t.live.mainStageTryAgain}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="min-h-[44px] px-5 rounded-2xl text-sm font-semibold text-white/60 transition-all active:scale-[0.97] bg-white/[0.06] border border-white/10"
+          >
+            {t.live.mainStageGoBack}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isGuestMode && consentError && !joinCheck) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center bg-pnp-background">
+        <div>
+          <p className="text-pnp-text-primary font-semibold text-sm mb-1">Main Stage Access Check Failed</p>
+          <p className="text-white/50 text-xs">{consentError}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="min-h-[44px] px-5 rounded-2xl text-sm font-semibold text-white"
+          style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  if (!isGuestMode && joinCheck && !joinCheck.canJoin) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-pnp-background px-6 py-10">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-white shadow-2xl">
+          <h1 className="text-xl font-bold mb-2">Before You Join Main Stage</h1>
+          <p className="text-sm text-white/70 mb-5">
+            Main Stage requires current consent to the Terms and Conditions, Privacy Policy, and confirmation that you are 18 or older.
+          </p>
+          <div className="space-y-3 text-sm">
+            <label className="flex items-start gap-3">
+              <input id="pnp-mainstage-2" type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} className="mt-1" />
+              <span>
+                I accept the <a href="/terms" target="_blank" rel="noreferrer" className="text-pnp-accent underline">Terms and Conditions</a>.
+              </span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input id="pnp-mainstage-3" type="checkbox" checked={acceptPrivacy} onChange={(e) => setAcceptPrivacy(e.target.checked)} className="mt-1" />
+              <span>
+                I accept the <a href="/privacy" target="_blank" rel="noreferrer" className="text-pnp-accent underline">Privacy Policy</a>.
+              </span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input id="pnp-mainstage-4" type="checkbox" checked={confirmAge} onChange={(e) => setConfirmAge(e.target.checked)} className="mt-1" />
+              <span>I confirm that I am 18 years of age or older.</span>
+            </label>
+          </div>
+          {consentError && (
+            <p className="mt-4 text-sm text-red-400">{consentError}</p>
+          )}
+          <div className="mt-6 flex gap-3">
+            <button
+              type="button"
+              onClick={handleAcceptConsents}
+              disabled={acceptingConsents}
+              className="min-h-[44px] flex-1 rounded-2xl px-5 text-sm font-semibold text-white"
+              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+            >
+              {acceptingConsents ? "Saving..." : "Accept and Join"}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="min-h-[44px] rounded-2xl border border-white/10 bg-white/[0.06] px-5 text-sm font-semibold text-white/70"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Guests need a connecting spinner while state arrives async via socket;
+  // showing the "unavailable" error before state hydrates would be wrong.
+  if (isGuestMode && guestCredsRef.current && !state) {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-pnp-background"
+        role="status"
+        aria-label="Connecting to Main Stage"
+      >
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <div
+              className="w-10 h-10 rounded-full border-2 animate-spin"
+              style={{ borderColor: "rgba(212,0,122,0.2)", borderTopColor: "#D4007A" }}
+            />
+            <p className="text-white/50 text-sm">
+              Connecting… / Conectando…
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!state && !isViewerMode) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center gap-5 px-6 text-center bg-pnp-background">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-pnp-purple/[0.12] border border-pnp-purple/25">
+          <svg className="w-8 h-8 text-pnp-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-pnp-text-primary font-semibold text-sm mb-1">{t.live.mainStageUnavailable}</p>
+          <p className="text-white/50 text-xs">{t.live.mainStageNoState}</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="min-h-[44px] px-5 rounded-2xl text-sm font-semibold text-white transition-all active:scale-[0.97]"
+            style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+          >
+            {t.live.mainStageReload}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="min-h-[44px] px-5 rounded-2xl text-sm font-semibold text-white/60 transition-all active:scale-[0.97] bg-white/[0.06] border border-white/10"
+          >
+            {t.live.mainStageGoBack}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Effective mode: per-user local override wins over the server's
+  // shared mode. Everything downstream uses this.
+  const mode: ModeId =
+    (localViewMode ?? (state?.mode as ModeId | undefined) ?? "cinema");
+  // In viewer mode, prefer the REST-polled state override (socket state not delivered to unauthed viewers).
+  const effectiveState = (isViewerMode && viewerStateOverride) ? viewerStateOverride : state;
+  const liveParticipants = effectiveState?.counts?.participants ?? effectiveState?.counts?.cammers ?? 0;
+
+  // i18n mode label lookup — used in header and toolbar aria-labels.
+  const modeLabels: Record<ModeId, string> = {
+    cinema: t.live.mainStageModeCinema,
+    spotlight: t.live.mainStageModeSpotlight,
+    grid3x3: t.live.mainStageModeGrid3x3,
+    hotpicks: t.live.mainStageModeHotPicks,
+  };
+
+  return (
+    <div
+      ref={stageRootRef}
+      className="fixed inset-0 lg:left-72 flex flex-col bg-pnp-background"
+    >
+      {showTutorial && (
+        <TutorialOverlay
+          section="mainstage"
+          onDismiss={dismissTutorial}
+          onDismissForever={dismissForever}
+        />
+      )}
+      <div
+        className="flex-shrink-0"
+        style={{
+          background: "rgba(10,10,15,0.85)",
+          backdropFilter: "blur(16px)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          zIndex: 20,
+        }}
+      >
+      <header
+        className="flex items-center justify-between px-2 sm:px-4 gap-2 sm:gap-3"
+        style={{
+          minHeight: "54px",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          paddingLeft: "calc(0.5rem + env(safe-area-inset-left, 0px))",
+          paddingRight: "calc(0.5rem + env(safe-area-inset-right, 0px))",
+        }}
+      >
+        <img
+          src="/logo-login.png"
+          alt="PNPtv!"
+          className="h-7 w-auto object-contain brightness-110 flex-shrink-0"
+        />
+
+        {/* Mode chip — yields space to action buttons on narrow viewports.
+            When PNPtv Mode is locked (Crystal Creator on stage), the chip
+            swaps to a distinct obsidian/platinum treatment so viewers know
+            the format is pinned on the featured model. */}
+        {state?.pnptvMode?.locked ? (
+          <div
+            className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full text-xs font-bold min-w-0 flex-shrink overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, rgba(15,15,20,0.95), rgba(35,30,55,0.95))",
+              border: "1px solid rgba(220,220,255,0.55)",
+              color: "#F0EDFF",
+              boxShadow: "0 0 12px rgba(180,170,255,0.25)",
+            }}
+            title="PNPtv Mode — spotlight locked on a Crystal Creator"
+          >
+            <span className="flex-shrink-0" aria-hidden>❖</span>
+            <span className="truncate">PNPtv Mode</span>
+            {liveParticipants > 0 && (
+              <>
+                <span className="opacity-40 mx-0.5 flex-shrink-0">·</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="tabular-nums opacity-80 flex-shrink-0">{liveParticipants}</span>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full text-xs font-semibold bg-white/[0.06] border border-white/10 text-white/80 min-w-0 flex-shrink overflow-hidden">
+            <span className="text-pnp-accent flex-shrink-0">{MODE_ICONS[mode]}</span>
+            <span className="hidden [min-width:400px]:inline truncate">{t.live.mainStageTitle}</span>
+            <span className="hidden sm:inline text-white/30 mx-0.5">·</span>
+            <span className="hidden sm:inline text-white/55 truncate">{modeLabels[mode]}</span>
+            {liveParticipants > 0 && (
+              <>
+                <span className="text-white/20 mx-0.5 flex-shrink-0">·</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="tabular-nums text-white/70 flex-shrink-0">{liveParticipants}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+          {isViewerMode && (
+            <span
+              className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              style={{
+                background: "rgba(212,0,122,0.12)",
+                border:     "1px solid rgba(212,0,122,0.35)",
+                color:      "#D4007A",
+              }}
+            >
+              Viewer
+            </span>
+          )}
+          {/* 💸 Tip button — always visible on mobile + desktop for signed-in
+              non-Santino users. Recipient defaults to the spotlighted cammer;
+              falls back to Santino (SANTINO_USER_ID) when nobody is on stage. */}
+          {!isGuestMode && user?.id && String(user.id) !== "8599671840" &&
+           String(state?.spotlight?.cammer || "") !== String(user.id) && (
+            <button
+              onClick={() => setShowTipSheet(true)}
+              aria-label="Send tip"
+              className="flex items-center gap-1 px-3 py-1 rounded-full text-white text-xs font-bold min-h-[44px] active:scale-95 transition-all border border-white/20"
+              style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.9),rgba(230,145,56,0.9))" }}
+            >
+              <span aria-hidden="true">💸</span>
+              <span>Tip</span>
+            </button>
+          )}
+          {!isGuestMode && !isViewerMode && tokenBalance !== null && (
+            <button
+              onClick={() => setShowBuyTokens(true)}
+              className="relative flex items-center gap-1 px-2 py-1 rounded-full bg-white/[0.06] border border-white/10 hover:bg-white/10 active:scale-95 transition-all min-h-[44px]"
+              title={t.live.walletTooltip(tokenBalance, giftedBalance + bonusGiftBalance)}
+            >
+              {tokenBalance < 500 && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              )}
+              <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#008CE7" }}>
+                <svg viewBox="0 0 24 24" className="w-2 h-2 fill-white"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm1.5 14.5h-3v-2h3c.828 0 1.5-.672 1.5-1.5S14.328 11 13.5 11H10V9h3.5c1.933 0 3.5 1.567 3.5 3.5S15.433 16 13.5 16.5z"/></svg>
+              </div>
+              <span className="text-[11px] font-semibold text-white/80 tabular-nums">{tokenBalance}</span>
+              {(giftedBalance + bonusGiftBalance) > 0 && (
+                <span className="flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[9px] font-bold" style={{ background: "rgba(212,0,122,0.20)", color: "#FF69B4", border: "1px solid rgba(212,0,122,0.30)" }} title={`+${giftedBalance + bonusGiftBalance} ${t.live.giftTokensLabel}`}>
+                  <svg viewBox="0 0 24 24" className="w-2 h-2 fill-current flex-shrink-0"><path d="M20 7h-3.17A3 3 0 0 0 12 4.17 3 3 0 0 0 7.17 7H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-8-1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm-3 2a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm3 13H7v-8h5v8zm5 0h-3v-8h3v8z"/></svg>
+                  +{giftedBalance + bonusGiftBalance} {t.live.giftTokensLabel}
+                </span>
+              )}
+            </button>
+          )}
+          {/* Guest badge + 15-min countdown */}
+          {isGuestMode && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              style={{
+                background: "rgba(123,97,255,0.18)",
+                border:     "1px solid rgba(123,97,255,0.40)",
+                color:      "#A990FF",
+              }}
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+              </svg>
+              Guest
+              {guestSecsLeft !== null && guestSecsLeft > 0 && (
+                <span className="tabular-nums ml-1">{fmtMmSs(guestSecsLeft)}</span>
+              )}
+              {guestSecsLeft === 0 && (
+                <button
+                  onClick={() => navigate("/register")}
+                  className="ml-1 underline"
+                >
+                  Join!
+                </button>
+              )}
+            </span>
+          )}
+          {/* Newcomer session countdown + upgrade nudge */}
+          {!isGuestMode && participantTier === 'newcomer' && sessionSecsLeft !== null && sessionSecsLeft > 0 && (
+            <button
+              type="button"
+              onClick={() => navigate("/subscribe")}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition-opacity hover:opacity-80"
+              style={{
+                background: sessionSecsLeft < 300 ? "rgba(212,0,122,0.20)" : "rgba(123,97,255,0.18)",
+                border:     `1px solid ${sessionSecsLeft < 300 ? "rgba(212,0,122,0.5)" : "rgba(123,97,255,0.40)"}`,
+                color:      sessionSecsLeft < 300 ? "#FF6BB0" : "#A990FF",
+              }}
+              title="Free preview — tap to become a Member for mic + all-day cam"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {fmtMmSs(sessionSecsLeft)}
+              {sessionSecsLeft < 300 && <span className="ml-0.5">· Upgrade</span>}
+            </button>
+          )}
+          {/* Hangouts shortcut — opens main community hangout */}
+          <button
+            type="button"
+            aria-label="Open hangouts"
+            onClick={() => navigate("/chat/26")}
+            className="min-h-[44px] min-w-[44px] flex-shrink-0 flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.92] bg-white/[0.06] border border-white/10"
+            title="Hangouts"
+          >
+            <svg className="w-4 h-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h6m-6 4h4M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H7l-4 4V7a2 2 0 012-2z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            aria-label={t.live.mainStageAriaLeave}
+            onClick={handleLeave}
+            title="Leave Main Stage"
+            className="min-h-[44px] min-w-[44px] flex-shrink-0 flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.92] bg-white/[0.06] border border-white/10"
+          >
+            <svg className="w-4 h-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      {/* Topic strip — always rendered (seed guarantees non-empty state).
+          flex-shrink-0 + explicit min-height prevents any parent flex layout
+          from collapsing it on cramped mobile viewports. */}
+      <div
+        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1 overflow-x-auto scrollbar-none"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.05)", minHeight: "28px" }}
+      >
+        <button
+          type="button"
+          onClick={() => navigate("/chat/26")}
+          className="flex-shrink-0 text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded-full transition-all hover:opacity-80 active:scale-95"
+          style={{ background: "rgba(212,0,122,0.15)", border: "1px solid rgba(212,0,122,0.30)", color: "#D4007A" }}
+        >
+          Hangouts
+        </button>
+        {mainTopics.map((tp) => (
+          <button
+            key={tp.id}
+            type="button"
+            onClick={() => navigate("/chat/26")}
+            title={tp.description || `#${tp.name}`}
+            className="flex-shrink-0 text-[10px] sm:text-[11px] font-medium px-2 py-0.5 rounded-full transition-all hover:opacity-80 active:scale-95 whitespace-nowrap"
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.65)" }}
+          >
+            #{tp.name}
+          </button>
+        ))}
+      </div>
+      </div>
+
+      {/* Floating vertical toolbar — fixed-positioned on the right edge,
+          always visible at any viewport size. Contains the per-user view
+          controls (cycle, reset) and shared utilities (shuffle, fullscreen,
+          admin). Stacked vertically so it scales down to the narrowest
+          phone without overflowing. Hidden while AdminDrawer is open so
+          buttons remain reachable and don't bleed through the drawer scrim. */}
+      <div
+        className={`absolute flex flex-col items-center gap-2 z-40${!isViewerMode ? " lg:!right-[316px]" : ""}${adminOpen ? " hidden" : ""}`}
+        style={{
+          top: "calc(64px + env(safe-area-inset-top, 0px))",
+          right: "calc(0.5rem + env(safe-area-inset-right, 0px))",
+          // Defensive cap on small viewports — if more buttons get added,
+          // the toolbar scrolls instead of running off-screen.
+          maxHeight: "calc(100dvh - 200px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
+          overflowY: "auto",
+          scrollbarWidth: "none",
+        }}
+      >
+        <button
+          type="button"
+          onClick={handleCycleMode}
+          aria-label={`Switch your view — current: ${modeLabels[mode]}. Next: ${modeLabels[NEXT_MODE[mode]]}`}
+          title={`Your view · ${modeLabels[mode]} → ${modeLabels[NEXT_MODE[mode]]}`}
+          className="relative min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          style={{
+            background: "linear-gradient(135deg, rgba(212,0,122,0.85), rgba(123,97,255,0.80))",
+            border: "1px solid rgba(255,255,255,0.25)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,0,122,0.30)",
+          }}
+        >
+          <span className="text-white">{MODE_ICONS[mode]}</span>
+          {localViewMode !== null && (
+            <span
+              className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border"
+              style={{ background: "#E5FF00", borderColor: "rgba(10,10,15,0.95)", boxShadow: "0 0 6px rgba(229,255,0,0.8)" }}
+              aria-hidden
+              title="You've picked your own view"
+            />
+          )}
+        </button>
+        {localViewMode !== null && (
+          <button
+            type="button"
+            onClick={handleResetViewMode}
+            aria-label={`Reset to room default (${modeLabels[(state?.mode as ModeId) ?? "spotlight"]})`}
+            title={t.live.mainStageAriaResetView}
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+            style={{
+              background: "rgba(20,20,30,0.85)",
+              border: "1px solid rgba(255,255,255,0.18)",
+              backdropFilter: "blur(6px)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+            }}
+          >
+            <svg className="w-4 h-4 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+            </svg>
+          </button>
+        )}
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={handleShuffle}
+            aria-label={t.live.mainStageAriaShuffle}
+            title={t.live.mainStageAriaShuffle}
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+            style={{
+              background: "rgba(20,20,30,0.85)",
+              border: "1px solid rgba(229,255,0,0.35)",
+              backdropFilter: "blur(6px)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+            }}
+          >
+            <svg className="w-4 h-4 text-pnp-lemon" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 4.5l3 3m0 0l-3 3m3-3H12M7.5 19.5l-3-3m0 0l3-3m-3 3H12M4.5 5.25L12 12.75M19.5 18.75L15 14.25" />
+            </svg>
+          </button>
+        )}
+        <FullscreenToggle targetRef={stageRootRef} />
+        {/* Chat overlay toggle — mobile only; sidebar is always visible on desktop */}
+        <button
+          type="button"
+          aria-label={chatOverlayVisible ? "Hide chat messages" : "Show chat messages"}
+          title={chatOverlayVisible ? "Hide messages" : "Show messages"}
+          onClick={() => setChatOverlayVisible((o) => !o)}
+          className="lg:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          style={{
+            background: chatOverlayVisible ? "linear-gradient(135deg,#D4007A,#7B61FF)" : "rgba(20,20,30,0.85)",
+            border: chatOverlayVisible ? "1px solid rgba(212,0,122,0.60)" : "1px solid rgba(212,0,122,0.35)",
+            backdropFilter: "blur(6px)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+          }}
+        >
+          <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label={isAdmin ? t.live.mainStageAriaOpenAdmin : t.live.mainStageSettingsTitle}
+          title={isAdmin ? t.live.mainStageAriaOpenAdmin : t.live.mainStageSettingsTitle}
+          onClick={() => setAdminOpen(true)}
+          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:opacity-80 hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          style={{
+            background: "rgba(20,20,30,0.85)",
+            border: "1px solid rgba(123,97,255,0.40)",
+            backdropFilter: "blur(6px)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+          }}
+        >
+          <svg className="w-4 h-4 text-pnp-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label={t.live.mainStageAriaShowTutorial}
+          title={t.live.mainStageAriaShowTutorial}
+          onClick={openTutorial}
+          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-all hover:bg-white/10 active:scale-[0.94] shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          style={{
+            background: "rgba(20,20,30,0.85)",
+            border: "1px solid rgba(255,255,255,0.18)",
+            backdropFilter: "blur(6px)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+          }}
+        >
+          <svg className="w-4 h-4 text-white/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.5M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+          </svg>
+        </button>
+      </div>
+
+      {connState === ConnectionState.Reconnecting && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-pnp-amber text-black">
+          <span className="w-1.5 h-1.5 rounded-full bg-black/40 animate-pulse" />
+          {t.live.mainStageReconnectingBanner}
+        </div>
+      )}
+
+      {camError && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2 z-40 flex items-start gap-2 px-3 py-2 rounded-xl text-xs font-semibold max-w-[92vw] sm:max-w-[480px] bg-pnp-error text-white"
+          style={{
+            top: "calc(60px + env(safe-area-inset-top, 0px))",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+          }}
+          role="alert"
+          aria-live="assertive"
+        >
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          <span className="flex-1 text-left">{camError}</span>
+          <button
+            type="button"
+            onClick={() => setCamError(null)}
+            aria-label={t.live.mainStageAriaDismiss}
+            className="min-h-[20px] min-w-[20px] flex-shrink-0 flex items-center justify-center rounded-full opacity-80 hover:opacity-100"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* ── Split layout: video left + chat sidebar right (desktop lg+) ── */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+
+        {/* LEFT: video area */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/*
+            The Room is created once in MainStageProvider and stays connected
+            across route changes. We pass the external Room instance here so
+            LiveKitRoom acts only as a React context bridge — it does NOT call
+            room.connect() or room.disconnect() when this component mounts/unmounts.
+            connect={false} is required to prevent LiveKitRoom from taking over
+            the connection lifecycle on unmount.
+          */}
+          {isGuestMode ? (
+            <LiveKitRoom
+              key="main-stage-guest"
+              token={guestCredsRef.current!.token}
+              serverUrl={guestCredsRef.current!.livekitUrl}
+              connect
+              audio={false}
+              video
+              options={{
+                adaptiveStream: true,
+                dynacast: true,
+                publishDefaults: { simulcast: true },
+                // Match ROOM_OPTIONS — front cam on mobile.
+                videoCaptureDefaults: { facingMode: "user" },
+              }}
+              className="flex-1 flex flex-col min-h-0"
+              onMediaDeviceFailure={(failure) => {
+                const msg = failure?.toString() || "Camera failed";
+                if (/NotAllowed|Permission/i.test(msg)) {
+                  setCamError(t.live.mainStageErrCameraPermission);
+                } else if (/NotFound|Device/i.test(msg)) {
+                  setCamError(t.live.mainStageErrNoCamera);
+                } else if (/NotReadable|Overconstrained/i.test(msg)) {
+                  setCamError(t.live.mainStageErrCameraInUse);
+                } else {
+                  setCamError(`Camera error: ${msg}`);
+                }
+              }}
+            >
+              <RoomAudioRenderer />
+              <ForceCamMicEnforcer active />
+              <MainStageInner
+                mode={mode as ModeId}
+                spotlightCammer={state?.spotlight?.cammer ?? null}
+                spotlightNextAt={state?.spotlight?.nextAt ?? null}
+                mediaKind={state?.media?.kind || "off"}
+                mediaSrc={state?.media?.src ?? null}
+                mediaPlaying={state?.media?.playing ?? true}
+                mediaVolume={state?.media?.volume ?? 70}
+                mediaStartedAt={state?.media?.startedAt ?? null}
+                isParticipant={isParticipant}
+                isAdmin={isAdmin}
+                onSpotlightPick={(identity) => {
+                  admin.setSpotlight(identity).catch((err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    window.alert(msg);
+                  });
+                }}
+                onConnectionStateChange={setConnState}
+                onCammersChange={handleCammersChange}
+                onLeave={handleLeave}
+                spotlight={state?.spotlight}
+                showTips={!adminOpen}
+                onSendReaction={handleSendReaction}
+                canScreenShare={canScreenShare}
+                hasMic={hasMic}
+                skipVoteCount={skipVoteCount}
+                skipVoteThreshold={skipVoteThreshold}
+                hasVotedSkip={hasVotedSkip}
+                onVoteSkip={handleVoteSkip}
+                onPlayNext={canPlayNext ? handlePlayNext : undefined}
+                playNextCooldown={playNextCooldown}
+              />
+            </LiveKitRoom>
+          ) : isViewerMode ? (
+            /* ── Viewer: subscribe-only LiveKit connection ── */
+            <>
+              <LiveKitRoom
+                key="main-stage-viewer"
+                token={viewerLkToken!}
+                serverUrl={viewerLkUrl!}
+                connect
+                audio={false}
+                video={false}
+                className="flex-1 flex flex-col min-h-0"
+              >
+                <RoomAudioRenderer />
+                <ForceCamMicEnforcer active={false} />
+                <MainStageInner
+                  mode={mode as ModeId}
+                  spotlightCammer={(viewerStateOverride ?? state)?.spotlight?.cammer ?? null}
+                  spotlightNextAt={(viewerStateOverride ?? state)?.spotlight?.nextAt ?? null}
+                  mediaKind={(viewerStateOverride ?? state)?.media?.kind || "off"}
+                  mediaSrc={(viewerStateOverride ?? state)?.media?.src ?? null}
+                  mediaPlaying={(viewerStateOverride ?? state)?.media?.playing ?? true}
+                  mediaVolume={(viewerStateOverride ?? state)?.media?.volume ?? 70}
+                  mediaStartedAt={(viewerStateOverride ?? state)?.media?.startedAt ?? null}
+                  isParticipant={false}
+                  isAdmin={false}
+                  onSpotlightPick={() => {}}
+                  onConnectionStateChange={setViewerConnState}
+                  onCammersChange={handleCammersChange}
+                  onLeave={handleLeave}
+                  spotlight={(viewerStateOverride ?? state)?.spotlight}
+                  showTips={false}
+                  showBottomBar={false}
+                />
+              </LiveKitRoom>
+
+              {/* Login CTA — viewers are unauthenticated, prompt them to sign in and join */}
+              <div
+                className="flex-shrink-0 flex items-center gap-3 px-4 py-3"
+                style={{
+                  background: "rgba(10,10,15,0.97)",
+                  borderTop: "1px solid rgba(255,255,255,0.08)",
+                  paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleLeave}
+                  aria-label={t.live.mainStageAriaLeave}
+                  className="min-h-[40px] min-w-[40px] flex-shrink-0 flex items-center justify-center rounded-full bg-pnp-error/15 border border-pnp-error/30 text-pnp-error hover:bg-white/10 active:scale-[0.96] transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                  </svg>
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-semibold text-sm leading-tight">
+                    {liveParticipants > 0 ? `${liveParticipants} on camera` : "Join the show"}
+                  </p>
+                  <p className="text-white/45 text-xs leading-tight mt-0.5">Create a free account to turn your camera on</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/login?return_to=/main-stage")}
+                  className="flex-shrink-0 min-h-[40px] px-4 rounded-2xl text-xs font-bold text-white transition-all active:scale-[0.97] whitespace-nowrap"
+                  style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", boxShadow: "0 4px 16px rgba(212,0,122,0.45)" }}
+                >
+                  Sign in
+                </button>
+              </div>
+            </>
+          ) : (
+            <LiveKitRoom
+              key="main-stage-prime"
+              room={room}
+              connect={false}
+              serverUrl={livekitUrl}
+              token=""
+              className="flex-1 flex flex-col min-h-0"
+              onMediaDeviceFailure={(failure) => {
+                const msg = failure?.toString() || "Camera failed";
+                if (/NotAllowed|Permission/i.test(msg)) {
+                  setCamError(t.live.mainStageErrCameraPermission);
+                } else if (/NotFound|Device/i.test(msg)) {
+                  setCamError(t.live.mainStageErrNoCamera);
+                } else if (/NotReadable|Overconstrained/i.test(msg)) {
+                  setCamError(t.live.mainStageErrCameraInUse);
+                } else {
+                  setCamError(`Camera error: ${msg}`);
+                }
+              }}
+            >
+              <RoomAudioRenderer />
+              <ForceCamMicEnforcer active={false} />
+              <MainStageInner
+                mode={mode as ModeId}
+                spotlightCammer={state?.spotlight?.cammer ?? null}
+                spotlightNextAt={state?.spotlight?.nextAt ?? null}
+                mediaKind={state?.media?.kind || "off"}
+                mediaSrc={state?.media?.src ?? null}
+                mediaPlaying={state?.media?.playing ?? true}
+                mediaVolume={state?.media?.volume ?? 70}
+                mediaStartedAt={state?.media?.startedAt ?? null}
+                isParticipant={isParticipant}
+                isAdmin={isAdmin}
+                onSpotlightPick={(identity) => {
+                  admin.setSpotlight(identity).catch((err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    window.alert(msg);
+                  });
+                }}
+                onConnectionStateChange={setConnState}
+                onCammersChange={handleCammersChange}
+                onLeave={handleLeave}
+                spotlight={state?.spotlight}
+                showTips={!adminOpen}
+                onSendReaction={handleSendReaction}
+                canScreenShare={canScreenShare}
+                hasMic={hasMic}
+                skipVoteCount={skipVoteCount}
+                skipVoteThreshold={skipVoteThreshold}
+                hasVotedSkip={hasVotedSkip}
+                onVoteSkip={handleVoteSkip}
+                onPlayNext={canPlayNext ? handlePlayNext : undefined}
+                playNextCooldown={playNextCooldown}
+              />
+            </LiveKitRoom>
+          )}
+
+          {/* ── Chat input — mobile only, hidden on desktop ── */}
+          {!isViewerMode && (
+            <div
+              className="flex-shrink-0 flex items-center gap-2 px-3 py-2 z-40 lg:hidden"
+              style={{
+                background: "rgba(8,8,14,0.88)",
+                backdropFilter: "blur(16px)",
+                borderTop: "1px solid rgba(255,255,255,0.06)",
+                paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
+              }}
+            >
+              <input id="pnp-mainstage-5"
+                ref={chatInputRef}
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
+                placeholder={user ? "Say something…" : "Sign in to chat"}
+                disabled={!user}
+                maxLength={300}
+                className="flex-1 min-h-[38px] px-3 rounded-xl text-sm text-white placeholder-white/30 bg-white/[0.07] border border-white/10 focus:outline-none focus:border-pnp-accent/50 disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={handleChatSend}
+                disabled={!user || !chatInput.trim()}
+                aria-label="Send message"
+                className="flex-shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl transition-all active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+              >
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>{/* end LEFT column */}
+
+        {/* RIGHT: chat sidebar — desktop only, 300px */}
+        {!isViewerMode && (
+          <div
+            className="hidden lg:flex flex-col w-[300px] flex-shrink-0"
+            style={{
+              borderLeft: "1px solid rgba(255,255,255,0.06)",
+              background: "rgba(8,8,14,0.72)",
+              backdropFilter: "blur(16px)",
+            }}
+          >
+            {/* Sidebar header — topic pills for jumping into the community hangout (always rendered) */}
+            <div
+              className="flex-shrink-0 flex items-center gap-1 px-3 py-2 overflow-x-auto scrollbar-none"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+            >
+              <span className="flex-shrink-0 text-[9px] font-bold uppercase tracking-widest text-white/40 mr-1">Topics</span>
+              {mainTopics.map((tp) => (
+                <button
+                  key={tp.id}
+                  type="button"
+                  onClick={() => navigate("/chat/26")}
+                  title={tp.description || `#${tp.name}`}
+                  className="flex-shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full transition-all hover:opacity-80 active:scale-95 whitespace-nowrap"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "rgba(255,255,255,0.60)" }}
+                >
+                  #{tp.name}
+                </button>
+              ))}
+            </div>
+            {/* Pinned admin announcement — sticky at top of chat sidebar so
+                late-joiners always see the latest platform update. */}
+            {visiblePin && (
+              <div
+                className="flex-shrink-0 flex items-start gap-2 px-3 py-2"
+                style={{
+                  background: "linear-gradient(135deg,rgba(212,0,122,0.14),rgba(123,97,255,0.14))",
+                  borderBottom: "1px solid rgba(212,0,122,0.28)",
+                }}
+              >
+                <span aria-hidden className="text-[13px] leading-tight mt-0.5">📌</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-white/50">
+                    {visiblePin.sender}
+                  </p>
+                  <p className="text-[12px] leading-snug text-white/92 break-words">{visiblePin.text}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissPin}
+                  aria-label="Dismiss pinned announcement"
+                  className="flex-shrink-0 text-white/40 hover:text-white/90 text-sm leading-none px-1"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {/* Scrollable messages */}
+            <div
+              ref={sidebarScrollRef}
+              aria-live="polite"
+              aria-label="Chat messages"
+              className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-end gap-1 px-3 py-3"
+              style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}
+            >
+              {chatMessages.length === 0 ? (
+                <p className="text-xs text-white/25 text-center py-6">No messages yet</p>
+              ) : (
+                chatMessages.map((msg) => {
+                  const isMe = user && String(msg.userId) === String(user.id);
+                  const isAuto = msg.kind === 'auto';
+                  return (
+                    <div
+                      key={msg.id}
+                      className="flex flex-col"
+                      style={{ animation: "chat-msg-in 0.2s ease-out" }}
+                    >
+                      <div
+                        className="inline-flex flex-col px-2.5 py-1 rounded-2xl self-start max-w-full"
+                        style={{
+                          background: isAuto
+                            ? "linear-gradient(135deg,rgba(123,97,255,0.30),rgba(212,0,122,0.20))"
+                            : isMe
+                              ? "linear-gradient(135deg,rgba(212,0,122,0.55),rgba(123,97,255,0.45))"
+                              : "rgba(255,255,255,0.06)",
+                          backdropFilter: "blur(8px)",
+                          border: isAuto
+                            ? "1px solid rgba(123,97,255,0.35)"
+                            : isMe
+                              ? "1px solid rgba(212,0,122,0.30)"
+                              : "1px solid rgba(255,255,255,0.06)",
+                        }}
+                      >
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="text-[10px] font-bold leading-tight"
+                            style={{
+                              background: isMe ? "rgba(255,255,255,0.9)" : "linear-gradient(90deg,#FF6BB0,#A990FF)",
+                              WebkitBackgroundClip: "text",
+                              WebkitTextFillColor: "transparent",
+                            }}
+                          >
+                            {msg.displayName}
+                          </span>
+                          {isAuto && (
+                            <span
+                              className="text-[8px] font-bold px-1 py-0.5 rounded"
+                              style={{
+                                background: "rgba(123,97,255,0.35)",
+                                color: "#E8DFFF",
+                                letterSpacing: "0.5px",
+                              }}
+                            >
+                              AUTO
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-[12px] leading-snug text-white/90 break-words">{msg.text}</span>
+                        {msg.cta && (
+                          msg.cta.action === 'open-tip' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Pre-select the CTA's recipient (e.g. "Send tip to Dejesusof22"
+                                // chip should open the sheet already targeting Dejesusof22).
+                                // If the recipientUserId doesn't match anyone on stage, fall
+                                // through to default selection (first crystal / donation).
+                                const recipientId = msg.cta?.recipientUserId ?? null;
+                                if (recipientId) {
+                                  const onStage = state?.spotlight?.onStage ?? [];
+                                  const match = onStage.find((x) => String(x.userId) === String(recipientId));
+                                  if (!match && import.meta.env.DEV) {
+                                    // eslint-disable-next-line no-console
+                                    console.warn('[MainStage] chat CTA recipientUserId not on stage:', recipientId);
+                                  }
+                                  setTipSelectedCreatorId(recipientId);
+                                } else {
+                                  setTipSelectedCreatorId(null);
+                                }
+                                setShowTipSheet(true);
+                              }}
+                              className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
+                            >
+                              {msg.cta.label}
+                            </button>
+                          ) : msg.cta.href ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Intercept known intents so we never unmount the
+                                // LiveKit viewer. Unknown targets open in a new
+                                // tab as a last-resort escape hatch — the user
+                                // stays on Main Stage in the original tab.
+                                const href = msg.cta?.href ?? "";
+                                // 1) Book a call — /c/<username>?action=book
+                                const bookMatch = href.match(/^\/c\/([^/?#]+)\?(?:.*&)?action=book(?:$|&)/);
+                                if (bookMatch) {
+                                  const uname = bookMatch[1];
+                                  const onStageEntry = (state?.spotlight?.onStage ?? []).find(
+                                    (x) => x.username === uname,
+                                  );
+                                  setBookCallCreator({
+                                    id: String(msg.cta?.recipientUserId ?? onStageEntry?.userId ?? ""),
+                                    username: uname,
+                                    photo_url: null,
+                                    creator_type: "occasional",
+                                    creator_price_usd: 0,
+                                    crystalCreator: !!onStageEntry?.isCrystal,
+                                  });
+                                  return;
+                                }
+                                // 2) Any tip-related href → open the inline tip sheet
+                                if (/^\/tip(\/|$|\?)/.test(href) || /^\/main-stage\?.*tip/.test(href)) {
+                                  const recipientId = msg.cta?.recipientUserId ?? null;
+                                  if (recipientId) setTipSelectedCreatorId(recipientId);
+                                  setShowTipSheet(true);
+                                  return;
+                                }
+                                // 3) Unknown — open a new tab so the current
+                                // Main Stage session stays alive.
+                                window.open(href, "_blank", "noopener,noreferrer");
+                              }}
+                              className="mt-1.5 self-start text-[11px] font-bold px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                              style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)", color: "white" }}
+                            >
+                              {msg.cta.label}
+                            </button>
+                          ) : null
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Pinned input */}
+            <div
+              className="flex-shrink-0 flex items-center gap-2 px-3 py-3"
+              style={{
+                borderTop: "1px solid rgba(255,255,255,0.06)",
+                paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))",
+              }}
+            >
+              <input id="pnp-mainstage-6"
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
+                placeholder={user ? "Say something…" : "Sign in to chat"}
+                disabled={!user}
+                maxLength={300}
+                className="flex-1 min-h-[38px] px-3 rounded-xl text-sm text-white placeholder-white/30 bg-white/[0.07] border border-white/10 focus:outline-none focus:border-pnp-accent/50 disabled:opacity-40"
+              />
+              <button
+                type="button"
+                onClick={handleChatSend}
+                disabled={!user || !chatInput.trim()}
+                aria-label="Send message"
+                className="flex-shrink-0 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl transition-all active:scale-[0.94] disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(135deg,#D4007A,#7B61FF)" }}
+              >
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>{/* end split-layout wrapper */}
+
+      <ConnectionOverlay
+        connState={isViewerMode ? viewerConnState : connState}
+        errorMessage={isViewerMode ? (viewerError ?? null) : (camError || error)}
+        hasEverConnected={hasEverConnected}
+      />
+
+      {state?.media?.kind === "video" && state.media.title && !adminOpen && (
+        <NowPlayingChip title={state.media.title} />
+      )}
+
+      {adminOpen && state && (
+        <AdminDrawer
+          state={state}
+          admin={admin}
+          cammerInfos={cammerInfos}
+          onClose={() => setAdminOpen(false)}
+          isAdmin={isAdmin}
+          localViewMode={localViewMode}
+          onSetLocalView={setLocalViewMode}
+          onResetLocalView={handleResetViewMode}
+        />
+      )}
+
+      <BuyTokensModal
+        isOpen={showBuyTokens}
+        onClose={() => setShowBuyTokens(false)}
+        onSuccess={(newBalance) => setTokenBalance(newBalance)}
+        dpnsHandle={null}
+      />
+
+      {/* Inline book-a-call modal — mounted here so LiveKit stays connected
+          while the user picks a package and pays. Redirecting to
+          /c/<creator> would unmount the entire MainStage tree. */}
+      {bookCallCreator && (
+        <BookCallModal
+          creator={bookCallCreator}
+          isOnline={true}
+          open={true}
+          onClose={() => setBookCallCreator(null)}
+        />
+      )}
+
+      {/* Tip sheet — Crystal Creators on stage receive tips directly.
+          Multi-cammer: every Crystal Creator in the queue is tippable.
+          When no Crystal Creator is on stage (empty or non-crystal only),
+          falls back to donation mode targeting the platform account. */}
+      {showTipSheet && (() => {
+        const onStage = state?.spotlight?.onStage ?? [];
+        const crystalOnStage = onStage.filter((x) => x.isCrystal);
+        const isDonationMode = crystalOnStage.length === 0;
+
+        // Per-creator tip recipient state: defaults to first crystal creator,
+        // or platform donation account in donation mode.
+        const defaultRecipientId = isDonationMode
+          ? "8599671840"
+          : crystalOnStage[0]?.userId ?? "8599671840";
+        // tipRecipientId is tracked in the closure; selecting a creator updates it.
+        // We use a React ref trick: store selected userId inside a local variable
+        // that re-initialises each render of this IIFE. Because the IIFE re-runs
+        // when showTipSheet changes (and when state changes), we drive selection
+        // via a separate piece of state lifted one level up.
+        const tipRecipientId = tipSelectedCreatorId ?? defaultRecipientId;
+
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }}
+          >
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
+              style={{ background: "rgba(19, 16, 26, 0.98)", border: "1px solid rgba(212,0,122,0.35)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {isDonationMode ? (
+                <div>
+                  <p className="text-base font-bold text-white">
+                    💸 Support the Main Stage — Send a Donation
+                  </p>
+                  <p className="text-[11px] text-white/60 mt-0.5">
+                    Your donation supports PNPtv and the Main Stage.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-base font-bold text-white">
+                    💸 Tip a Crystal Creator on stage
+                  </p>
+                  <p className="text-[11px] text-white/60">
+                    USDC on Base. Gas-sponsored. 100% goes to the creator, instantly.
+                  </p>
+                  {/* Creator selector — one row per crystal creator on stage */}
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    {crystalOnStage.map((creator) => {
+                      const isSelected = tipRecipientId === creator.userId;
+                      return (
+                        <div
+                          key={creator.userId}
+                          className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-colors cursor-pointer ${
+                            isSelected
+                              ? "border-pink-500/60 bg-pink-500/10"
+                              : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+                          }`}
+                          onClick={() => setTipSelectedCreatorId(creator.userId)}
+                        >
+                          <span className="text-sm font-semibold text-white">
+                            ❖ {creator.username ?? creator.userId}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {creator.username && (
+                              <button
+                                type="button"
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20 text-white/60 hover:text-white/90 hover:border-white/40 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Stay on Main Stage — open BookCallModal inline
+                                  // instead of navigating away (which kills LiveKit).
+                                  setShowTipSheet(false);
+                                  setBookCallCreator({
+                                    id: String(creator.userId),
+                                    username: creator.username as string,
+                                    photo_url: null,
+                                    creator_type: "occasional",
+                                    creator_price_usd: 0,
+                                    crystalCreator: !!creator.isCrystal,
+                                  });
+                                }}
+                              >
+                                Book a call
+                              </button>
+                            )}
+                            <div
+                              className={`w-4 h-4 rounded-full border-2 flex-shrink-0 transition-colors ${
+                                isSelected ? "border-pink-500 bg-pink-500" : "border-white/30 bg-transparent"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {/* Preset chips — dual-labeled ($USD + Rush at 6/$1). Selecting
+                  persists to localStorage so a repeat tipper sees the same
+                  default next time. */}
+              <div className="grid grid-cols-4 gap-2">
+                {TIP_PRESETS_USD.map((amt, i) => {
+                  const rushAmt = TIP_PRESETS_RUSH[i];
+                  const selected = tipAmount === amt;
+                  return (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => {
+                        setTipAmount(amt);
+                        try { localStorage.setItem('pnptv:lastTipUsd', String(amt)); } catch { /* blocked */ }
+                      }}
+                      className={`py-2.5 rounded-lg text-center transition-colors ${
+                        selected
+                          ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
+                          : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      <span className="block text-sm font-bold">${amt}</span>
+                      <span className="block text-[10px] opacity-70">{rushAmt} 💎</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <input id="pnp-mainstage-7"
+                type="number"
+                min={1}
+                max={500}
+                step={1}
+                value={tipAmount}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value || "0", 10);
+                  if (Number.isFinite(v) && v > 0) {
+                    const clamped = Math.min(500, v);
+                    setTipAmount(clamped);
+                    try { localStorage.setItem('pnptv:lastTipUsd', String(clamped)); } catch { /* blocked */ }
+                  }
+                }}
+                className="w-full py-2 px-3 rounded-lg text-sm text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+                placeholder="Custom amount ($)"
+              />
+              <input id="pnp-mainstage-8"
+                type="text"
+                maxLength={140}
+                value={tipMessage}
+                onChange={(e) => setTipMessage(e.target.value)}
+                className="w-full py-2 px-3 rounded-lg text-xs text-white bg-white/[0.05] border border-white/10 focus:border-pink-400/60 focus:outline-none"
+                placeholder="Add a message (optional)"
+              />
+
+              {/* Rail selector — Ru$h (instant, no fees) vs USDC (gasless on
+                  Base). Ru$h defaults ON when the user's balance covers the
+                  tip; otherwise USDC. Both rails available in donation AND
+                  crystal-creator modes. */}
+              {!privyAuthenticated ? (
+                <button
+                  type="button"
+                  onClick={() => privyLogin()}
+                  className="w-full py-3 rounded-xl text-sm font-bold text-white transition-transform active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                >
+                  {isDonationMode ? "Sign in to send donation" : "Sign in to send tip"}
+                </button>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTipRailMode('rush')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                        tipRailMode === 'rush'
+                          ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with Ru$h 💎 — instant
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTipRailMode('usdc')}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
+                        tipRailMode === 'usdc'
+                          ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
+                          : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
+                      }`}
+                    >
+                      Pay with USDC — gasless
+                    </button>
+                  </div>
+
+                  {tipRailMode === 'rush' ? (
+                    // Ru$h rail — computes rush amount from selected USD (6 Ru$h = $1).
+                    // Donation mode uses "live" mode so tip animations still fire;
+                    // recipient is the platform donation user (Santino).
+                    // allowGifted=true for donation so gifted_balance counts (only
+                    // Santino/Lex are in the gifted-allowed backend list).
+                    <TipRushRail
+                      creatorId={tipRecipientId}
+                      creatorName={isDonationMode ? "Main Stage" : (crystalOnStage.find((c) => c.userId === tipRecipientId)?.username ?? undefined)}
+                      mode="live"
+                      variant="full"
+                      showMessage={false}
+                      showBalance={true}
+                      allowGifted={isDonationMode}
+                      onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
+                    />
+                  ) : (
+                    <WalletPayCard
+                      surface="tip"
+                      amountUsd={tipAmount}
+                      entitlementSpec={{
+                        creator_id: tipRecipientId,
+                        message: tipMessage.trim() || undefined,
+                      }}
+                      metadata={{ context: "main_stage", donation: isDonationMode ? "platform" : undefined }}
+                      label={isDonationMode ? `Send $${tipAmount} donation` : `Send $${tipAmount} tip`}
+                      lang="en"
+                      onSuccess={() => setTimeout(() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }, 1200)}
+                      compact
+                    />
+                  )}
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={() => { setShowTipSheet(false); setTipSelectedCreatorId(null); }}
+                className="w-full text-xs text-white/50 hover:text-white/80 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── YouTube-style chat messages overlay ─────────────────────────────── */}
+      <style>{`
+        @keyframes mainstage-float-up {
+          0%   { transform: translateY(0) scale(1);   opacity: 1; }
+          80%  { transform: translateY(-60vh) scale(1.2); opacity: 0.9; }
+          100% { transform: translateY(-80vh) scale(0.8); opacity: 0; }
+        }
+        @keyframes chat-msg-in {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes tipPop {
+          0%   { opacity: 0; transform: translateY(12px) scale(0.9); }
+          8%   { opacity: 1; transform: translateY(0) scale(1); }
+          80%  { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-8px) scale(0.95); }
+        }
+      `}</style>
+
+      {/* ── Tip toasts — bottom-right stack, one per performer, max 4 simultaneous ── */}
+      {tipQueue.length > 0 && (
+        <div
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "80px",
+            right: "16px",
+            zIndex: 9999,
+            pointerEvents: "none",
+            display: "flex",
+            flexDirection: "column-reverse",
+            gap: "8px",
+          }}
+        >
+          {tipQueue.slice(-4).map((tip) => (
+            <div
+              key={tip.key}
+              aria-label="Tip received"
+              style={{
+                background: "linear-gradient(135deg, #D4007A, #7B61FF)",
+                color: "#fff",
+                borderRadius: "12px",
+                padding: "10px 16px",
+                boxShadow: "0 4px 20px rgba(212,0,122,0.4)",
+                minWidth: "180px",
+                maxWidth: "240px",
+                animation: "tipPop 4s ease-out forwards",
+              }}
+            >
+              <div style={{ fontSize: "10px", opacity: 0.75, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>
+                {tip.performerName}
+              </div>
+              <div style={{ fontSize: "22px", fontWeight: 900, letterSpacing: "-0.5px" }}>
+                💎 {tip.amount} Ru$h
+              </div>
+              <div style={{ fontSize: "12px", opacity: 0.9, marginTop: "2px" }}>
+                from <strong>{tip.username}</strong>
+              </div>
+              {tip.message && (
+                <div style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8, fontStyle: "italic" }}>
+                  "{tip.message}"
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Pinned announcement — mobile overlay. Sits above the chat-overlay
+          messages so late-joiners always see the latest admin update even
+          when they've collapsed chat. Dismissible per-session. */}
+      {visiblePin && !isViewerMode && (
+        <div
+          className="absolute left-3 right-3 z-40 flex items-start gap-2 px-3 py-2 rounded-xl lg:hidden"
+          style={{
+            top: "calc(64px + env(safe-area-inset-top, 0px))",
+            background: "linear-gradient(135deg,rgba(212,0,122,0.92),rgba(123,97,255,0.92))",
+            border: "1px solid rgba(255,255,255,0.20)",
+            backdropFilter: "blur(10px)",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+          }}
+        >
+          <span aria-hidden className="text-[13px] leading-tight mt-0.5">📌</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-white/85">
+              {visiblePin.sender}
+            </p>
+            <p className="text-[12px] leading-snug text-white break-words">{visiblePin.text}</p>
+          </div>
+          <button
+            type="button"
+            onClick={dismissPin}
+            aria-label="Dismiss pinned announcement"
+            className="flex-shrink-0 text-white/70 hover:text-white text-base leading-none px-1"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {chatOverlayVisible && !isViewerMode && chatMessages.length > 0 && (
+        <div
+          aria-live="polite"
+          aria-label="Chat messages"
+          className="absolute left-3 pointer-events-none z-30 flex flex-col justify-end gap-1 lg:hidden"
+          style={{
+            bottom: "calc(116px + env(safe-area-inset-bottom, 0px))",
+            maxWidth: "min(280px, 58vw)",
+            maxHeight: "38vh",
+            overflow: "hidden",
+          }}
+        >
+          {chatMessages.slice(-10).map((msg) => {
+            const isMe = user && String(msg.userId) === String(user.id);
+            return (
+              <div
+                key={msg.id}
+                className="flex flex-col"
+                style={{ animation: "chat-msg-in 0.2s ease-out" }}
+              >
+                <div
+                  className="inline-flex flex-col px-2.5 py-1 rounded-2xl self-start"
+                  style={{
+                    background: isMe
+                      ? "linear-gradient(135deg,rgba(212,0,122,0.55),rgba(123,97,255,0.45))"
+                      : "rgba(0,0,0,0.58)",
+                    backdropFilter: "blur(8px)",
+                    border: isMe ? "1px solid rgba(212,0,122,0.30)" : "1px solid rgba(255,255,255,0.06)",
+                    maxWidth: "100%",
+                  }}
+                >
+                  <span
+                    className="text-[10px] font-bold leading-tight"
+                    style={{
+                      background: isMe ? "rgba(255,255,255,0.9)" : "linear-gradient(90deg,#FF6BB0,#A990FF)",
+                      WebkitBackgroundClip: "text",
+                      WebkitTextFillColor: "transparent",
+                    }}
+                  >
+                    {msg.displayName}
+                  </span>
+                  <span className="text-[12px] leading-snug text-white/92 break-words">{msg.text}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Floating reaction emojis ────────────────────────────────────────── */}
+      {reactions.map((r) => (
+        <div
+          key={r.id}
+          aria-hidden
+          style={{
+            position: "fixed",
+            left: `${r.x}%`,
+            bottom: "80px",
+            fontSize: "2rem",
+            lineHeight: 1,
+            pointerEvents: "none",
+            userSelect: "none",
+            animation: "mainstage-float-up 3s ease-out forwards",
+            zIndex: 44,
+          }}
+        >
+          {r.emoji}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Re-export AdminPanelContent for any external consumers (e.g. standalone
+// settings modal) that import it directly from this page module.
+export { AdminPanelContent } from "@/components/mainstage/AdminDrawer";

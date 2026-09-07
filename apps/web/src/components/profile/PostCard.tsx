@@ -1,0 +1,2025 @@
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { useTier } from "@/hooks/useTier";
+import { useI18n } from "@/lib/i18n";
+
+// Creators whose free videos get a PRIME upsell banner below the player.
+// Add IDs here to promote additional creators.
+const PRIME_UPSELL_CREATOR_IDS = new Set(["8599671840", "8552451957", "8f5f4dd1-7bdb-4571-b026-e09d91113c91"]); // Santino (SantinoFurioso + pnptv alt) + PNPLatinoBoy (Lex)
+
+const PRIME_PLANS = [
+  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
+  { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
+  { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
+] as const;
+import {
+  togglePostLike,
+  togglePostHype,
+  getReplies,
+  createReply,
+  editSocialPost,
+  searchCreators,
+  NP_COINS_SUBSCRIBE,
+  ApiError,
+  type SocialPostItem,
+  type MentionUser,
+} from "@/lib/api";
+import { translateText } from "@/lib/feedI18n";
+import { SharePostModal } from "@/components/SharePostModal";
+// NP inline PRIME checkout retired 2026-08-09 — PRIME CTAs now deep-link
+// into /subscribe (which uses the wallet). Local shim below preserves the
+// JSX call sites without pulling in the NP hook.
+import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+// NearbyBadge removed — PostCard shows city name inline instead
+import { MentionText } from "@/components/MentionText";
+import { MentionInput } from "@/components/MentionInput";
+import { UserAvatar } from "@/components/UserAvatar";
+import { VideoPlayer } from "@/components/VideoPlayer";
+import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
+
+const CAROUSEL_VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+function isCarouselVideo(url: string) { return CAROUSEL_VIDEO_RE.test(url); }
+
+function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: string[]; showWatermark: boolean; onImageClick?: (url: string) => void }) {
+  const [active, setActive] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    if (idx !== active && idx >= 0 && idx < urls.length) setActive(idx);
+  }, [active, urls.length]);
+  const goTo = useCallback((idx: number) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const clamped = Math.max(0, Math.min(urls.length - 1, idx));
+    el.scrollTo({ left: clamped * el.clientWidth, behavior: "smooth" });
+  }, [urls.length]);
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="flex overflow-x-auto snap-x snap-mandatory rounded-lg no-scrollbar"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        {urls.map((url, i) => (
+          // aspect-square reserves the layout space before the image loads,
+          // preventing CLS. The container is 100% wide (flex item) so the
+          // browser knows the height immediately without needing img metadata.
+          <div key={i} className="w-full flex-shrink-0 snap-center">
+            {isCarouselVideo(url) ? (
+              // Videos: reserve height via maxHeight — they vary in aspect ratio
+              <video
+                src={url}
+                controls
+                controlsList="nodownload"
+                disablePictureInPicture
+                playsInline
+                preload="metadata"
+                onContextMenu={(e) => e.preventDefault()}
+                className="w-full bg-black"
+                style={{ maxHeight: 480 }}
+              />
+            ) : (
+              // Aspect-ratio wrapper eliminates CLS: browser reserves vertical
+              // space before the image is fetched. object-cover fills the box.
+              <div className="relative w-full aspect-square bg-white/5">
+                <img
+                  src={url}
+                  alt={`Slide ${i + 1} of ${urls.length}`}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading={i === 0 ? undefined : "lazy"}
+                  decoding="async"
+                  onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
+                  onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
+                  style={onImageClick ? { cursor: "zoom-in" } : undefined}
+                />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div
+        className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[11px] font-semibold text-white"
+        style={{ background: "rgba(0,0,0,0.65)", pointerEvents: "none" }}
+      >
+        {active + 1}/{urls.length}
+      </div>
+      {/* Prev/next buttons — desktop-only fallback for trackpad users. */}
+      {active > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active - 1); }}
+          className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Previous slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+      {active < urls.length - 1 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active + 1); }}
+          className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Next slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
+      <div className="mt-2 flex items-center justify-center gap-1.5">
+        {urls.map((_, i) => (
+          <span
+            key={i}
+            className="rounded-full transition-all"
+            style={{
+              width: i === active ? 18 : 6,
+              height: 6,
+              background: i === active ? "#D4007A" : "rgba(255,255,255,0.35)",
+            }}
+          />
+        ))}
+      </div>
+      {showWatermark && (
+        <img
+          src="/logo-nav.png"
+          alt=""
+          aria-hidden="true"
+          style={{ position: "absolute", bottom: 30, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+        />
+      )}
+    </div>
+  );
+}
+
+function extractCarouselUrls(mediaUrls: unknown): string[] {
+  if (!Array.isArray(mediaUrls)) return [];
+  return mediaUrls
+    .map((u) => (typeof u === "string" ? u : (u && typeof u === "object" && "url" in u ? String((u as { url: unknown }).url) : "")))
+    .filter((u) => u.length > 0);
+}
+
+// ── Helpers (duplicated here to keep the component self-contained) ────────────
+
+function resolvePhotoUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith("/") || url.startsWith("http")) return url;
+  return null;
+}
+
+function timeAgo(dateStr: string): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  return `${Math.floor(months / 12)}y`;
+}
+
+// ── X Embed Card ──────────────────────────────────────────────────────────────
+// Renders an embedded tweet using Twitter's blockquote + widgets.js approach.
+// widgets.js is lazy-loaded once per page; subsequent calls use twttr.widgets.load().
+
+declare const window: Window & { twttr?: any };
+
+function XEmbedCard({ url }: { url: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+
+    const loadEmbed = () => {
+      if (window.twttr?.widgets) {
+        window.twttr.widgets.load(ref.current ?? undefined);
+      }
+    };
+
+    if (!window.twttr) {
+      const script = document.createElement("script");
+      script.src = "https://platform.twitter.com/widgets.js";
+      script.async = true;
+      script.onload = loadEmbed;
+      document.head.appendChild(script);
+    } else {
+      loadEmbed();
+    }
+  }, [url]);
+
+  return (
+    <div ref={ref} className="mt-3">
+      <blockquote className="twitter-tweet" data-dnt="true" data-theme="dark">
+        <a href={url} target="_blank" rel="noopener noreferrer">
+          {url}
+        </a>
+      </blockquote>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+        </svg>
+        View on X
+      </a>
+    </div>
+  );
+}
+
+// ── Props ─────────────────────────────────────────────────────────────────────
+
+export interface PostCardProps {
+  post: SocialPostItem;
+  isOwn: boolean;
+  isAdmin: boolean;
+  isOwnProfile: boolean;
+  isSubscribed: boolean;
+  creatorPriceUsd?: number | null;
+  currentUserId: string;
+  userLang: string;
+  onLike: (id: number) => void;
+  onDelete: (id: number) => void;
+  onAuthorTap?: (userId: string) => void;
+  onSubscribeCta?: () => void;
+  onReport?: (postId: number) => void;
+  contentDisclaimerAccepted?: boolean;
+  onAcceptDisclaimer?: () => Promise<void>;
+  viewerCity?: string | null;
+  viewerCountry?: string | null;
+  /** Suppress the Subscribe CTA banner on creator profiles (redundant there). */
+  hideCreatorCta?: boolean;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function PostCard({
+  post,
+  isOwn,
+  isAdmin,
+  isOwnProfile,
+  isSubscribed,
+  creatorPriceUsd,
+  currentUserId,
+  userLang,
+  onLike,
+  onDelete,
+  onAuthorTap,
+  onSubscribeCta,
+  onReport,
+  contentDisclaimerAccepted,
+  onAcceptDisclaimer,
+  viewerCity,
+  viewerCountry,
+  hideCreatorCta = false,
+}: PostCardProps) {
+  const t = useI18n();
+  const p = t.profile;
+  const { feed: ft } = useI18n();
+  const { user } = useAuth();
+  const { isPrime, tier: viewerTier } = useTier();
+  const navigate = useNavigate();
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const isPrimeCreator =
+    PRIME_UPSELL_CREATOR_IDS.has(post.author_id) ||
+    ["santinofurioso"].includes(String(post.author_username || "").toLowerCase());
+  // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
+  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && String(user?.id ?? "") !== String(post.author_id);
+  const upsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
+  const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(upsellKey) === "1"; } catch { return false; }
+  });
+  const dismissPrimeUpsell = () => {
+    try { sessionStorage.setItem(upsellKey, "1"); } catch { /* ignore */ }
+    setPrimeUpsellDismissed(true);
+  };
+  const [showPrimePlanPicker, setShowPrimePlanPicker] = useState(false);
+  const [selectedPrimePlan, setSelectedPrimePlan] = useState<typeof PRIME_PLANS[number] | null>(null);
+  // Creator subscribe upsell — on FREE posts of active creators.
+  const showCreatorSubscribeUpsell =
+    !hideCreatorCta &&
+    !showPrimeUpsell &&
+    !isPrimeCreator &&
+    post.author_creator_status === "active" &&
+    !post.is_exclusive &&
+    String(user?.id ?? "") !== String(post.author_id);
+  const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
+  const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(subscribeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissCreatorUpsell = () => {
+    try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+    setCreatorUpsellDismissed(true);
+  };
+  const [deleting, setDeleting] = useState(false);
+  // Edit post state (owner only) — mirrors SocialPostCard
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(post.content || "");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [localContent, setLocalContent] = useState<string | null>(null);
+  const photoUrl = resolvePhotoUrl(post.author_photo);
+  const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
+  const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+  // PRIME CTAs deep-link into /subscribe (wallet flow) — no popup, no NP.
+  const inlineCheckout = {
+    launching: false,
+    error: null as string | null,
+    showGuide: false,
+    start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
+      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+    },
+    dismissGuide: () => {},
+    confirmGuideAndStart: () => {},
+    skipGuideAndStart: () => {},
+  };
+  // Creator-sub CTAs reveal the canonical CreatorSubscribeWizard inline —
+  // same widget the creator-profile "Subscribe" pill opens.
+  const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);
+
+  const [translatedContent, setTranslatedContent] = useState<string | null>(
+    null
+  );
+  const [isTranslating, setIsTranslating] = useState(false);
+
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showReplies, setShowReplies] = useState(false);
+  const [replies, setReplies] = useState<SocialPostItem[]>([]);
+  const [loadingReplies, setLoadingReplies] = useState(false);
+  const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
+  const [repliesCursor, setRepliesCursor] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [sendingReply, setSendingReply] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [composerKey, setComposerKey] = useState(0); // bump to remount + autofocus
+  // Local optimistic state for per-reply likes — keyed by reply post id.
+  // Lets us flip the heart instantly without re-fetching the reply list.
+  const [replyLikes, setReplyLikes] = useState<Record<number, { liked: boolean; count: number }>>({});
+  const [localReplyCount, setLocalReplyCount] = useState(
+    post.replies_count || 0
+  );
+  // Counter for synthesising stable client-side ids on optimistic replies before
+  // the server returns the real post.id. Prefixed negative-ish range so it
+  // never collides with real bigint ids.
+  const optimisticIdRef = useRef(-Date.now());
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  const canDelete = isOwn || isAdmin;
+
+  const [localVideoTitle, setLocalVideoTitle] = useState<string | null>(null);
+  const [localVideoDescription, setLocalVideoDescription] = useState<string | null>(null);
+  const [editVideoTitle, setEditVideoTitle] = useState("");
+  const [editVideoDescription, setEditVideoDescription] = useState("");
+  const [editTaggedPerformers, setEditTaggedPerformers] = useState<MentionUser[]>([]);
+  const [editTagQuery, setEditTagQuery] = useState("");
+  const [editTagResults, setEditTagResults] = useState<MentionUser[]>([]);
+  const [editTagSearching, setEditTagSearching] = useState(false);
+  const [showEditTagPicker, setShowEditTagPicker] = useState(false);
+  const [localTaggedPerformers, setLocalTaggedPerformers] = useState<typeof post.tagged_performers>(null);
+
+  const [videoError, setVideoError] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [hypePosted, setHypePosted] = useState<boolean>(Boolean(post.hyped_by_me));
+  const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
+  const [hypeError, setHypeError] = useState<string | null>(null);
+  const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
+  const hypeInFlight = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showMenu]);
+
+  useEffect(() => {
+    if (!isEditing || !editTagQuery.trim()) { setEditTagResults([]); return; }
+    setEditTagSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await searchCreators(editTagQuery.trim());
+        if (res.success) setEditTagResults(res.users.filter(u => !editTaggedPerformers.some(tp => tp.id === u.id)));
+      } catch { /* silent */ }
+      setEditTagSearching(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [editTagQuery, isEditing, editTaggedPerformers]);
+
+  const handleStartEdit = useCallback(() => {
+    setEditContent(localContent ?? post.content ?? "");
+    setEditVideoTitle(localVideoTitle ?? post.video_title ?? "");
+    setEditVideoDescription(localVideoDescription ?? post.video_description ?? "");
+    setEditTaggedPerformers(
+      (localTaggedPerformers ?? post.tagged_performers ?? []).map(tp => ({
+        id: tp.id, username: tp.username, avatar_url: tp.avatar_url, creator_status: 'active',
+      }))
+    );
+    setEditTagQuery("");
+    setEditTagResults([]);
+    setShowEditTagPicker(false);
+    setIsEditing(true);
+  }, [localContent, localVideoTitle, localVideoDescription, localTaggedPerformers, post.content, post.video_title, post.video_description, post.tagged_performers]);
+
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditContent(localContent ?? post.content ?? "");
+    setEditTaggedPerformers([]);
+    setEditTagQuery("");
+    setEditTagResults([]);
+    setShowEditTagPicker(false);
+  }, [localContent, post.content]);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (savingEdit) return;
+    const trimmed = editContent.trim();
+    if (!trimmed) return;
+    setSavingEdit(true);
+    try {
+      const res = await editSocialPost(post.id, trimmed, {
+        ...(post.media_type === 'video' && {
+          videoTitle: editVideoTitle.trim() || null,
+          videoDescription: editVideoDescription.trim() || null,
+        }),
+        taggedPerformerIds: editTaggedPerformers.map(p => p.id),
+      });
+      if (res.success) {
+        setLocalContent(res.content ?? trimmed);
+        if (res.videoTitle !== undefined) setLocalVideoTitle(res.videoTitle ?? null);
+        if (res.videoDescription !== undefined) setLocalVideoDescription(res.videoDescription ?? null);
+        setLocalTaggedPerformers(
+          editTaggedPerformers.map(tp => ({ id: tp.id, username: tp.username, avatar_url: tp.avatar_url }))
+        );
+        setTranslatedContent(null);
+        setIsEditing(false);
+      }
+    } catch { /* silent */ }
+    setSavingEdit(false);
+  }, [post.id, post.media_type, editContent, editVideoTitle, editVideoDescription, editTaggedPerformers, savingEdit]);
+
+  const handleShare = useCallback(() => {
+    setShowShareModal(true);
+  }, []);
+
+  const handleTranslate = useCallback(async () => {
+    if (isTranslating) return;
+    if (translatedContent) {
+      setTranslatedContent(null);
+      return;
+    }
+    if (!post.content) return;
+    setIsTranslating(true);
+    const result = await translateText(post.content, userLang || "en");
+    if (result) setTranslatedContent(result);
+    setIsTranslating(false);
+  }, [isTranslating, translatedContent, post.content, userLang]);
+
+  const loadReplies = useCallback(async () => {
+    if (loadingReplies) return;
+    setLoadingReplies(true);
+    setReplyError(null);
+    try {
+      const res = await getReplies(post.id);
+      if (res.success) {
+        setReplies(res.replies);
+        setRepliesCursor(res.nextCursor || null);
+      }
+    } catch (err) {
+      setReplyError(err instanceof Error && err.message ? err.message : ft.replyFailed);
+    }
+    setLoadingReplies(false);
+  }, [post.id, loadingReplies, ft.replyFailed]);
+
+  const loadMoreReplies = useCallback(async () => {
+    if (loadingMoreReplies || !repliesCursor) return;
+    setLoadingMoreReplies(true);
+    try {
+      const res = await getReplies(post.id, repliesCursor);
+      if (res.success) {
+        // Dedupe in case an optimistic reply is now also returned by the server.
+        setReplies((prev) => {
+          const seen = new Set(prev.map((r) => r.id));
+          return [...prev, ...res.replies.filter((r) => !seen.has(r.id))];
+        });
+        setRepliesCursor(res.nextCursor || null);
+      }
+    } catch { /* surface via inline error pill on next user action */ }
+    setLoadingMoreReplies(false);
+  }, [post.id, loadingMoreReplies, repliesCursor]);
+
+  const toggleReplies = useCallback(() => {
+    const next = !showReplies;
+    setShowReplies(next);
+    if (next && replies.length === 0) loadReplies();
+    // Bump composer key so MentionInput remounts with autoFocus the moment
+    // the reply section opens. Doesn't fire on close.
+    if (next) setComposerKey((k) => k + 1);
+  }, [showReplies, replies.length, loadReplies]);
+
+  // Tap-to-reply on a specific reply: prepend `@theirusername ` to whatever's
+  // in the composer and focus it. If the mention is already present, no-op so
+  // double-tap doesn't duplicate.
+  const replyToUser = useCallback((username: string | null) => {
+    if (!username) return;
+    const handle = `@${username}`;
+    setReplyText((prev) => {
+      if (prev.includes(handle)) return prev;
+      const sep = prev && !prev.endsWith(" ") ? " " : "";
+      return `${prev}${sep}${handle} `;
+    });
+    setComposerKey((k) => k + 1);
+    setTimeout(() => {
+      composerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 50);
+  }, []);
+
+  const handleSendReply = useCallback(async () => {
+    const text = replyText.trim();
+    if (!text || sendingReply) return;
+    setSendingReply(true);
+    setReplyError(null);
+
+    // Optimistic insert — show the reply immediately so the user gets
+    // instant feedback. Marked pending=true so the row renders dimmed.
+    const tempId = optimisticIdRef.current--;
+    const optimistic: SocialPostItem = {
+      ...post, // borrow author identity from current viewer if available below
+      id: tempId,
+      content: text,
+      likes_count: 0,
+      replies_count: 0,
+      liked_by_me: false,
+      created_at: new Date().toISOString(),
+      // currentUser fields aren't in PostCardProps directly — pull from author
+      // shape on the parent post and override with currentUserId. The optimistic
+      // row is replaced on success so this is purely visual.
+      author_id: currentUserId,
+      author_username: post.author_username, // best-effort placeholder
+      author_first_name: undefined,
+      author_photo: undefined,
+      // Pending flag — used in the row renderer to show "sending…" opacity.
+      // Not part of SocialPostItem; widened to unknown then cast back.
+      ...({ __pending: true } as object),
+    } as unknown as SocialPostItem;
+
+    setReplies((prev) => [...prev, optimistic]);
+    setReplyText("");
+    setLocalReplyCount((c) => c + 1);
+
+    try {
+      const res = await createReply(post.id, text);
+      if (res.success && res.post) {
+        // Replace the optimistic row with the real one.
+        setReplies((prev) => prev.map((r) => (r.id === tempId ? res.post : r)));
+      } else {
+        throw new Error(ft.replyFailed);
+      }
+    } catch (err) {
+      // Rollback: remove optimistic row + restore the user's draft so they can
+      // tap retry without re-typing.
+      setReplies((prev) => prev.filter((r) => r.id !== tempId));
+      setLocalReplyCount((c) => Math.max(0, c - 1));
+      setReplyText(text);
+      setReplyError(err instanceof Error && err.message ? err.message : ft.replyFailed);
+    }
+    setSendingReply(false);
+  }, [replyText, sendingReply, post, currentUserId, ft.replyFailed]);
+
+  // Per-reply like — replies are first-class posts so we just call togglePostLike.
+  // Optimistic toggle in replyLikes; rolled back on error.
+  const toggleReplyLike = useCallback(async (reply: SocialPostItem) => {
+    const id = reply.id;
+    const current = replyLikes[id] ?? { liked: !!reply.liked_by_me, count: reply.likes_count || 0 };
+    const next = { liked: !current.liked, count: current.count + (current.liked ? -1 : 1) };
+    setReplyLikes((m) => ({ ...m, [id]: next }));
+    try {
+      const res = await togglePostLike(id);
+      if (typeof res?.likes_count === "number") {
+        setReplyLikes((m) => ({ ...m, [id]: { liked: res.liked, count: res.likes_count! } }));
+      } else {
+        setReplyLikes((m) => ({ ...m, [id]: { ...next, liked: res.liked } }));
+      }
+    } catch {
+      // Rollback
+      setReplyLikes((m) => ({ ...m, [id]: current }));
+    }
+  }, [replyLikes]);
+
+  // Keyboard: Esc closes the reply section if the composer is empty.
+  useEffect(() => {
+    if (!showReplies) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !replyText.trim()) setShowReplies(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showReplies, replyText]);
+
+  const isExclusiveLocked =
+    post.is_exclusive === true &&
+    !isOwnProfile &&
+    !isSubscribed &&
+    (post.exclusive_status === "locked" || post.exclusive_status === undefined);
+
+  // Paywall action: PRIME co-founders (Santino/Lex) unlock via PRIME popup;
+  // regular creators reveal the canonical CreatorSubscribeWizard inline —
+  // same widget the creator-profile "Subscribe" pill opens.
+  const paywallAction = useCallback(() => {
+    if (post.unlock_target === "prime") {
+      inlineCheckout.start({ planId: post.plan_slug || "monthly-pass", isSubscription: false, storageKey: "pnp_pending_prime_paywall" });
+    } else {
+      setShowCreatorSubWizard(true);
+    }
+  }, [inlineCheckout, post.unlock_target, post.plan_slug]);
+
+  // Hype rendered as an attribution chip on the ORIGINAL post (post_hypes,
+  // migration 347). No wrapper posts to translate authorship for any more.
+
+  return (
+    <div
+      className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]"
+      style={hypeCount > 0
+        ? { borderLeft: "3px solid transparent", borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1", background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)" }
+        : undefined}
+    >
+      {/* ── Exclusive lock overlay (non-owner, non-subscriber) ── */}
+      {isExclusiveLocked && (
+        showCreatorSubWizard && post.unlock_target !== "prime" ? (
+          <div
+            className="absolute inset-0 z-10 rounded-xl overflow-hidden p-3"
+            style={{ background: "rgba(0,0,0,0.75)", borderRadius: "inherit", minHeight: 220 }}
+          >
+            <CreatorSubscribeWizard
+              creatorId={String(post.author_id)}
+              creatorName={post.author_first_name || post.author_username}
+              username={post.author_username}
+              priceUsd={Number(creatorPriceUsd || 15)}
+              lang={((user?.language as "en" | "es") || "en")}
+              compact
+              onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+              onClose={() => setShowCreatorSubWizard(false)}
+              storageKey={`pnp_creator_sub_${post.author_id}`}
+            />
+          </div>
+        ) : (
+          <div
+            className="absolute inset-0 z-10 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-2 px-6 text-center"
+            style={{ background: "rgba(0,0,0,0.55)", borderRadius: "inherit", minHeight: 220 }}
+            aria-label="Exclusive content locked"
+          >
+            {post.is_video_exclusive && post.preview_gif_url && (
+              <video
+                src={post.preview_gif_url}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                className="absolute inset-0 w-full h-full object-cover"
+                style={{ filter: "blur(6px)", zIndex: -1 }}
+              />
+            )}
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ background: post.unlock_target === "prime" ? "linear-gradient(135deg, #D4007A, #7B61FF)" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+            >
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            </div>
+            <button
+              onClick={paywallAction}
+              disabled={post.unlock_target === "prime" && inlineCheckout.launching}
+              className="mt-1 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97] min-h-[44px] disabled:opacity-60"
+              style={{ background: post.unlock_target === "prime" ? "linear-gradient(135deg, #D4007A, #7B61FF)" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+              aria-label={post.unlock_target === "prime" ? "Watch full video on PRIME" : "Subscribe to unlock exclusive content"}
+            >
+              {post.unlock_target === "prime" && inlineCheckout.launching
+                ? "…"
+                : post.unlock_target === "prime"
+                ? "▶ Watch full video on PRIME"
+                : `▶ Watch full video — Subscribe $${creatorPriceUsd || 15}/mo`}
+            </button>
+            {post.unlock_target === "prime" && inlineCheckout.error && (
+              <p className="text-[11px] text-red-300">{inlineCheckout.error}</p>
+            )}
+            <a
+              href="/crypto-guide"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-white/60 hover:text-white underline"
+            >
+              First time paying with crypto? See the 2-min guide →
+            </a>
+          </div>
+        )
+      )}
+
+      {/* 🔁 X-style reposted-by banner. Card's primary author IS the reposter. */}
+      {post.repost_of_id && (
+        <div className="flex items-center gap-1.5 mb-2 -mt-1 text-[11px] text-white/50">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z" />
+          </svg>
+          <span className="truncate">
+            <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
+            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+          </span>
+        </div>
+      )}
+
+      <div className="flex gap-3">
+        {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+          // Channel-promo from system account — show channel initial, not Cristina emoji.
+          // Creator-authored promos (is_creator_post=true) fall through to UserAvatar.
+          <div
+            className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label="PNP Channel"
+          >
+            {((post.metadata as Record<string, unknown>).channel_name as string ?? "C").charAt(0).toUpperCase()}
+          </div>
+        ) : post.author_id === "8552451957" ? (
+          <img
+            src="/logo-final.png"
+            alt="PNPtv!"
+            className="w-10 h-10 flex-shrink-0 rounded-full object-contain ring-2 ring-[#1C1C1E] bg-black p-0.5"
+          />
+        ) : (
+          <UserAvatar
+            userId={post.author_id}
+            photoUrl={photoUrl}
+            displayName={post.author_first_name || post.author_username}
+            size="md"
+          />
+        )}
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {post.author_id === "8552451957" && (post.metadata as Record<string, unknown> | null | undefined)?.kind === "channel_promo" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+              // Channel-promo from system account: show channel name as author label.
+              // Creator-authored promos (is_creator_post=true) show the real author name.
+              <span className="font-semibold text-white text-sm truncate">
+                {((post.metadata as Record<string, unknown>).channel_name as string | undefined) || "PNP Channels"}
+              </span>
+            ) : (
+              <button
+                onClick={() => onAuthorTap?.(post.author_id)}
+                className="font-semibold text-white text-sm truncate hover:underline"
+              >
+                {post.author_first_name || post.author_username || p.anonymous}
+              </button>
+            )}
+            {post.author_username && (post.author_id !== "8552451957" || (post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post) && (
+              <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                @{post.author_username}
+              </span>
+            )}
+            <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              &middot; {timeAgo(post.created_at)}
+            </span>
+            {post.author_city && post.author_country && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pnp-border/30 text-pnp-textSecondary">
+                {post.author_city}
+              </span>
+            )}
+            {post.is_exclusive && isOwnProfile && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  background: "rgba(212,0,122,0.15)",
+                  color: "#D4007A",
+                  border: "1px solid rgba(212,0,122,0.3)",
+                }}
+              >
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+                  />
+                </svg>
+                {p.exclusiveLabel}
+              </span>
+            )}
+            {/* Rent/buy paywall badge — shown on video posts with per-video pricing.
+                Hidden for the uploader (isOwn) since they always have access.
+                Distinct amber palette to separate from the pink exclusive badge. */}
+            {!isOwn && post.media_type === "video" && (() => {
+              const rentPrice = (post as any).rent_price_rush ?? (post.metadata as any)?.rent_price_rush;
+              const buyPrice = (post as any).buy_price_rush ?? (post.metadata as any)?.buy_price_rush;
+              const passEnabled = (post as any).channel_pass_enabled ?? (post.metadata as any)?.channel_pass_enabled;
+              if (!rentPrice && !buyPrice && !passEnabled) return null;
+              return (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    background: "rgba(230,145,56,0.15)",
+                    color: "#E69138",
+                    border: "1px solid rgba(230,145,56,0.30)",
+                  }}
+                  title="Rent or buy this video with Ru$h 💎"
+                >
+                  <span aria-hidden="true">💎</span>
+                  <span className="hidden sm:inline">Rent · Buy</span>
+                </span>
+              );
+            })()}
+            {/* AI-generated disclosure — self-declared or admin-flagged */}
+            {post.is_ai_generated && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  background: "rgba(167,139,250,0.15)",
+                  color: "#A78BFA",
+                  border: "1px solid rgba(167,139,250,0.3)",
+                }}
+                title="Contains AI-generated content"
+              >
+                🤖 AI
+              </span>
+            )}
+
+
+            {/* 3-dots post menu */}
+            {(canDelete || (!isOwn && !!onReport)) && (
+              <div className="relative ml-auto" ref={menuRef}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowMenu((v) => !v); }}
+                  className="p-1 rounded-full transition-colors hover:bg-white/10"
+                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  aria-label="Post options"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                  </svg>
+                </button>
+                {showMenu && (
+                  <div
+                    className="absolute right-0 top-7 z-50 w-40 rounded-xl shadow-xl py-1 overflow-hidden"
+                    style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {isOwn && !isEditing && !post.blurred && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#fff" }}
+                        onClick={() => { setShowMenu(false); handleStartEdit(); }}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                        </svg>
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#ef4444" }}
+                        onClick={() => { setShowMenu(false); setDeleting(true); onDelete(post.id); }}
+                        disabled={deleting}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                        {deleting ? "Deleting…" : "Delete"}
+                      </button>
+                    )}
+                    {!isOwn && !!onReport && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#FFB454" }}
+                        onClick={() => { setShowMenu(false); onReport(post.id); }}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" />
+                        </svg>
+                        Report
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Tagged performers */}
+          {Array.isArray(localTaggedPerformers ?? post.tagged_performers) && (localTaggedPerformers ?? post.tagged_performers)!.length > 0 && (
+            <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 mt-0.5 mb-0.5">
+              <span className="text-[11px]" style={{ color: "#8E8E93" }}>with</span>
+              {(localTaggedPerformers ?? post.tagged_performers)!.map((tp, i) => (
+                <span key={tp.id} className="inline-flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => onAuthorTap?.(tp.id)}
+                    className="text-[11px] font-medium hover:underline transition-colors"
+                    style={{ color: "#5ED1C4" }}
+                  >
+                    @{tp.username}
+                  </button>
+                  {i < (localTaggedPerformers ?? post.tagged_performers)!.length - 1 && (
+                    <span className="text-[11px]" style={{ color: "#8E8E93" }}>,</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Post body — inline editor when editing, otherwise @mentions/URLs clickable */}
+          {isEditing ? (
+            <div className="mt-1.5 space-y-2">
+              <textarea id="pnp-postcard-1"
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 resize-none"
+                rows={3}
+                maxLength={5000}
+                disabled={savingEdit}
+                autoFocus
+              />
+              {post.media_type === 'video' && (
+                <>
+                  <input id="pnp-postcard-2"
+                    type="text"
+                    value={editVideoTitle}
+                    onChange={(e) => setEditVideoTitle(e.target.value)}
+                    maxLength={120}
+                    placeholder="Video title…"
+                    disabled={savingEdit}
+                    className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-1.5 outline-none border border-white/10 focus:border-white/30"
+                  />
+                  <textarea id="pnp-postcard-3"
+                    value={editVideoDescription}
+                    onChange={(e) => setEditVideoDescription(e.target.value)}
+                    rows={2}
+                    maxLength={500}
+                    placeholder="Video description…"
+                    disabled={savingEdit}
+                    className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-1.5 outline-none border border-white/10 focus:border-white/30 resize-none"
+                  />
+                </>
+              )}
+              {/* Tagged performers */}
+              <div>
+                {editTaggedPerformers.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {editTaggedPerformers.map(tp => (
+                      <span key={tp.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>
+                        @{tp.username}
+                        <button type="button" onClick={() => setEditTaggedPerformers(p => p.filter(t => t.id !== tp.id))} className="opacity-60 hover:opacity-100 ml-0.5">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {showEditTagPicker && (
+                  <div className="relative mb-1.5">
+                    <input id="pnp-postcard-4"
+                      type="text"
+                      value={editTagQuery}
+                      onChange={(e) => setEditTagQuery(e.target.value)}
+                      placeholder="Search creators to tag…"
+                      className="w-full bg-white/5 text-white text-sm rounded-lg px-3 py-1.5 outline-none border border-white/10 focus:border-teal-500"
+                    />
+                    {(editTagResults.length > 0 || editTagSearching) && (
+                      <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        {editTagSearching && <p className="px-3 py-2 text-xs" style={{ color: "#8E8E93" }}>Searching…</p>}
+                        {editTagResults.map(u => (
+                          <button
+                            key={u.id}
+                            type="button"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/10 transition-colors text-left"
+                            style={{ color: "#fff" }}
+                            onClick={() => { setEditTaggedPerformers(p => [...p, u]); setEditTagQuery(""); setEditTagResults([]); }}
+                          >
+                            @{u.username}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowEditTagPicker(v => !v)}
+                  className="text-xs transition-colors"
+                  style={{ color: showEditTagPicker ? "#5ED1C4" : "#8E8E93" }}
+                >
+                  {showEditTagPicker ? "Hide tag picker" : "Tag performers"}
+                  {editTaggedPerformers.length > 0 && ` (${editTaggedPerformers.length})`}
+                </button>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={handleCancelEdit}
+                  disabled={savingEdit}
+                  className="text-xs px-3 py-1.5 rounded-md text-pnp-textSecondary hover:text-white hover:bg-white/5 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit || !editContent.trim()}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-md disabled:opacity-40 btn-gradient text-white"
+                >
+                  {savingEdit ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <MentionText
+              text={translatedContent ?? localContent ?? post.content}
+              className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
+              maxLength={200}
+              resolvedMentions={post.resolved_mentions}
+            />
+          )}
+          {translatedContent && !isEditing && (
+            <button
+              onClick={() => setTranslatedContent(null)}
+              className="text-xs mt-0.5"
+              style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+            >
+              {ft.showOriginal}
+            </button>
+          )}
+
+          {/* Promoted CTA button — matches feed/SocialPostCard so profile view
+              renders the same tap-to-open link as the main feed. */}
+          {post.is_promoted && post.promoted_link && (
+            <div className="mt-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const link = post.promoted_link!;
+                  if (link.startsWith("/")) {
+                    navigate(link);
+                  } else if (link.startsWith("https://pnptv.app")) {
+                    navigate(link.replace("https://pnptv.app", "") || "/");
+                  } else if (link.startsWith("https://")) {
+                    window.open(link, "_blank", "noopener,noreferrer");
+                  }
+                }}
+                className="w-full text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
+                style={{
+                  background: "linear-gradient(135deg, #D4007A, #E69138)",
+                  color: "#fff",
+                }}
+              >
+                {post.promoted_link_label || "Open"}
+              </button>
+            </div>
+          )}
+
+          {/* Link preview card — only when post has no attached media */}
+          {!isEditing && !post.media_url && (() => {
+            const contentStr = translatedContent ?? localContent ?? post.content ?? "";
+            const urlMatch = contentStr.match(/https?:\/\/[^\s<>"]+/);
+            if (!urlMatch) return null;
+            const rawUrl = urlMatch[0].replace(/[.,;:!?)\]]+$/, "");
+            let host = rawUrl;
+            try { host = new URL(rawUrl).host.replace(/^www\./, ""); } catch { /* noop */ }
+            return (
+              <a
+                href={rawUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="mt-3 block rounded-lg border border-white/10 bg-white/5 px-3 py-2 hover:bg-white/[0.08] transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0" style={{ color: "#5ED1C4" }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] uppercase tracking-wide font-semibold text-pnp-textSecondary">{host}</div>
+                    <div className="text-xs text-white/80 truncate">{rawUrl}</div>
+                  </div>
+                </div>
+              </a>
+            );
+          })()}
+
+          {/* X (Twitter) embed */}
+          {post.content_type === "x_embed" && post.x_embed_url && (
+            <XEmbedCard url={post.x_embed_url} />
+          )}
+
+          {/* Channel-promo CTA — rendered in place of generic media for channel_promo posts.
+               Shows the GIF/thumbnail + a "Watch now" / "Subscribe to Watch" button.
+               For publish-flow posts the author is the system account (8552451957);
+               for hype posts the author is the creator themselves. Either way the
+               metadata carries the channel info needed to build this card. */}
+          {(() => {
+            const m = post.metadata as Record<string, unknown> | undefined | null;
+            if (!m || m.kind !== "channel_promo") return null;
+            const channelSlug = (m.channel_slug as string | undefined) || "";
+            const channelName = (m.channel_name as string | undefined) || "";
+            const accessType = (m.access_type as "free" | "prime" | "subscription" | "paid" | "bts" | undefined) || "free";
+            const creatorUsername = (m.creator_username as string | undefined) || "";
+            const priceUsd = m.price_usd as number | null | undefined;
+            const videoUrl = ((m.video_url as string | undefined) && (m.video_url as string).length > 10)
+              ? (m.video_url as string)
+              : ((m.video_directus_id as string | undefined) ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
+            const channelHref = channelSlug ? `/channels?channel=${channelSlug}` : "/channels";
+
+            // Per-tier gate — mirrors SocialPostCard.resolveChannelPromoCta so the
+            // profile-wall render matches the feed. PRIME videos NEVER open the
+            // raw asset URL for non-PRIME viewers; they route to /subscribe.
+            let canPlayInline = false;
+            let ctaLabel = "▶ Watch now";
+            let ctaHref: string = videoUrl ?? channelHref;
+            let locked = false;
+            switch (accessType) {
+              case "free":
+                canPlayInline = !!videoUrl;
+                ctaHref = videoUrl ?? channelHref;
+                break;
+              case "prime":
+                if (isPrime) {
+                  canPlayInline = !!videoUrl;
+                  ctaHref = videoUrl ?? channelHref;
+                } else {
+                  canPlayInline = false;
+                  locked = true;
+                  ctaLabel = "🔒 Subscribe to PRIME →";
+                  ctaHref = `/subscribe?plan=prime&return=${encodeURIComponent(channelHref)}`;
+                }
+                break;
+              case "subscription":
+                // Subscription channel: link to the creator's profile to subscribe.
+                // Existing subscribers hit the channel and get inline access there.
+                canPlayInline = false;
+                locked = true;
+                ctaLabel = creatorUsername
+                  ? `Subscribe to @${creatorUsername} →`
+                  : "Subscribe to Watch →";
+                ctaHref = creatorUsername
+                  ? `/profile/${creatorUsername}?action=subscribe`
+                  : channelHref;
+                break;
+              case "paid":
+                canPlayInline = false;
+                locked = true;
+                ctaLabel = `Get pass — $${priceUsd ?? "?"}/mo →`;
+                ctaHref = `${channelHref}&action=purchase`;
+                break;
+            }
+
+            return (
+              <div className="mt-3">
+                {post.media_url && (
+                  <a href={ctaHref} className="relative block rounded-xl overflow-hidden mb-2 cursor-pointer group aspect-video bg-white/5">
+                    <img
+                      src={post.media_url}
+                      alt={channelName || "Channel promo"}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/10 group-hover:bg-black/30 transition-colors">
+                      <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm border border-white/20">
+                        <svg className="w-5 h-5 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      </div>
+                    </div>
+                    {channelName && (
+                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                        📺 PNP Channels · {channelName}
+                      </div>
+                    )}
+                    {locked && (
+                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                        🔒
+                      </div>
+                    )}
+                  </a>
+                )}
+                <a
+                  href={ctaHref}
+                  className="block w-full text-center text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
+                  style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
+                >
+                  {canPlayInline ? "▶ Watch now" : ctaLabel}
+                </a>
+              </div>
+            );
+          })()}
+
+          {/* Hype is a viewer vote (post_hypes, migration 347) — no wrapper posts
+              on profile walls. Attribution renders as a chip on the ORIGINAL. */}
+
+          {/* Media — suppressed for channel_promo posts (block above handles display) */}
+          {post.media_url && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== "channel_promo" && (
+            <div className="mt-3">
+              {post.media_type === "video" ? (
+                <>
+                  {((localVideoTitle ?? post.video_title) || (localVideoDescription ?? post.video_description)) && (
+                    <div className="mb-2 px-1">
+                      {(localVideoTitle ?? post.video_title) && (
+                        <h4 className="text-sm font-semibold text-white">{localVideoTitle ?? post.video_title}</h4>
+                      )}
+                      {(localVideoDescription ?? post.video_description) && (
+                        <p className="text-xs text-white/60 mt-0.5 line-clamp-2">{localVideoDescription ?? post.video_description}</p>
+                      )}
+                    </div>
+                  )}
+                  {videoError ? (
+                    <div className="w-full rounded-lg bg-white/5 flex flex-col items-center justify-center gap-2 py-10 text-white/40">
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                      <span className="text-xs">
+                        {userLang === "es" ? "Este video ya no está disponible" : "Video no longer available"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ position: "relative" }}>
+                      <VideoPlayer
+                        src={post.media_url}
+                        controls
+                        controlsList="nodownload"
+                        disablePictureInPicture
+                        onContextMenu={(e) => e.preventDefault()}
+                        playsInline
+                        creatorDisclaimer
+                        className="w-full rounded-xl overflow-hidden shadow-md"
+                        preload="metadata"
+                        poster={post.video_thumbnail_url || undefined}
+                        onError={() => setVideoError(true)}
+                        videoId={post.id}
+                        uploaderId={post.author_id}
+                      />
+                      {post.author_username && post.author_creator_status === "active" && (
+                        <img
+                          src="/logo-nav.png"
+                          alt=""
+                          aria-hidden="true"
+                          style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                        />
+                      )}
+                    </div>
+                  )}
+                  {/* PRIME plan picker — Santino & Lex posts. Pill → plan grid → coin grid. */}
+                  {showPrimeUpsell && !primeUpsellDismissed && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {!showPrimePlanPicker ? (
+                        /* Step 0 — Collapsed pill */
+                        <div
+                          className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
+                          style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
+                          onClick={() => setShowPrimePlanPicker(true)}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span className="text-xs">🔥</span>
+                            <span className="text-pink-200 truncate">
+                              {userLang === "es" ? "Hazte PRIME — Contenido exclusivo + Hangouts" : "Become PRIME — Exclusive content + Hangouts"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                              {userLang === "es" ? "Ver planes →" : "See plans →"}
+                            </span>
+                            <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
+                          </div>
+                        </div>
+                      ) : selectedPrimePlan ? (
+                        /* Step 2 — Coin picker */
+                        <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                            <button type="button" onClick={() => setSelectedPrimePlan(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white transition-colors text-xs font-medium">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                              <span className="text-pink-300 font-semibold">{selectedPrimePlan.label}</span>
+                              <span className="text-white/40">·</span>
+                              <span className="text-white font-bold">${selectedPrimePlan.price}</span>
+                            </button>
+                            <button type="button" onClick={() => { setShowPrimePlanPicker(false); setSelectedPrimePlan(null); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
+                          </div>
+                          <div className="p-2.5">
+                            <p className="text-[10px] text-white/50 mb-2 text-center">{userLang === "es" ? "Elige cómo pagar" : "Choose how to pay"}</p>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {NP_COINS_SUBSCRIBE.map((coin) => (
+                                <button
+                                  key={coin.code}
+                                  type="button"
+                                  disabled={inlineCheckout.launching}
+                                  onClick={() => inlineCheckout.start({ planId: selectedPrimePlan.id, isSubscription: selectedPrimePlan.isRecurring, payCurrency: coin.code, storageKey: "pnp_pending_prime_banner" })}
+                                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
+                                >
+                                  <span className="text-base font-bold leading-none flex-shrink-0" style={{ color: coin.color }}>{coin.icon}</span>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-xs font-bold text-white">{coin.label}</span>
+                                      {"recommended" in coin && coin.recommended && (
+                                        <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[9px] leading-none text-white/40">{coin.network}</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                            {inlineCheckout.error && <p className="mt-2 text-[10px] text-red-400 text-center">{inlineCheckout.error}</p>}
+                            <div className="mt-2 text-center">
+                              <a href="/crypto-guide" target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 underline decoration-dotted">
+                                {userLang === "es" ? "¿Qué red usar? →" : "Which network? →"}
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Step 1 — Plan grid */
+                        <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm">🔥</span>
+                              <span className="text-xs font-bold text-pink-200">{userLang === "es" ? "Elige tu plan PRIME" : "Choose your PRIME plan"}</span>
+                            </div>
+                            <button type="button" onClick={() => { setShowPrimePlanPicker(false); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
+                          </div>
+                          <div className="p-2.5 space-y-2">
+                            {PRIME_PLANS.map((plan) => (
+                              <div key={plan.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${plan.recommended ? "border-pink-500/50 bg-pink-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"}`}>
+                                <div className="min-w-0 flex-1">
+                                  {plan.recommended && <div className="text-[10px] font-bold text-pink-400 uppercase tracking-wider mb-0.5">★ {userLang === "es" ? "Mejor valor" : "Best value"}</div>}
+                                  <div className="text-[12px] font-semibold text-white leading-tight">{plan.label}</div>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] text-white/50">{plan.duration}</span>
+                                    {plan.isRecurring && <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{userLang === "es" ? "Recurrente" : "Recurring"}</span>}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <span className="text-sm font-black text-white">${plan.price}</span>
+                                  <button type="button" onClick={() => setSelectedPrimePlan(plan)} className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95 whitespace-nowrap" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                                    {userLang === "es" ? "Elegir →" : "Select →"}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="px-3 pb-2.5 text-center">
+                            <a href="/subscribe" className="text-[10px] text-white/40 hover:text-white/70 transition-colors underline decoration-dotted" onClick={(e) => e.stopPropagation()}>
+                              {userLang === "es" ? "Ver todos los detalles en /subscribe" : "Full details at /subscribe"}
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Creator subscribe upsell micro-banner: shown on every free post from active creators.
+                      Tap reveals CreatorSubscribeWizard inline — same widget the profile Subscribe pill opens. */}
+                  {showCreatorSubscribeUpsell && !creatorUpsellDismissed && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {showCreatorSubWizard ? (
+                        <CreatorSubscribeWizard
+                          creatorId={String(post.author_id)}
+                          creatorName={post.author_first_name || post.author_username}
+                          username={post.author_username}
+                          priceUsd={Number(post.author_creator_price || 15)}
+                          lang={userLang === "es" ? "es" : "en"}
+                          compact
+                          onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+                          onClose={() => setShowCreatorSubWizard(false)}
+                          storageKey={`pnp_creator_sub_${post.author_id}`}
+                        />
+                      ) : (
+                      <div
+                        className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-amber-500/30 transition-all"
+                        style={{ background: "rgba(230, 145, 56, 0.12)", backdropFilter: "blur(4px)" }}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <span className="text-xs">⭐</span>
+                          <span className="text-amber-200 truncate">
+                            {userLang === "es"
+                              ? `Suscríbete a mi contenido exclusivo y hangout $${post.author_creator_price || 15}/mes`
+                              : `Subscribe to my exclusive content & hangout $${post.author_creator_price || 15}/mo`}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShowCreatorSubWizard(true)}
+                            className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm transition-transform active:scale-95"
+                            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                          >
+                            {userLang === "es" ? `Suscribirme $${post.author_creator_price || 15}` : `Subscribe $${post.author_creator_price || 15}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={dismissCreatorUpsell}
+                            aria-label="Dismiss"
+                            className="text-white/50 hover:text-white text-xs px-1"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (() => {
+                const carouselUrls = extractCarouselUrls(post.media_urls);
+                const showWatermark = !!(post.author_username && post.author_creator_status === "active");
+                if (carouselUrls.length > 1) {
+                  return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => setLightboxSrc(url)} />;
+                }
+                return (
+                  <div className="relative w-full aspect-square rounded-lg overflow-hidden bg-white/5">
+                    <img
+                      src={post.media_url}
+                      alt="Post image"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
+                      style={{ cursor: "zoom-in" }}
+                    />
+                    {showWatermark && (
+                      <img
+                        src="/logo-nav.png"
+                        alt=""
+                        aria-hidden="true"
+                        style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                      />
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Actions bar */}
+          <div
+            className="flex items-center gap-5 mt-3"
+            style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+          >
+            {/* Like */}
+            <button
+              onClick={() => onLike(post.id)}
+              className="flex items-center gap-1.5 text-xs hover:text-pink-400 transition-colors"
+              style={post.liked_by_me ? { color: "#D4007A" } : undefined}
+              aria-label={post.liked_by_me ? p.unlikePost : p.likePost}
+            >
+              <svg
+                className="w-4 h-4"
+                fill={post.liked_by_me ? "currentColor" : "none"}
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"
+                />
+              </svg>
+              {post.likes_count > 0 && <span>{post.likes_count}</span>}
+            </button>
+
+            {/* Reply button */}
+            <button
+              onClick={toggleReplies}
+              className="flex items-center gap-1.5 text-xs hover:text-blue-400 transition-colors"
+              style={showReplies ? { color: "#60A5FA" } : undefined}
+              aria-label={ft.reply}
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z"
+                />
+              </svg>
+              {localReplyCount > 0 && <span>{localReplyCount}</span>}
+            </button>
+
+            {/* Share — always visible; disclaimer modal gates first share. */}
+            <button
+              onClick={() => {
+                if (contentDisclaimerAccepted) {
+                  handleShare();
+                } else {
+                  setShowDisclaimerModal(true);
+                }
+              }}
+              className="flex items-center gap-1.5 text-xs hover:text-green-400 transition-colors"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0-12.814a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0 12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
+                />
+              </svg>
+            </button>
+
+            {/* Translate — visible on every post that has any text content. */}
+            {post.content && (
+              <button
+                onClick={handleTranslate}
+                disabled={isTranslating}
+                className="flex items-center gap-1 text-xs transition-colors hover:text-teal-400 disabled:opacity-40"
+                style={
+                  translatedContent
+                    ? { color: "#5ED1C4" }
+                    : { color: "var(--pnp-text-secondary, #8E8E93)" }
+                }
+                title={translatedContent ? ft.showOriginal : ft.translate}
+              >
+                {isTranslating ? (
+                  <span className="text-[10px]">{ft.translating}</span>
+                ) : (
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802"
+                    />
+                  </svg>
+                )}
+              </button>
+            )}
+
+            {/* Hype vote — viewer-cast boost (post_hypes, migration 347) */}
+            {user && !post.is_promoted
+              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
+              <button
+                onClick={async () => {
+                  if (hypeInFlight.current) return;
+                  hypeInFlight.current = true;
+                  const next = !hypePosted;
+                  setHypePosted(next);
+                  setHypeCount(c => Math.max(0, c + (next ? 1 : -1)));
+                  try {
+                    const res = await togglePostHype(post.id);
+                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
+                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                    if (typeof res.dailyLimit === 'number' && typeof res.dailyRemaining === 'number') {
+                      setHypeQuota({ remaining: res.dailyRemaining, limit: res.dailyLimit, resetsAt: res.dailyResetsAt ?? null });
+                    }
+                  } catch (err) {
+                    setHypePosted(!next);
+                    setHypeCount(c => Math.max(0, c + (next ? -1 : 1)));
+                    if (err instanceof ApiError && err.code === 'HYPE_QUOTA_EXCEEDED') {
+                      const d = err.data as { dailyLimit?: number; dailyRemaining?: number; resetsAt?: string | null };
+                      if (typeof d?.dailyLimit === 'number') {
+                        setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
+                      }
+                      setHypeError(err.message);
+                      setTimeout(() => setHypeError(null), 4500);
+                    } else {
+                      const msg = err instanceof Error ? err.message : '';
+                      setHypeError(msg || 'Failed');
+                      setTimeout(() => setHypeError(null), 2500);
+                    }
+                  } finally {
+                    hypeInFlight.current = false;
+                  }
+                }}
+                className="flex items-center gap-1.5 text-xs transition-all"
+                style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypePosted ? 'Un-hype' : 'Hype this post'}
+                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
+                aria-pressed={hypePosted}
+              >
+                <svg className={hypePosted ? "w-5 h-5" : "w-4 h-4"} fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
+                </svg>
+                <span className={`tabular-nums${hypePosted ? ' font-semibold' : ''}`}>{hypeCount > 0 ? hypeCount : ''}</span>
+              </button>
+            )}
+
+          </div>
+
+          {hypeError && (
+            <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
+          )}
+
+          {hypeQuota && !hypeError && hypeQuota.remaining < hypeQuota.limit && (() => {
+            const anyFt = ft as unknown as Record<string, (...args: unknown[]) => string>;
+            let label: string;
+            if (hypeQuota.remaining === 0) {
+              const ms = hypeQuota.resetsAt ? new Date(hypeQuota.resetsAt).getTime() - Date.now() : 0;
+              if (hypeQuota.resetsAt && ms > 0) {
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                label = anyFt.hypeQuotaFullWithReset?.(hypeQuota.limit, h, m)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day) — resets in ${h}h ${m}m`;
+              } else {
+                label = anyFt.hypeQuotaFull?.(hypeQuota.limit)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day)`;
+              }
+            } else {
+              label = anyFt.hypeQuotaLeft?.(hypeQuota.remaining, hypeQuota.limit)
+                ?? `${hypeQuota.remaining}/${hypeQuota.limit} hypes left today`;
+            }
+            const tooltip = hypeQuota.resetsAt
+              ? (anyFt.hypeQuotaTooltip?.(new Date(hypeQuota.resetsAt).toLocaleString())
+                  ?? `Resets ${new Date(hypeQuota.resetsAt).toLocaleString()}`)
+              : undefined;
+            return (
+              <p
+                className={`text-[10px] mt-1 ${hypeQuota.remaining === 0 ? 'text-red-400' : hypeQuota.remaining <= 1 ? 'text-orange-400' : 'text-pnp-textSecondary'}`}
+                title={tooltip}
+              >
+                🔥 {label}
+              </p>
+            );
+          })()}
+
+          {/* 🔥 Hype attribution banner — hyped posts get a warm tinted row */}
+          {hypeCount > 0 && (
+            <div
+              className="mt-2 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px]"
+              style={{ background: "linear-gradient(90deg, rgba(255,149,0,0.10), rgba(255,59,48,0.06))", border: "1px solid rgba(255,149,0,0.22)" }}
+            >
+              <span className="text-base leading-none flex-shrink-0" style={{ filter: "drop-shadow(0 0 6px rgba(255,149,0,0.85))" }}>🔥</span>
+              {(post.top_hypers || []).length > 0 && (
+                <div className="flex -space-x-1.5 flex-shrink-0">
+                  {(post.top_hypers || []).slice(0, 3).map((h) => (
+                    <UserAvatar
+                      key={h.id}
+                      userId={h.id}
+                      photoUrl={h.photo_file_id}
+                      displayName={h.first_name || h.username}
+                      size="xs"
+                      className="ring-2 ring-black/60"
+                      showOnline={false}
+                      linkToProfile={false}
+                    />
+                  ))}
+                </div>
+              )}
+              <span className="text-white/80 flex-1 min-w-0 truncate">
+                {(post.top_hypers && post.top_hypers.length > 0) ? (
+                  <>
+                    <span className="text-white font-semibold">{post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone'}</span>
+                    {hypeCount > 1 && <> and <span className="text-orange-400 font-semibold">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
+                    {' '}hyped this
+                  </>
+                ) : (
+                  <><span className="text-orange-400 font-bold">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
+                )}
+              </span>
+              {hypeCount >= 5 && (
+                <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-black" style={{ background: "linear-gradient(135deg, #FF9500, #FF3B30)" }}>
+                  HOT
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Replies section */}
+          {showReplies && (
+            <div className="mt-3 pt-3 border-t border-white/10">
+              {/* "Reply to @author" pill — only when composer is empty and the
+                  post has an author username. Tap inserts the @mention + focus.
+                  Replaces the always-on "Replying to @user" banner that
+                  presumed every reply was @-mentioning the author. */}
+              {post.author_username && !replyText.trim() && (
+                <button
+                  type="button"
+                  onClick={() => replyToUser(post.author_username!)}
+                  className="inline-flex items-center gap-1.5 mb-2 px-2 py-0.5 rounded-full text-xs transition-colors hover:bg-white/10"
+                  style={{ background: "rgba(94,209,196,0.10)", color: "#5ED1C4" }}
+                >
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                  </svg>
+                  <span>{ft.replyToAuthor.replace("{name}", post.author_username)}</span>
+                </button>
+              )}
+
+              {loadingReplies ? (
+                /* Shimmer skeleton — three rows roughly matching real reply dimensions */
+                <div className="space-y-3 mb-3" aria-label={ft.loadingReplies} role="status">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex gap-2 animate-pulse">
+                      <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0" />
+                      <div className="flex-1 space-y-1.5 pt-1">
+                        <div className="h-2 rounded bg-white/10 w-1/4" />
+                        <div className="h-2 rounded bg-white/10 w-3/4" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : replies.length === 0 ? (
+                <p className="text-xs mb-3" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {ft.noRepliesYet}
+                </p>
+              ) : (
+                <div className="space-y-3 mb-3">
+                  {replies.map((reply) => {
+                    const pending = (reply as unknown as { __pending?: boolean }).__pending === true;
+                    const likeState = replyLikes[reply.id] ?? {
+                      liked: !!reply.liked_by_me,
+                      count: reply.likes_count || 0,
+                    };
+                    const isOwnReply = String(reply.author_id) === String(currentUserId);
+                    return (
+                      <div
+                        key={reply.id}
+                        className={`flex gap-2 transition-opacity ${pending ? "opacity-60" : ""}`}
+                      >
+                        <UserAvatar
+                          userId={reply.author_id}
+                          photoUrl={resolvePhotoUrl(reply.author_photo)}
+                          displayName={reply.author_first_name || reply.author_username}
+                          size="sm"
+                          linkToProfile={!pending}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-white truncate">
+                              {reply.author_first_name || reply.author_username}
+                            </span>
+                            <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                              {pending ? ft.sending : timeAgo(reply.created_at)}
+                            </span>
+                          </div>
+                          {/* Reply content — @mentions as clickable links */}
+                          <MentionText
+                            text={reply.content}
+                            className="text-xs text-white/80 mt-0.5 whitespace-pre-wrap block"
+                            resolvedMentions={reply.resolved_mentions}
+                          />
+                          {/* Per-reply actions — like + reply-to-this-user.
+                              Hidden while the row is pending (no real id yet). */}
+                          {!pending && (
+                            <div className="mt-1 flex items-center gap-3 text-[11px]">
+                              <button
+                                type="button"
+                                onClick={() => toggleReplyLike(reply)}
+                                className="inline-flex items-center gap-1 transition-colors active:scale-95"
+                                style={{ color: likeState.liked ? "#D4007A" : "#8E8E93" }}
+                                aria-pressed={likeState.liked}
+                                aria-label={likeState.liked ? p.unlikePost : p.likePost}
+                              >
+                                <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                                </svg>
+                                {likeState.count > 0 && <span>{likeState.count}</span>}
+                              </button>
+                              {!isOwnReply && (reply.author_username || reply.author_first_name) && (
+                                <button
+                                  type="button"
+                                  onClick={() => replyToUser(reply.author_username || reply.author_first_name || null)}
+                                  className="inline-flex items-center gap-1 transition-colors hover:text-white/80"
+                                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                                  aria-label={ft.replyToAuthor.replace("{name}", reply.author_username)}
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                                  </svg>
+                                  <span>{ft.reply}</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Load more — visible only when the API said there's another page */}
+                  {repliesCursor && (
+                    <button
+                      type="button"
+                      onClick={loadMoreReplies}
+                      disabled={loadingMoreReplies}
+                      className="w-full text-xs py-2 rounded-lg transition-colors hover:bg-white/5 disabled:opacity-50"
+                      style={{ color: "#5ED1C4" }}
+                    >
+                      {loadingMoreReplies ? ft.loading : ft.loadMoreReplies}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Reply composer */}
+              {currentUserId && (
+                <div ref={composerRef}>
+                  <div className="flex gap-2 items-end">
+                    <MentionInput
+                      key={composerKey}
+                      value={replyText}
+                      onChange={setReplyText}
+                      placeholder={ft.writeReply}
+                      maxLength={500}
+                      rows={2}
+                      disabled={sendingReply}
+                      autoFocus
+                      onSubmit={handleSendReply}
+                      className="flex-1 bg-white/5 text-white text-xs rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/30 resize-none"
+                    />
+                    <button
+                      onClick={handleSendReply}
+                      disabled={!replyText.trim() || sendingReply}
+                      className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-30 transition-colors flex-shrink-0"
+                      style={{ color: "#D4007A" }}
+                    >
+                      {sendingReply ? "..." : ft.reply}
+                    </button>
+                  </div>
+                  {/* Inline error pill — appears under composer; tap to retry. */}
+                  {replyError && (
+                    <div
+                      role="alert"
+                      className="mt-1.5 flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg text-[11px]"
+                      style={{ background: "rgba(239,68,68,0.10)", color: "#FCA5A5" }}
+                    >
+                      <span className="truncate">{replyError}</span>
+                      <button
+                        type="button"
+                        onClick={() => { setReplyError(null); handleSendReply(); }}
+                        disabled={!replyText.trim()}
+                        className="font-semibold disabled:opacity-50"
+                        style={{ color: "#FCA5A5" }}
+                      >
+                        {ft.retry}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Crypto onboarding guide — auto-launched on first NP checkout */}
+      {inlineCheckout.showGuide && (
+        <div
+          className="fixed inset-0 z-[210] flex items-start justify-center p-3 overflow-y-auto"
+          style={{ background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)" }}
+          onClick={(e) => { e.stopPropagation(); inlineCheckout.dismissGuide(); }}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl p-4 my-6"
+            style={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CryptoOnboardingWizard
+              lang={userLang === "es" ? "es" : "en"}
+              onConfirm={inlineCheckout.confirmGuideAndStart}
+              onSkip={inlineCheckout.skipGuideAndStart}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Content Disclaimer Modal */}
+      {showDisclaimerModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(6px)",
+          }}
+          onClick={() => setShowDisclaimerModal(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-5 space-y-4"
+            style={{
+              background: "var(--pnp-surface, #1C1C1E)",
+              border: "1px solid rgba(212,0,122,0.25)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, #D4007A, #E69138)",
+                }}
+              >
+                <svg
+                  className="w-5 h-5 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-white">
+                Content Sharing Disclaimer
+              </h3>
+            </div>
+            <p className="text-sm text-white/80 leading-relaxed">
+              By accepting this disclaimer, you acknowledge that you are
+              responsible for any content you share from this platform. Shared
+              content must comply with our community guidelines and applicable
+              laws.
+            </p>
+            <p className="text-xs text-white/50 leading-relaxed">
+              This action is permanent and cannot be undone. Your acceptance
+              date, time, and IP address will be recorded.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowDisclaimerModal(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-white/20 text-white/70 hover:border-white/40 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setDisclaimerAccepting(true);
+                  try {
+                    await onAcceptDisclaimer?.();
+                    setShowDisclaimerModal(false);
+                    setShowShareModal(true);
+                  } catch {
+                    /* silent */
+                  }
+                  setDisclaimerAccepting(false);
+                }}
+                disabled={disclaimerAccepting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 transition-all"
+                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+              >
+                {disclaimerAccepting ? "..." : "Accept & Share"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SharePostModal
+        postId={post.id}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        isOwnPost={isOwn || post.author_id === 'pnptv-official'}
+        contentDisclaimerAccepted={contentDisclaimerAccepted}
+        onAcceptDisclaimer={onAcceptDisclaimer}
+      />
+      {lightboxSrc && (() => {
+        const carouselList = extractCarouselUrls(post.media_urls);
+        const list = carouselList.length > 1 ? carouselList : (post.media_url ? [post.media_url] : []);
+        if (list.length === 0) return null;
+        return (
+          <MediaLightbox
+            src={lightboxSrc}
+            mediaType="image"
+            mediaList={list}
+            onClose={() => setLightboxSrc(null)}
+            onNavigate={(url) => setLightboxSrc(url)}
+          />
+        );
+      })()}
+    </div>
+  );
+}

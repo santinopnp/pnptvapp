@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PNPtv! - Checkout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://checkout.epayco.co">
+    <link rel="preconnect" href="https://multimedia.epayco.co">
+    <link rel="dns-prefetch" href="https://checkout.epayco.co">
+    <link rel="dns-prefetch" href="https://multimedia.epayco.co">
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #121212;
+            color: #FFFFFF;
+            font-family: 'Roboto Mono', monospace;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .bg-orb {
+            position: fixed;
+            width: 500px;
+            height: 500px;
+            border-radius: 50%;
+            opacity: 0.2;
+            filter: blur(80px);
+            pointer-events: none;
+        }
+
+        .bg-orb-pink {
+            top: -20%;
+            left: -10%;
+            background: radial-gradient(circle, #D4007A, transparent 70%);
+        }
+
+        .bg-orb-amber {
+            bottom: -20%;
+            right: -10%;
+            background: radial-gradient(circle, #E69138, transparent 70%);
+        }
+
+        .glass-card {
+            background: rgba(30, 30, 30, 0.7);
+            border: 1px solid rgba(212, 0, 122, 0.3);
+            border-radius: 24px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            width: 100%;
+            max-width: 480px;
+            padding: 32px;
+            position: relative;
+            z-index: 10;
+            animation: fadeInUp 0.6s ease-out forwards, subtleGlow 3s ease-in-out infinite;
+        }
+
+        @media (min-width: 640px) {
+            .glass-card { padding: 40px; }
+        }
+
+        .logo-container {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .logo-container img {
+            height: 48px;
+            width: auto;
+        }
+
+        /* Plan summary */
+        .plan-summary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .plan-icon { font-size: 32px; margin-bottom: 8px; }
+        .plan-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+        .plan-price { font-size: 24px; font-weight: 700; background: linear-gradient(135deg, #D4007A, #E69138); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .plan-ref { font-size: 11px; color: #8E8E93; margin-top: 6px; }
+
+        /* Form */
+        .form-section { margin-bottom: 20px; }
+        .section-title { font-size: 13px; font-weight: 600; color: #8E8E93; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+
+        .field-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .field-row > * { flex: 1; }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px;
+        }
+
+        .field label {
+            font-size: 11px;
+            color: #8E8E93;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .field input, .field select {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-family: 'Roboto Mono', monospace;
+            font-size: 14px;
+            color: #FFFFFF;
+            outline: none;
+            transition: border-color 0.2s;
+            width: 100%;
+        }
+
+        .field input:focus, .field select:focus {
+            border-color: #D4007A;
+        }
+
+        .field input::placeholder {
+            color: rgba(255, 255, 255, 0.25);
+        }
+
+        .field select option {
+            background: #1C1C1E;
+            color: #FFFFFF;
+        }
+
+        .field-error input, .field-error select {
+            border-color: #FF453A;
+        }
+
+        /* Button */
+        .btn-pay {
+            background: linear-gradient(135deg, #D4007A, #E69138);
+            color: #FFFFFF;
+            border: none;
+            border-radius: 12px;
+            padding: 16px 24px;
+            font-family: 'Roboto Mono', monospace;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .btn-pay:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(212, 0, 122, 0.3); }
+        .btn-pay:active { transform: translateY(0); }
+        .btn-pay:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 14px 24px;
+            font-family: 'Roboto Mono', monospace;
+            font-size: 14px;
+            font-weight: 500;
+            color: #FFFFFF;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+            margin-top: 12px;
+        }
+
+        .btn-secondary:hover { background: rgba(255, 255, 255, 0.1); }
+
+        /* Status messages */
+        .msg { text-align: center; font-size: 13px; margin-top: 12px; }
+        .msg-error { color: #FF453A; }
+        .msg-info { color: #8E8E93; }
+
+        /* States */
+        .state { display: none; }
+        .state.active { display: block; }
+
+        /* Loading spinner */
+        .spinner-container { text-align: center; padding: 48px 0; }
+        .spinner {
+            width: 48px; height: 48px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #D4007A;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        /* Success checkmark */
+        .success-icon {
+            width: 72px; height: 72px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #30D158, #34C759);
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 20px;
+            animation: scaleIn 0.4s ease-out;
+        }
+
+        .success-icon svg { width: 36px; height: 36px; }
+
+        /* Error icon */
+        .error-icon {
+            width: 72px; height: 72px;
+            border-radius: 50%;
+            background: rgba(255, 69, 58, 0.15);
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 20px;
+        }
+
+        .error-icon svg { width: 36px; height: 36px; color: #FF453A; }
+
+        /* Polling dots */
+        .polling-dots span {
+            animation: blink 1.4s infinite both;
+        }
+        .polling-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .polling-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        /* 3DS iframe */
+        .threeds-frame {
+            width: 100%;
+            min-height: 400px;
+            border: none;
+            border-radius: 12px;
+            background: #FFFFFF;
+        }
+
+        /* OTP input */
+        .otp-input {
+            text-align: center;
+            font-size: 24px;
+            letter-spacing: 0.3em;
+            font-weight: 700;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: center;
+        }
+
+        .footer p { font-size: 11px; color: #8E8E93; }
+        .footer a { color: #D4007A; text-decoration: none; }
+        .footer .secure-badge { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 8px; }
+        .footer .secure-badge svg { width: 14px; height: 14px; color: #30D158; }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes subtleGlow {
+            0%, 100% { box-shadow: 0 0 30px rgba(212, 0, 122, 0.15), 0 0 60px rgba(230, 145, 56, 0.1); }
+            50% { box-shadow: 0 0 40px rgba(212, 0, 122, 0.25), 0 0 80px rgba(230, 145, 56, 0.15); }
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes scaleIn {
+            from { transform: scale(0); }
+            to { transform: scale(1); }
+        }
+
+        @keyframes blink {
+            0%, 80%, 100% { opacity: 0; }
+            40% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-orb bg-orb-pink"></div>
+    <div class="bg-orb bg-orb-amber"></div>
+
+    <div class="glass-card">
+        <div class="logo-container">
+            <img src="/Logo2-50.png" alt="PNPtv!" onerror="this.style.display='none'">
+        </div>
+
+        <!-- STATE: Loading -->
+        <div id="state-loading" class="state active">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <p style="color:#8E8E93; font-size:14px;">Loading payment details...</p>
+            </div>
+        </div>
+
+        <!-- STATE: Form -->
+        <div id="state-form" class="state">
+            <div id="plan-summary" class="plan-summary"></div>
+
+            <form id="payment-form" autocomplete="on">
+                <!-- Cardholder info -->
+                <div class="form-section">
+                    <div class="section-title">Cardholder Information</div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="name">First Name</label>
+                            <input type="text" id="name" name="given-name" autocomplete="given-name" required placeholder="John">
+                        </div>
+                        <div class="field">
+                            <label for="lastName">Last Name</label>
+                            <input type="text" id="lastName" name="family-name" autocomplete="family-name" required placeholder="Doe">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" autocomplete="email" required placeholder="john@example.com">
+                    </div>
+                    <div class="field-row" id="docFields" style="display:none;">
+                        <div class="field">
+                            <label for="docType">Doc Type</label>
+                            <select id="docType" name="docType" onchange="updateDocNumberField(this.value)">
+                                <option value="CC">CC (Cédula)</option>
+                                <option value="CE">CE (Foreign ID)</option>
+                                <option value="NIT">NIT (Tax ID)</option>
+                                <option value="PP">PP (Passport)</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="docNumber">Doc Number</label>
+                            <input type="text" id="docNumber" name="docNumber" placeholder="Ej: 1234567890" inputmode="numeric" pattern="[A-Za-z0-9]*">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="phone">Phone</label>
+                        <input type="tel" id="phone" name="tel" autocomplete="tel" placeholder="3101234567" inputmode="tel">
+                    </div>
+                </div>
+
+                <!-- Card info — values are passed to ePayco SDK as a plain object, not via form parsing. -->
+                <div class="form-section">
+                    <div class="section-title">Card Details</div>
+                    <div class="field">
+                        <label for="cardNumber">Card Number</label>
+                        <input type="text" id="cardNumber" autocomplete="cc-number" required placeholder="4111 1111 1111 1111" inputmode="numeric" maxlength="19">
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="expMonth">Month</label>
+                            <select id="expMonth" autocomplete="cc-exp-month" required>
+                                <option value="">MM</option>
+                                <option value="01">01</option><option value="02">02</option>
+                                <option value="03">03</option><option value="04">04</option>
+                                <option value="05">05</option><option value="06">06</option>
+                                <option value="07">07</option><option value="08">08</option>
+                                <option value="09">09</option><option value="10">10</option>
+                                <option value="11">11</option><option value="12">12</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="expYear">Year</label>
+                            <select id="expYear" autocomplete="cc-exp-year" required>
+                                <option value="">YY</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="cvc">CVC</label>
+                            <input type="text" id="cvc" autocomplete="cc-csc" required placeholder="123" inputmode="numeric" maxlength="4">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="dues">Installments</label>
+                        <select id="dues">
+                            <option value="1">1 (Full payment)</option>
+                            <option value="2">2</option><option value="3">3</option>
+                            <option value="6">6</option><option value="12">12</option>
+                            <option value="24">24</option><option value="36">36</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="form-error" class="msg msg-error" style="display:none;"></div>
+                <button type="submit" class="btn-pay" id="btn-pay">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                    <span id="btn-pay-text">Pay Now</span>
+                </button>
+            </form>
+        </div>
+
+        <!-- STATE: Processing (tokenizing + charging) -->
+        <div id="state-processing" class="state">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <p id="processing-msg" style="color:#8E8E93; font-size:14px;">Processing your payment...</p>
+                <!-- F3: 3DS-specific guidance — hidden until handle3DS2() shows it -->
+                <p id="processing-3ds-guidance" style="display:none; color:#8E8E93; font-size:12px; margin-top:10px; max-width:320px; margin-left:auto; margin-right:auto; line-height:1.5;">
+                    Tu banco te está enviando un código de verificación. Revisa tu teléfono — puede llegar como SMS o notificación de tu app bancaria. Este paso puede tomar 2–5 minutos; por favor no cierres esta ventana.<br>
+                    <span style="color:#555; font-size:11px;">Your bank is sending you a verification code. Check your phone for an SMS or push notification from your banking app. This step can take 2–5 minutes — please don't close this window.</span>
+                </p>
+            </div>
+        </div>
+
+        <!-- STATE: 3DS Redirect (iframe for bank auth) -->
+        <div id="state-3ds" class="state">
+            <p style="font-size:13px; color:#8E8E93; text-align:center; margin-bottom:12px;">Complete authentication with your bank</p>
+            <iframe id="threeds-iframe" class="threeds-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation-by-user-activation allow-popups allow-popups-to-escape-sandbox"></iframe>
+            <p class="msg msg-info" style="margin-top:12px;">After completing bank verification, your payment will be confirmed automatically.</p>
+        </div>
+
+        <!-- STATE: Polling -->
+        <div id="state-polling" class="state">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <p style="color:#8E8E93; font-size:14px;">Confirming your payment<span class="polling-dots"><span>.</span><span>.</span><span>.</span></span></p>
+                <p id="polling-detail" style="color:#555; font-size:12px; margin-top:8px;"></p>
+            </div>
+        </div>
+
+        <!-- STATE: 2FA / OTP -->
+        <div id="state-2fa" class="state">
+            <div style="text-align:center; margin-bottom:20px;">
+                <div style="font-size:40px; margin-bottom:12px;">🔐</div>
+                <p style="font-size:16px; font-weight:600; margin-bottom:4px;">Verification Required</p>
+                <p style="font-size:13px; color:#8E8E93;">Enter the code sent to your registered contact</p>
+            </div>
+            <div class="field">
+                <input type="text" id="otp-input" class="otp-input" maxlength="6" placeholder="000000" inputmode="numeric" autocomplete="one-time-code">
+            </div>
+            <div id="otp-error" class="msg msg-error" style="display:none;"></div>
+            <button class="btn-pay" id="btn-verify-otp" onclick="handleVerifyOTP()" style="margin-top:12px;">Verify Code</button>
+        </div>
+
+        <!-- STATE: Success -->
+        <div id="state-success" class="state">
+            <div style="text-align:center;">
+                <div class="success-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <p style="font-size:20px; font-weight:700; margin-bottom:8px;">Payment Confirmed!</p>
+                <p id="success-detail" style="font-size:13px; color:#8E8E93; margin-bottom:24px;">Your subscription has been activated.</p>
+                <button class="btn-pay" onclick="window.close() || (window.location.href='/app')">Return to App</button>
+            </div>
+        </div>
+
+        <!-- STATE: Error -->
+        <div id="state-error" class="state">
+            <div style="text-align:center;">
+                <div class="error-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                </div>
+                <p style="font-size:18px; font-weight:700; margin-bottom:8px;">Payment Failed</p>
+                <p id="error-detail" style="font-size:13px; color:#8E8E93; margin-bottom:24px;"></p>
+                <button class="btn-pay" id="btn-retry" onclick="handleRetry()">Try Again</button>
+                <button class="btn-secondary" onclick="window.close() || (window.location.href='/app')">Return to App</button>
+            </div>
+        </div>
+
+        <!-- STATE: Fatal (payment not found / expired) -->
+        <div id="state-fatal" class="state">
+            <div style="text-align:center;">
+                <div class="error-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <p style="font-size:18px; font-weight:700; margin-bottom:8px;">Unable to Process</p>
+                <p id="fatal-detail" style="font-size:13px; color:#8E8E93; margin-bottom:24px;"></p>
+                <button class="btn-secondary" onclick="window.close() || (window.location.href='/subscribe')">Back to Plans</button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="secure-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                <span style="font-size:11px; color:#30D158;">Secure checkout powered by ePayco</span>
+            </div>
+            <p>PNPtv! &copy; 2026</p>
+        </div>
+    </div>
+
+    <!--
+      ╔══════════════════════════════════════════════════════════════════╗
+      ║  STOP — READ BEFORE TOUCHING THE THREE <script> TAGS BELOW        ║
+      ╠══════════════════════════════════════════════════════════════════╣
+      ║  This block is the entire ePayco card-payment integration        ║
+      ║  surface. It is load-bearing and confirmed working in production ║
+      ║  on 2026-04-11 after a 6-week regression caused by a previous    ║
+      ║  Claude session that "consolidated" these scripts.               ║
+      ║                                                                  ║
+      ║  All three scripts MUST stay, in this exact order:               ║
+      ║    1. jQuery       — required by the ePayco SDK                  ║
+      ║    2. epayco.min.js — exports ePayco.token / ePayco.card only    ║
+      ║    3. validateThreeds.min.js — exports window.validate3ds        ║
+      ║                                                                  ║
+      ║  validate3ds() is NOT in epayco.min.js. It lives ONLY in         ║
+      ║  validateThreeds.min.js. Without it, every 3DS-required card     ║
+      ║  payment silently abandons.                                      ║
+      ║                                                                  ║
+      ║  Verify with:                                                    ║
+      ║    curl -s https://checkout.epayco.co/epayco.min.js \            ║
+      ║      | grep -oE "window\\.[a-zA-Z_]+|ePayco\\.[a-zA-Z]+" | sort -u║
+      ║                                                                  ║
+      ║  Regression history: feaf61c (2026-02-28) deleted the third      ║
+      ║  script tag → 6 weeks of silent abandonment → restored in        ║
+      ║  a37f127 (2026-04-11). Do not let it happen a third time.        ║
+      ╚══════════════════════════════════════════════════════════════════╝
+    -->
+    <!-- 1. jQuery (required by ePayco SDK) — SRI integrity hash prevents CDN tampering -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"
+            integrity="sha384-1H217gwSVyLSIfaLxHbE7dRb3v4mYCKbpQvzx0cegeju1MVsGrX5xXxAvs/HgeFs"
+            crossorigin="anonymous"></script>
+    <!-- 2. ePayco base SDK — only exports ePayco.token and ePayco.card. Does NOT export validate3ds. -->
+    <script src="https://checkout.epayco.co/epayco.min.js"></script>
+    <!-- 3. ePayco 3DS 2.0 validator — exports window.validate3ds (Cardinal Commerce DDC + bank challenge). LOAD-BEARING. -->
+    <script src="https://multimedia.epayco.co/general/3DS/validateThreeds.min.js"></script>
+
+    <script>
+        // ── State machine ──────────────────────────────────────────
+        let currentState = 'loading';
+        let paymentId = null;
+        let paymentData = null;
+        let pollTimer = null;
+        let pollCount = 0;
+        const MAX_POLLS = 60;
+        const POLL_INTERVAL_MS = 3000;
+
+        function showState(state) {
+            currentState = state;
+            document.querySelectorAll('.state').forEach(el => el.classList.remove('active'));
+            const el = document.getElementById('state-' + state);
+            if (el) el.classList.add('active');
+        }
+
+        // ── Extract paymentId from URL ─────────────────────────────
+        function extractPaymentId() {
+            const path = window.location.pathname;
+            const parts = path.split('/').filter(Boolean);
+            // Handles /payment/:id, /checkout/:id
+            if (parts.length >= 2) {
+                const id = parts[parts.length - 1];
+                // Validate UUID format
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+                    return id;
+                }
+                // Also accept non-UUID for checkout/pnp or smart checkout
+                if (id !== 'pnp' && id !== 'checkout' && id !== 'payment') {
+                    return id;
+                }
+            }
+            // Check query params for smart checkout
+            const params = new URLSearchParams(window.location.search);
+            return params.get('paymentId') || params.get('id') || null;
+        }
+
+        // ── Format currency ────────────────────────────────────────
+        function formatCOP(amount) {
+            return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(amount);
+        }
+
+        function formatUSD(amount) {
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+        }
+
+        // ── Populate year dropdown ─────────────────────────────────
+        function populateYears() {
+            const select = document.getElementById('expYear');
+            const currentYear = new Date().getFullYear();
+            for (let y = currentYear; y <= currentYear + 15; y++) {
+                const opt = document.createElement('option');
+                // Store full 4-digit year; SDK validateExpirationDate requires > 2020 && < 2035
+                opt.value = String(y);
+                opt.textContent = String(y);
+                select.appendChild(opt);
+            }
+        }
+
+        // ── Card number formatting ─────────────────────────────────
+        function formatCardNumber(input) {
+            let value = input.value.replace(/\D/g, '');
+            if (value.length > 16) value = value.slice(0, 16);
+            input.value = value.replace(/(\d{4})(?=\d)/g, '$1 ');
+        }
+
+        // ── Collect browser info for 3DS ───────────────────────────
+        function getBrowserInfo() {
+            return {
+                language: navigator.language || 'es-CO',
+                colorDepth: screen.colorDepth || 24,
+                screenWidth: screen.width || 1920,
+                screenHeight: screen.height || 1080,
+                timezoneOffset: new Date().getTimezoneOffset(),
+                javaEnabled: false,
+                userAgent: navigator.userAgent,
+            };
+        }
+
+        // ── Initialize ────────────────────────────────────────────
+        async function init() {
+            populateYears();
+
+            document.getElementById('cardNumber').addEventListener('input', function() {
+                formatCardNumber(this);
+            });
+
+            paymentId = extractPaymentId();
+
+            if (!paymentId) {
+                showState('fatal');
+                document.getElementById('fatal-detail').textContent =
+                    'No payment ID found. Please generate a new payment link from the app.';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/payment/' + encodeURIComponent(paymentId));
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    showState('fatal');
+                    document.getElementById('fatal-detail').textContent =
+                        data.error || 'Payment not found or already processed.';
+                    return;
+                }
+
+                paymentData = data.payment;
+                renderPlanSummary();
+                if (paymentData.showDocFields) {
+                    document.getElementById('docFields').style.display = 'flex';
+                }
+                // Pre-fill user fields from payment metadata
+                const meta = paymentData.metadata || {};
+                const userEmail = meta.customerEmail || meta.customer_email || meta.email;
+                const userFirstName = meta.firstName || meta.first_name || paymentData.userFirstName;
+                const userLastName = meta.lastName || meta.last_name || paymentData.userLastName;
+                const userPhone = meta.phone || paymentData.userPhone;
+                if (userEmail) { const el = document.getElementById('email'); if (el && !el.value) el.value = userEmail; }
+                if (userFirstName) { const el = document.getElementById('name'); if (el && !el.value) el.value = userFirstName; }
+                if (userLastName) { const el = document.getElementById('lastName'); if (el && !el.value) el.value = userLastName; }
+                if (userPhone) { const el = document.getElementById('phone'); if (el && !el.value) el.value = userPhone; }
+                showState('form');
+
+                // Warn before navigating away — abandoning the page wastes a payment session
+                window.addEventListener('beforeunload', function(e) {
+                    if (currentState === 'form') {
+                        e.preventDefault();
+                        e.returnValue = '';
+                    }
+                });
+            } catch (err) {
+                showState('fatal');
+                document.getElementById('fatal-detail').textContent =
+                    'Could not load payment details. Please check your connection and try again.';
+            }
+        }
+
+        // ── Render plan summary ────────────────────────────────────
+        function renderPlanSummary() {
+            const p = paymentData;
+            const plan = p.plan;
+            const usdDisplay = formatUSD(p.amountUSD);
+            const copDisplay = formatCOP(p.amountCOP);
+
+            let promoHtml = '';
+            if (p.isPromo && p.promoCode) {
+                promoHtml = '<div style="margin-top:6px;"><span style="background:rgba(48,209,88,0.15);color:#30D158;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;">PROMO: ' +
+                    escapeHtml(p.promoCode) + ' (-' + formatUSD(p.discountAmount) + ')</span></div>';
+            }
+
+            document.getElementById('plan-summary').innerHTML =
+                '<div class="plan-icon">' + escapeHtml(plan.icon) + '</div>' +
+                '<div class="plan-name">' + escapeHtml(plan.name) + '</div>' +
+                '<div class="plan-price">' + usdDisplay + ' USD</div>' +
+                '<div style="font-size:12px;color:#8E8E93;">≈ ' + copDisplay + ' COP (charged amount)</div>' +
+                promoHtml +
+                '<div class="plan-ref">Ref: ' + escapeHtml(p.paymentRef) + '</div>';
+
+            // Button shows USD so users know exactly what they're paying
+            document.getElementById('btn-pay-text').textContent = 'Pay ' + usdDisplay + ' USD';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
+        }
+
+        // ── Form submission ────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function() {
+            init();
+
+            document.getElementById('payment-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                await handlePayment();
+            });
+        });
+
+        async function handlePayment() {
+            const formError = document.getElementById('form-error');
+            formError.style.display = 'none';
+
+            // Collect form values
+            const name = document.getElementById('name').value.trim();
+            const lastName = document.getElementById('lastName').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const docType = document.getElementById('docType').value;
+            const docNumber = document.getElementById('docNumber').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const cardNumber = document.getElementById('cardNumber').value.replace(/\s/g, '');
+            const expMonth = document.getElementById('expMonth').value;
+            const expYear = document.getElementById('expYear').value;
+            const cvc = document.getElementById('cvc').value.trim();
+            const dues = document.getElementById('dues').value;
+
+            // Validate
+            if (!name || !email || !cardNumber || !expMonth || !expYear || !cvc) {
+                formError.textContent = 'Please fill in all required fields.';
+                formError.style.display = 'block';
+                return;
+            }
+
+            // Validate email format (ePayco requires valid email)
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                formError.textContent = 'Please enter a valid email address.';
+                formError.style.display = 'block';
+                return;
+            }
+
+            if (cardNumber.length < 13 || cardNumber.length > 16) {
+                formError.textContent = 'Invalid card number.';
+                formError.style.display = 'block';
+                return;
+            }
+
+            if (cvc.length < 3) {
+                formError.textContent = 'Invalid CVC.';
+                formError.style.display = 'block';
+                return;
+            }
+
+            // Disable form
+            document.getElementById('btn-pay').disabled = true;
+            showState('processing');
+            document.getElementById('processing-msg').textContent = 'Processing your payment securely...';
+            // Ensure 3DS guidance is hidden for the tokenization step
+            var guidanceOnPay = document.getElementById('processing-3ds-guidance');
+            if (guidanceOnPay) guidanceOnPay.style.display = 'none';
+
+            try {
+                // Send raw card data to backend for server-side tokenization via ePayco Node SDK.
+                // PCI SAQ A-EP: transmitted over HTTPS, never stored/logged server-side.
+                const chargeBody = {
+                    paymentId: paymentId,
+                    cardNumber: cardNumber,
+                    expYear: expYear,
+                    expMonth: expMonth,
+                    cvc: cvc,
+                    name: name,
+                    lastName: lastName,
+                    email: email,
+                    docType: docNumber ? docType : 'CC',
+                    docNumber: docNumber || '1000000000',
+                    phone: phone || '0000000000',
+                    city: 'Bogota',
+                    address: 'N/A',
+                    dues: dues,
+                    browserInfo: getBrowserInfo(),
+                };
+                const chargeRes = await fetch('/api/payment/tokenized-charge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(chargeBody),
+                });
+
+                let result;
+                try {
+                    result = await chargeRes.json();
+                } catch (parseErr) {
+                    showState('error');
+                    document.getElementById('error-detail').textContent =
+                        'Server error (' + chargeRes.status + '). Please try again later.';
+                    document.getElementById('btn-pay').disabled = false;
+                    return;
+                }
+                if (!chargeRes.ok && !result.status) {
+                    showState('error');
+                    document.getElementById('error-detail').textContent =
+                        result.error || 'Payment processing error. Please try again.';
+                    document.getElementById('btn-pay').disabled = false;
+                    return;
+                }
+                if (result.retryable) {
+                    showState('error');
+                    document.getElementById('error-detail').textContent =
+                        result.error || 'El procesador de pagos no está disponible. Intenta en unos minutos.';
+                    document.getElementById('btn-pay').disabled = false;
+                    return;
+                }
+                handleChargeResult(result);
+            } catch (err) {
+                showState('error');
+                document.getElementById('error-detail').textContent =
+                    err.message || 'An unexpected error occurred.';
+                document.getElementById('btn-pay').disabled = false;
+            }
+        }
+
+        // ── Handle charge result ──────────────────────────────────
+        function handleChargeResult(result) {
+            if (result.status === 'processing' || (result.success && result.status === 'processing')) {
+                // Approved via API, waiting for webhook — start polling
+                startPolling();
+                return;
+            }
+
+            if (result.status === 'pending' && result.redirectUrl) {
+                // 3DS 1.0 — bank redirect
+                handle3DSRedirect(result.redirectUrl);
+                return;
+            }
+
+            if (result.status === 'pending' && result.threeDSecure) {
+                // 3DS 2.0 — Cardinal Commerce
+                handle3DS2(result.threeDSecure);
+                return;
+            }
+
+            if (result.status === 'pending') {
+                // Generic pending — start polling
+                startPolling();
+                return;
+            }
+
+            if (result.status === 'requires_2fa') {
+                showState('2fa');
+                return;
+            }
+
+            if (result.status === 'approved' && result.success) {
+                showState('success');
+                document.getElementById('success-detail').textContent =
+                    result.message || 'Your subscription has been activated.';
+                return;
+            }
+
+            if (result.status === 'rejected') {
+                showState('error');
+                document.getElementById('error-detail').textContent =
+                    result.error || 'Your card was declined. Please try a different card or payment method.';
+                document.getElementById('btn-pay').disabled = false;
+                return;
+            }
+
+            if (result.status === 'failed') {
+                showState('error');
+                document.getElementById('error-detail').textContent =
+                    result.error || 'Payment failed. Please try again or use a different payment method.';
+                document.getElementById('btn-pay').disabled = false;
+                return;
+            }
+
+            // Unknown status fallback
+            showState('error');
+            document.getElementById('error-detail').textContent =
+                result.error || 'Your payment was declined. Please try a different card or payment method.';
+            document.getElementById('btn-pay').disabled = false;
+        }
+
+        // ── 3DS 1.0: Bank redirect in iframe ──────────────────────
+        function handle3DSRedirect(url) {
+            showState('3ds');
+            var iframe = document.getElementById('threeds-iframe');
+            iframe.src = url;
+
+            // Start polling alongside — the bank may redirect back, or webhook may fire
+            setTimeout(function() { startPolling(); }, 5000);
+        }
+
+        // ── 3DS 2.0: ePayco validate3ds() ─────────────────────────
+        var threeDSTimeout = null;
+
+        function handle3DS2(threeDSecure) {
+            showState('processing');
+            // F3: Replace generic spinner text with actionable 3DS guidance.
+            // Guarded here (not in showState) so card-tokenization spinner stays generic.
+            document.getElementById('processing-msg').textContent = 'Verifying with your bank';
+            var guidanceEl = document.getElementById('processing-3ds-guidance');
+            if (guidanceEl) {
+                guidanceEl.style.display = 'block';
+            }
+
+            var txData = threeDSecure.transactionData || {};
+            var environment = (paymentData && paymentData.testMode) ? 'test' : 'prod';
+
+            // Listen for validate3ds() result via postMessage
+            window.addEventListener('message', on3DSMessage);
+
+            // Safety timeout: 8 minutes — if validate3ds() never responds, fall back to polling
+            threeDSTimeout = setTimeout(function() {
+                window.removeEventListener('message', on3DSMessage);
+                console.warn('3DS validation timed out after 8 minutes, falling back to polling');
+                startPolling();
+            }, 8 * 60 * 1000);
+
+            // Call ePayco's official validate3ds() which handles DDC + frictionless + challenge.
+            // The ePayco SDK loaded from checkout.epayco.co exposes this as a global function.
+            if (typeof validate3ds === 'function') {
+                try {
+                    validate3ds(txData, environment);
+                } catch (err) {
+                    console.error('validate3ds() threw an error:', err);
+                    clearTimeout(threeDSTimeout);
+                    window.removeEventListener('message', on3DSMessage);
+                    startPolling();
+                }
+                return;
+            }
+
+            // Fallback: if validate3ds isn't available but we have a bank URL, render it.
+            var bankUrl = txData.urlbanco || txData.url_response_bank || txData.url || threeDSecure.redirectUrl;
+            if (bankUrl) {
+                showState('3ds');
+                var iframe = document.getElementById('threeds-iframe');
+                iframe.src = bankUrl;
+                setTimeout(function() { startPolling(); }, 8000);
+                return;
+            }
+
+            // No validate3ds, no bank URL — fall back to polling.
+            console.error('validate3ds function not available and no bank URL, falling back to polling');
+            clearTimeout(threeDSTimeout);
+            window.removeEventListener('message', on3DSMessage);
+            startPolling();
+        }
+
+        // Trusted origins for 3DS postMessage — ePayco, Cardinal Commerce, and bank auth domains
+        var TRUSTED_3DS_ORIGINS = [
+            'https://checkout.epayco.co',
+            'https://secure.epayco.co',
+            'https://secure.payco.co',
+            'https://api.secure.payco.co',
+            'https://3ds.epayco.com',
+            'https://3ds-green.epayco.com',
+            'https://songbird.cardinalcommerce.com',
+            'https://songbirdstag.cardinalcommerce.com',
+            'https://centinelapi.cardinalcommerce.com',
+            'https://centinelapistag.cardinalcommerce.com',
+        ];
+
+        function on3DSMessage(event) {
+            // Validate origin — only accept messages from known payment/3DS domains.
+            // Also allow same-origin (our own page) since some ePayco flows use that.
+            if (event.origin && event.origin !== window.location.origin) {
+                var originTrusted = TRUSTED_3DS_ORIGINS.some(function(o) { return event.origin === o; });
+                // Also allow any *.epayco.co, *.payco.co, *.cardinalcommerce.com subdomain
+                // since bank 3DS pages may proxy through various subdomains
+                if (!originTrusted) {
+                    originTrusted = /^https:\/\/[a-z0-9.-]+\.(epayco\.co|payco\.co|epayco\.com|epayco\.io|cardinalcommerce\.com)$/.test(event.origin);
+                }
+                if (!originTrusted) return; // Reject unknown origins silently
+            }
+
+            // validate3ds() posts { success: true/false, ref_payco: "..." }
+            var data = event.data;
+            if (!data || typeof data !== 'object') return;
+            if (!('success' in data) && !('ref_payco' in data)) return;
+
+            // This is a validate3ds() result
+            window.removeEventListener('message', on3DSMessage);
+            if (threeDSTimeout) {
+                clearTimeout(threeDSTimeout);
+                threeDSTimeout = null;
+            }
+
+            if (data.success) {
+                // 3DS passed (frictionless or challenge completed) — poll for final status
+                startPolling();
+            } else {
+                // 3DS failed or was cancelled
+                showState('error');
+                document.getElementById('error-detail').textContent =
+                    'La verificación 3D Secure no fue completada. Intenta de nuevo o usa otro método de pago.';
+                document.getElementById('btn-pay').disabled = false;
+            }
+        }
+
+        // ── Polling ────────────────────────────────────────────────
+        var pollingActive = false;
+        function startPolling() {
+            // Guard: prevent duplicate polling intervals from concurrent 3DS paths
+            if (pollingActive && pollTimer) return;
+            pollingActive = true;
+            showState('polling');
+            pollCount = 0;
+
+            if (pollTimer) clearInterval(pollTimer);
+
+            pollTimer = setInterval(async function() {
+                pollCount++;
+
+                if (pollCount > MAX_POLLS) {
+                    clearInterval(pollTimer);
+                    pollingActive = false;
+                    showState('error');
+                    document.getElementById('error-detail').textContent =
+                        'Payment confirmation timed out. If you were charged, your subscription will be activated automatically. Please check back later.';
+                    document.getElementById('btn-pay').disabled = false;
+                    return;
+                }
+
+                try {
+                    var res = await fetch('/api/payment/' + encodeURIComponent(paymentId) + '/status');
+                    var data = await res.json();
+
+                    document.getElementById('polling-detail').textContent =
+                        'Attempt ' + pollCount + '/' + MAX_POLLS;
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollTimer);
+                        pollingActive = false;
+                        showState('success');
+                        document.getElementById('success-detail').textContent =
+                            data.message || 'Your subscription has been activated!';
+                        // For call package payments, update "Return to App" button to go to booking confirmation
+                        if (data.redirectUrl) {
+                            var retBtn = document.querySelector('#state-success .btn-pay');
+                            if (retBtn) {
+                                retBtn.textContent = 'View Booking';
+                                retBtn.onclick = function() { window.location.href = data.redirectUrl; };
+                            }
+                        }
+                        return;
+                    }
+
+                    if (data.status === 'failed' || data.status === 'refunded') {
+                        clearInterval(pollTimer);
+                        pollingActive = false;
+                        showState('error');
+                        document.getElementById('error-detail').textContent =
+                            data.message || 'Payment was not approved.';
+                        document.getElementById('btn-pay').disabled = false;
+                        return;
+                    }
+
+                    if (data.status === 'processing_recovery') {
+                        document.getElementById('polling-detail').textContent =
+                            'Recovering payment status...';
+                    }
+                } catch (err) {
+                    // Network error — keep polling
+                }
+            }, POLL_INTERVAL_MS);
+        }
+
+        // ── 2FA / OTP verification ─────────────────────────────────
+        async function handleVerifyOTP() {
+            var otp = document.getElementById('otp-input').value.trim();
+            var otpError = document.getElementById('otp-error');
+            otpError.style.display = 'none';
+
+            if (!otp || otp.length < 4) {
+                otpError.textContent = 'Please enter a valid code.';
+                otpError.style.display = 'block';
+                return;
+            }
+
+            document.getElementById('btn-verify-otp').disabled = true;
+
+            try {
+                var res = await fetch('/api/payment/verify-2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paymentId: paymentId,
+                        otp: otp,
+                    }),
+                });
+
+                var result = await res.json();
+
+                if (result.success) {
+                    // Re-submit the payment
+                    showState('processing');
+                    document.getElementById('processing-msg').textContent = 'Retrying payment after verification...';
+                    var guidanceOnOtp = document.getElementById('processing-3ds-guidance');
+                    if (guidanceOnOtp) guidanceOnOtp.style.display = 'none';
+                    // Re-trigger the form
+                    await handlePayment();
+                } else {
+                    otpError.textContent = result.error || 'Verification failed.';
+                    otpError.style.display = 'block';
+                    document.getElementById('btn-verify-otp').disabled = false;
+                }
+            } catch (err) {
+                otpError.textContent = 'Verification failed. Please try again.';
+                otpError.style.display = 'block';
+                document.getElementById('btn-verify-otp').disabled = false;
+            }
+        }
+
+        // ── Retry ──────────────────────────────────────────────────
+        function handleRetry() {
+            document.getElementById('btn-pay').disabled = false;
+            showState('form');
+        }
+
+        function updateDocNumberField(docType) {
+            var input = document.getElementById('docNumber');
+            if (!input) return;
+            if (docType === 'PP') {
+                input.placeholder = 'Ej: AB1234567';
+                input.setAttribute('inputmode', 'text');
+            } else {
+                input.placeholder = 'Ej: 1234567890';
+                input.setAttribute('inputmode', 'numeric');
+            }
+        }
+    </script>
+</body>
+</html>

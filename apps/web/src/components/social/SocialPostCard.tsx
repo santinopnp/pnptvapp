@@ -1,0 +1,2463 @@
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+
+const PRIME_PLANS = [
+  { id: "prime-week-pass-7d",      label: "PRIME Week Pass",   duration: "7 days",   price: "15",    isRecurring: false, recommended: false },
+  { id: "monthly-pass",            label: "PRIME Monthly",     duration: "30 days",  price: "24.99", isRecurring: true,  recommended: true  },
+  { id: "prime-diamond-pass-365d", label: "PRIME Diamond",     duration: "1 year",   price: "99.99", isRecurring: false, recommended: false },
+  { id: "lifetime80",              label: "Lifetime PRIME",    duration: "Forever",  price: "100",   isRecurring: false, recommended: false },
+] as const;
+import { MentionText } from "@/components/MentionText";
+import { MentionInput } from "@/components/MentionInput";
+import { SharePostModal } from "@/components/SharePostModal";
+import { NearbyBadge } from "@/components/NearbyBadge";
+import FreeTierOverlay from "@/components/FreeTierOverlay";
+import { UserAvatar } from "@/components/UserAvatar";
+import { VideoPlayer } from "@/components/VideoPlayer";
+import { MediaLightbox } from "@/components/hangouts/MediaLightbox";
+// NP inline checkout retired 2026-08-09; PRIME CTAs deep-link to /subscribe.
+import { CryptoOnboardingWizard } from "@/components/payments/CryptoOnboardingWizard";
+import CreatorSubscribeWizard from "@/components/creators/CreatorSubscribeWizard";
+import {
+  getReplies,
+  createReply,
+  togglePostLike,
+  togglePostHype,
+  editSocialPost,
+  createUserReport,
+  searchCreators,
+  getOwnChannels,
+  assignPostToChannel,
+  NP_COINS_SUBSCRIBE,
+  ApiError,
+  type SocialPostItem,
+  type MentionUser,
+  type CreatorChannel,
+} from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
+import { translateText } from "@/lib/feedI18n";
+import { useAuth } from "@/hooks/useAuth";
+import { useTier } from "@/hooks/useTier";
+
+declare const window: Window & { twttr?: any };
+
+const CAROUSEL_VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+function isCarouselVideo(url: string) { return CAROUSEL_VIDEO_RE.test(url); }
+
+function MediaCarouselImages({ urls, showWatermark, onImageClick }: { urls: string[]; showWatermark: boolean; onImageClick?: (url: string) => void }) {
+  const [active, setActive] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    if (idx !== active && idx >= 0 && idx < urls.length) setActive(idx);
+  }, [active, urls.length]);
+  const goTo = useCallback((idx: number) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const clamped = Math.max(0, Math.min(urls.length - 1, idx));
+    el.scrollTo({ left: clamped * el.clientWidth, behavior: "smooth" });
+  }, [urls.length]);
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="flex overflow-x-auto snap-x snap-mandatory rounded-lg no-scrollbar"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        {urls.map((url, i) => (
+          <div key={i} className="w-full flex-shrink-0 snap-center">
+            {isCarouselVideo(url) ? (
+              <video
+                src={url}
+                controls
+                controlsList="nodownload"
+                disablePictureInPicture
+                playsInline
+                preload="metadata"
+                onContextMenu={(e) => e.preventDefault()}
+                className="w-full bg-black"
+                style={{ maxHeight: 480 }}
+              />
+            ) : (
+              <img
+                src={url}
+                alt={`Slide ${i + 1} of ${urls.length}`}
+                className="w-full object-cover"
+                loading={i === 0 ? undefined : "lazy"}
+                onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.25"; }}
+                onClick={onImageClick ? (e) => { e.stopPropagation(); onImageClick(url); } : undefined}
+                style={onImageClick ? { cursor: "zoom-in", aspectRatio: "4 / 5" } : { aspectRatio: "4 / 5" }}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div
+        className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[11px] font-semibold text-white"
+        style={{ background: "rgba(0,0,0,0.65)", pointerEvents: "none" }}
+      >
+        {active + 1}/{urls.length}
+      </div>
+      {/* Prev/next buttons — desktop-only fallback for trackpad users without
+          horizontal scroll. Hidden on touch screens (mobile swipe handles nav). */}
+      {active > 0 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active - 1); }}
+          className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Previous slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+      {active < urls.length - 1 && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); goTo(active + 1); }}
+          className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100 opacity-70"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          aria-label="Next slide"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
+      <div className="mt-2 flex items-center justify-center gap-1.5">
+        {urls.map((_, i) => (
+          <span
+            key={i}
+            className="rounded-full transition-all"
+            style={{
+              width: i === active ? 18 : 6,
+              height: 6,
+              background: i === active ? "#D4007A" : "rgba(255,255,255,0.35)",
+            }}
+          />
+        ))}
+      </div>
+      {showWatermark && (
+        <img
+          src="/logo-nav.png"
+          alt=""
+          aria-hidden="true"
+          style={{ position: "absolute", bottom: 30, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+        />
+      )}
+    </div>
+  );
+}
+
+function extractCarouselUrls(mediaUrls: unknown): string[] {
+  if (!Array.isArray(mediaUrls)) return [];
+  return mediaUrls
+    .map((u) => (typeof u === "string" ? u : (u && typeof u === "object" && "url" in u ? String((u as { url: unknown }).url) : "")))
+    .filter((u) => u.length > 0);
+}
+
+function XEmbedCard({ url }: { url: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+
+    const loadEmbed = () => {
+      if (window.twttr?.widgets) {
+        window.twttr.widgets.load(ref.current ?? undefined);
+      }
+    };
+
+    if (!window.twttr) {
+      const script = document.createElement("script");
+      script.src = "https://platform.twitter.com/widgets.js";
+      script.async = true;
+      script.onload = loadEmbed;
+      document.head.appendChild(script);
+    } else {
+      loadEmbed();
+    }
+  }, [url]);
+
+  return (
+    <div ref={ref} className="mt-3">
+      <blockquote className="twitter-tweet" data-dnt="true" data-theme="dark">
+        <a href={url} target="_blank" rel="noopener noreferrer">
+          {url}
+        </a>
+      </blockquote>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+        </svg>
+        View on X
+      </a>
+    </div>
+  );
+}
+
+/**
+ * Channel-promo CTA resolver. Reads the post's `metadata` and the viewer's
+ * tier and produces the right call-to-action label + click target.
+ *
+ * Today we only know "is the viewer PRIME" with zero extra DB roundtrips.
+ * For subscription / paid channels we always upsell (worst-case the user gets
+ * the paywall on the channel page, which already handles "you already have
+ * access" correctly). Future: subscribe to a per-creator entitlement context
+ * so we can show "Watch now" pre-emptively to existing subscribers.
+ */
+function resolveChannelPromoCta(
+  metadata: Record<string, unknown> | undefined | null,
+  isPrime: boolean,
+  lang: string,
+  isLocked: boolean = false,
+): { label: string; href: string; canPlayInline: boolean; videoUrl: string | null } | null {
+  if (!metadata || (metadata as { kind?: string }).kind !== "channel_promo") return null;
+  const m = metadata as {
+    channel_slug?: string;
+    channel_name?: string;
+    creator_username?: string | null;
+    access_type?: "free" | "prime" | "subscription" | "paid" | "bts";
+    price_usd?: number | null;
+    video_url?: string;
+    video_directus_id?: string;
+  };
+  const slug = m.channel_slug || "";
+  const isEs = lang === "es";
+  const watchNow = isEs ? "Ver ahora →" : "Watch now →";
+  const canPlayInline = m.access_type === "free" || (m.access_type === "prime" && isPrime);
+  // Resolve the actual playable video URL from metadata.
+  // This URL is stored at publish time and is publicly accessible on the Directus CDN
+  // (no auth required for the media request itself). Access control is enforced at
+  // the channel/entitlement layer, not at the CDN layer.
+  // Belt-and-suspenders: never construct a playable URL for locked posts —
+  // the backend already nulls these fields, but channel_promo metadata
+  // may still carry video_url / video_directus_id before the lock runs.
+  const videoUrl = isLocked
+    ? null
+    : (m.video_url && m.video_url.length > 10)
+      ? m.video_url
+      : (m.video_directus_id ? `https://cms.pnptv.app/assets/${m.video_directus_id}` : null);
+
+  switch (m.access_type) {
+    case "free":
+      return { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl };
+    case "prime":
+      return isPrime
+        ? { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: true, videoUrl }
+        : {
+            label: isEs ? "Suscríbete a PRIME →" : "Subscribe to PRIME →",
+            href: `/subscribe?plan=prime&return=${encodeURIComponent(`/channels?channel=${slug}`)}`,
+            // Non-PRIME viewers cannot play inline — redirect them to subscribe.
+            canPlayInline: false,
+            videoUrl,
+          };
+    case "subscription": {
+      // Subscription channels: the media URL is public (CDN, no auth required).
+      // Always allow inline play so subscribers see their content immediately.
+      // Non-subscribers who try to open the channel page will hit the proper paywall.
+      const creator = m.creator_username || m.channel_name || "creator";
+      return {
+        label: isEs
+          ? `Suscríbete a @${creator} →`
+          : `Subscribe to @${creator} →`,
+        href: `/profile/${creator}?action=subscribe`,
+        canPlayInline: !!videoUrl,
+        videoUrl,
+      };
+    }
+    case "paid":
+      // Paid channels: same reasoning as subscription — media URL is public CDN.
+      return {
+        label: isEs
+          ? `Pase mensual — $${m.price_usd ?? "?"}/mes →`
+          : `Get pass — $${m.price_usd ?? "?"}/mo →`,
+        href: `/channels?channel=${slug}&action=purchase`,
+        canPlayInline: !!videoUrl,
+        videoUrl,
+      };
+    default:
+      return { label: watchNow, href: `/channels?channel=${slug}`, canPlayInline: !!videoUrl, videoUrl };
+  }
+}
+
+export interface SocialPostCardProps {
+  post: SocialPostItem;
+  currentUserId: string;
+  isAdmin: boolean;
+  userLang: string;
+  onLike: (id: number) => void;
+  onDelete: (id: number) => void | Promise<void>;
+  onNavigate: (path: string) => void;
+  contentDisclaimerAccepted?: boolean;
+  onAcceptDisclaimer?: () => Promise<void>;
+  viewerCity?: string | null;
+  viewerCountry?: string | null;
+  distanceKm?: number | null;
+  initialShowReplies?: boolean;
+  /**
+   * When true, the "Subscribe to <creator>" CTA banner is suppressed.
+   * Used on creator profiles where the same call-to-action is already the
+   * main pill above the wall — showing it on every post would be redundant.
+   * The banner is always shown in the community feed (default false).
+   */
+  hideCreatorCta?: boolean;
+  /**
+   * Reply id to scroll to and highlight after replies load. Used when the user
+   * arrives via a mention/tag notification whose real target was a comment on
+   * this post — so they see the parent context AND their specific comment.
+   */
+  highlightReplyId?: number | string | null;
+}
+
+function timeAgo(dateStr: string, nowLabel: string): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return nowLabel;
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d`;
+  return `${Math.floor(days / 30)}mo`;
+}
+
+function isValidPhotoUrl(photo: string | null | undefined): photo is string {
+  return !!photo && (photo.startsWith("/uploads/") || photo.startsWith("http"));
+}
+
+export default function SocialPostCard({
+  post,
+  currentUserId,
+  isAdmin,
+  userLang,
+  onLike,
+  onDelete,
+  onNavigate,
+  contentDisclaimerAccepted,
+  onAcceptDisclaimer,
+  viewerCity,
+  viewerCountry,
+  distanceKm,
+  initialShowReplies,
+  highlightReplyId,
+  hideCreatorCta = false,
+}: SocialPostCardProps) {
+  const { feed: t, lang } = useI18n();
+  const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
+  const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  // Open the replies drawer when the parent explicitly requests it, or when
+  // arriving via a highlight deep-link (mention on a comment) so the reply
+  // can be scrolled to on load.
+  const [showReplies, setShowReplies] = useState((initialShowReplies ?? false) || highlightReplyId != null);
+  const [replies, setReplies] = useState<SocialPostItem[]>([]);
+  const [loadingReplies, setLoadingReplies] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [sendingReply, setSendingReply] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyLikes, setReplyLikes] = useState<Record<number, { liked: boolean; count: number }>>({});
+  const [deleting, setDeleting] = useState(false);
+  const [localReplyCount, setLocalReplyCount] = useState(post.replies_count || 0);
+  const optimisticIdRef = useRef(-Date.now());
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [translatedContent, setTranslatedContent] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(post.content || "");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const [localContent, setLocalContent] = useState<string | null>(null);
+  const [localVideoTitle, setLocalVideoTitle] = useState<string | null>(null);
+  const [localVideoDescription, setLocalVideoDescription] = useState<string | null>(null);
+  const [editVideoTitle, setEditVideoTitle] = useState("");
+  const [editVideoDescription, setEditVideoDescription] = useState("");
+  const [editTaggedPerformers, setEditTaggedPerformers] = useState<MentionUser[]>([]);
+  const [editTagQuery, setEditTagQuery] = useState("");
+  const [editTagResults, setEditTagResults] = useState<MentionUser[]>([]);
+  const [editTagSearching, setEditTagSearching] = useState(false);
+  const [showEditTagPicker, setShowEditTagPicker] = useState(false);
+  const [localTaggedPerformers, setLocalTaggedPerformers] = useState<typeof post.tagged_performers>(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const [channelPromoPlaying, setChannelPromoPlaying] = useState(false);
+  const [channelPromoPlayerError, setChannelPromoPlayerError] = useState(false);
+  const [showChannelPicker, setShowChannelPicker] = useState(false);
+  const [ownChannels, setOwnChannels] = useState<CreatorChannel[]>([]);
+  const [channelPickerLoading, setChannelPickerLoading] = useState(false);
+  const [assigningChannel, setAssigningChannel] = useState(false);
+  const [assignedChannelId, setAssignedChannelId] = useState<number | null>(null);
+  const [hypePosted, setHypePosted] = useState<boolean>(Boolean(post.hyped_by_me));
+  const [hypeCount, setHypeCount] = useState<number>(Math.max(0, Number(post.hype_score) || 0));
+  const [hypeError, setHypeError] = useState<string | null>(null);
+  const [hypeQuota, setHypeQuota] = useState<{ remaining: number; limit: number; resetsAt: string | null } | null>(null);
+  const hypeInFlight = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const isOwn = String(post.author_id) === currentUserId;
+  const hasRealPostId = Number(post.id) > 0;
+  const canDelete = hasRealPostId && (isOwn || isAdmin);
+  const { user } = useAuth();
+  const { isPrime, tier: viewerTier } = useTier();
+  const channelPromoCta = resolveChannelPromoCta(
+    post.metadata as Record<string, unknown> | undefined,
+    !!isPrime,
+    lang,
+    !!(post.content_locked || post.exclusive_status === "locked"),
+  );
+  // For own posts/replies, always use the live auth-context photo so avatar
+  // updates cascade instantly without a full feed refetch.
+  const effectiveAuthorPhoto = isOwn && user?.photoUrl ? user.photoUrl : post.author_photo;
+
+  // Creator upsell CTAs on video posts (mirrors PostCard.tsx profile view).
+  // Santino's videos push Become PRIME (classic Telegram content + hangout);
+  // every other active creator pushes membership for exclusive content, channel & private hangout.
+  // Use viewerTier !== "prime" (not !isPrime) so admins can see the banner and verify it works.
+  const isPrimeCreator =
+    ["8599671840", "8552451957"].includes(String(post.author_id)) ||
+    ["santinofurioso", "pnptv"].includes(String(post.author_username || "").toLowerCase());
+  const showPrimeUpsell = isPrimeCreator && viewerTier !== "prime" && !post.is_exclusive && !isOwn;
+  const primeUpsellKey = `pnp_prime_upsell_dismissed_${post.author_id}`;
+  const [primeUpsellDismissed, setPrimeUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(primeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissPrimeUpsell = () => {
+    try { sessionStorage.setItem(primeUpsellKey, "1"); } catch { /* ignore */ }
+    setPrimeUpsellDismissed(true);
+  };
+  // Retroactive rule (2026-07-24): every free post from an active creator
+  // gets a Subscribe CTA in the community feed. Applies to all media types.
+  const showCreatorSubscribeUpsell =
+    !hideCreatorCta &&
+    !showPrimeUpsell &&
+    !isPrimeCreator &&
+    post.author_creator_status === "active" &&
+    !post.is_exclusive &&
+    !isOwn;
+  const subscribeUpsellKey = `pnp_creator_subscribe_dismissed_${post.author_id}`;
+  const [creatorUpsellDismissed, setCreatorUpsellDismissed] = useState(() => {
+    try { return sessionStorage.getItem(subscribeUpsellKey) === "1"; } catch { return false; }
+  });
+  const dismissCreatorUpsell = () => {
+    try { sessionStorage.setItem(subscribeUpsellKey, "1"); } catch { /* ignore */ }
+    setCreatorUpsellDismissed(true);
+  };
+
+  // PRIME CTAs deep-link into /subscribe (wallet flow) — no popup, no NP.
+  const navigate = useNavigate();
+  const inlineCheckout = {
+    launching: false,
+    error: null as string | null,
+    showGuide: false,
+    start: ({ planId }: { planId: string; isSubscription?: boolean; storageKey?: string; payCurrency?: string; creatorId?: string }) => {
+      navigate(`/subscribe?plan=${encodeURIComponent(planId)}`);
+    },
+    dismissGuide: () => {},
+    confirmGuideAndStart: () => {},
+    skipGuideAndStart: () => {},
+  };
+
+  // Creator-subscription CTAs reveal the canonical CreatorSubscribeWizard
+  // inline — same widget the creator-profile "Subscribe" button opens. This
+  // keeps the UX identical across every creator-sub entry point.
+  const [showCreatorSubWizard, setShowCreatorSubWizard] = useState(false);
+  // PRIME plan picker — expands the collapsed banner into an inline plan grid,
+  // then a coin grid when a specific plan is selected.
+  const [showPrimePlanPicker, setShowPrimePlanPicker] = useState(false);
+  const [selectedPrimePlan, setSelectedPrimePlan] = useState<typeof PRIME_PLANS[number] | null>(null);
+
+  const loadReplies = useCallback(async () => {
+    if (loadingReplies) return;
+    setLoadingReplies(true);
+    try {
+      const res = await getReplies(post.id);
+      if (res.success) setReplies(res.replies);
+    } catch { /* silent */ }
+    setLoadingReplies(false);
+  }, [post.id, loadingReplies]);
+
+  // When opened in expanded mode (deep-link from a reply notification), load
+  // the replies on mount and focus the composer so the mobile keyboard opens
+  // ready for the user to respond. When a specific reply id is passed
+  // (highlightReplyId — from ?highlight= on a mention deep-link), skip the
+  // composer focus and scroll to that reply instead so the user lands on
+  // their comment rather than on a keyboard prompt.
+  useEffect(() => {
+    if (!initialShowReplies && highlightReplyId == null) return;
+    void loadReplies();
+    if (highlightReplyId != null) {
+      // Scroll handled by the highlightReplyId effect once replies render.
+      return;
+    }
+    const focusTimer = setTimeout(() => {
+      composerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      composerRef.current?.querySelector("textarea")?.focus();
+    }, 150);
+    return () => clearTimeout(focusTimer);
+    // Run once on mount — loadReplies identity churns with loadingReplies state
+    // and would re-fire mid-load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Scroll to and briefly ring the specific reply the user was tagged in.
+  // Runs whenever replies finish loading with a highlight target present.
+  const [highlightedReplyId, setHighlightedReplyId] = useState<number | string | null>(null);
+  useEffect(() => {
+    if (highlightReplyId == null || replies.length === 0) return;
+    const target = replies.find((r) => String(r.id) === String(highlightReplyId));
+    if (!target) return;
+    setHighlightedReplyId(highlightReplyId);
+    const scrollTimer = setTimeout(() => {
+      const el = document.querySelector(`[data-reply-id="${highlightReplyId}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    // Clear the ring after 3s so the visual doesn't linger forever
+    const clearTimer = setTimeout(() => setHighlightedReplyId(null), 3000);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [replies, highlightReplyId]);
+
+  const toggleReplies = useCallback(() => {
+    const next = !showReplies;
+    setShowReplies(next);
+    if (next) {
+      if (replies.length === 0) loadReplies();
+      // Pre-fill reply with @authorUsername mention if not own post
+      if (!isOwn && (post.author_username || post.author_first_name)) {
+        const mention = `@${post.author_username || post.author_first_name} `;
+        setReplyText((prev) => (prev.startsWith(mention) ? prev : mention));
+      }
+    }
+  }, [showReplies, replies.length, loadReplies, isOwn, post.author_username, post.author_first_name]);
+
+  const toggleReplyLike = useCallback(async (reply: SocialPostItem) => {
+    const id = reply.id;
+    const current = replyLikes[id] ?? { liked: !!reply.liked_by_me, count: reply.likes_count || 0 };
+    const next = { liked: !current.liked, count: current.count + (current.liked ? -1 : 1) };
+    setReplyLikes((m) => ({ ...m, [id]: next }));
+    try {
+      const res = await togglePostLike(id);
+      if (typeof res?.likes_count === "number") {
+        setReplyLikes((m) => ({ ...m, [id]: { liked: res.liked, count: res.likes_count! } }));
+      } else {
+        setReplyLikes((m) => ({ ...m, [id]: { ...next, liked: res.liked } }));
+      }
+    } catch {
+      setReplyLikes((m) => ({ ...m, [id]: current }));
+    }
+  }, [replyLikes]);
+
+  const handleSendReply = useCallback(async () => {
+    const text = replyText.trim();
+    if (!text || sendingReply) return;
+    setSendingReply(true);
+    setReplyError(null);
+
+    const tempId = optimisticIdRef.current--;
+    const optimistic: SocialPostItem = {
+      ...post,
+      id: tempId,
+      content: text,
+      likes_count: 0,
+      replies_count: 0,
+      liked_by_me: false,
+      created_at: new Date().toISOString(),
+      author_id: currentUserId,
+      author_username: post.author_username,
+      author_first_name: undefined,
+      author_photo: undefined,
+      ...({ __pending: true } as object),
+    } as unknown as SocialPostItem;
+
+    setReplies((prev) => [...prev, optimistic]);
+    setReplyText("");
+    setLocalReplyCount((c) => c + 1);
+
+    try {
+      const res = await createReply(post.id, text);
+      if (res.success && res.post) {
+        setReplies((prev) => prev.map((r) => (r.id === tempId ? res.post : r)));
+      } else {
+        throw new Error(t.replyFailed);
+      }
+    } catch (err) {
+      setReplies((prev) => prev.filter((r) => r.id !== tempId));
+      setLocalReplyCount((c) => Math.max(0, c - 1));
+      setReplyText(text);
+      setReplyError(err instanceof Error && err.message ? err.message : t.replyFailed);
+    }
+    setSendingReply(false);
+  }, [replyText, sendingReply, post, currentUserId, t.replyFailed]);
+
+  const handleShare = useCallback(() => {
+    setShowShareModal(true);
+  }, []);
+
+  const handleTranslate = useCallback(async () => {
+    if (isTranslating) return;
+    if (translatedContent) { setTranslatedContent(null); return; }
+    if (!post.content) return;
+    setIsTranslating(true);
+    const result = await translateText(post.content, userLang || "en");
+    if (result) setTranslatedContent(result);
+    setIsTranslating(false);
+  }, [isTranslating, translatedContent, post.content, userLang]);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showMenu]);
+
+  useEffect(() => {
+    if (!isEditing || !editTagQuery.trim()) { setEditTagResults([]); return; }
+    setEditTagSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await searchCreators(editTagQuery.trim());
+        if (res.success) setEditTagResults(res.users.filter(u => !editTaggedPerformers.some(tp => tp.id === u.id)));
+      } catch { /* silent */ }
+      setEditTagSearching(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [editTagQuery, isEditing, editTaggedPerformers]);
+
+  const handleReport = useCallback(async () => {
+    if (reporting || reportSent) return;
+    setReporting(true);
+    try {
+      await createUserReport({
+        reportedUserId: String(post.author_id),
+        category: "other",
+        evidenceType: "post",
+        evidenceId: String(post.id),
+      });
+      setReportSent(true);
+    } catch { /* silent */ }
+    setReporting(false);
+  }, [post.author_id, post.id, reporting, reportSent]);
+
+  // handleLike delegates upward so parent can sync all feed slices
+  const handleLike = useCallback(() => {
+    onLike(post.id);
+  }, [post.id, onLike]);
+
+  const handleDelete = useCallback(async () => {
+    if (deleting) return;
+    if (!confirm("Delete this post?")) return;
+    setDeleting(true);
+    try {
+      await onDelete(post.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete post");
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleting, onDelete, post.id]);
+
+  const handleStartEdit = useCallback(() => {
+    setEditContent(localContent ?? post.content ?? "");
+    setEditVideoTitle(localVideoTitle ?? post.video_title ?? "");
+    setEditVideoDescription(localVideoDescription ?? post.video_description ?? "");
+    setEditTaggedPerformers(
+      (localTaggedPerformers ?? post.tagged_performers ?? []).map(tp => ({
+        id: tp.id, username: tp.username, avatar_url: tp.avatar_url, creator_status: 'active',
+      }))
+    );
+    setEditTagQuery("");
+    setEditTagResults([]);
+    setShowEditTagPicker(false);
+    setIsEditing(true);
+  }, [localContent, localVideoTitle, localVideoDescription, localTaggedPerformers, post.content, post.video_title, post.video_description, post.tagged_performers]);
+
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditContent(localContent ?? post.content ?? "");
+    setEditTaggedPerformers([]);
+    setEditTagQuery("");
+    setEditTagResults([]);
+    setShowEditTagPicker(false);
+  }, [localContent, post.content]);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (savingEdit) return;
+    const trimmed = editContent.trim();
+    if (!trimmed) return;
+    setSavingEdit(true);
+    try {
+      const res = await editSocialPost(post.id, trimmed, {
+        ...(post.media_type === 'video' && {
+          videoTitle: editVideoTitle.trim() || null,
+          videoDescription: editVideoDescription.trim() || null,
+        }),
+        taggedPerformerIds: editTaggedPerformers.map(p => p.id),
+      });
+      if (res.success) {
+        setLocalContent(res.content ?? trimmed);
+        if (res.videoTitle !== undefined) setLocalVideoTitle(res.videoTitle ?? null);
+        if (res.videoDescription !== undefined) setLocalVideoDescription(res.videoDescription ?? null);
+        setLocalTaggedPerformers(
+          editTaggedPerformers.map(tp => ({ id: tp.id, username: tp.username, avatar_url: tp.avatar_url }))
+        );
+        setTranslatedContent(null);
+        setIsEditing(false);
+      }
+    } catch { /* silent */ }
+    setSavingEdit(false);
+  }, [post.id, post.media_type, editContent, editVideoTitle, editVideoDescription, editTaggedPerformers, savingEdit]);
+
+  const authorPath =
+    String(post.author_id) === currentUserId
+      ? "/profile"
+      : `/profile/${post.author_id}`;
+
+  // Promoted posts fall back to the PNPtv logo ONLY when the author has no
+  // real avatar (platform-only announcements). When a real author is attached
+  // (e.g. a founder blog crosspost), show their photo and allow profile nav.
+  const showPlatformLogo =
+    post.is_promoted &&
+    !post.is_carousel &&
+    !isValidPhotoUrl(effectiveAuthorPhoto) &&
+    post.author_id !== "8552451957";
+
+  return (
+    <div
+      className={`group glass-card-sm pt-4 pb-4 pr-4 pl-14 relative transition-colors lg:hover:border-white/15 lg:hover:bg-white/[0.02]${post.is_carousel ? "" : " cursor-pointer"}`}
+      onClick={post.is_carousel ? undefined : toggleReplies}
+      id={`post-${post.id}`}
+      style={
+        post.is_promoted
+          ? {
+              borderLeft: "3px solid transparent",
+              borderImage: "linear-gradient(180deg, #D4007A, #E69138) 1",
+            }
+          : (!post.is_carousel && hypeCount > 0)
+          ? {
+              borderLeft: "3px solid transparent",
+              borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1",
+              background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)",
+            }
+          : undefined
+      }
+    >
+      {/* 🔁 Reposted-by banner — X-style, shows above the header when this
+          post is a repost. The card's primary author IS the reposter (matches
+          how Twitter/X renders it), so we simply announce the action. */}
+      {post.repost_of_id && (
+        <div className="mb-2 -mt-1 ml-0 flex items-center gap-1.5 text-[11px] text-white/50">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M17 1l4 4-4 4V6H7v4H5V4h12V1zM7 23l-4-4 4-4v3h10v-4h2v6H7v3z" />
+          </svg>
+          <span className="truncate">
+            <span className="text-white/70 font-medium">{post.author_first_name || post.author_username || 'Someone'}</span>{' '}
+            reposted{post.repost_author_username && <> from <span className="text-white/70">@{post.repost_author_username}</span></>}
+          </span>
+        </div>
+      )}
+
+      {/* Avatar — pinned to upper-left corner */}
+      <div className="absolute -top-2 -left-2 z-10 flex-shrink-0">
+        {post.is_carousel ? (
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E]"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label="PNPtv PRIME"
+          >
+            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.5 18.5L5 9l4.5 4L12 4l2.5 9L19 9l2.5 9.5H2.5z" />
+            </svg>
+          </div>
+        ) : showPlatformLogo ? (
+          <img
+            src="/Logo2-50.png"
+            alt="PNPtv!"
+            className="w-10 h-10 rounded-full object-cover ring-2 ring-[#1C1C1E]"
+            style={{ background: "#1a1a2e" }}
+          />
+        ) : post.author_id === "8552451957" && channelPromoCta && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+          // Channel-promo post from the system account — show channel branding
+          // instead of the Cristina AI indicator so the feed card feels like it
+          // belongs to the creator, not the platform system.
+          // Creator-authored promos (is_creator_post=true) skip this and fall
+          // through to the standard UserAvatar below.
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center ring-2 ring-[#1C1C1E] text-white text-sm font-bold"
+            style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+            aria-label="PNP Channel"
+          >
+            {((post.metadata as { channel_name?: string } | undefined)?.channel_name ?? "C").charAt(0).toUpperCase()}
+          </div>
+        ) : post.author_id === "8552451957" && !channelPromoCta ? (
+          <img
+            src="/logo-final.png"
+            alt="PNPtv!"
+            className="w-10 h-10 rounded-full object-contain ring-2 ring-[#1C1C1E] bg-black p-0.5"
+          />
+        ) : (
+          <UserAvatar
+            userId={post.author_id}
+            photoUrl={effectiveAuthorPhoto}
+            displayName={post.author_first_name || post.author_username}
+            size="md"
+            className="ring-2 ring-[#1C1C1E] rounded-full"
+          />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {post.is_carousel ? (
+              <span className="font-semibold text-white text-sm truncate">
+                {post.author_first_name || post.author_username || "Anonymous"}
+              </span>
+            ) : channelPromoCta && post.author_id === "8552451957" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post ? (
+              // Channel-promo from system account: show channel name as author label
+              // so the card reads as belonging to the creator's channel, not the bot.
+              // Creator-authored promos (is_creator_post=true) show the real author name.
+              <span className="font-semibold text-white text-sm truncate">
+                {(post.metadata as { channel_name?: string } | undefined)?.channel_name || "PNP Channels"}
+              </span>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); onNavigate(authorPath); }}
+                className="font-semibold text-white text-sm truncate hover:underline"
+              >
+                {post.author_first_name || post.author_username || "Anonymous"}
+              </button>
+            )}
+            {post.author_username && !post.is_carousel && !(channelPromoCta && post.author_id === "8552451957" && !(post.metadata as { is_creator_post?: boolean } | null)?.is_creator_post) && (
+              <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                @{post.author_username}
+              </span>
+            )}
+            <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+              &middot; {timeAgo(post.created_at, t.translating)}
+            </span>
+
+            {/* Nearby badge */}
+            {distanceKm != null && (
+              <NearbyBadge distanceKm={distanceKm} variant="compact" />
+            )}
+
+            {/* Featured / Promoted badge */}
+            {post.is_promoted && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(212,0,122,0.2), rgba(230,145,56,0.2))",
+                  color: "#FFB454",
+                }}
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                </svg>
+                {t.featured}
+              </span>
+            )}
+            {/* Hangout context badge — shows which hangout the post was made in */}
+            {post.hangout_group_name && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onNavigate(`/?hangout=${post.hangout_group_id}`); }}
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity"
+                style={{ background: "rgba(123,97,255,0.15)", color: "#7B61FF" }}
+              >
+                #{post.hangout_group_name.replace(/\s+/g, "")}
+              </button>
+            )}
+            {/* Exclusive badges */}
+            {post.is_exclusive && post.exclusive_status === "unlocked" && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: "rgba(212,0,122,0.15)", color: "#D4007A" }}
+              >
+                Exclusive
+              </span>
+            )}
+            {/* AI-generated disclosure — self-declared or admin-flagged */}
+            {post.is_ai_generated && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{ background: "rgba(167,139,250,0.15)", color: "#A78BFA" }}
+                title="Contains AI-generated content"
+              >
+                🤖 AI
+              </span>
+            )}
+            {/* Verified creator badge */}
+            {post.author_creator_verified && (
+              <svg
+                className="w-4 h-4 flex-shrink-0"
+                viewBox="0 0 24 24"
+                fill="#5ED1C4"
+                aria-label="Verified creator"
+              >
+                <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+            )}
+
+            {/* 3-dots post menu */}
+            {hasRealPostId && !post.is_promoted && (canDelete || !isOwn) && (
+              <div className="relative ml-auto" ref={menuRef}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowMenu((v) => !v); }}
+                  className="p-1 rounded-full transition-colors hover:bg-white/10"
+                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                  aria-label="Post options"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                  </svg>
+                </button>
+                {showMenu && (
+                  <div
+                    className="absolute right-0 top-7 z-50 w-40 rounded-xl shadow-xl py-1 overflow-hidden"
+                    style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {isOwn && !isEditing && !post.blurred && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#fff" }}
+                        onClick={() => { setShowMenu(false); handleStartEdit(); }}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                        </svg>
+                        Edit
+                      </button>
+                    )}
+                    {isOwn && user?.creator_status === "active" && !showChannelPicker && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#5ED1C4" }}
+                        onClick={async () => {
+                          setChannelPickerLoading(true);
+                          setShowChannelPicker(true);
+                          try {
+                            const res = await getOwnChannels();
+                            setOwnChannels(res.channels ?? []);
+                          } catch { /* silent */ } finally {
+                            setChannelPickerLoading(false);
+                          }
+                        }}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
+                        </svg>
+                        Move to channel
+                      </button>
+                    )}
+                    {isOwn && showChannelPicker && (
+                      <div className="px-3 py-2 space-y-1 border-t border-white/10">
+                        {channelPickerLoading ? (
+                          <p className="text-xs text-white/40 py-1">Loading…</p>
+                        ) : ownChannels.length === 0 ? (
+                          <p className="text-xs text-white/40 py-1">No channels yet</p>
+                        ) : (
+                          ownChannels.map((ch) => (
+                            <button
+                              key={ch.id}
+                              disabled={assigningChannel || assignedChannelId === ch.id}
+                              className="w-full text-left px-2 py-1.5 rounded-lg text-xs hover:bg-white/10 transition-colors truncate"
+                              style={{ color: assignedChannelId === ch.id ? "#5ED1C4" : "#fff" }}
+                              onClick={async () => {
+                                setAssigningChannel(true);
+                                try {
+                                  await assignPostToChannel(post.id, ch.id);
+                                  setAssignedChannelId(ch.id);
+                                  setShowChannelPicker(false);
+                                  setShowMenu(false);
+                                } catch { /* silent */ } finally {
+                                  setAssigningChannel(false);
+                                }
+                              }}
+                            >
+                              {assignedChannelId === ch.id ? "✓ " : ""}{ch.name}
+                            </button>
+                          ))
+                        )}
+                        <button
+                          className="w-full text-left px-2 py-1 text-xs text-white/30 hover:text-white/60 transition-colors"
+                          onClick={() => setShowChannelPicker(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    {canDelete && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: "#ef4444" }}
+                        onClick={() => { setShowMenu(false); void handleDelete(); }}
+                        disabled={deleting}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                        {deleting ? "Deleting…" : "Delete"}
+                      </button>
+                    )}
+                    {!isOwn && (
+                      <button
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
+                        style={{ color: reportSent ? "#34D399" : "#FFB454" }}
+                        onClick={() => { setShowMenu(false); void handleReport(); }}
+                        disabled={reporting || reportSent}
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" />
+                        </svg>
+                        {reportSent ? "Reported" : reporting ? "Reporting…" : "Report"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Tagged performers */}
+          {(() => {
+            const tagged = localTaggedPerformers ?? post.tagged_performers;
+            if (!Array.isArray(tagged) || tagged.length === 0) return null;
+            return (
+              <div className="flex items-center flex-wrap gap-x-1 gap-y-0.5 mt-0.5 mb-0.5">
+                <span className="text-[11px]" style={{ color: "#8E8E93" }}>with</span>
+                {tagged.map((tp, i) => (
+                  <span key={tp.id} className="inline-flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onNavigate(`/profile/${tp.id}`); }}
+                      className="text-[11px] font-medium hover:underline transition-colors"
+                      style={{ color: "#5ED1C4" }}
+                    >
+                      @{tp.username}
+                    </button>
+                    {i < tagged.length - 1 && <span className="text-[11px]" style={{ color: "#8E8E93" }}>,</span>}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Tier-blurred content overlay */}
+          {post.blurred ? (
+            <FreeTierOverlay
+              label={
+                post.content_tier === "prime" || post.content_tier === "PRIME"
+                  ? "PRIME post"
+                  : "Member post"
+              }
+              requiredTier={
+                post.content_tier === "prime" || post.content_tier === "PRIME"
+                  ? "prime"
+                  : "member"
+              }
+            >
+              <div className="p-4 mt-1.5">
+                <p className="text-sm text-white/60">
+                  This content is available to{" "}
+                  {post.content_tier === "prime" || post.content_tier === "PRIME"
+                    ? "PRIME"
+                    : "Member"}{" "}
+                  members
+                </p>
+              </div>
+            </FreeTierOverlay>
+          ) : (post.is_exclusive && post.exclusive_status === "locked") || (post.content_locked && !post.blurred) ? (
+            (() => {
+              const unlockPrime = post.unlock_target === "prime";
+              const unlockPaid = post.unlock_target === "paid";
+              const isChannelGated = post.locked_reason === "channel_gated";
+              const price = Number(post.author_creator_price || 15);
+              const displayName = post.author_first_name || post.author_username || (lang === "es" ? "este creador" : "this creator");
+              const previewSrc = post.preview_gif_url || null;
+
+              // Derive CTA label — channel-gated posts get channel-specific copy
+              let ctaLabel: string;
+              if (unlockPrime && isChannelGated) {
+                ctaLabel = lang === "es" ? "Desbloquea el canal PRIME" : "Unlock PRIME channel";
+              } else if (unlockPrime) {
+                ctaLabel = lang === "es" ? "Ver video completo en PRIME" : "Watch full video on PRIME";
+              } else if (unlockPaid && isChannelGated) {
+                ctaLabel = lang === "es" ? "Comprar acceso al canal" : "Purchase channel access";
+              } else if (isChannelGated) {
+                // creator_sub channel-gated
+                ctaLabel = lang === "es"
+                  ? `Suscríbete a @${post.author_username || displayName} para acceso al canal`
+                  : `Subscribe to @${post.author_username || displayName} for full channel access`;
+              } else {
+                ctaLabel = lang === "es"
+                  ? `Ver video — Suscríbete a @${post.author_username || displayName} $${price}/mes`
+                  : `Watch full video — Subscribe to @${post.author_username || displayName} $${price}/mo`;
+              }
+
+              // Paid-channel gate: link directly to channel page (purchase flow lives there)
+              if (unlockPaid && isChannelGated) {
+                const channelHref = post.channel_id ? `/channels?channel=${post.channel_id}` : "/channels";
+                return (
+                  <div
+                    className="mt-2 rounded-xl overflow-hidden relative"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  >
+                    <div className="p-4 text-center space-y-3">
+                      <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/15 flex items-center justify-center border border-pink-500/30">
+                        <svg className="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                        </svg>
+                      </div>
+                      <a
+                        href={channelHref}
+                        className="inline-block px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95"
+                        style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {`🔒 ${ctaLabel}`}
+                      </a>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Creator-sub wizard reveal: mirrors CreatorProfilePage subscribe pill.
+              // Applies to both regular creator_sub exclusive posts AND channel-gated creator_sub.
+              if (!unlockPrime && showCreatorSubWizard) {
+                return (
+                  <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                    <CreatorSubscribeWizard
+                      creatorId={String(post.author_id)}
+                      creatorName={post.author_first_name || post.author_username}
+                      username={post.author_username}
+                      priceUsd={price}
+                      lang={lang === "es" ? "es" : "en"}
+                      compact
+                      onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+                      onClose={() => setShowCreatorSubWizard(false)}
+                      storageKey={`pnp_creator_sub_${post.author_id}`}
+                    />
+                  </div>
+                );
+              }
+              return (
+                <div
+                  className="mt-2 rounded-xl overflow-hidden relative"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {post.is_video_exclusive && previewSrc && (
+                    <video
+                      src={previewSrc}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      preload="metadata"
+                      className="w-full block"
+                      style={{ filter: "blur(6px)", maxHeight: 340, objectFit: "cover" }}
+                    />
+                  )}
+                  <div
+                    className="p-4 text-center space-y-3"
+                    style={previewSrc ? { position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backdropFilter: "blur(2px)" } : undefined}
+                  >
+                    <div className="w-10 h-10 mx-auto rounded-full bg-pink-500/15 flex items-center justify-center border border-pink-500/30">
+                      <svg className="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                      </svg>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (unlockPrime) {
+                          inlineCheckout.start({ planId: post.plan_slug || "monthly-pass", isSubscription: false, storageKey: "pnp_pending_prime_paywall" });
+                        } else {
+                          setShowCreatorSubWizard(true);
+                        }
+                      }}
+                      disabled={unlockPrime && inlineCheckout.launching}
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+                      style={{ background: unlockPrime ? "linear-gradient(135deg, #D4007A, #7B61FF)" : "linear-gradient(135deg, #D4007A, #E69138)" }}
+                    >
+                      {unlockPrime && inlineCheckout.launching ? (lang === "es" ? "Abriendo…" : "Opening…") : `🔒 ${ctaLabel}`}
+                    </button>
+                    {unlockPrime && inlineCheckout.error && (
+                      <p className="text-[11px] text-red-300">{inlineCheckout.error}</p>
+                    )}
+                    <a
+                      href="/crypto-guide"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[10px] text-white/50 hover:text-white/80 underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {lang === "es" ? "¿Primera vez pagando con cripto? Guía de 2 min →" : "First time paying with crypto? See the 2-min guide →"}
+                    </a>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <>
+              {/* Promoted thumbnail banner — suppressed when the post has
+                  its own media (media_url / media_urls carousel) so the
+                  actual media block below is the primary visual and we
+                  don't render slide 1 twice. */}
+              {post.is_promoted && post.promoted_thumbnail && !post.media_url && (
+                <div className="mt-2 -mx-4">
+                  <img
+                    src={post.promoted_thumbnail}
+                    alt="Featured content"
+                    className="w-full max-h-56 object-cover"
+                    style={{ aspectRatio: "16 / 9" }}
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).parentElement!.style.display =
+                        "none";
+                    }}
+                  />
+                </div>
+              )}
+
+              {isEditing ? (
+                <div className="mt-1.5 space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <textarea id="pnp-socialpostcard-1"
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    rows={3}
+                    className="w-full rounded-lg p-2 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500 resize-none"
+                    placeholder="Edit your post..."
+                    disabled={savingEdit}
+                  />
+                  {post.media_type === 'video' && (
+                    <>
+                      <input id="pnp-socialpostcard-2"
+                        type="text"
+                        value={editVideoTitle}
+                        onChange={(e) => setEditVideoTitle(e.target.value)}
+                        maxLength={120}
+                        placeholder="Video title…"
+                        disabled={savingEdit}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500"
+                      />
+                      <textarea id="pnp-socialpostcard-3"
+                        value={editVideoDescription}
+                        onChange={(e) => setEditVideoDescription(e.target.value)}
+                        rows={2}
+                        maxLength={500}
+                        placeholder="Video description…"
+                        disabled={savingEdit}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-pink-500 resize-none"
+                      />
+                    </>
+                  )}
+                  {/* Tagged performers */}
+                  <div>
+                    {editTaggedPerformers.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-1.5">
+                        {editTaggedPerformers.map(tp => (
+                          <span key={tp.id} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(94,209,196,0.15)", color: "#5ED1C4" }}>
+                            @{tp.username}
+                            <button type="button" onClick={() => setEditTaggedPerformers(p => p.filter(t => t.id !== tp.id))} className="opacity-60 hover:opacity-100 ml-0.5">×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {showEditTagPicker && (
+                      <div className="relative mb-1.5">
+                        <input id="pnp-socialpostcard-4"
+                          type="text"
+                          value={editTagQuery}
+                          onChange={(e) => setEditTagQuery(e.target.value)}
+                          placeholder="Search creators to tag…"
+                          className="w-full rounded-lg px-2 py-1.5 text-sm text-white bg-white/5 border border-white/15 focus:outline-none focus:border-teal-500"
+                        />
+                        {(editTagResults.length > 0 || editTagSearching) && (
+                          <div className="absolute top-full left-0 right-0 z-50 mt-0.5 rounded-lg overflow-hidden shadow-xl" style={{ background: "#2C2C2E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                            {editTagSearching && <p className="px-3 py-2 text-xs" style={{ color: "#8E8E93" }}>Searching…</p>}
+                            {editTagResults.map(u => (
+                              <button
+                                key={u.id}
+                                type="button"
+                                className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/10 transition-colors text-left"
+                                style={{ color: "#fff" }}
+                                onClick={() => { setEditTaggedPerformers(p => [...p, u]); setEditTagQuery(""); setEditTagResults([]); }}
+                              >
+                                <span className="text-white/90">@{u.username}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowEditTagPicker(v => !v)}
+                      className="text-xs transition-colors"
+                      style={{ color: showEditTagPicker ? "#5ED1C4" : "#8E8E93" }}
+                    >
+                      {showEditTagPicker ? "Hide tag picker" : "Tag performers"}
+                      {editTaggedPerformers.length > 0 && ` (${editTaggedPerformers.length})`}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void handleSaveEdit(); }}
+                      disabled={savingEdit || !editContent.trim()}
+                      className="px-3 py-1 rounded-full text-xs font-semibold transition-all disabled:opacity-40"
+                      style={{ background: "#D4007A", color: "#fff" }}
+                    >
+                      {savingEdit ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
+                      disabled={savingEdit}
+                      className="px-3 py-1 rounded-full text-xs font-semibold transition-all"
+                      style={{ background: "rgba(255,255,255,0.06)", color: "var(--pnp-text-secondary, #8E8E93)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <MentionText
+                  text={translatedContent ?? localContent ?? post.content}
+                  className="text-sm text-white/90 mt-1.5 whitespace-pre-wrap leading-relaxed block"
+                  maxLength={200}
+                  resolvedMentions={post.resolved_mentions}
+                />
+              )}
+              {translatedContent && !isEditing && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTranslatedContent(null); }}
+                  className="text-xs mt-0.5"
+                  style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                >
+                  {t.showOriginal}
+                </button>
+              )}
+
+              {/* Promoted PRIME video carousel (auto-injected synthetic post) */}
+              {post.is_promoted && post.is_carousel && Array.isArray(post.carousel_items) && post.carousel_items.length > 0 && (
+                <div className="mt-3 -mx-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex gap-2 overflow-x-auto pb-2 px-2 snap-x snap-mandatory" style={{ scrollbarWidth: "thin" }}>
+                    {post.carousel_items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => onNavigate(item.link)}
+                        className="flex-shrink-0 w-36 snap-start text-left group"
+                        title={item.title}
+                      >
+                        <div
+                          className="relative w-36 h-24 rounded-lg overflow-hidden bg-black/40"
+                          style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+                        >
+                          {item.thumbnail_url ? (
+                            <img
+                              src={item.thumbnail_url}
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:opacity-80 transition-opacity"
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white/20">
+                              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M2 6a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                              </svg>
+                            </div>
+                          )}
+                          <span
+                            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ background: "rgba(0,0,0,0.4)" }}
+                          >
+                            <svg className="w-8 h-8" fill="#fff" viewBox="0 0 20 20">
+                              <path d="M6.3 4.7l8 5.3-8 5.3z" />
+                            </svg>
+                          </span>
+                          {item.duration && item.duration > 0 && (
+                            <span
+                              className="absolute bottom-1 right-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                              style={{ background: "rgba(0,0,0,0.7)", color: "#fff" }}
+                            >
+                              {Math.floor(item.duration / 60)}:{String(Math.floor(item.duration % 60)).padStart(2, "0")}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-white/90 line-clamp-2 leading-tight">
+                          {item.title}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Channel-promo CTA — produced by the per-channel video upload flow.
+                   Computed client-side per viewer (PRIME-aware), so a single
+                   social_posts row serves all viewer states. */}
+              {channelPromoCta && !post.promoted_link && (() => {
+                const m = post.metadata as { channel_name?: string } | undefined;
+                const channelName = m?.channel_name || "";
+                return (
+                  <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+                    {/* Thumbnail with play button overlay */}
+                    {(post.media_url || post.video_thumbnail_url) && (
+                      <div className="relative cursor-pointer mb-2" onClick={() => {
+                        if (channelPromoCta.canPlayInline && channelPromoCta.videoUrl) {
+                          setChannelPromoPlayerError(false);
+                          setChannelPromoPlaying(true);
+                        } else {
+                          onNavigate(channelPromoCta.href);
+                        }
+                      }}>
+                        {(post.media_url || post.video_thumbnail_url) ? (
+                          <img
+                            src={post.media_url || post.video_thumbnail_url || undefined}
+                            alt={channelName || "Channel promo"}
+                            className="w-full object-cover rounded-xl"
+                            style={{ aspectRatio: "16 / 9" }}
+                            loading="lazy"
+                            onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="w-full aspect-video rounded-xl bg-gradient-to-br from-white/10 to-white/5" />
+                        )}
+                        <div className="absolute inset-0 flex items-center justify-center rounded-xl">
+                          <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm border border-white/20">
+                            <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </div>
+                        </div>
+                        {channelName && (
+                          <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                            📺 PNP Channels · {channelName}
+                          </div>
+                        )}
+                        {!channelPromoCta.canPlayInline && (
+                          <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 text-white text-xs font-medium backdrop-blur-sm">
+                            🔒
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* CTA button */}
+                    <button
+                      onClick={() => {
+                        if (channelPromoCta.canPlayInline && channelPromoCta.videoUrl) {
+                          setChannelPromoPlayerError(false);
+                          setChannelPromoPlaying(true);
+                        } else {
+                          onNavigate(channelPromoCta.href);
+                        }
+                      }}
+                      className="w-full text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90"
+                      style={{ background: "linear-gradient(135deg, #D4007A, #E69138)", color: "#fff" }}
+                    >
+                      {channelPromoCta.canPlayInline && channelPromoCta.videoUrl
+                        ? (lang === "es" ? "▶ Ver ahora" : "▶ Watch now")
+                        : channelPromoCta.label}
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* Promoted CTA buttons (single or dual) */}
+              {post.is_promoted && post.promoted_link && (
+                <div
+                  className={`mt-3 ${post.promoted_link2 ? "flex gap-2" : ""}`}
+                >
+                  <button
+                    onClick={(e) => { e.stopPropagation();
+                      const link = post.promoted_link!;
+                      if (link.startsWith("/")) {
+                        onNavigate(link);
+                      } else if (link.startsWith("https://")) {
+                        window.open(link, "_blank", "noopener,noreferrer");
+                      }
+                    }}
+                    className={`${post.promoted_link2 ? "flex-1" : "w-full"} text-sm font-semibold py-2.5 rounded-lg transition-opacity hover:opacity-90`}
+                    style={{
+                      background: "linear-gradient(135deg, #D4007A, #E69138)",
+                      color: "#fff",
+                    }}
+                  >
+                    {post.promoted_link_label || "Watch Now"}
+                  </button>
+                  {post.promoted_link2 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation();
+                        const link = post.promoted_link2!;
+                        if (link.startsWith("/")) {
+                          onNavigate(link);
+                        } else if (link.startsWith("https://")) {
+                          window.open(link, "_blank", "noopener,noreferrer");
+                        }
+                      }}
+                      className="flex-1 text-sm font-semibold py-2.5 rounded-lg transition-colors hover:bg-white/10"
+                      style={{
+                        background: "rgba(255,255,255,0.06)",
+                        color: "#fff",
+                        border: "1px solid rgba(255,255,255,0.15)",
+                      }}
+                    >
+                      {post.promoted_link2_label || "Open"}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Link preview — only when the post has no media */}
+              {!post.is_promoted && !post.media_url && (() => {
+                const contentStr = translatedContent ?? localContent ?? post.content ?? "";
+                const urlMatch = contentStr.match(/https?:\/\/[^\s<>"]+/);
+                if (!urlMatch) return null;
+                const rawUrl = urlMatch[0].replace(/[.,;:!?)\]]+$/, "");
+                let host = rawUrl;
+                try { host = new URL(rawUrl).host.replace(/^www\./, ""); } catch { /* noop */ }
+                return (
+                  <a
+                    href={rawUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-3 block rounded-lg border border-white/10 bg-white/5 px-3 py-2 hover:bg-white/[0.08] transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg
+                        className="w-4 h-4 flex-shrink-0"
+                        style={{ color: "#5ED1C4" }}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] uppercase tracking-wide font-semibold text-pnp-textSecondary">
+                          {host}
+                        </div>
+                        <div className="text-xs text-white/80 truncate">
+                          {rawUrl}
+                        </div>
+                      </div>
+                    </div>
+                  </a>
+                );
+              })()}
+
+              {/* X embed */}
+              {post.content_type === "x_embed" && post.x_embed_url &&
+               /^https:\/\/(twitter\.com|x\.com)\//.test(post.x_embed_url) && (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <XEmbedCard url={post.x_embed_url} />
+                </div>
+              )}
+
+              {/* Hype is a viewer vote (post_hypes, migration 347) — no wrapper
+                  posts in the feed. Attribution renders as a chip on the ORIGINAL
+                  post below (top_hypers). Legacy community_hype rows are
+                  soft-deleted server-side, so no render path is needed here. */}
+
+              {/* Media — promoted posts show their media here for the carousel;
+                  channel_promo thumbnails are rendered inside channelPromoCta. */}
+              {post.media_url && !channelPromoCta && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'community_hype' && (
+                <div className="mt-3">
+                  {post.media_type === "video" ? (
+                    <>
+                      {(() => {
+                        const vt = localVideoTitle ?? post.video_title;
+                        const vd = localVideoDescription ?? post.video_description;
+                        const safeTitle = vt && vt !== '[object Object]' ? vt : null;
+                        const safeDesc = vd && vd !== '[object Object]' ? vd : null;
+                        if (!safeTitle && !safeDesc) return null;
+                        return (
+                          <div className="mb-2 px-1">
+                            {safeTitle && (
+                              <h4 className="text-sm font-semibold text-white">{safeTitle}</h4>
+                            )}
+                            {safeDesc && (
+                              <p className="text-xs text-white/60 mt-0.5 line-clamp-2">{safeDesc}</p>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {videoError ? (
+                        <div className="w-full rounded-lg bg-white/5 flex flex-col items-center justify-center gap-2 py-10 text-white/40">
+                          <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                          </svg>
+                          <span className="text-xs">
+                            {lang === "es" ? "Este video ya no está disponible" : "Video no longer available"}
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ position: "relative" }}>
+                          <VideoPlayer
+                            src={post.media_url}
+                            controls
+                            controlsList="nodownload"
+                            disablePictureInPicture
+                            onContextMenu={(e) => e.preventDefault()}
+                            playsInline
+                            creatorDisclaimer
+                            className="w-full rounded-xl overflow-hidden shadow-md"
+                            preload="metadata"
+                            poster={post.video_thumbnail_url || undefined}
+                            onError={() => setVideoError(true)}
+                          />
+                          {post.author_username && post.author_creator_status === "active" && (
+                            <img
+                              src="/logo-nav.png"
+                              alt=""
+                              aria-hidden="true"
+                              style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : (() => {
+                    const carouselUrls = extractCarouselUrls(post.media_urls);
+                    const showWatermark = !!(post.author_username && post.author_creator_status === "active");
+                    if (carouselUrls.length > 1) {
+                      return <MediaCarouselImages urls={carouselUrls} showWatermark={showWatermark} onImageClick={(url) => setLightboxSrc(url)} />;
+                    }
+                    return (
+                      <div style={{ position: "relative" }}>
+                        <img
+                          src={post.media_url}
+                          alt="Post image"
+                          className="w-full rounded-lg object-cover"
+                          loading="lazy"
+                          onClick={(e) => { e.stopPropagation(); if (post.media_url) setLightboxSrc(post.media_url); }}
+                          style={{ cursor: "zoom-in", aspectRatio: "4 / 5" }}
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).parentElement!.style.display = "none";
+                          }}
+                        />
+                        {showWatermark && (
+                          <img
+                            src="/logo-nav.png"
+                            alt=""
+                            aria-hidden="true"
+                            style={{ position: "absolute", bottom: 10, right: 10, height: 22, width: "auto", opacity: 0.35, pointerEvents: "none", userSelect: "none", zIndex: 10, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* PRIME plan picker — Santino & Lex free posts. Collapsed pill expands
+                  into a compact plan grid; each plan fires its own NP popup. */}
+              {showPrimeUpsell && !primeUpsellDismissed && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  {!showPrimePlanPicker ? (
+                    /* Step 0 — Collapsed pill */
+                    <div
+                      className="cursor-pointer flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-pink-500/30 hover:border-pink-500/60 transition-all"
+                      style={{ background: "rgba(212, 0, 122, 0.12)", backdropFilter: "blur(4px)" }}
+                      onClick={() => setShowPrimePlanPicker(true)}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-xs">🔥</span>
+                        <span className="text-pink-200 truncate">
+                          {lang === "es"
+                            ? "Hazte PRIME — Contenido exclusivo + Hangouts"
+                            : "Become PRIME — Exclusive content + Hangouts"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm" style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}>
+                          {lang === "es" ? "Ver planes →" : "See plans →"}
+                        </span>
+                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); dismissPrimeUpsell(); }} aria-label="Dismiss" className="text-white/50 hover:text-white text-xs px-1">×</button>
+                      </div>
+                    </div>
+                  ) : selectedPrimePlan ? (
+                    /* Step 2 — Coin picker for the selected plan */
+                    <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPrimePlan(null)}
+                          className="flex items-center gap-1.5 text-white/60 hover:text-white transition-colors text-xs font-medium"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                          </svg>
+                          <span className="text-pink-300 font-semibold">{selectedPrimePlan.label}</span>
+                          <span className="text-white/40">·</span>
+                          <span className="text-white font-bold">${selectedPrimePlan.price}</span>
+                        </button>
+                        <button type="button" onClick={() => { setShowPrimePlanPicker(false); setSelectedPrimePlan(null); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
+                      </div>
+                      <div className="p-2.5">
+                        <p className="text-[10px] text-white/50 mb-2 text-center">
+                          {lang === "es" ? "Elige cómo pagar" : "Choose how to pay"}
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {NP_COINS_SUBSCRIBE.map((coin) => (
+                            <button
+                              key={coin.code}
+                              type="button"
+                              disabled={inlineCheckout.launching}
+                              onClick={() => inlineCheckout.start({ planId: selectedPrimePlan.id, isSubscription: selectedPrimePlan.isRecurring, payCurrency: coin.code, storageKey: "pnp_pending_prime_banner" })}
+                              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-50 transition-colors text-left"
+                            >
+                              <span className="text-base font-bold leading-none flex-shrink-0" style={{ color: coin.color }}>{coin.icon}</span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs font-bold text-white">{coin.label}</span>
+                                  {"recommended" in coin && coin.recommended && (
+                                    <span className="text-[7px] font-bold px-1 py-px rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 leading-none">★</span>
+                                  )}
+                                </div>
+                                <span className="text-[9px] leading-none text-white/40">{coin.network}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        {inlineCheckout.error && (
+                          <p className="mt-2 text-[10px] text-red-400 text-center">{inlineCheckout.error}</p>
+                        )}
+                        <div className="mt-2 text-center">
+                          <a href="/crypto-guide" target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 underline decoration-dotted">
+                            {lang === "es" ? "¿Qué red usar? →" : "Which network? →"}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Step 1 — Plan grid */
+                    <div className="rounded-xl overflow-hidden border-2 border-pink-500/40" style={{ background: "rgba(212,0,122,0.08)" }}>
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">🔥</span>
+                          <span className="text-xs font-bold text-pink-200">{lang === "es" ? "Elige tu plan PRIME" : "Choose your PRIME plan"}</span>
+                        </div>
+                        <button type="button" onClick={() => { setShowPrimePlanPicker(false); dismissPrimeUpsell(); }} aria-label="Close" className="text-white/40 hover:text-white transition-colors text-base leading-none px-1">×</button>
+                      </div>
+                      <div className="p-2.5 space-y-2">
+                        {PRIME_PLANS.map((plan) => (
+                          <div key={plan.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${plan.recommended ? "border-pink-500/50 bg-pink-500/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"}`}>
+                            <div className="min-w-0 flex-1">
+                              {plan.recommended && <div className="text-[10px] font-bold text-pink-400 uppercase tracking-wider mb-0.5">★ {lang === "es" ? "Mejor valor" : "Best value"}</div>}
+                              <div className="text-[12px] font-semibold text-white leading-tight">{plan.label}</div>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[10px] text-white/50">{plan.duration}</span>
+                                {plan.isRecurring && <span className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">{lang === "es" ? "Recurrente" : "Recurring"}</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-sm font-black text-white">${plan.price}</span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPrimePlan(plan)}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95 whitespace-nowrap"
+                                style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                              >
+                                {lang === "es" ? "Elegir →" : "Select →"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="px-3 pb-2.5 text-center">
+                        <a href="/subscribe" className="text-[10px] text-white/40 hover:text-white/70 transition-colors underline decoration-dotted" onClick={(e) => e.stopPropagation()}>
+                          {lang === "es" ? "Ver todos los detalles en /subscribe" : "Full details at /subscribe"}
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Creator subscribe upsell micro-banner: shown on every free post from active creators */}
+              {showCreatorSubscribeUpsell && !creatorUpsellDismissed && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  {showCreatorSubWizard ? (
+                    <CreatorSubscribeWizard
+                      creatorId={String(post.author_id)}
+                      creatorName={post.author_first_name || post.author_username}
+                      username={post.author_username}
+                      priceUsd={Number(post.author_creator_price || 15)}
+                      lang={lang === "es" ? "es" : "en"}
+                      compact
+                      onSuccess={() => { setShowCreatorSubWizard(false); window.location.reload(); }}
+                      onClose={() => setShowCreatorSubWizard(false)}
+                      storageKey={`pnp_creator_sub_${post.author_id}`}
+                    />
+                  ) : (
+                    <div
+                      className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-amber-500/30 transition-all"
+                      style={{ background: "rgba(230, 145, 56, 0.12)", backdropFilter: "blur(4px)" }}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-xs">⭐</span>
+                        <span className="text-amber-200 truncate">
+                          {lang === "es"
+                            ? `Suscríbete a mi contenido exclusivo y hangout $${post.author_creator_price || 15}/mes`
+                            : `Subscribe to my exclusive content & hangout $${post.author_creator_price || 15}/mo`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setShowCreatorSubWizard(true)}
+                          className="px-2.5 py-0.5 rounded text-[10px] font-bold text-white shadow-sm transition-transform active:scale-95"
+                          style={{ background: "linear-gradient(135deg, #D4007A, #E69138)" }}
+                        >
+                          {lang === "es" ? `Suscribirme $${post.author_creator_price || 15}` : `Subscribe $${post.author_creator_price || 15}`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={dismissCreatorUpsell}
+                          aria-label="Dismiss"
+                          className="text-white/50 hover:text-white text-xs px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* "More from @X" — shown to viewers who already unlocked an exclusive post */}
+              {post.is_exclusive && post.exclusive_status === "unlocked" && post.author_username && !isOwn && (
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                  <a
+                    href={`/c/${encodeURIComponent(post.author_username)}`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white shadow-sm transition-all hover:scale-[1.02]"
+                    style={{ background: "linear-gradient(135deg, #D4007A, #7B61FF)" }}
+                  >
+                    <span>▶</span>
+                    {lang === "es"
+                      ? `Más de @${post.author_username}${isPrimeCreator ? " en PRIME" : ""}`
+                      : `More from @${post.author_username}${isPrimeCreator ? " on PRIME" : ""}`}
+                  </a>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* 🔥 Hype attribution banner — hyped posts get a warm tinted row */}
+          {!post.is_carousel && hypeCount > 0 && (
+            <div
+              className="mt-3 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[12px]"
+              style={{ background: "linear-gradient(90deg, rgba(255,149,0,0.10), rgba(255,59,48,0.06))", border: "1px solid rgba(255,149,0,0.22)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-base leading-none flex-shrink-0" style={{ filter: "drop-shadow(0 0 6px rgba(255,149,0,0.85))" }}>🔥</span>
+              {(post.top_hypers || []).length > 0 && (
+                <div className="flex -space-x-1.5 flex-shrink-0">
+                  {(post.top_hypers || []).slice(0, 3).map((h) => (
+                    <UserAvatar
+                      key={h.id}
+                      userId={h.id}
+                      photoUrl={h.photo_file_id}
+                      displayName={h.first_name || h.username}
+                      size="xs"
+                      className="ring-2 ring-black/60"
+                      showOnline={false}
+                      linkToProfile={false}
+                    />
+                  ))}
+                </div>
+              )}
+              <span className="text-white/80 flex-1 min-w-0 truncate">
+                {(post.top_hypers && post.top_hypers.length > 0)
+                  ? (
+                    <>
+                      <span className="text-white font-semibold">{post.top_hypers[0].first_name || post.top_hypers[0].username || 'Someone'}</span>
+                      {hypeCount > 1 && <> and <span className="text-orange-400 font-semibold">{hypeCount - 1}</span> other{hypeCount - 1 === 1 ? '' : 's'}</>}
+                      {' '}hyped this
+                    </>
+                  )
+                  : <><span className="text-orange-400 font-bold">{hypeCount}</span> {hypeCount === 1 ? 'person hyped' : 'people hyped'} this</>
+                }
+              </span>
+              {hypeCount >= 5 && (
+                <span className="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-black" style={{ background: "linear-gradient(135deg, #FF9500, #FF3B30)" }}>
+                  HOT
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Actions bar — hidden on synthetic carousel posts (no real post to like) */}
+          {!post.is_carousel && (
+          <div
+            className="flex items-center gap-3 mt-3 pt-2.5 flex-wrap border-t border-white/5"
+            style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Heart like */}
+            <button
+              onClick={handleLike}
+              className="flex items-center gap-1.5 text-xs transition-colors hover:text-pink-400"
+              style={{ color: post.liked_by_me ? "#D4007A" : "#8E8E93" }}
+            >
+              <svg
+                className="w-4 h-4"
+                fill={post.liked_by_me ? "currentColor" : "none"}
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={post.liked_by_me ? 0 : 1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"
+                />
+              </svg>
+              {(post.likes_count || 0) > 0 && <span>{post.likes_count}</span>}
+            </button>
+
+            {/* Comment / Reply toggle */}
+            <button
+              onClick={toggleReplies}
+              className="flex items-center gap-1.5 text-xs hover:text-blue-400 transition-colors"
+              style={showReplies ? { color: "#60A5FA" } : undefined}
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 01-.923 1.785A5.969 5.969 0 006 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337z"
+                />
+              </svg>
+              {localReplyCount > 0 && <span>{localReplyCount}</span>}
+            </button>
+
+            {/* Share — always visible; disclaimer modal gates first share. */}
+            <button
+              onClick={() => {
+                if (contentDisclaimerAccepted) {
+                  handleShare();
+                } else {
+                  setShowDisclaimerModal(true);
+                }
+              }}
+              className="flex items-center gap-1.5 text-xs hover:text-green-400 transition-colors"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0-12.814a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0 12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
+                />
+              </svg>
+            </button>
+
+            {/* Translate — visible on every post that has any text content. */}
+            {post.content && (
+              <button
+                onClick={handleTranslate}
+                disabled={isTranslating}
+                className="flex items-center gap-1 text-xs transition-colors hover:text-teal-400 disabled:opacity-40"
+                style={translatedContent ? { color: "#5ED1C4" } : { color: "var(--pnp-text-secondary, #8E8E93)" }}
+                title={translatedContent ? t.showOriginal : t.translate}
+              >
+                {isTranslating ? (
+                  <span className="text-[10px]">{t.translating}</span>
+                ) : (
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802"
+                    />
+                  </svg>
+                )}
+              </button>
+            )}
+
+            {/* Hype — viewer-cast boost vote (post_hypes, migration 347).
+                Toggles a 7-day vote that shows as attribution on the ORIGINAL
+                post and feeds into _applyDiscoveryBoost. Not shown on hyper's
+                own posts (self-hype allowed but pointless in feed context). */}
+            {user && !post.is_promoted
+              && (post.metadata as Record<string, unknown> | null | undefined)?.kind !== 'channel_promo' && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (hypeInFlight.current) return;
+                  hypeInFlight.current = true;
+                  const nextHyped = !hypePosted;
+                  setHypePosted(nextHyped);
+                  setHypeCount(c => Math.max(0, c + (nextHyped ? 1 : -1)));
+                  try {
+                    const res = await togglePostHype(post.id);
+                    if (typeof res.hyped === 'boolean') setHypePosted(res.hyped);
+                    if (typeof res.hype_score === 'number') setHypeCount(Math.max(0, res.hype_score));
+                    if (typeof res.dailyLimit === 'number' && typeof res.dailyRemaining === 'number') {
+                      setHypeQuota({ remaining: res.dailyRemaining, limit: res.dailyLimit, resetsAt: res.dailyResetsAt ?? null });
+                    }
+                  } catch (err) {
+                    setHypePosted(!nextHyped);
+                    setHypeCount(c => Math.max(0, c + (nextHyped ? -1 : 1)));
+                    if (err instanceof ApiError && err.code === 'HYPE_QUOTA_EXCEEDED') {
+                      const d = err.data as { dailyLimit?: number; dailyRemaining?: number; resetsAt?: string | null };
+                      if (typeof d?.dailyLimit === 'number') {
+                        setHypeQuota({ remaining: d.dailyRemaining ?? 0, limit: d.dailyLimit, resetsAt: d.resetsAt ?? null });
+                      }
+                      setHypeError(err.message);
+                      setTimeout(() => setHypeError(null), 4500);
+                    } else {
+                      const msg = err instanceof Error ? err.message : '';
+                      setHypeError(msg || 'Failed');
+                      setTimeout(() => setHypeError(null), 2500);
+                    }
+                  } finally {
+                    hypeInFlight.current = false;
+                  }
+                }}
+                className="flex items-center gap-1.5 text-xs transition-all"
+                style={hypePosted ? { color: '#FF9500', filter: 'drop-shadow(0 0 5px rgba(255,149,0,0.6))' } : { color: 'var(--pnp-text-secondary, #8E8E93)' }}
+                title={hypePosted ? 'Un-hype' : 'Hype this post'}
+                aria-label={hypePosted ? 'Un-hype this post' : 'Hype this post'}
+                aria-pressed={hypePosted}
+              >
+                <svg className={hypePosted ? "w-5 h-5" : "w-4 h-4"} fill={hypePosted ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={hypePosted ? 0 : 1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
+                </svg>
+                <span className={`tabular-nums${hypePosted ? ' font-semibold' : ''}`}>{hypeCount > 0 ? hypeCount : ''}</span>
+              </button>
+            )}
+
+          </div>
+          )}
+
+          {hypeError && (
+            <p className="text-xs text-red-400 mt-1" role="alert">{hypeError}</p>
+          )}
+
+          {hypeQuota && !hypeError && hypeQuota.remaining < hypeQuota.limit && (() => {
+            const anyT = t as unknown as Record<string, (...args: unknown[]) => string>;
+            let label: string;
+            if (hypeQuota.remaining === 0) {
+              const ms = hypeQuota.resetsAt ? new Date(hypeQuota.resetsAt).getTime() - Date.now() : 0;
+              if (hypeQuota.resetsAt && ms > 0) {
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                label = anyT.hypeQuotaFullWithReset?.(hypeQuota.limit, h, m)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day) — resets in ${h}h ${m}m`;
+              } else {
+                label = anyT.hypeQuotaFull?.(hypeQuota.limit)
+                  ?? `Out of hypes today (${hypeQuota.limit}/day)`;
+              }
+            } else {
+              label = anyT.hypeQuotaLeft?.(hypeQuota.remaining, hypeQuota.limit)
+                ?? `${hypeQuota.remaining}/${hypeQuota.limit} hypes left today`;
+            }
+            const tooltip = hypeQuota.resetsAt
+              ? (anyT.hypeQuotaTooltip?.(new Date(hypeQuota.resetsAt).toLocaleString())
+                  ?? `Resets ${new Date(hypeQuota.resetsAt).toLocaleString()}`)
+              : undefined;
+            return (
+              <p
+                className={`text-[10px] mt-1 ${hypeQuota.remaining === 0 ? 'text-red-400' : hypeQuota.remaining <= 1 ? 'text-orange-400' : 'text-pnp-textSecondary'}`}
+                title={tooltip}
+              >
+                🔥 {label}
+              </p>
+            );
+          })()}
+
+          {/* Replies section */}
+          {showReplies && (
+            <div className="mt-3 pt-3 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
+              {loadingReplies ? (
+                <div className="space-y-3 mb-3" aria-label={t.loadingReplies} role="status">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex gap-2 animate-pulse">
+                      <div className="w-7 h-7 rounded-full bg-white/10 flex-shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-2.5 bg-white/10 rounded w-1/3" />
+                        <div className="h-2 bg-white/10 rounded w-2/3" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : replies.length === 0 ? (
+                <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                  {t.noCommentsYet}
+                </p>
+              ) : (
+                <div className="space-y-3 mb-3">
+                  {replies.map((reply) => {
+                    const pending = (reply as unknown as { __pending?: boolean }).__pending === true;
+                    const replyIsOwn = String(reply.author_id) === currentUserId;
+                    const replyPhoto = replyIsOwn && user?.photoUrl ? user.photoUrl : reply.author_photo;
+                    const likeState = replyLikes[reply.id] ?? { liked: !!reply.liked_by_me, count: reply.likes_count || 0 };
+                    const isHighlighted = highlightedReplyId != null && String(highlightedReplyId) === String(reply.id);
+                    return (
+                    <div
+                      key={reply.id}
+                      data-reply-id={reply.id}
+                      className={`flex gap-2 transition-all rounded-lg ${pending ? "opacity-60" : ""} ${isHighlighted ? "-mx-2 px-2 py-2 ring-2 ring-pnp-accent/70" : ""}`}
+                      style={isHighlighted ? { background: "rgba(212,0,122,0.08)" } : undefined}
+                    >
+                      <UserAvatar
+                        userId={reply.author_id}
+                        photoUrl={replyPhoto}
+                        displayName={reply.author_first_name || reply.author_username}
+                        size="sm"
+                        linkToProfile={!pending}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-white truncate">
+                            {reply.author_first_name || reply.author_username}
+                          </span>
+                          <span className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
+                            {pending ? t.sending : timeAgo(reply.created_at, t.translating)}
+                          </span>
+                        </div>
+                        <MentionText
+                          text={reply.content}
+                          className="text-xs text-white/80 mt-0.5 whitespace-pre-wrap block"
+                          resolvedMentions={reply.resolved_mentions}
+                        />
+                        {/* Per-reply actions — hidden while row is pending (no real id yet) */}
+                        {!pending && (
+                          <div className="mt-1 flex items-center gap-3 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); void toggleReplyLike(reply); }}
+                              className="inline-flex items-center gap-1 transition-colors active:scale-95"
+                              style={{ color: likeState.liked ? "#D4007A" : "#8E8E93" }}
+                              aria-pressed={likeState.liked}
+                            >
+                              <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                              </svg>
+                              {likeState.count > 0 && <span>{likeState.count}</span>}
+                            </button>
+                            {/* Reply-to-reply: prefills composer with the reply author's @handle */}
+                            {!replyIsOwn && (reply.author_username || reply.author_first_name) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const handle = reply.author_username || reply.author_first_name || "";
+                                  const mention = `@${handle} `;
+                                  setReplyText((prev) => {
+                                    if (prev.startsWith(mention)) return prev;
+                                    const cleaned = prev.replace(/^@\S+\s+/, "");
+                                    return mention + cleaned;
+                                  });
+                                  setTimeout(() => {
+                                    composerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                    composerRef.current?.querySelector("textarea")?.focus();
+                                  }, 50);
+                                }}
+                                className="inline-flex items-center gap-1 transition-colors hover:text-white/80"
+                                style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                                </svg>
+                                <span>{t.reply}</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Reply composer */}
+              {currentUserId && (
+                <div ref={composerRef}>
+                  {/* "Reply to @author" pill — only when composer is empty and post has an author username on non-own posts */}
+                  {post.author_username && !replyText.trim() && !isOwn && (
+                    <button
+                      type="button"
+                      onClick={() => setReplyText(`@${post.author_username} `)}
+                      className="inline-flex items-center gap-1.5 mb-2 px-2 py-0.5 rounded-full text-xs transition-colors hover:bg-white/10"
+                      style={{ background: "rgba(94,209,196,0.10)", color: "#5ED1C4" }}
+                    >
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                      </svg>
+                      <span>Reply to @{post.author_username}</span>
+                    </button>
+                  )}
+                  <div className="flex gap-2 items-end">
+                    <MentionInput
+                      value={replyText}
+                      onChange={(v) => { setReplyText(v); if (replyError) setReplyError(null); }}
+                      placeholder={t.writeReply}
+                      maxLength={500}
+                      rows={2}
+                      disabled={sendingReply}
+                      onSubmit={handleSendReply}
+                      className="flex-1 bg-white/5 text-white text-xs rounded-lg px-3 py-2 outline-none border border-white/10 focus:border-white/30 placeholder:text-white/30 resize-none"
+                    />
+                    <button
+                      onClick={handleSendReply}
+                      disabled={!replyText.trim() || sendingReply}
+                      className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-30 transition-colors flex-shrink-0"
+                      style={{ color: "#D4007A" }}
+                    >
+                      {sendingReply ? "..." : t.reply}
+                    </button>
+                  </div>
+                  {/* Inline error pill — appears under composer on reply failure */}
+                  {replyError && (
+                    <div
+                      role="alert"
+                      className="mt-1.5 flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg text-[11px]"
+                      style={{ background: "rgba(239,68,68,0.10)", color: "#FCA5A5" }}
+                    >
+                      <span className="truncate">{replyError}</span>
+                      <button
+                        type="button"
+                        onClick={() => { setReplyError(null); void handleSendReply(); }}
+                        disabled={!replyText.trim()}
+                        className="font-semibold disabled:opacity-50"
+                        style={{ color: "#FCA5A5" }}
+                      >
+                        {t.retry}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+      </div>
+
+      {/* Channel-promo inline video modal */}
+      {channelPromoPlaying && channelPromoCta?.videoUrl && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setChannelPromoPlaying(false)}
+        >
+          <div
+            className="relative w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col"
+            style={{ background: "#0A0A14", maxHeight: "92vh" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <span className="text-sm font-semibold text-white truncate">
+                {(post.metadata as { channel_name?: string } | undefined)?.channel_name
+                  ? `📺 ${(post.metadata as { channel_name?: string }).channel_name}`
+                  : (post.content || "Channel Video")}
+              </span>
+              <button
+                onClick={() => setChannelPromoPlaying(false)}
+                className="ml-3 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors"
+                style={{ color: "#8E8E93" }}
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {channelPromoPlayerError ? (
+              <div className="w-full flex flex-col items-center justify-center gap-2 py-10 bg-black" style={{ minHeight: 180 }}>
+                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+                <p className="text-xs text-white/40">{lang === "es" ? "Video no disponible" : "Video unavailable"}</p>
+              </div>
+            ) : (
+              <VideoPlayer
+                key={channelPromoCta.videoUrl ?? "promo"}
+                src={channelPromoCta.videoUrl ?? undefined}
+                controls
+                autoPlay
+                playsInline
+                controlsList="nodownload"
+                preload="metadata"
+                creatorDisclaimer
+                onError={() => setChannelPromoPlayerError(true)}
+                className="w-full bg-black"
+                style={{ maxHeight: "60vh" }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Crypto onboarding guide — auto-launched on first NP checkout */}
+      {inlineCheckout.showGuide && (
+        <div
+          className="fixed inset-0 z-[210] flex items-start justify-center p-3 overflow-y-auto"
+          style={{ background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)" }}
+          onClick={(e) => { e.stopPropagation(); inlineCheckout.dismissGuide(); }}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl p-4 my-6"
+            style={{ background: "#0f0f10", border: "1px solid rgba(255,255,255,0.08)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CryptoOnboardingWizard
+              lang={lang === "es" ? "es" : "en"}
+              onConfirm={inlineCheckout.confirmGuideAndStart}
+              onSkip={inlineCheckout.skipGuideAndStart}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Content Disclaimer Modal */}
+      {showDisclaimerModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+          onClick={(e) => { e.stopPropagation(); setShowDisclaimerModal(false); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-5 space-y-4"
+            style={{
+              background: "var(--pnp-surface, #1C1C1E)",
+              border: "1px solid rgba(212,0,122,0.25)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, #D4007A, #E69138)",
+                }}
+              >
+                <svg
+                  className="w-5 h-5 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-white">
+                Content Sharing Disclaimer
+              </h3>
+            </div>
+            <p className="text-sm text-white/80 leading-relaxed">
+              By accepting this disclaimer, you acknowledge that you are
+              responsible for any content you share from this platform. Shared
+              content must comply with our community guidelines and applicable
+              laws.
+            </p>
+            <p className="text-xs text-white/50 leading-relaxed">
+              This action is permanent and cannot be undone. Your acceptance
+              date, time, and IP address will be recorded.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowDisclaimerModal(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-white/20 text-white/70 hover:border-white/40 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setDisclaimerAccepting(true);
+                  try {
+                    await onAcceptDisclaimer?.();
+                    setShowDisclaimerModal(false);
+                    handleShare();
+                  } catch { /* silent */ }
+                  setDisclaimerAccepting(false);
+                }}
+                disabled={disclaimerAccepting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50 transition-all"
+                style={{
+                  background: "linear-gradient(135deg, #D4007A, #E69138)",
+                }}
+              >
+                {disclaimerAccepting ? "..." : "Accept & Share"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Post Modal */}
+      <SharePostModal
+        postId={post.id}
+        postContent={post.content}
+        authorName={post.author_first_name || post.author_username}
+        mediaType={post.media_type}
+        videoThumbnailUrl={post.video_thumbnail_url}
+        mediaUrl={post.media_url}
+        isOwnPost={isOwn || post.author_id === 'pnptv-official'}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+      />
+      {lightboxSrc && (() => {
+        const carouselList = extractCarouselUrls(post.media_urls);
+        const list = carouselList.length > 1 ? carouselList : (post.media_url ? [post.media_url] : []);
+        if (list.length === 0) return null;
+        return (
+          <MediaLightbox
+            src={lightboxSrc}
+            mediaType="image"
+            mediaList={list}
+            onClose={() => setLightboxSrc(null)}
+            onNavigate={(url) => setLightboxSrc(url)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
