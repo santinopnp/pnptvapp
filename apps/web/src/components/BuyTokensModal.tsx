@@ -492,7 +492,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // Card onramp → auto-buy flow for custom amounts and preset packages.
   // Mirrors handleFundForPackage. When pkgId is provided, actualTokens uses
   // the package's real token count (including bonus) instead of the flat rate.
-  const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string) => {
+  const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string, closeOnCancel = false) => {
     if (!activeWallet) return;
     const actualTokens = tokens ?? Math.round(usd * 6);
     setError(null);
@@ -522,7 +522,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/cancel|closed|reject/i.test(msg)) return;
+      if (/cancel|closed|reject/i.test(msg)) {
+        if (closeOnCancel) onClose();
+        return;
+      }
       setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
     } finally {
       setPayingCustom(false);
@@ -566,11 +569,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       _executeIntent("usdc", { tokens, ...(pkgId ? { packageId: pkgId } : {}) }, tokens, usd)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          if (!/cancel|closed|reject/i.test(msg)) setError(msg);
+          if (/cancel|closed|reject/i.test(msg)) { onClose(); return; }
+          setError(msg);
         })
         .finally(() => setPayingCustom(false));
     } else {
-      void handleFundForCustomAmount(usd, tokens, pkgId);
+      void handleFundForCustomAmount(usd, tokens, pkgId, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, walletLoading, loadingPackages, authenticated, activeWallet?.address, initialPackageId, initialAmountUsd]);
