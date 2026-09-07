@@ -1,0 +1,132 @@
+import React, { Component, ErrorInfo, ReactNode } from "react";
+import * as Sentry from "@sentry/react";
+import { getI18n, getLang } from "@/lib/i18n";
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught:", error, errorInfo);
+
+    // Auto-recover from DOM mutation errors (browser extensions / translate)
+    const isDomError =
+      error.name === "NotFoundError" ||
+      error.message?.includes("removeChild") ||
+      error.message?.includes("insertBefore") ||
+      error.message?.includes("is not a child");
+
+    if (isDomError) {
+      console.warn("ErrorBoundary: DOM mutation error, auto-recovering");
+      this.setState({ hasError: false, error: null });
+      return;
+    }
+
+    // Auto-reload on stale chunk errors (dynamic import fails after deploy)
+    const isChunkError =
+      error.message?.includes("Failed to fetch dynamically imported module") ||
+      error.message?.includes("Loading chunk") ||
+      error.message?.includes("Loading CSS chunk") ||
+      error.name === "ChunkLoadError";
+
+    if (isChunkError) {
+      const reloadKey = "pnptv_chunk_reload";
+      const lastReload = sessionStorage.getItem(reloadKey);
+      const now = Date.now();
+      // Only auto-reload once per 30 seconds to avoid infinite loops
+      if (!lastReload || now - Number(lastReload) > 30000) {
+        sessionStorage.setItem(reloadKey, String(now));
+        window.location.reload();
+        return;
+      }
+    }
+
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } });
+    }
+
+    // Log to backend in production
+    if (import.meta.env.MODE === "production") {
+      fetch("/api/log-error", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          error: error.toString(),
+          stack: error.stack,
+          componentStack: errorInfo.componentStack,
+        }),
+      }).catch(() => {
+        // Silent fail - don't crash on logging error
+      });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      const e = getI18n(getLang()).gates.error;
+
+      return (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "100dvh",
+            padding: "20px",
+            backgroundColor: "var(--pnp-surface, #1C1C1E)",
+            color: "#fff",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: "48px", marginBottom: "16px" }}>⚠️</div>
+          <h1 style={{ fontSize: "24px", marginBottom: "8px", color: "#FFB454" }}>
+            {e.title}
+          </h1>
+          <p style={{ marginBottom: "24px", color: "var(--pnp-text-secondary, #8E8E93)" }}>
+            {e.description}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "12px 24px",
+              background: "linear-gradient(135deg, #E69138 0%, #D4007A 100%)",
+              border: "none",
+              borderRadius: "8px",
+              color: "#fff",
+              fontSize: "16px",
+              fontWeight: "600",
+              cursor: "pointer",
+            }}
+          >
+            {e.refreshPage}
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default ErrorBoundary;

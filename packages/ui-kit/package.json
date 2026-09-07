@@ -1,0 +1,14 @@
+{
+  "name": "@pnptv/ui-kit",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tailwind": "./dist/tailwind.js"
+  }
+}

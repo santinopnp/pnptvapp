@@ -1,0 +1,98 @@
+import { UserManager, WebStorageStateStore, User } from "oidc-client-ts";
+
+const AUTHENTIK_URL = import.meta.env.VITE_AUTHENTIK_URL || "https://auth.pnptv.app";
+const CLIENT_ID = import.meta.env.VITE_AUTHENTIK_CLIENT_ID || "pnptv-web";
+
+// Use current origin so SSO works correctly
+const APP_URL = typeof window !== "undefined" ? window.location.origin : (import.meta.env.VITE_APP_URL || "https://pnptv.app");
+
+const userManager = new UserManager({
+  authority: `${AUTHENTIK_URL}/application/o/pnptv-web/`,
+  client_id: CLIENT_ID,
+  redirect_uri: `${APP_URL}/auth/callback`,
+  post_logout_redirect_uri: APP_URL,
+  response_type: "code",
+  scope: "openid profile email",
+  // Use localStorage instead of sessionStorage so Safari Private Browsing / ITP
+  // doesn't wipe OIDC state between the redirect out and the callback.
+  userStore: new WebStorageStateStore({ store: localStorage }),
+  stateStore: new WebStorageStateStore({ store: localStorage }),
+  automaticSilentRenew: true,
+  silent_redirect_uri: `${APP_URL}/auth/silent-renew`,
+});
+
+const ALLOWED_RETURN_HOSTS = new Set([
+  "pnptv.app",
+  "app.pnptv.app",
+]);
+
+export function sanitizeReturnTo(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  // Must start with a single slash — reject protocol-relative URLs (//evil.com)
+  if (/^\/(?!\/)/.test(raw)) {
+    return raw.startsWith('/') ? raw : null;
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return null;
+    if (!ALLOWED_RETURN_HOSTS.has(url.hostname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+const RETURN_TO_KEY = "pnptv:returnTo";
+
+// Safe storage wrapper — Safari Private Browsing throws on localStorage.setItem,
+// and iOS in-app browsers (Instagram/TikTok/etc.) sometimes disable it too.
+function safeSet(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch {
+    try { sessionStorage.setItem(key, value); } catch { /* ignore */ }
+  }
+}
+function safeGet(key: string): string | null {
+  try { const v = localStorage.getItem(key); if (v) return v; } catch { /* ignore */ }
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function safeDel(key: string) {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+  try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+export function rememberReturnTo(url: string | null): void {
+  if (typeof window === "undefined") return;
+  if (url) safeSet(RETURN_TO_KEY, url);
+  else safeDel(RETURN_TO_KEY);
+}
+
+export function consumeReturnTo(): string | null {
+  if (typeof window === "undefined") return null;
+  const raw = safeGet(RETURN_TO_KEY);
+  safeDel(RETURN_TO_KEY);
+  return sanitizeReturnTo(raw);
+}
+
+export async function login(): Promise<void> {
+  await userManager.signinRedirect();
+}
+
+export async function handleCallback(): Promise<User> {
+  return userManager.signinRedirectCallback();
+}
+
+export async function logout(): Promise<void> {
+  await userManager.signoutRedirect();
+}
+
+export async function getUser(): Promise<User | null> {
+  return userManager.getUser();
+}
+
+export async function getAccessToken(): Promise<string | null> {
+  const user = await userManager.getUser();
+  if (!user || user.expired) return null;
+  return user.access_token;
+}
+
+export { userManager };
