@@ -253,7 +253,17 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
       const host = ref.current;
       host.innerHTML = "";
       const ins = document.createElement("ins");
-      ins.className = "eas6a97888e2";
+      // ExoClick uses format-specific class names for the <ins> element.
+      const FORMAT_INS_CLASS: Partial<Record<AdSlotFormat, string>> = {
+        instant_message:       "eas6a97888e6",
+        push_inpage:           "eas6a97888e2",
+        recommendation_widget: "eas6a97888e2",
+        multi_format:          "eas6a97888e2",
+        video_slider:          "eas6a97888e2",
+        outstream_video:       "eas6a97888e2",
+        vertical_video:        "eas6a97888e2",
+      };
+      ins.className = FORMAT_INS_CLASS[cfg.format] ?? "eas6a97888e2";
       ins.setAttribute("data-zoneid", String(cfg.zoneId));
       host.appendChild(ins);
       const push = document.createElement("script");

@@ -45,7 +45,7 @@ const SURFACE_TTL_SEC = {
 // Ad-free trial for new signups — first N days after account creation, no ads
 // at all. Matched to Prime Trial duration so the transition prompt lands
 // naturally: "your ad-free trial ended — start your Prime trial to keep it".
-const AD_FREE_TRIAL_DAYS = 3;
+const AD_FREE_TRIAL_DAYS = 0;
 
 async function isFeatureEnabled() {
   try {
