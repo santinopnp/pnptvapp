@@ -1,1 +1,1 @@
-module.exports = require('../bot/utils/uxUtils');
+module.exports = require('../bot/utils/uxUtils.js');

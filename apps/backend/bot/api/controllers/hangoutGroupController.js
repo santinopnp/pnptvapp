@@ -3208,7 +3208,7 @@ const forwardMessage = async (req, res) => {
 
   const io = req.app.get('io');
   const DmService = require('../../../services/dmService');
-  const { resolveUserId } = require('../utils/helpers');
+  const { resolveUserId } = require('../../utils/helpers');
   const results = [];
 
   for (const target of targets) {

@@ -13,7 +13,7 @@
  * If check fails, request is immediately rejected with 403.
  */
 
-const logger = require('../utils/logger');
+const logger = require('../../utils/logger');
 const { Pool } = require('pg');
 
 // Blocked outbound domains and patterns

@@ -432,7 +432,7 @@ const setMedia = asyncHandler(async (req, res) => {
 
   // Notify media broadcaster to reload source / toggle playback
   try {
-    const broadcaster = require('../../../../workers/mainStageMediaBroadcaster');
+    const broadcaster = require('../../../workers/mainStageMediaBroadcaster');
     if (src !== undefined)     await broadcaster.updateSource(src);
     if (playing !== undefined) await broadcaster.setPlaying(Boolean(playing));
   } catch (err) {

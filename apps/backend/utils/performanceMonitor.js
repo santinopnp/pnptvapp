@@ -2,131 +2,55 @@ const logger = require('./logger');
 
 class PerformanceMonitor {
   constructor() {
-    this.metrics = {};
-    this.startTimes = {};
+    this.timers = new Map();
+    this.metrics = new Map();
   }
 
-  /**
-   * Start timing a specific operation
-   * @param {string} operationName - Name of the operation to time
-   */
-  start(operationName) {
-    if (!this.startTimes[operationName]) {
-      this.startTimes[operationName] = [];
-    }
-    this.startTimes[operationName].push(process.hrtime());
+  start(label) {
+    this.timers.set(label, Date.now());
   }
 
-  /**
-   * End timing and record the duration
-   * @param {string} operationName - Name of the operation
-   * @param {Object} [context] - Additional context for logging
-   */
-  end(operationName, context = {}) {
-    const startTimes = this.startTimes[operationName];
-    if (!startTimes || startTimes.length === 0) {
-      logger.warn(`Performance monitoring: No start time found for ${operationName}`);
-      return;
-    }
+  end(label, metadata = {}) {
+    const startTime = this.timers.get(label);
+    if (!startTime) return 0;
+    const duration = Date.now() - startTime;
+    this.timers.delete(label);
 
-    const startTime = startTimes.pop();
-    const diff = process.hrtime(startTime);
-    const durationMs = (diff[0] * 1000) + (diff[1] / 1000000);
-    
-    // Store metric
-    if (!this.metrics[operationName]) {
-      this.metrics[operationName] = [];
-    }
-    this.metrics[operationName].push(durationMs);
-    // Cap array to last 500 samples to prevent unbounded growth
-    if (this.metrics[operationName].length > 500) {
-      this.metrics[operationName] = this.metrics[operationName].slice(-500);
-    }
+    const current = this.metrics.get(label) || { count: 0, totalDuration: 0, maxDuration: 0 };
+    current.count += 1;
+    current.totalDuration += duration;
+    current.maxDuration = Math.max(current.maxDuration, duration);
+    current.lastDuration = duration;
+    this.metrics.set(label, current);
 
-    // Log if it's slow
-    if (durationMs > 100) { // Log operations taking more than 100ms
-      logger.debug(`Performance: ${operationName} took ${durationMs.toFixed(2)}ms`, context);
+    if (duration > 1000) {
+      logger.warn(`[performance] ${label} took ${duration}ms`, metadata);
     }
-    
-    if (startTimes.length === 0) {
-      delete this.startTimes[operationName];
-    }
-    return durationMs;
+    return duration;
   }
 
-  /**
-   * Get average duration for an operation
-   * @param {string} operationName - Name of the operation
-   * @returns {number|null} Average duration in ms or null if no data
-   */
-  getAverage(operationName) {
-    const durations = this.metrics[operationName];
-    if (!durations || durations.length === 0) return null;
-    
-    const sum = durations.reduce((a, b) => a + b, 0);
-    return sum / durations.length;
+  logSummary() {
+    logger.info('[performance] Performance summary:');
+    for (const [label, data] of this.metrics.entries()) {
+      const avg = Math.round(data.totalDuration / data.count);
+      logger.info(`  ${label}: calls=${data.count}, avg=${avg}ms, max=${data.maxDuration}ms`);
+    }
   }
 
-  /**
-   * Get all metrics
-   * @returns {Object} All collected metrics
-   */
-  getAllMetrics() {
+  getMetrics() {
     const result = {};
-    Object.keys(this.metrics).forEach(key => {
-      const samples = this.metrics[key];
-      result[key] = {
-        count: samples.length,
-        average: this.getAverage(key),
-        max: samples.reduce((m, v) => v > m ? v : m, -Infinity),
-        min: samples.reduce((m, v) => v < m ? v : m, Infinity),
+    for (const [label, data] of this.metrics.entries()) {
+      result[label] = {
+        ...data,
+        avgDuration: Math.round(data.totalDuration / (data.count || 1))
       };
-    });
+    }
     return result;
   }
 
-  /**
-   * Reset all metrics
-   */
   reset() {
-    this.metrics = {};
-    this.startTimes = {};
-  }
-
-  /**
-   * Wrap a function to automatically monitor its performance
-   * @param {string} operationName - Name of the operation
-   * @param {Function} fn - Function to wrap
-   * @returns {Function} Wrapped function
-   */
-  monitor(operationName, fn) {
-    return async (...args) => {
-      this.start(operationName);
-      try {
-        const result = await fn(...args);
-        this.end(operationName);
-        return result;
-      } catch (error) {
-        this.end(operationName);
-        throw error;
-      }
-    };
-  }
-
-  /**
-   * Log performance summary
-   */
-  logSummary() {
-    const metrics = this.getAllMetrics();
-    Object.keys(metrics).forEach(key => {
-      const metric = metrics[key];
-      logger.info(`Performance Summary - ${key}:`, {
-        count: metric.count,
-        averageMs: metric.average.toFixed(2),
-        maxMs: metric.max.toFixed(2),
-        minMs: metric.min.toFixed(2)
-      });
-    });
+    this.timers.clear();
+    this.metrics.clear();
   }
 }
 

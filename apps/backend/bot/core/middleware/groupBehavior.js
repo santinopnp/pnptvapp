@@ -19,7 +19,7 @@ const HANGOUT_REDIRECT_COOLDOWN_S = 24 * 60 * 60;
  */
 async function getLinkedHangout(chatId) {
   try {
-    const { getRedis } = require('../../config/redis');
+    const { getRedis } = require('../../../config/redis');
     const { query: dbQuery } = require('../../../config/postgres');
     const redis = getRedis();
     // Use a separate key for the full object (rules included) so the bridge's
@@ -355,7 +355,7 @@ function groupBehaviorMiddleware() {
     // Regular text in non-linked group: generic hangout redirect (once per 24h per user)
     const isRegularTextMessage = ctx.message?.text && !isCommand;
     if (isRegularTextMessage && userId) {
-      const { getRedis: _getRedis } = require('../../config/redis');
+      const { getRedis: _getRedis } = require('../../../config/redis');
       const redis = _getRedis();
       const cooldownRedisKey = `cristina:redirect:cooldown:${userId}`;
       const alreadySent = await redis.exists(cooldownRedisKey).catch(() => false);

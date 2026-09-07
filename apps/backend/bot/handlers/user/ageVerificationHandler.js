@@ -59,7 +59,7 @@ const registerAgeVerificationHandlers = (bot) => {
     const [command, payload] = webAppPayload.split(':', 2);
 
     if (command === 'age_verified') {
-      const { updateAgeVerificationStatus } = require('../../middleware/ageVerificationRequired');
+      const { updateAgeVerificationStatus } = require('../../core/middleware/ageVerificationRequired');
       const { showTermsAndPrivacy } = require('./onboarding');
 
       await updateAgeVerificationStatus(ctx, true, 'webapp_photo');
@@ -89,7 +89,7 @@ const registerAgeVerificationHandlers = (bot) => {
   bot.action('age_confirm_yes', async (ctx) => {
     try {
       await ctx.answerCbQuery();
-      const { updateAgeVerificationStatus } = require('../../middleware/ageVerificationRequired');
+      const { updateAgeVerificationStatus } = require('../../core/middleware/ageVerificationRequired');
 
       // Update verification status with correct method
       await updateAgeVerificationStatus(ctx, true, 'manual');
@@ -445,7 +445,7 @@ Thank you for completing the verification!`;
   await ctx.reply(successMessage, { parse_mode: 'Markdown' });
 
   // Update age verification status (session + cache invalidation)
-  const { updateAgeVerificationStatus } = require('../../middleware/ageVerificationRequired');
+  const { updateAgeVerificationStatus } = require('../../core/middleware/ageVerificationRequired');
   await updateAgeVerificationStatus(ctx, true, 'ai_photo');
 
   // Update session

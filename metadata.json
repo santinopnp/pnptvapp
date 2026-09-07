@@ -1,0 +1,6 @@
+{
+  "name": "PNPtv App",
+  "description": "PNPtv backend API server and Telegram service",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

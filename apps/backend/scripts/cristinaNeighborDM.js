@@ -13,8 +13,8 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 
-const { query, pool } = require('../bot/config/postgres');
-const { getRedis } = require('../bot/config/redis');
+const { query, pool } = require('../config/postgres');
+const { getRedis } = require('../config/redis');
 const sendSystemDM = require('../services/sendSystemDM');
 const { getOrCreateRefCode } = require('../services/referralService');
 

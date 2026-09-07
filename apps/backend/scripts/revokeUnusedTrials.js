@@ -11,7 +11,7 @@ process.exit(2);
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../../.env') });
 
-const { query, pool } = require('../bot/config/postgres');
+const { query, pool } = require('../config/postgres');
 const sendSystemDM = require('../services/sendSystemDM');
 
 const CRISTINA_ID = 'pnptv-official';

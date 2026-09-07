@@ -33,7 +33,7 @@ module.exports = {
 
   // ==================== ENVIRONMENT ====================
   NODE_ENV: process.env.NODE_ENV || 'development',
-  PORT: parseInt(process.env.PORT) || 3001,
+  PORT: 3000,
 
   // ==================== POSTGRESQL ====================
   POSTGRES_HOST: process.env.POSTGRES_HOST || 'localhost',

@@ -1,7 +1,6 @@
 require('dotenv').config();
-const { initializeFirebase } = require('../src/config/firebase');
-const PlanModel = require('../src/models/planModel');
-const logger = require('../src/utils/logger');
+const PlanModel = require('../models/planModel');
+const logger = require('../utils/logger');
 
 /**
  * Seed database with initial data
@@ -9,9 +8,6 @@ const logger = require('../src/utils/logger');
 const seedDatabase = async () => {
   try {
     logger.info('Starting database seed...');
-
-    // Initialize Firebase
-    initializeFirebase();
 
     // Initialize default plans
     logger.info('Seeding default subscription plans...');

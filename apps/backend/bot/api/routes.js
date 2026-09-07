@@ -2322,6 +2322,175 @@ const uploadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Root dashboard for web preview
+app.get('/', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PNPtv App</title>
+  <meta name="description" content="PNPtv backend API server and Telegram service">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-bright: #f0f6fc;
+      --accent: #238636;
+      --accent-hover: #2ea043;
+      --badge-bg: #1f6feb22;
+      --badge-text: #58a6ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      max-width: 640px;
+      width: 100%;
+      padding: 32px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+    .title {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #23863622;
+      color: #3fb950;
+      border: 1px solid #23863644;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #3fb950;
+      box-shadow: 0 0 8px #3fb950;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+    .info-item {
+      background: var(--bg);
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .info-label {
+      font-size: 12px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .info-val {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-bright);
+    }
+    .links-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-top: 24px;
+      margin-bottom: 12px;
+    }
+    .links-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .link-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-bright);
+      text-decoration: none;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+    .link-btn:hover {
+      border-color: #58a6ff;
+      background: #1f6feb11;
+      color: #58a6ff;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="title">PNPtv App</div>
+      <div class="status-pill"><span class="pulse"></span> Online</div>
+    </div>
+    <p style="font-size: 14px; line-height: 1.5; color: #8b949e;">
+      PNPtv backend API server and Telegram service is operational on port 3000.
+    </p>
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">Environment</div>
+        <div class="info-val">${process.env.NODE_ENV || 'development'}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Port</div>
+        <div class="info-val">3000</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Socket.IO</div>
+        <div class="info-val">Active</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">BullMQ Queues</div>
+        <div class="info-val">Initialized</div>
+      </div>
+    </div>
+    <div class="links-title">Quick Endpoints</div>
+    <div class="links-list">
+      <a class="link-btn" href="/health" target="_blank">🩺 Health Check (/health)</a>
+      <a class="link-btn" href="/api/health" target="_blank">📊 Metrics (/api/health)</a>
+      <a class="link-btn" href="/admin/queues" target="_blank">📋 Queue Dashboard (/admin/queues)</a>
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
 // Health check with dependency checks and security
 app.get('/health', healthLimiter, async (req, res) => {
   // Check if request is from internal network or has valid secret

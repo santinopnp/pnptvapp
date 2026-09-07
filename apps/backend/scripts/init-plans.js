@@ -3,8 +3,8 @@
  */
 
 require('dotenv').config();
-const Plan = require('../src/models/planModel');
-const logger = require('../src/utils/logger');
+const Plan = require('../models/planModel');
+const logger = require('../utils/logger');
 
 async function initPlans() {
   try {

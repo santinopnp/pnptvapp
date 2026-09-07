@@ -207,7 +207,7 @@ const startApiServer = (modeLabel) => {
     return apiServer;
   }
 
-  const PORT = process.env.PORT || 3001;
+  const PORT = 3000;
   const server = http.createServer(apiApp);
 
   // Attach Socket.IO for real-time chat/DM
@@ -289,14 +289,13 @@ const startApiServer = (modeLabel) => {
  * Validate critical environment variables
  */
 const validateCriticalEnvVars = () => {
-  // Only BOT_TOKEN is critical - PostgreSQL can use defaults or DATABASE_URL
   const criticalVars = ['BOT_TOKEN'];
   const missing = criticalVars.filter((varName) => !process.env[varName]);
   if (missing.length > 0) {
-    logger.error(`Missing critical environment variables: ${missing.join(', ')}`);
-    logger.error('Please configure these variables in your .env file');
-    throw new Error(`Missing critical environment variables: ${missing.join(', ')}`);
+    logger.warn(`Notice: ${missing.join(', ')} is not set. Telegram polling will be paused; Express API server will run.`);
+    return false;
   }
+  return true;
 };
 
 /**
@@ -310,14 +309,9 @@ const startBot = async () => {
       process.exit(1);
     }
     // Validate critical environment variables
-    try {
-      validateCriticalEnvVars();
+    const hasCriticalVars = validateCriticalEnvVars();
+    if (hasCriticalVars) {
       logger.info('✓ Environment variables validated');
-    } catch (error) {
-      logger.error('CRITICAL: Missing environment variables, cannot start bot');
-      logger.error(error.message);
-      logger.error('Please configure all required environment variables in your .env file');
-      process.exit(1);
     }
     // Initialize Sentry (optional)
     try {
@@ -435,6 +429,19 @@ const startBot = async () => {
     } catch (apiStartError) {
       logger.error(`CRITICAL: Failed to start core API server: ${apiStartError.message}`);
       // Don't exit — continue and try again later in the startup sequence
+    }
+
+    // Check if BOT_TOKEN is present; if not, keep Express API server running
+    if (!process.env.BOT_TOKEN) {
+      const {
+        errorHandler: expressErrorHandler,
+        notFoundHandler: expressNotFoundHandler
+      } = require('../api/middleware/errorHandler');
+      apiApp.use(expressNotFoundHandler);
+      apiApp.use(expressErrorHandler);
+      logger.info('✓ Error handlers registered');
+      logger.info('✓ Backend server running on port 3000 (BOT_TOKEN not set; Telegram bot paused)');
+      return;
     }
 
     // Create bot instance
