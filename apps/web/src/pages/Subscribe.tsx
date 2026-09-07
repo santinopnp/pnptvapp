@@ -893,19 +893,19 @@ export default function Subscribe() {
                   balance. WalletPayCard handles card + Privy-wallet cases
                   inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                  >
-                    💳 {t.lang === "es" ? "Pagar" : "Pay"} ${parseFloat(String(plan.price)).toFixed(2)}
-                  </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  Paga con PNPtv! Wallet 💎 · ${parseFloat(String(plan.price)).toFixed(2)}
+                </button>
+                <div className="flex justify-center pt-0.5">
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="py-3 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all"
+                    className="text-[11px] text-white/40 hover:text-white/65 transition"
                   >
-                    {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
+                    {t.lang === "es" ? "₿ Pagar con otra cripto →" : "₿ Pay with another crypto →"}
                   </button>
                 </div>
                 {(() => {
@@ -1076,19 +1076,19 @@ export default function Subscribe() {
                   balance. WalletPayCard handles card + Privy-wallet cases
                   inline. */}
               <div className="mt-3 pt-3 border-t border-white/5 space-y-2" onClick={(e) => e.stopPropagation()}>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
-                    className={`py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
-                  >
-                    💳 {t.lang === "es" ? "Pagar" : "Pay"} ${parseFloat(String(plan.price)).toFixed(2)}
-                  </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setWalletPanelPlanId(walletPanelPlanId === plan.id ? null : plan.id); }}
+                  className={`w-full py-3 rounded-lg font-bold text-sm text-white transition-all ${walletPanelPlanId === plan.id ? "bg-gradient-to-r from-emerald-400 to-emerald-500 ring-2 ring-emerald-300" : "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500"}`}
+                >
+                  Paga con PNPtv! Wallet 💎 · ${parseFloat(String(plan.price)).toFixed(2)}
+                </button>
+                <div className="flex justify-center pt-0.5">
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); openNpFallback(plan.id); }}
-                    className="py-3 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 transition-all"
+                    className="text-[11px] text-white/40 hover:text-white/65 transition"
                   >
-                    {t.lang === "es" ? "₿ Otra cripto" : "₿ Any crypto"}
+                    {t.lang === "es" ? "₿ Pagar con otra cripto →" : "₿ Pay with another crypto →"}
                   </button>
                 </div>
                 {(() => {

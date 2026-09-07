@@ -762,9 +762,7 @@ export function WalletPayCard({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-pnp-textPrimary">
-            {es
-              ? (isEmbedded ? "Pagar desde tu billetera" : "Pagar con tu wallet externa")
-              : (isEmbedded ? "Pay from your wallet" : "Pay with your external wallet")}
+            Paga con PNPtv! Wallet 💎
           </p>
           <p className="text-[11px] text-pnp-textSecondary">
             {loading

@@ -19,7 +19,7 @@ import { AdSlot } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -2510,6 +2510,67 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const isMainStage = path === "/main-stage";
   const isCreatorProfile = !!creatorUsername;
 
+  // ── Home panel state ────────────────────────────────────────────────────────
+  // Shown on home/feed/nearby/channels/explore routes in place of the full
+  // WalletHomeSheet. Shows balance + subscription plans + "Ver billetera" CTA.
+  const HOME_PANEL_ROUTES = new Set(["/", "/home", "/feed", "/nearby", "/channels", "/explore", "/social"]);
+  const isHomePanelRoute = HOME_PANEL_ROUTES.has(path) || path === "/";
+  const [homePanelOpen, setHomePanelOpen] = useState(false);
+  const [homePlanLoading, setHomePlanLoading] = useState(false);
+  const [homePlans, setHomePlans] = useState<SubscriptionPlan[]>([]);
+  const [homeUsdcBalance, setHomeUsdcBalance] = useState<number | null>(null);
+  const [homePlansError, setHomePlansError] = useState<string | null>(null);
+  // Pulse animation — triggers after 30s idle, repeats every 9s.
+  const [pulsing, setPulsing] = useState(false);
+  const pulseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    idleTimerRef.current = setTimeout(() => {
+      setPulsing(true);
+      pulseTimerRef.current = setInterval(() => {
+        setPulsing(false);
+        setTimeout(() => setPulsing(true), 100);
+      }, 9000);
+    }, 30000);
+    const resetPulse = () => {
+      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
+      if (pulseTimerRef.current) { clearInterval(pulseTimerRef.current); pulseTimerRef.current = null; }
+      setPulsing(false);
+    };
+    window.addEventListener("click", resetPulse, { passive: true, capture: true });
+    window.addEventListener("touchstart", resetPulse, { passive: true, capture: true });
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (pulseTimerRef.current) clearInterval(pulseTimerRef.current);
+      window.removeEventListener("click", resetPulse, { capture: true });
+      window.removeEventListener("touchstart", resetPulse, { capture: true });
+    };
+  }, [isAuthenticated]);
+
+  // Fetch subscription plans + wallet balance when home panel opens.
+  useEffect(() => {
+    if (!homePanelOpen) return;
+    setHomePlansError(null);
+    setHomePlanLoading(true);
+    const activeWalletAddr = (wallets.find((w) => w.walletClientType === "privy") || wallets[0])?.address;
+    Promise.all([
+      getSubscriptionPlans().catch(() => ({ plans: [] as SubscriptionPlan[], success: false })),
+      activeWalletAddr
+        ? getWalletUsdcBalance(activeWalletAddr).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([plansRes, balRes]) => {
+      const HIDDEN_IDS = new Set(["prime-trial-3d"]);
+      setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
+      setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
+    }).catch(() => {
+      setHomePlansError("No se pudieron cargar los planes. Intenta de nuevo.");
+    }).finally(() => setHomePlanLoading(false));
+  }, [homePanelOpen]);
+
+  // Close home panel on route change.
+  useEffect(() => { setHomePanelOpen(false); }, [path]);
+
   // Listen for OPEN_WALLET_EVENT so the desktop sidebar and mobile drawer
   // "Wallet" nav items can pop the sheet from any surface without a route
   // change. Same-tab CustomEvent dispatched by the nav buttons.
@@ -2597,6 +2658,190 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
 
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
+
+  // ── Home panel mode: balance + subscription plans ────────────────────────
+  // Activated on feed/home/nearby/channels/explore routes. Shows a compact
+  // bottom sheet with the user's USD balance (USDC) + all active plans as
+  // tappable cards that open WalletHomeSheet (full experience). Pulse animates
+  // every 9s after 30s idle to encourage first-time engagement.
+  if (isHomePanelRoute && !isMainStage && !isCreatorProfile) {
+    const fabLabel = homePanelOpen ? "Cerrar billetera" : "Abrir billetera";
+
+    const formatPlanDuration = (days: number) => {
+      if (days >= 36500) return "Lifetime";
+      if (days >= 365) return `${Math.round(days / 365)}y`;
+      if (days >= 30) return `${Math.round(days / 30)}mo`;
+      return `${days}d`;
+    };
+
+    return (
+      <>
+        {/* Home panel bottom sheet */}
+        {homePanelOpen && (
+          <div
+            className="fixed inset-0 z-[48]"
+            onClick={() => setHomePanelOpen(false)}
+            aria-hidden="true"
+          >
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          </div>
+        )}
+        {homePanelOpen && (
+          <div
+            className="fixed left-0 right-0 z-[49] mx-auto w-full max-w-md px-3"
+            style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Wallet"
+          >
+            <div
+              className="rounded-2xl overflow-hidden shadow-2xl"
+              style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(16,185,129,0.25)" }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💎</span>
+                  <p className="text-sm font-bold text-white">Wallet</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHomePanelOpen(false)}
+                  aria-label="Cerrar"
+                  className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Balance row */}
+              <div className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-white/[0.06]">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-0.5">Saldo</p>
+                  <p className="text-base font-black text-white tabular-nums">
+                    {homeUsdcBalance != null
+                      ? `$${homeUsdcBalance.toFixed(2)}`
+                      : "—"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setHomePanelOpen(false); setOpen(true); }}
+                  className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition"
+                >
+                  Ver billetera completa →
+                </button>
+              </div>
+
+              {/* Plans */}
+              <div className="px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                  Planes
+                </p>
+                {homePlanLoading ? (
+                  <div className="space-y-1.5">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="h-10 rounded-xl bg-white/[0.05] animate-pulse" />
+                    ))}
+                  </div>
+                ) : homePlansError ? (
+                  <div className="py-2 text-center">
+                    <p className="text-xs text-red-400 mb-2">{homePlansError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setHomePanelOpen(false)}
+                      className="text-[11px] text-emerald-400 hover:underline"
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {homePlans.map((plan) => {
+                      const days = plan.duration_days ?? plan.duration ?? 0;
+                      const duration = formatPlanDuration(days);
+                      const price = plan.priceUSD ?? plan.price ?? 0;
+                      const isPrime = plan.tier?.toLowerCase() === "prime" || !plan.id.startsWith("member");
+                      return (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          onClick={() => { setHomePanelOpen(false); navigate(`/subscribe?plan=${plan.id}&via=np-go`); }}
+                          className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                          style={{
+                            borderColor: isPrime ? "rgba(212,0,122,0.35)" : "rgba(255,255,255,0.1)",
+                            background: isPrime ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
+                          }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-white truncate">
+                              {plan.display_name || plan.name}
+                            </p>
+                            <p className="text-[10px] text-white/50">{duration}</p>
+                          </div>
+                          <p
+                            className="text-sm font-black flex-shrink-0"
+                            style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
+                          >
+                            ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FAB — pulse animation triggers after 30s idle */}
+        <style>{`
+          @keyframes wallet-fab-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.7); transform: scale(1); }
+            50% { box-shadow: 0 0 0 12px rgba(16,185,129,0); transform: scale(1.07); }
+            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); transform: scale(1); }
+          }
+        `}</style>
+        <button
+          type="button"
+          onClick={() => { setPulsing(false); setHomePanelOpen((v) => !v); }}
+          aria-label={fabLabel}
+          aria-expanded={homePanelOpen}
+          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            width: 52, height: 52,
+            background: "linear-gradient(135deg,#10b981,#059669)",
+            color: "white",
+            fontSize: 22,
+            animation: pulsing ? "wallet-fab-pulse 0.6s ease-out" : "none",
+          }}
+        >
+          {homePanelOpen ? "×" : "💎"}
+          {showFabBadge && !homePanelOpen && (
+            <span
+              aria-hidden="true"
+              className="absolute flex items-center justify-center rounded-full bg-white shadow"
+              style={{ bottom: -2, right: -2, width: 20, height: 20, border: "2px solid rgba(19,16,26,0.98)" }}
+              title={`Signing as ${activeFabWallet?.walletClientType}`}
+            >
+              <WalletTypeIcon clientType={activeFabWallet?.walletClientType} size={12} />
+            </span>
+          )}
+        </button>
+
+        {/* WalletHomeSheet — opened via "Ver billetera completa" button */}
+        {open && (
+          <Suspense fallback={null}>
+            <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+          </Suspense>
+        )}
+      </>
+    );
+  }
 
   // ── Main Stage mode: expandable action stack ─────────────────────────────
   if (isMainStage) {

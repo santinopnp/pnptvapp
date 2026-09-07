@@ -814,8 +814,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                       ? (es ? "Procesando…" : "Processing…")
                       : canAfford
                         ? (rail === "eth"
-                            ? `Ξ ${ethNeeded.toFixed(6)} ETH`
-                            : `${es ? "Pagar" : "Pay"} $${price.toFixed(2)}`)
+                            ? `Paga con PNPtv! Wallet 💎 · Ξ ${ethNeeded.toFixed(6)}`
+                            : `Paga con PNPtv! Wallet 💎 · $${price.toFixed(2)}`)
                         : `💳 $${grossUpForOnramp(price)} · ${es ? "Tarjeta" : "Card"}`;
                     return (
                       <button
@@ -848,60 +848,64 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   : "1 USD = 6 Ru$h (base). Larger packs include a bonus."}
               </p>
 
-              {/* Alt-coin path — pay in USDC (Ethereum), Bitcoin, or Ethereum
-                  via a hosted NowPayments invoice. Restricted to these three
-                  for token top-ups per product policy; opens a centered popup
-                  (NP can't be iframed) and polls until webhook credits Ru$h. */}
+              {/* Alt-coin path — secondary text-link style (NP can't be iframed;
+                  opens popup). Visually subordinate to the primary wallet rail. */}
               <div className="mt-3 pt-3 border-t border-white/5">
-                <p className="text-[11px] font-semibold text-white/70 text-center mb-2">
-                  {es ? "O paga con cripto externa" : "Or pay with external crypto"}
-                </p>
-                <div className="grid grid-cols-3 gap-1.5 mb-2">
-                  {([
-                    { id: 'usdcerc20' as NpCoin, label: 'USDC', tint: 'text-[#2775ca]' },
-                    { id: 'btc' as NpCoin,       label: 'BTC',  tint: 'text-[#F7931A]' },
-                    { id: 'eth' as NpCoin,       label: 'ETH',  tint: 'text-[#627EEA]' },
-                  ]).map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => setNpCoin(c.id)}
-                      className={`text-xs font-bold py-2 rounded-lg border transition ${
-                        npCoin === c.id
-                          ? "bg-orange-500/20 border-orange-400/60 text-orange-100"
-                          : "bg-white/[0.04] border-white/10 text-white/70 hover:bg-white/[0.08]"
-                      }`}
-                    >
-                      <span className={c.tint}>●</span> {c.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {eligiblePackages.map((pkg) => {
-                    const price = Number(pkg.usd);
-                    const isPaying = npFallbackPackageId === pkg.id;
-                    const disabled = isPaying || success !== null || npFallbackPackageId !== null;
-                    const coinLabel = npCoin === 'usdcerc20' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
-                    return (
-                      <button
-                        key={`np-${pkg.id}`}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => handlePayWithNowPayments(pkg)}
-                        className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg border border-orange-400/30 bg-orange-500/[0.06] text-left transition hover:bg-orange-500/[0.12] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <span className="text-[11px] font-semibold text-white/85 leading-tight">
-                          {Number(pkg.tokens).toLocaleString()} Ru$h 💎
-                        </span>
-                        <span className="text-[9px] text-white/60 leading-none">
-                          {isPaying
-                            ? (es ? "Abriendo…" : "Opening…")
-                            : `$${price.toFixed(0)} · ${coinLabel} ▸`}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <details className="group">
+                  <summary className="flex items-center justify-center gap-1.5 cursor-pointer list-none select-none py-0.5">
+                    <span className="text-[11px] text-white/40 hover:text-white/65 transition group-open:text-white/60">
+                      {es ? "Pagar con otra cripto →" : "Pagar con otra cripto →"}
+                    </span>
+                  </summary>
+                  <div className="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="flex gap-1.5 justify-center flex-wrap">
+                      {([
+                        { id: 'usdcerc20' as NpCoin, label: 'USDC', tint: 'text-[#2775ca]' },
+                        { id: 'btc' as NpCoin,       label: 'BTC',  tint: 'text-[#F7931A]' },
+                        { id: 'eth' as NpCoin,       label: 'ETH',  tint: 'text-[#627EEA]' },
+                      ]).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setNpCoin(c.id)}
+                          className={`text-[10px] font-semibold px-2.5 py-1.5 rounded-lg border transition ${
+                            npCoin === c.id
+                              ? "bg-orange-500/15 border-orange-400/50 text-orange-200"
+                              : "bg-white/[0.03] border-white/8 text-white/50 hover:text-white/70 hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          <span className={c.tint}>●</span> {c.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {eligiblePackages.map((pkg) => {
+                        const price = Number(pkg.usd);
+                        const isPaying = npFallbackPackageId === pkg.id;
+                        const disabled = isPaying || success !== null || npFallbackPackageId !== null;
+                        const coinLabel = npCoin === 'usdcerc20' ? 'USDC' : npCoin === 'btc' ? 'BTC' : 'ETH';
+                        return (
+                          <button
+                            key={`np-${pkg.id}`}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => handlePayWithNowPayments(pkg)}
+                            className="flex items-center justify-between gap-1 px-2.5 py-2 rounded-lg border border-white/[0.08] bg-white/[0.02] text-left transition hover:bg-white/[0.05] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <span className="text-[10px] font-semibold text-white/70 leading-tight truncate">
+                              {Number(pkg.tokens).toLocaleString()} 💎
+                            </span>
+                            <span className="text-[9px] text-white/45 flex-shrink-0">
+                              {isPaying
+                                ? "…"
+                                : `$${price.toFixed(0)} ${coinLabel}`}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
           )}
