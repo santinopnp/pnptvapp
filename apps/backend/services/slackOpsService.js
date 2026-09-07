@@ -40,6 +40,7 @@ function _nowTs() {
 }
 
 let _tokenDead = false;
+let _tokenDeadLogged = false;
 const FATAL_TOKEN_ERRORS = new Set(['account_inactive', 'invalid_auth', 'token_revoked', 'token_expired']);
 
 async function _post(channel, text, blocks) {
@@ -58,7 +59,10 @@ async function _post(channel, text, blocks) {
     if (!data.ok) {
       if (FATAL_TOKEN_ERRORS.has(data.error)) {
         _tokenDead = true;
-        logger.warn('[slackOps] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+        if (!_tokenDeadLogged) {
+          _tokenDeadLogged = true;
+          logger.warn('[slackOps] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+        }
       } else {
         logger.warn('[slackOps] post failed', { error: data.error, channel });
       }

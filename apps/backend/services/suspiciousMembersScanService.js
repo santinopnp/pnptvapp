@@ -338,11 +338,7 @@ function start() {
   if (!BOT_TOKEN || !CHANNEL_ID) {
     // Optional feature: only complain if partially configured (one var set,
     // the other missing). Fully unset is a valid choice — skip silently.
-    if (BOT_TOKEN || CHANNEL_ID) {
-      logger.warn('[suspicious] scheduler NOT started — set BOTH SLACK_BOT_TOKEN and SLACK_CHANNEL_SUSPICIOUS_REVIEW');
-    } else {
-      logger.info('[suspicious] scheduler disabled (SLACK_CHANNEL_SUSPICIOUS_REVIEW not set)');
-    }
+    logger.info('[suspicious] scheduler disabled — set SLACK_BOT_TOKEN + SLACK_CHANNEL_SUSPICIOUS_REVIEW to enable');
     return;
   }
   cron.schedule('0 13 * * *', async () => {

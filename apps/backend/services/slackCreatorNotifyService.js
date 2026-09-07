@@ -23,6 +23,7 @@ const SLACK_API = 'https://slack.com/api';
 const _deadChannels = new Set();
 
 let _tokenDead = false;
+let _tokenDeadLogged = false;
 const FATAL_TOKEN_ERRORS = new Set(['account_inactive', 'invalid_auth', 'token_revoked', 'token_expired']);
 
 // ---------------------------------------------------------------------------
@@ -69,7 +70,10 @@ async function _slackPost(body) {
     if (!data.ok) {
       if (FATAL_TOKEN_ERRORS.has(data.error)) {
         _tokenDead = true;
-        logger.warn('[slackCreatorNotifyService] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+        if (!_tokenDeadLogged) {
+          _tokenDeadLogged = true;
+          logger.warn('[slackCreatorNotifyService] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+        }
       } else if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
         const alreadyLogged = _deadChannels.has(body.channel);
         _deadChannels.add(body.channel);
