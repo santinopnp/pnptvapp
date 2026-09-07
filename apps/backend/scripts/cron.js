@@ -556,32 +556,46 @@ const startCronJobs = async (bot = null) => {
     // Was: delete user-created groups inactive for 72+ hours. Removed per user request.
 
     // Notification cleanup — daily at 03:20 UTC (staggered from media cleanup at 03:00)
-    // Removes read notifications older than 90 days and all hangout_call
-    // notifications older than 30 days (they become stale very quickly).
+    // TTL policy (all types, read OR unread):
+    //   group_message  — 14 days  (handled by separate BullMQ job; skipped here)
+    //   dm             — 90 days  (high volume, unread ones pile up forever without this)
+    //   announcement   — 90 days
+    //   hangout_call   — 30 days
+    //   follow/like/reply/mention_post/group_join/group_join_request — 90 days
+    //   everything else (read only) — 90 days
     cron.schedule('20 3 * * *', async () => {
       try {
         logger.info('Running notification cleanup job...');
 
-        const { rows: oldReadRows } = await pgQuery(
+        // Hard TTL for high-volume types (regardless of read status)
+        const highVolume = await pgQuery(
           `DELETE FROM notifications
-           WHERE is_read = TRUE
-             AND created_at < NOW() - INTERVAL '90 days'
-           RETURNING id`
+           WHERE type IN ('dm', 'announcement', 'follow', 'like', 'reply',
+                          'mention_post', 'group_join', 'group_join_request',
+                          'hangout_call', 'system_push')
+             AND created_at < NOW() - INTERVAL '90 days'`
         );
-        const deletedRead = oldReadRows.length;
 
-        const { rows: oldCallRows } = await pgQuery(
+        // Shorter TTL for ephemeral call notifications
+        const calls = await pgQuery(
           `DELETE FROM notifications
            WHERE type = 'hangout_call'
-             AND created_at < NOW() - INTERVAL '30 days'
-           RETURNING id`
+             AND created_at < NOW() - INTERVAL '30 days'`
         );
-        const deletedCalls = oldCallRows.length;
 
+        // Catch-all: any read notification older than 90 days
+        const oldRead = await pgQuery(
+          `DELETE FROM notifications
+           WHERE is_read = TRUE
+             AND created_at < NOW() - INTERVAL '90 days'`
+        );
+
+        const total = (highVolume.rowCount || 0) + (calls.rowCount || 0) + (oldRead.rowCount || 0);
         logger.info('Notification cleanup completed', {
-          deletedReadOlderThan90Days: deletedRead,
-          deletedHangoutCallsOlderThan30Days: deletedCalls,
-          totalDeleted: deletedRead + deletedCalls,
+          highVolumeTtl: highVolume.rowCount || 0,
+          callsTtl: calls.rowCount || 0,
+          oldRead: oldRead.rowCount || 0,
+          totalDeleted: total,
         });
       } catch (error) {
         logger.error('Error in notification cleanup cron:', error);
