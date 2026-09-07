@@ -17,9 +17,8 @@ interface Props {
  * Full-screen upsell shown INSTEAD of a popunder or after N impressions.
  * Copy leads with desire (feedback_marketing_copy_desire_first): "keep the
  * experience clean" rather than "your card was declined". Two CTAs:
- * primary = 3-day free trial (matches ad-free trial duration for narrative
- * consistency), secondary = $15/mo. No payment brand names in copy
- * (feedback_payment_brand_names_hidden).
+ * primary = subscribe (monthly), secondary = see all plans. No payment brand
+ * names in copy (feedback_payment_brand_names_hidden).
  */
 export function UpgradeModal({ slot, mode, onDismiss }: Props) {
   const navigate = useNavigate();
@@ -32,13 +31,13 @@ export function UpgradeModal({ slot, mode, onDismiss }: Props) {
     return () => { document.body.style.overflow = prevOverflow; };
   }, [slot, mode]);
 
-  const goToTrial = () => {
-    trackAdEvent(slot, "upgrade_click", { surface: mode, plan: "trial_3d" });
-    navigate(`/subscribe?ref=upgrade-${mode}-${encodeURIComponent(slot)}&plan=trial`);
-  };
-  const goToMonthly = () => {
+  const goToPrime = () => {
     trackAdEvent(slot, "upgrade_click", { surface: mode, plan: "monthly" });
     navigate(`/subscribe?ref=upgrade-${mode}-${encodeURIComponent(slot)}&plan=monthly`);
+  };
+  const goToMonthly = () => {
+    trackAdEvent(slot, "upgrade_click", { surface: mode, plan: "plans" });
+    navigate(`/subscribe?ref=upgrade-${mode}-${encodeURIComponent(slot)}`);
   };
   const dismissSoft = () => onDismiss("closed");
   const dismissFallback = () => onDismiss("fallback_popunder");
@@ -80,18 +79,18 @@ export function UpgradeModal({ slot, mode, onDismiss }: Props) {
             Miralo todo sin cortes
           </h2>
           <p className="text-white/70 text-sm leading-relaxed">
-            Cero ads. Todo el contenido PRIME. Todas las funciones desbloqueadas. Probalo 3 días gratis.
+            Cero ads. Todo el contenido PRIME. Todas las funciones desbloqueadas. Desde $15/mes, cancelá cuando quieras.
           </p>
         </div>
 
         <div className="mt-6 space-y-2">
           <button
             type="button"
-            onClick={goToTrial}
+            onClick={goToPrime}
             className="w-full py-3.5 rounded-2xl text-sm font-bold text-white transition-transform active:scale-[0.98]"
             style={{ background: "linear-gradient(90deg, #D4007A 0%, #FF6B9D 100%)", boxShadow: "0 6px 24px rgba(212,0,122,0.35)" }}
           >
-            Empezar 3 días gratis
+            Suscribirme a PRIME
           </button>
           <button
             type="button"
@@ -99,7 +98,7 @@ export function UpgradeModal({ slot, mode, onDismiss }: Props) {
             className="w-full py-3 rounded-2xl text-sm font-semibold text-white/90 transition-colors"
             style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
           >
-            Ver planes desde $15/mes
+            Ver todos los planes
           </button>
         </div>
 

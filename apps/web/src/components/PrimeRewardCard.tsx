@@ -9,13 +9,9 @@ import { PrimeRewardedModal } from "@/components/PrimeRewardedModal";
 
 /**
  * "Watch 3 ads → 24h Prime" rewarded surface. Renders a compact card that
- * links to /subscribe (3-day Prime trial) OR, when the operator flips the
- * surface on via server-side EXO_VAST_URL_PRIME_TRIAL_24H, offers the ad-
- * rewarded 24h unlock flow.
- *
- * Full VAST-in-modal IMA integration is a follow-up. For MVP we surface the
- * upsell and route the click into the existing 3-day Prime trial flow —
- * still the strongest conversion path without any player work.
+ * links to /subscribe (monthly plan) OR, when the operator flips the surface
+ * on via server-side EXO_VAST_URL_PRIME_TRIAL_24H, offers the ad-rewarded
+ * 24h unlock flow.
  */
 export function PrimeRewardCard({ className }: { className?: string }) {
   const { isPrime, isAdmin, isFree } = useTier();
@@ -68,12 +64,12 @@ export function PrimeRewardCard({ className }: { className?: string }) {
 
   const heading = surfaceReady
     ? "Mirá 3 ads → 24h de PRIME free"
-    : "Empezá 3 días de PRIME free";
+    : "Accedé a todo PRIME";
   const subheading = surfaceReady
     ? "Sin cargo. Sin tarjeta. Solo 3 ads cortos."
-    : "Cero ads. Todo desbloqueado. Sin tarjeta si cancelás en 3 días.";
-  const ctaText = surfaceReady ? "Ver primer ad" : "Empezar trial";
-  const trialHref = "/subscribe?ref=prime-reward-card&plan=trial";
+    : "Cero ads. Todo el contenido. Desde $15/mes, cancelá cuando quieras.";
+  const ctaText = surfaceReady ? "Ver primer ad" : "Ver planes PRIME";
+  const trialHref = "/subscribe?ref=prime-reward-card&plan=monthly";
 
   const handleCta = (e: React.MouseEvent) => {
     trackClientEvent("prime_reward_card", "upgrade_click", { surface: surfaceReady ? "rewarded" : "trial" });
