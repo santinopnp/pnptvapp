@@ -39,8 +39,11 @@ function _nowTs() {
   return new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
 }
 
+let _tokenDead = false;
+const FATAL_TOKEN_ERRORS = new Set(['account_inactive', 'invalid_auth', 'token_revoked', 'token_expired']);
+
 async function _post(channel, text, blocks) {
-  if (!_tok() || !channel) return; // silently noop if not configured
+  if (_tokenDead || !_tok() || !channel) return;
   try {
     const res = await fetch(`${SLACK_API}/chat.postMessage`, {
       method: 'POST',
@@ -53,7 +56,12 @@ async function _post(channel, text, blocks) {
     });
     const data = await res.json();
     if (!data.ok) {
-      logger.warn('[slackOps] post failed', { error: data.error, channel });
+      if (FATAL_TOKEN_ERRORS.has(data.error)) {
+        _tokenDead = true;
+        logger.warn('[slackOps] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+      } else {
+        logger.warn('[slackOps] post failed', { error: data.error, channel });
+      }
     }
   } catch (e) {
     logger.warn('[slackOps] fetch error', { error: e.message });

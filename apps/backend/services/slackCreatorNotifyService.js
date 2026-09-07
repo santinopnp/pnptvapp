@@ -22,6 +22,9 @@ const SLACK_API = 'https://slack.com/api';
 // don't hammer Slack for the same dead channel on every notification.
 const _deadChannels = new Set();
 
+let _tokenDead = false;
+const FATAL_TOKEN_ERRORS = new Set(['account_inactive', 'invalid_auth', 'token_revoked', 'token_expired']);
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -44,6 +47,7 @@ async function _clearStaleChannel(channelId) {
  * @returns {Promise<Object>}
  */
 async function _slackPost(body) {
+  if (_tokenDead) return { ok: false, error: 'token_dead_cached' };
   const token = _botToken();
   if (!token) {
     logger.warn('[slackCreatorNotifyService] SLACK_BOT_TOKEN not set — skipping post');
@@ -63,7 +67,10 @@ async function _slackPost(body) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
+      if (FATAL_TOKEN_ERRORS.has(data.error)) {
+        _tokenDead = true;
+        logger.warn('[slackCreatorNotifyService] Slack token is invalid — disabling all Slack calls for this process lifetime', { error: data.error });
+      } else if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
         const alreadyLogged = _deadChannels.has(body.channel);
         _deadChannels.add(body.channel);
         if (!alreadyLogged) {

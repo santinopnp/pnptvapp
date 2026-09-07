@@ -22,6 +22,10 @@ let _opsLiveChannel = process.env.SLACK_OPS_LIVE_CHANNEL || '';
 // the log with the same failure every 2 minutes.
 const _deadChannels = new Set();
 
+// Token-level fatal errors (account_inactive, invalid_auth, token_revoked).
+// Once set, all Slack calls are no-ops for the process lifetime — logged once.
+let _tokenDead = false;
+
 /**
  * Override the ops-live channel — useful for tests or runtime injection.
  * @param {string} channelId
@@ -46,6 +50,7 @@ function _botToken() {
  * @returns {Promise<Object>}
  */
 async function _slackPost(method, body) {
+  if (_tokenDead) return { ok: false, error: 'token_dead_cached' };
   const token = _botToken();
   if (!token) {
     logger.warn('[slackLiveService] SLACK_BOT_TOKEN not set — skipping post');
@@ -66,7 +71,13 @@ async function _slackPost(method, body) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
+      const FATAL_TOKEN_ERRORS = new Set(['account_inactive', 'invalid_auth', 'token_revoked', 'token_expired']);
+      if (FATAL_TOKEN_ERRORS.has(data.error)) {
+        _tokenDead = true;
+        logger.warn('[slackLiveService] Slack token is invalid — disabling all Slack calls for this process lifetime', {
+          error: data.error,
+        });
+      } else if (body?.channel && (data.error === 'channel_not_found' || data.error === 'is_archived' || data.error === 'not_in_channel')) {
         const alreadyLogged = _deadChannels.has(body.channel);
         _deadChannels.add(body.channel);
         if (!alreadyLogged) {

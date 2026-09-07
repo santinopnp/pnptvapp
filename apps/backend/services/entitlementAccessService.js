@@ -625,7 +625,7 @@ class EntitlementAccessService {
       }
       if (kind === 'hangout') {
         const { rows } = await query(
-          `SELECT id, creator_id, is_paid, price_usd, channel_id, name, parent_group_id
+          `SELECT id, creator_id, is_paid, price_usd, channel_id, name, parent_group_id, is_public, is_main
              FROM hangout_groups
              WHERE id = $1 LIMIT 1`,
           [String(resourceId)]
@@ -742,6 +742,17 @@ class EntitlementAccessService {
           );
           if (membership.rows.length > 0) {
             return { allowed: true, reason: 'existing_member' };
+          }
+          // Public free hangouts: auto-join on first access instead of 403ing.
+          // Mirrors ensureMainGroupMembership but runs in the middleware so new users
+          // are never blocked on their first visit.
+          if (resource.is_public) {
+            await query(
+              `INSERT INTO hangout_group_members (group_id, user_id, role)
+               VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`,
+              [String(resource.id), String(userId)]
+            );
+            return { allowed: true, reason: 'auto_joined_public' };
           }
         } catch (memberErr) {
           logger.warn('hasResourceAccess: hangout_group_members check failed', {

@@ -978,8 +978,8 @@ services:
     container_name: calcom
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom"
-      DATABASE_DIRECT_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom"
+      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connection_limit=5&pool_timeout=30&connect_timeout=10"
+      DATABASE_DIRECT_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connect_timeout=10"
       NEXTAUTH_SECRET: "b968f9535372ec2a1ad3ffa16c6782ecf7ce286aeca7f95be231f3ab8608274e"
       NEXTAUTH_URL: https://booking.pnptv.app
       CALENDSO_ENCRYPTION_KEY: "b46d7aec2df70c8c3d268a9399cbde29f9a8f4f8cdf007a70eb62049fba8a29f"
