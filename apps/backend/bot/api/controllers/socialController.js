@@ -924,7 +924,8 @@ const createPostWithMedia = async (req, res) => {
           [user.id, String(parentAuthorId)]
         );
         if (replierBlockedByAuthor.rows.length > 0 || authorBlockedByReplier.rows.length > 0) {
-          if (finalFilePath) await fs.unlink(finalFilePath).catch(() => {});
+          // finalFilePath is not yet set at this point — clean up the multer temp file directly
+          if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
           return res.status(403).json({ error: 'Cannot reply to this post', code: 'BLOCKED' });
         }
       }

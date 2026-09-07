@@ -1844,18 +1844,20 @@ fs.mkdirSync(CHUNK_DIR, { recursive: true });
 try { fs.chmodSync(CHUNK_DIR, 0o777); } catch (_) {}
 const CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
-// Cleanup chunk dirs older than 24h on startup
-(async () => {
+// Cleanup chunk dirs older than 6h — runs at startup and every hour.
+async function _cleanStaleChunks() {
   try {
     const entries = await fs.promises.readdir(CHUNK_DIR);
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - 6 * 60 * 60 * 1000;
     for (const e of entries) {
       const p = path.join(CHUNK_DIR, e);
       const stat = await fs.promises.stat(p).catch(() => null);
       if (stat && stat.mtimeMs < cutoff) await fs.promises.rm(p, { recursive: true, force: true }).catch(() => {});
     }
   } catch {}
-})();
+}
+_cleanStaleChunks();
+setInterval(_cleanStaleChunks, 60 * 60 * 1000);
 
 const chunkUpload = multer({
   storage: multer.diskStorage({
@@ -19695,7 +19697,9 @@ app.post('/api/creators/:id/services/:serviceId/book',
               'video/x-flv', 'video/mp2t',
             ]);
             if (!detected || !CHANNEL_VIDEO_MIMES.has(detected.mime)) {
-              await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+              // Only delete the bad first chunk — keep the upload dir so user doesn't lose prior chunks.
+              // The 6h orphan cleanup handles any incomplete upload dirs.
+              await fs.promises.unlink(path.join(dir, '000000.part')).catch(() => {});
               logger.warn('Channel video chunk rejected: bad magic bytes on first chunk', {
                 userId: String(req.session?.user?.id),
                 detected: detected?.mime ?? 'unknown',
@@ -21137,7 +21141,7 @@ app.get('/api/webapp/stage-tv/status', requireSessionAuth, (req, res) => {
 
   app.post('/api/webapp/admin/prime-videos/upload',
     adminGuard,
-    (req, _res, next) => { req.socket.setTimeout(0); next(); },
+    (req, _res, next) => { req.socket.setTimeout(3 * 60 * 60 * 1000); next(); },
     primeUpload.single('file'),
     asyncHandler(async (req, res) => {
       if (!req.file) return res.status(400).json({ success: false, error: 'file required' });
@@ -21403,7 +21407,9 @@ app.post('/api/webapp/creators/media/upload-video/chunk',
           await fd.read(head, 0, 64, 0);
           const detected = await FileType.fromBuffer(head);
           if (!detected || !VIDEO_MIMES.has(detected.mime)) {
-            await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+            // Only delete the bad first chunk — keep the upload dir so user doesn't lose prior chunks.
+            // The 6h orphan cleanup handles any incomplete upload dirs.
+            await fs.promises.unlink(chunkPath).catch(() => {});
             logger.warn('Chunked video upload rejected: bad magic bytes on first chunk', {
               userId: sessionUserId,
               detected: detected?.mime ?? 'unknown',
