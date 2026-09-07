@@ -1145,6 +1145,30 @@ services:
           memory: 256m
           cpus: '0.25'
 
+  deploy-webhook:
+    build:
+      context: /opt/deploy-webhook
+    container_name: deploy-webhook
+    restart: unless-stopped
+    environment:
+      PORT: "3016"
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_OPS_ADMIN_CHANNEL: ${SLACK_OPS_ADMIN_CHANNEL}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/pnptvapp:/opt/pnptvapp
+      - /usr/libexec/docker/cli-plugins/docker-buildx:/usr/libexec/docker/cli-plugins/docker-buildx:ro
+      - /root/.ssh/pnptvapp_deploy_key:/root/.ssh/pnptvapp_deploy_key:ro
+      - /root/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.15'
+
   mcp-notion:
     image: pnptv-mcp:latest
     container_name: mcp-notion

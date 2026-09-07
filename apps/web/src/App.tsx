@@ -314,6 +314,28 @@ function PrivyReadinessBreadcrumb() {
 // authenticate via the wallet FAB, BuyTokensModal, or any Privy entry point
 // still get their identity persisted server-side. Guarded by sessionStorage so
 // re-renders and route changes don't re-POST.
+// Fires once per browser session when PNPtv is logged in but Privy is not.
+// Triggers Privy's login modal automatically so users never have to hunt for
+// "reconnect wallet" when switching devices — Privy's MPC layer recovers the
+// wallet shard on the new device as soon as they authenticate.
+function PrivyAutoLogin() {
+  const { ready, authenticated, login } = usePrivy();
+  const { isAuthenticated } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;   // PNPtv not logged in yet
+    if (!ready) return;             // Privy SDK still initializing
+    if (authenticated) return;      // Already connected — nothing to do
+    const flag = "__pnptv_privy_autologin";
+    try { if (sessionStorage.getItem(flag) === "1") return; } catch { /* ignore */ }
+    try { sessionStorage.setItem(flag, "1"); } catch { /* ignore */ }
+    // Small delay: let any in-flight Privy session restore finish before
+    // showing the modal, avoiding a flash on fast connections.
+    const t = setTimeout(() => login(), 1800);
+    return () => clearTimeout(t);
+  }, [isAuthenticated, ready, authenticated, login]);
+  return null;
+}
+
 function PrivyIdentitySync() {
   const { authenticated, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
@@ -512,6 +534,7 @@ export default function App() {
                   >
                     <PrivyReadinessBreadcrumb />
                     <PrivyIdentitySync />
+                    <PrivyAutoLogin />
                     <RouterProvider router={router} />
                     <AppOverlays />
                   </PrivyProvider>
