@@ -2362,6 +2362,139 @@ function QuickTipSheet({
   );
 }
 
+// ── PanelChrome ───────────────────────────────────────────────────────────────
+// Defined at module scope so its identity is stable across re-renders. If it
+// were declared inside WalletFloater, every balance update would create a new
+// function reference and force React to unmount + remount the component.
+
+interface PanelChromeProps {
+  usd: number | null;
+  rush: number | null;
+  onClose: () => void;
+  onFullWallet: () => void;
+  body: React.ReactNode;
+  lang: string;
+  walletGuideOpen: boolean;
+  onToggleGuide: () => void;
+}
+
+function PanelChrome({
+  usd, rush, onClose, onFullWallet, body, lang, walletGuideOpen, onToggleGuide,
+}: PanelChromeProps) {
+  const es = lang === "es";
+  return (
+    <div
+      className="rounded-2xl overflow-hidden shadow-2xl"
+      style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.30)" }}
+    >
+      {/* Bug 4 — scrollable inner container so panel never overflows the screen */}
+      <div className="overflow-y-auto" style={{ maxHeight: "calc(100dvh - 9rem)" }}>
+        {/* ── Header ── */}
+        <div className="px-4 pt-3 pb-2 border-b border-white/[0.06]">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <span>💎</span>
+              <span className="text-sm font-bold text-white">Wallet</span>
+            </div>
+            {/* Bug 5 — expanded touch target (40px) without changing visual */}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar"
+              className="-mr-1.5 -mt-0.5 w-10 h-10 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
+            >×</button>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-4">
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">{es ? "Saldo" : "Balance"}</p>
+                <p className="text-sm font-black text-white tabular-nums">
+                  {usd != null ? `$${usd.toFixed(2)}` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">Ru$h 💎</p>
+                <p className="text-sm font-black text-white tabular-nums">
+                  {rush != null ? rush.toLocaleString() : "—"}
+                </p>
+              </div>
+            </div>
+            {/* Bug 2 — \n doesn't render in HTML; use single-line text */}
+            <button
+              type="button"
+              onClick={onFullWallet}
+              className="text-[10px] font-semibold text-emerald-400 hover:text-emerald-300 transition text-right leading-tight"
+            >
+              {es ? "Ver billetera completa →" : "Full wallet →"}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Body (contextual) ── */}
+        {body}
+
+        {/* ── Footer ── */}
+        <div className="px-4 py-2 border-t border-white/[0.06]">
+          {/* Bug 6 — -my-2 cancels out the py-2 added to links so visual spacing is unchanged */}
+          <div className="-my-2 flex items-center justify-center gap-3 flex-wrap">
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="py-2 text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Términos" : "Terms"}
+            </a>
+            <span className="text-white/20 text-[9px]">·</span>
+            <a
+              href="/refunds"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="py-2 text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Reembolsos" : "Refunds"}
+            </a>
+            <span className="text-white/20 text-[9px]">·</span>
+            <button
+              type="button"
+              onClick={onToggleGuide}
+              className="py-2 text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Cómo usar la billetera" : "How to use"}
+            </button>
+          </div>
+          {walletGuideOpen && (
+            <div className="mt-2 pt-2 border-t border-white/[0.06]">
+              <p className="text-[10px] font-semibold text-white/60 mb-1.5">
+                {es ? "Guía rápida 💎" : "Quick guide 💎"}
+              </p>
+              <ol className="space-y-1">
+                {(es
+                  ? [
+                      "Agrega Ru$h 💎 con USDC o tarjeta para desbloquear contenido.",
+                      "Envía propinas a tus creadores favoritos en tiempo real.",
+                      "Tus Ru$h no vencen. Tu saldo siempre está seguro.",
+                    ]
+                  : [
+                      "Add Ru$h 💎 with USDC or card to unlock exclusive content.",
+                      "Send real-time tips to your favorite creators.",
+                      "Your Ru$h never expire. Your balance is always safe.",
+                    ]
+                ).map((step, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="text-[9px] font-black text-emerald-400 flex-shrink-0">{i + 1}.</span>
+                    <span className="text-[9px] text-white/50 leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── WalletFloater ─────────────────────────────────────────────────────────────
 
 function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } = {}) {
@@ -2588,124 +2721,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
     return `${days}d`;
   };
 
-  // Unified panel chrome: header (USD + Ru$h balances) + contextual body + footer.
-  function PanelChrome({
-    usd, rush, onClose, onFullWallet, body,
-  }: {
-    usd: number | null;
-    rush: number | null;
-    onClose: () => void;
-    onFullWallet: () => void;
-    body: React.ReactNode;
-  }) {
-    const es = lang === "es";
-    return (
-      <div
-        className="rounded-2xl overflow-hidden shadow-2xl"
-        style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.30)" }}
-      >
-        {/* ── Header ── */}
-        <div className="px-4 pt-3 pb-2 border-b border-white/[0.06]">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <span>💎</span>
-              <span className="text-sm font-bold text-white">Wallet</span>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Cerrar"
-              className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
-            >×</button>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-4">
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">{es ? "Saldo" : "Balance"}</p>
-                <p className="text-sm font-black text-white tabular-nums">
-                  {usd != null ? `$${usd.toFixed(2)}` : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">Ru$h 💎</p>
-                <p className="text-sm font-black text-white tabular-nums">
-                  {rush != null ? rush.toLocaleString() : "—"}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onFullWallet}
-              className="text-[10px] font-semibold text-emerald-400 hover:text-emerald-300 transition text-right leading-tight"
-            >
-              {es ? "Ver billetera\ncompleta →" : "Full\nwallet →"}
-            </button>
-          </div>
-        </div>
-
-        {/* ── Body (contextual) ── */}
-        {body}
-
-        {/* ── Footer ── */}
-        <div className="px-4 py-2 border-t border-white/[0.06]">
-          <div className="flex items-center justify-center gap-3 flex-wrap">
-            <a
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[9px] text-white/30 hover:text-white/50 transition"
-            >
-              {es ? "Términos" : "Terms"}
-            </a>
-            <span className="text-white/20 text-[9px]">·</span>
-            <a
-              href="/refunds"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[9px] text-white/30 hover:text-white/50 transition"
-            >
-              {es ? "Reembolsos" : "Refunds"}
-            </a>
-            <span className="text-white/20 text-[9px]">·</span>
-            <button
-              type="button"
-              onClick={() => setWalletGuideOpen((v) => !v)}
-              className="text-[9px] text-white/30 hover:text-white/50 transition"
-            >
-              {es ? "Cómo usar la billetera" : "How to use"}
-            </button>
-          </div>
-          {walletGuideOpen && (
-            <div className="mt-2 pt-2 border-t border-white/[0.06]">
-              <p className="text-[10px] font-semibold text-white/60 mb-1.5">
-                {es ? "Guía rápida 💎" : "Quick guide 💎"}
-              </p>
-              <ol className="space-y-1">
-                {(es
-                  ? [
-                      "Agrega Ru$h 💎 con USDC o tarjeta para desbloquear contenido.",
-                      "Envía propinas a tus creadores favoritos en tiempo real.",
-                      "Tus Ru$h no vencen. Tu saldo siempre está seguro.",
-                    ]
-                  : [
-                      "Add Ru$h 💎 with USDC or card to unlock exclusive content.",
-                      "Send real-time tips to your favorite creators.",
-                      "Your Ru$h never expire. Your balance is always safe.",
-                    ]
-                ).map((step, i) => (
-                  <li key={i} className="flex gap-1.5">
-                    <span className="text-[9px] font-black text-emerald-400 flex-shrink-0">{i + 1}.</span>
-                    <span className="text-[9px] text-white/50 leading-relaxed">{step}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   if (!isAuthenticated) return null;
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
@@ -2739,7 +2754,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         {/* Panel */}
         {livePanelOpen && (
           <div
-            className="fixed left-0 right-0 z-[49] mx-auto w-full max-w-md px-3"
+            className="fixed left-3 right-3 z-[49] sm:left-auto sm:right-3 sm:w-[420px] max-w-full"
             style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
@@ -2751,6 +2766,9 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               rush={liveRushBalance}
               onClose={() => setLivePanelOpen(false)}
               onFullWallet={() => { setLivePanelOpen(false); setOpen(true); }}
+              lang={lang}
+              walletGuideOpen={walletGuideOpen}
+              onToggleGuide={() => setWalletGuideOpen((v) => !v)}
               body={
                 <div className="px-3 pt-3 pb-2">
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
@@ -2826,7 +2844,9 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
           style={{
             bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
-            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            ...(avoidRightEdge
+              ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
+              : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
             width: 52, height: 52,
             background: "linear-gradient(135deg,#D4007A,#E69138)",
             color: "white",
@@ -2875,7 +2895,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         )}
         {homePanelOpen && (
           <div
-            className="fixed left-0 right-0 z-[49] mx-auto w-full max-w-md px-3"
+            className="fixed left-3 right-3 z-[49] sm:left-auto sm:right-3 sm:w-[420px] max-w-full"
             style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
@@ -2887,6 +2907,9 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               rush={homeRushBalance}
               onClose={() => setHomePanelOpen(false)}
               onFullWallet={() => { setHomePanelOpen(false); setOpen(true); }}
+              lang={lang}
+              walletGuideOpen={walletGuideOpen}
+              onToggleGuide={() => setWalletGuideOpen((v) => !v)}
               body={
                 <div className="px-3 py-2.5">
                   {selectedHomePlan ? (
@@ -3003,7 +3026,9 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
           style={{
             bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
-            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            ...(avoidRightEdge
+              ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
+              : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
             width: 52, height: 52,
             background: "linear-gradient(135deg,#10b981,#059669)",
             color: "white",
