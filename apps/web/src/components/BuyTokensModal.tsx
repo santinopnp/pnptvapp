@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useI18n } from "@/lib/i18n";
 import {
   getTokenPackages,
@@ -34,9 +34,11 @@ interface BuyTokensModalProps {
   onClose: () => void;
   onSuccess?: (newBalance: number) => void;
   dpnsHandle?: string | null;
+  initialAmountUsd?: number;
+  initialPackageId?: string;
 }
 
-export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHandle }: BuyTokensModalProps) {
+export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHandle, initialAmountUsd, initialPackageId }: BuyTokensModalProps) {
   const t = useI18n();
   const es = t.lang === "es";
   const { authenticated, login } = usePrivy();
@@ -118,6 +120,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     setPayingPackageId(null);
     setPayingCustom(false);
     setNpFallbackPackageId(null);
+    if (initialAmountUsd && initialAmountUsd >= 1) setCustomUsd(String(initialAmountUsd));
+    else setCustomUsd("");
     setLoadingPackages(true);
     getTokenPackages()
       .then((res) => {
@@ -485,6 +489,92 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
     }
   };
 
+  // Card onramp → auto-buy flow for custom amounts and preset packages.
+  // Mirrors handleFundForPackage. When pkgId is provided, actualTokens uses
+  // the package's real token count (including bonus) instead of the flat rate.
+  const handleFundForCustomAmount = async (usd: number, tokens?: number, pkgId?: string) => {
+    if (!activeWallet) return;
+    const actualTokens = tokens ?? Math.round(usd * 6);
+    setError(null);
+    setPayingCustom(true);
+    try {
+      await addFunds({
+        destination: {
+          address: activeWallet.address,
+          chain: BASE_CAIP2,
+          asset: USDC_BASE_ADDRESS,
+        },
+        fiat: { defaultAmount: grossUpForOnramp(usd) },
+      });
+      const deadline = Date.now() + 60_000;
+      let bal = walletUsdc ?? 0;
+      while (Date.now() < deadline && bal < usd) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const b = await getWalletUsdcBalance(activeWallet.address).catch(() => null);
+        if (b && b.hasWallet) { bal = b.usdc; setWalletUsdc(b.usdc); }
+      }
+      if (bal >= usd) {
+        await _executeIntent("usdc", { tokens: actualTokens, ...(pkgId ? { packageId: pkgId } : {}) }, actualTokens, usd);
+      } else {
+        setError(es
+          ? "El pago se está procesando. Cuando llegue el USDC toca el botón nuevamente."
+          : "Card payment processing. Once USDC arrives tap the button again.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel|closed|reject/i.test(msg)) return;
+      setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
+    } finally {
+      setPayingCustom(false);
+    }
+  };
+
+  // Auto-trigger: when the modal is opened from a preset button (initialPackageId or
+  // initialAmountUsd set), fire checkout immediately once wallet data has loaded.
+  // When initialPackageId is provided the package's real token count (including bonus)
+  // is used so the bonus is never silently dropped.
+  const autoTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) { autoTriggeredRef.current = false; }
+  }, [isOpen]);
+  useEffect(() => {
+    if (!initialPackageId && !initialAmountUsd) return;
+    if (!isOpen || walletLoading || loadingPackages || autoTriggeredRef.current) return;
+    if (!authenticated || !activeWallet) return;
+
+    let usd: number;
+    let tokens: number;
+    let pkgId: string | undefined;
+
+    if (initialPackageId) {
+      const pkg = packages.find((p) => p.id === initialPackageId);
+      if (!pkg) return; // packages not loaded yet — wait for next render
+      usd = Number(pkg.usd);
+      tokens = Number(pkg.tokens);
+      pkgId = pkg.id;
+    } else {
+      usd = initialAmountUsd!;
+      tokens = Math.round(usd * 6);
+      pkgId = undefined;
+    }
+
+    autoTriggeredRef.current = true;
+    setCustomUsd(String(usd));
+    const canAfford = walletUsdc != null && walletUsdc + 1e-9 >= usd;
+    if (canAfford) {
+      setPayingCustom(true);
+      _executeIntent("usdc", { tokens, ...(pkgId ? { packageId: pkgId } : {}) }, tokens, usd)
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/cancel|closed|reject/i.test(msg)) setError(msg);
+        })
+        .finally(() => setPayingCustom(false));
+    } else {
+      void handleFundForCustomAmount(usd, tokens, pkgId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, walletLoading, loadingPackages, authenticated, activeWallet?.address, initialPackageId, initialAmountUsd]);
+
   const handleRedeemCode = async () => {
     const trimmedCode = activationCode.trim();
     if (!trimmedCode) {
@@ -508,6 +598,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   };
 
   const eligiblePackages = packages.filter((p) => Number(p.usd) >= 1);
+
+  // When opened from a preset (initialAmountUsd or initialPackageId set), show a minimal
+  // loading screen while auto-trigger fires — avoids flashing the full wallet UI.
+  const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && !autoTriggeredRef.current;
 
   return (
     <div
@@ -541,6 +635,39 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Auto-trigger loading screen — shown briefly while Privy checkout launches */}
+          {isAutoTriggerMode && (
+            <div className="flex flex-col items-center justify-center py-10 gap-4">
+              <svg className="w-8 h-8 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <div className="text-center">
+                <p className="text-sm font-bold text-white">
+                  {es ? "Preparando checkout…" : "Launching checkout…"}
+                </p>
+                {(() => {
+                  const pkg = initialPackageId ? packages.find((p) => p.id === initialPackageId) : null;
+                  const displayUsd = pkg ? pkg.usd : initialAmountUsd;
+                  const displayTokens = pkg ? pkg.tokens : Math.round((initialAmountUsd || 0) * 6);
+                  const displayBonus = pkg ? (pkg.bonus ?? 0) : 0;
+                  return (
+                    <p className="text-xs text-white/50 mt-1">
+                      ${displayUsd} · {Number(displayTokens).toLocaleString()} Ru$h 💎
+                      {displayBonus > 0 && (
+                        <span className="text-emerald-400"> +{displayBonus} bonus</span>
+                      )}
+                    </p>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* Full UI — hidden while auto-trigger is pending, shown once Privy fired
+              (or if opened manually without a preset amount). */}
+          {!isAutoTriggerMode && (
+            <>
           {/* Hero — one-off marketing pitch shared with every other checkout surface. */}
           <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
 
@@ -860,9 +987,9 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                   <div className="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
                     <div className="flex gap-1.5 justify-center flex-wrap">
                       {([
-                        { id: 'usdcerc20' as NpCoin, label: 'USDC', tint: 'text-[#2775ca]' },
-                        { id: 'btc' as NpCoin,       label: 'BTC',  tint: 'text-[#F7931A]' },
-                        { id: 'eth' as NpCoin,       label: 'ETH',  tint: 'text-[#627EEA]' },
+                        { id: 'usdcerc20' as 'usdcerc20', label: 'USDC', tint: 'text-[#2775ca]' },
+                        { id: 'btc' as 'btc',             label: 'BTC',  tint: 'text-[#F7931A]' },
+                        { id: 'eth' as 'eth',             label: 'ETH',  tint: 'text-[#627EEA]' },
                       ]).map((c) => (
                         <button
                           key={c.id}
@@ -964,6 +1091,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               ? "Solo tu billetera puede firmar transacciones. PNPtv nunca tiene acceso a tus fondos."
               : "Only your wallet can sign transactions. PNPtv never has access to your funds."}
           </p>
+            </>
+          )}
         </div>
       </div>
     </div>

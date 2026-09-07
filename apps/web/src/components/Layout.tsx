@@ -19,12 +19,12 @@ import { AdSlot } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
 import { MediaMessage } from "@/components/hangouts/MediaMessage";
-import { TIP_PRESETS_USD, TIP_PRESETS_RUSH, WalletTypeIcon, getPreferredWallet } from "@/components/payments/PayInWalletChips";
+import { WalletTypeIcon, getPreferredWallet } from "@/components/payments/PayInWalletChips";
 
 // Duplicated string (not imported) to keep the FAB in the main bundle without
 // pulling in the lazy PayInWalletChips chunk. Keep in sync with the export in
@@ -2273,18 +2273,6 @@ function FloatingWidgets({
 // sub-buttons upward (Tip Crystal Creators + Support Main Stage fallback),
 // tap a sub-button to open the compact QuickTipSheet below.
 
-// Shared Ru$h rate constant — 1 USD = 6 Ru$h (see feedback_token_rate.md).
-const RUSH_PER_USD = 6;
-
-// Preset Ru$h amounts for the quick-tip sheet.
-// Unified tip presets — sourced from the shared PayInWalletChips constants
-// so every tip surface (MainStage sheet, QuickTipSheet, creator profile)
-// stays in sync. USD is authoritative; Rush is the paired dual-label at
-// 6 Ru$h = $1 (per feedback_token_rate.md).
-const QUICK_TIP_PRESETS = TIP_PRESETS_USD.map((usd, i) => ({
-  rush: TIP_PRESETS_RUSH[i],
-  usd,
-}));
 
 // Platform donation user ID — Santino's account, used as the fallback
 // recipient when no Crystal Creator is on stage.
@@ -2298,9 +2286,9 @@ interface QuickTipRecipient {
 }
 
 // ── QuickTipSheet ──────────────────────────────────────────────────────────
-// Compact bottom sheet (~40% vh) opened by the Main Stage FAB action stack.
-// Composes TipRushRail (Ru$h, "live" mode fires tip animations) and
-// WalletPayCard (USDC on Base, gasless via Privy) as two side-by-side rails.
+// Compact bottom sheet opened by the Main Stage FAB action stack.
+// Uses TipRushRail exclusively — STATE A (has Ru$h) shows amount input + Max,
+// STATE B (no Ru$h) shows package grid → BuyTokensModal.
 //
 // This component is defined inline in Layout.tsx (per feedback_no_new_files.md).
 
@@ -2311,26 +2299,7 @@ function QuickTipSheet({
   recipient: QuickTipRecipient;
   onClose: () => void;
 }) {
-  const [selectedRush, setSelectedRush] = useState<number>(QUICK_TIP_PRESETS[1].rush);
-  // Default to USDC (Privy embedded wallet) so it's the primary payment rail.
-  // Users with Ru$h balance can still one-click to swap rails.
-  const [railMode, setRailMode] = useState<"rush" | "usdc">("usdc");
-  const [rushDone, setRushDone] = useState(false);
-
-  // Derived USD amount for WalletPayCard based on selected preset.
-  const selectedUsd = selectedRush / RUSH_PER_USD;
-
-  // entitlementSpec mirrors what MainStage.tsx passes to WalletPayCard.
-  const entitlementSpec = {
-    creator_id: recipient.userId,
-  };
-  const metadata = {
-    context: "main_stage_fab",
-    ...(recipient.isDonation ? { donation: "platform" } : {}),
-  };
-
   return (
-    // Backdrop — click outside to dismiss.
     <div
       className="fixed inset-0 z-[110] flex items-end justify-center"
       role="dialog"
@@ -2343,7 +2312,7 @@ function QuickTipSheet({
         style={{
           background: "rgba(19,16,26,0.98)",
           border: "1px solid rgba(212,0,122,0.35)",
-          maxHeight: "44vh",
+          maxHeight: "78vh",
           overflowY: "auto",
         }}
         onClick={(e) => e.stopPropagation()}
@@ -2376,86 +2345,18 @@ function QuickTipSheet({
           </button>
         </div>
 
-        {/* Preset chips — shared between both rails */}
-        <div className="grid grid-cols-4 gap-2">
-          {QUICK_TIP_PRESETS.map(({ rush, usd }) => (
-            <button
-              key={rush}
-              type="button"
-              onClick={() => { setSelectedRush(rush); setRushDone(false); }}
-              className={`py-2.5 rounded-lg text-center transition-colors ${
-                selectedRush === rush
-                  ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white"
-                  : "bg-white/[0.05] text-white/80 border border-white/10 hover:bg-white/[0.10]"
-              }`}
-            >
-              <span className="block text-sm font-bold">{rush} 💎</span>
-              <span className="block text-[10px] text-white/60">~${usd}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Rail selector — USDC first (primary), Ru$h second (spend existing balance) */}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setRailMode("usdc")}
-            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
-              railMode === "usdc"
-                ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
-                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
-            }`}
-          >
-            Pay with USDC — gasless
-          </button>
-          <button
-            type="button"
-            onClick={() => setRailMode("rush")}
-            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-colors ${
-              railMode === "rush"
-                ? "bg-gradient-to-r from-pink-500 to-orange-400 text-white shadow"
-                : "bg-white/[0.05] text-white/60 border border-white/10 hover:bg-white/[0.10]"
-            }`}
-          >
-            Pay with Ru$h 💎 — instant
-          </button>
-        </div>
-
-        {/* Active rail */}
-        {railMode === "rush" && !rushDone && (
-          <Suspense fallback={<div className="h-16 flex items-center justify-center text-white/40 text-xs">Loading…</div>}>
-            <LazyTipRushRail
-              creatorId={recipient.userId}
-              creatorName={recipient.label}
-              mode="live"
-              variant="compact"
-              showMessage={false}
-              showBalance={false}
-              allowGifted={recipient.userId === PLATFORM_DONATION_USER_ID}
-              selectedPreset={selectedRush}
-              onSuccess={() => { setRushDone(true); setTimeout(onClose, 1200); }}
-            />
-          </Suspense>
-        )}
-        {railMode === "rush" && rushDone && (
-          <p className="text-center text-sm text-emerald-400 font-semibold py-3">
-            Tip sent! 💎
-          </p>
-        )}
-        {railMode === "usdc" && (
-          <Suspense fallback={<div className="h-16 flex items-center justify-center text-white/40 text-xs">Loading…</div>}>
-            <LazyWalletPayCard
-              surface="tip"
-              amountUsd={selectedUsd}
-              entitlementSpec={entitlementSpec}
-              metadata={metadata}
-              label={`Send ${selectedRush} Ru$h ($${selectedUsd}) tip`}
-              lang="en"
-              compact
-              onSuccess={() => setTimeout(onClose, 1200)}
-            />
-          </Suspense>
-        )}
+        <Suspense fallback={<div className="h-24 flex items-center justify-center text-white/40 text-xs">Loading…</div>}>
+          <LazyTipRushRail
+            creatorId={recipient.userId}
+            creatorName={recipient.isDonation ? undefined : recipient.label}
+            mode="live"
+            variant="full"
+            showMessage={false}
+            allowGifted={recipient.isDonation}
+            onSuccess={() => setTimeout(onClose, 1500)}
+            onClose={onClose}
+          />
+        </Suspense>
       </div>
     </div>
   );
@@ -2467,6 +2368,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const location = useLocation();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
+  const { lang } = useI18n();
   // Creator profile route match — drives the /c/:username contextual stack.
   // useMatch returns null when the current path isn't a creator profile.
   const creatorMatch = useMatch("/c/:username");
@@ -2510,6 +2412,29 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const isMainStage = path === "/main-stage";
   const isCreatorProfile = !!creatorUsername;
 
+  // ── /live panel state ───────────────────────────────────────────────────────
+  const isLivePage = path === "/live";
+  const [livePanelOpen, setLivePanelOpen] = useState(false);
+  const [liveRushBalance, setLiveRushBalance] = useState<number | null>(null);
+  const [liveBuyUsd, setLiveBuyUsd] = useState<number | undefined>(undefined);
+  const [liveBuyOpen, setLiveBuyOpen] = useState(false);
+  const [liveCustomInput, setLiveCustomInput] = useState("");
+  const [livePackages, setLivePackages] = useState<TokenPackage[]>([]);
+  const [livePackagesLoading, setLivePackagesLoading] = useState(false);
+  const [liveBuyPackageId, setLiveBuyPackageId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!livePanelOpen || !isAuthenticated) return;
+    setLivePackagesLoading(true);
+    Promise.all([
+      import("@/lib/api").then(({ getWalletBalance }) => getWalletBalance()).catch(() => null),
+      import("@/lib/api").then(({ getTokenPackages }) => getTokenPackages()).catch(() => null),
+    ]).then(([balRes, pkgRes]) => {
+      if (balRes?.success) setLiveRushBalance((balRes.regularBalance ?? 0) + (balRes.giftedBalance ?? 0));
+      if (pkgRes?.success && Array.isArray(pkgRes.packages)) setLivePackages(pkgRes.packages);
+    }).catch(() => {}).finally(() => setLivePackagesLoading(false));
+  }, [livePanelOpen, isAuthenticated]);
+  useEffect(() => { if (!isLivePage) { setLivePanelOpen(false); } }, [isLivePage]);
+
   // ── Home panel state ────────────────────────────────────────────────────────
   // Shown on home/feed/nearby/channels/explore routes in place of the full
   // WalletHomeSheet. Shows balance + subscription plans + "Ver billetera" CTA.
@@ -2520,31 +2445,21 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homePlans, setHomePlans] = useState<SubscriptionPlan[]>([]);
   const [homeUsdcBalance, setHomeUsdcBalance] = useState<number | null>(null);
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
-  // Pulse animation — triggers after 30s idle, repeats every 9s.
+  const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
+  // Pulse animation — starts 8s after mount (or auth), loops every 2.5s until first tap.
   const [pulsing, setPulsing] = useState(false);
-  const pulseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!isAuthenticated) return;
-    idleTimerRef.current = setTimeout(() => {
-      setPulsing(true);
-      pulseTimerRef.current = setInterval(() => {
-        setPulsing(false);
-        setTimeout(() => setPulsing(true), 100);
-      }, 9000);
-    }, 30000);
-    const resetPulse = () => {
+    idleTimerRef.current = setTimeout(() => setPulsing(true), 8000);
+    const stopPulse = () => {
       if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
-      if (pulseTimerRef.current) { clearInterval(pulseTimerRef.current); pulseTimerRef.current = null; }
       setPulsing(false);
     };
-    window.addEventListener("click", resetPulse, { passive: true, capture: true });
-    window.addEventListener("touchstart", resetPulse, { passive: true, capture: true });
+    window.addEventListener("click", stopPulse, { passive: true, capture: true });
     return () => {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      if (pulseTimerRef.current) clearInterval(pulseTimerRef.current);
-      window.removeEventListener("click", resetPulse, { capture: true });
-      window.removeEventListener("touchstart", resetPulse, { capture: true });
+      window.removeEventListener("click", stopPulse, { capture: true });
     };
   }, [isAuthenticated]);
 
@@ -2568,8 +2483,8 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
     }).finally(() => setHomePlanLoading(false));
   }, [homePanelOpen]);
 
-  // Close home panel on route change.
-  useEffect(() => { setHomePanelOpen(false); }, [path]);
+  // Close home panel + clear checkout on route change.
+  useEffect(() => { setHomePanelOpen(false); setSelectedHomePlan(null); }, [path]);
 
   // Listen for OPEN_WALLET_EVENT so the desktop sidebar and mobile drawer
   // "Wallet" nav items can pop the sheet from any surface without a route
@@ -2659,6 +2574,178 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
 
+  // ── /live panel mode: Ru$h buy widget ──────────────────────────────────────
+  if (isLivePage && !isMainStage && !isCreatorProfile) {
+    const openBuyPackage = (pkgId: string) => {
+      setLiveBuyPackageId(pkgId);
+      setLiveBuyUsd(undefined);
+      setLivePanelOpen(false);
+      setLiveBuyOpen(true);
+    };
+    const handleCustomBuy = () => {
+      const n = parseFloat(liveCustomInput);
+      if (!isFinite(n) || n < 1) return;
+      setLiveCustomInput("");
+      setLiveBuyPackageId(undefined);
+      setLiveBuyUsd(n);
+      setLivePanelOpen(false);
+      setLiveBuyOpen(true);
+    };
+    return (
+      <>
+        {/* Backdrop */}
+        {livePanelOpen && (
+          <div className="fixed inset-0 z-[48]" onClick={() => setLivePanelOpen(false)} aria-hidden="true">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          </div>
+        )}
+
+        {/* Panel */}
+        {livePanelOpen && (
+          <div
+            className="fixed left-0 right-0 z-[49] mx-auto w-full max-w-md px-3"
+            style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Buy Ru$h"
+          >
+            <div
+              className="rounded-2xl overflow-hidden shadow-2xl"
+              style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.30)" }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💎</span>
+                  <p className="text-sm font-bold text-white">Ru$h</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLivePanelOpen(false)}
+                  aria-label="Cerrar"
+                  className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
+                >×</button>
+              </div>
+
+              {/* Balance + "full wallet" link */}
+              <div className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-white/[0.06]">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-0.5">Ru$h 💎</p>
+                  <p className="text-base font-black text-white tabular-nums">
+                    {liveRushBalance != null ? liveRushBalance.toLocaleString() : "—"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setLivePanelOpen(false); setOpen(true); }}
+                  className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition"
+                >
+                  {lang === "es" ? "Ver billetera completa →" : "Full wallet →"}
+                </button>
+              </div>
+
+              {/* Preset buttons */}
+              <div className="px-3 pt-3 pb-2">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                  {lang === "es" ? "Comprar Ru$h" : "Buy Ru$h"}
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
+                  {livePackagesLoading ? (
+                    [0,1,2,3].map((i) => (
+                      <div key={i} className="h-14 rounded-xl bg-white/[0.06] animate-pulse" />
+                    ))
+                  ) : (
+                    livePackages
+                      .filter((p) => [25, 50, 100, 500, 1000].includes(Number(p.usd)))
+                      .sort((a, b) => Number(a.usd) - Number(b.usd))
+                      .map((pkg) => (
+                        <button
+                          key={pkg.id}
+                          type="button"
+                          onClick={() => openBuyPackage(pkg.id)}
+                          className="flex flex-col items-start px-3 py-2.5 rounded-xl text-left transition active:scale-95"
+                          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.20),rgba(230,145,56,0.20))", border: "1px solid rgba(212,0,122,0.35)" }}
+                        >
+                          <span className="text-sm font-black text-white">${pkg.usd}</span>
+                          <span className="text-xs font-bold text-white/80">{Number(pkg.tokens).toLocaleString()} 💎</span>
+                          {(pkg.bonus ?? 0) > 0 && (
+                            <span className="text-[10px] font-semibold text-emerald-400">+{pkg.bonus} bonus</span>
+                          )}
+                        </button>
+                      ))
+                  )}
+                </div>
+
+                {/* Custom amount */}
+                <div className="flex gap-2 pb-3">
+                  <div
+                    className="flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2"
+                    style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}
+                  >
+                    <span className="text-xs text-white/50 font-bold">$</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={1}
+                      value={liveCustomInput}
+                      onChange={(e) => setLiveCustomInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleCustomBuy()}
+                      placeholder={lang === "es" ? "Otro monto" : "Custom amount"}
+                      className="flex-1 min-w-0 bg-transparent text-sm font-bold text-white outline-none placeholder-white/30 tabular-nums"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCustomBuy}
+                    disabled={!liveCustomInput || parseFloat(liveCustomInput) < 1}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white transition active:scale-95 disabled:opacity-40"
+                    style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                  >
+                    {lang === "es" ? "Comprar" : "Buy"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FAB */}
+        <button
+          type="button"
+          onClick={() => { setPulsing(false); setLivePanelOpen((v) => !v); }}
+          aria-label={livePanelOpen ? "Cerrar" : "Comprar Ru$h"}
+          aria-expanded={livePanelOpen}
+          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
+            width: 52, height: 52,
+            background: "linear-gradient(135deg,#D4007A,#E69138)",
+            color: "white",
+            fontSize: 22,
+            animation: pulsing ? "wallet-fab-pulse 1.4s ease-out infinite" : "",
+          }}
+        >
+          {livePanelOpen ? "×" : "💎"}
+        </button>
+
+        {/* BuyTokensModal — mounted outside panel so it persists after panel closes */}
+        {liveBuyOpen && (
+          <Suspense fallback={null}>
+            <LazyBuyTokensModal
+              isOpen={liveBuyOpen}
+              onClose={() => { setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
+              onSuccess={(nb) => { setLiveRushBalance(nb); setLiveBuyOpen(false); setLiveBuyUsd(undefined); setLiveBuyPackageId(undefined); }}
+              initialAmountUsd={liveBuyUsd}
+              initialPackageId={liveBuyPackageId}
+            />
+          </Suspense>
+        )}
+      </>
+    );
+  }
+
   // ── Home panel mode: balance + subscription plans ────────────────────────
   // Activated on feed/home/nearby/channels/explore routes. Shows a compact
   // bottom sheet with the user's USD balance (USDC) + all active plans as
@@ -2734,82 +2821,119 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                 </button>
               </div>
 
-              {/* Plans */}
+              {/* Plans list OR inline checkout */}
               <div className="px-3 py-2.5">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  Planes
-                </p>
-                {homePlanLoading ? (
-                  <div className="space-y-1.5">
-                    {[0, 1, 2].map((i) => (
-                      <div key={i} className="h-10 rounded-xl bg-white/[0.05] animate-pulse" />
-                    ))}
-                  </div>
-                ) : homePlansError ? (
-                  <div className="py-2 text-center">
-                    <p className="text-xs text-red-400 mb-2">{homePlansError}</p>
-                    <button
-                      type="button"
-                      onClick={() => setHomePanelOpen(false)}
-                      className="text-[11px] text-emerald-400 hover:underline"
-                    >
-                      Reintentar
-                    </button>
-                  </div>
+                {selectedHomePlan ? (
+                  <>
+                    <div className="flex items-center gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedHomePlan(null)}
+                        className="text-[11px] text-white/40 hover:text-white/70 transition flex items-center gap-1"
+                      >
+                        ← {lang === "es" ? "Planes" : "Plans"}
+                      </button>
+                      <span className="text-[11px] text-white/60 font-semibold truncate">
+                        {selectedHomePlan.display_name || selectedHomePlan.name}
+                      </span>
+                    </div>
+                    <Suspense fallback={<div className="h-24 rounded-xl bg-white/[0.05] animate-pulse" />}>
+                      <LazyWalletPayCard
+                        surface={
+                          (selectedHomePlan.tier?.toLowerCase() === "prime" || !selectedHomePlan.id.startsWith("member"))
+                            ? "prime"
+                            : "membership"
+                        }
+                        amountUsd={selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0}
+                        entitlementSpec={{ planId: selectedHomePlan.id }}
+                        label={`${lang === "es" ? "Pagar" : "Pay"} $${(selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0).toFixed(2)} · ${selectedHomePlan.display_name || selectedHomePlan.name}`}
+                        lang={lang === "es" ? "es" : "en"}
+                        compact
+                        onSuccess={() => {
+                          setSelectedHomePlan(null);
+                          setHomePanelOpen(false);
+                        }}
+                      />
+                    </Suspense>
+                  </>
                 ) : (
-                  <div className="space-y-1.5">
-                    {homePlans.map((plan) => {
-                      const days = plan.duration_days ?? plan.duration ?? 0;
-                      const duration = formatPlanDuration(days);
-                      const price = plan.priceUSD ?? plan.price ?? 0;
-                      const isPrime = plan.tier?.toLowerCase() === "prime" || !plan.id.startsWith("member");
-                      return (
+                  <>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                      Planes
+                    </p>
+                    {homePlanLoading ? (
+                      <div className="space-y-1.5">
+                        {[0, 1, 2].map((i) => (
+                          <div key={i} className="h-10 rounded-xl bg-white/[0.05] animate-pulse" />
+                        ))}
+                      </div>
+                    ) : homePlansError ? (
+                      <div className="py-2 text-center">
+                        <p className="text-xs text-red-400 mb-2">{homePlansError}</p>
                         <button
-                          key={plan.id}
                           type="button"
-                          onClick={() => { setHomePanelOpen(false); navigate(`/subscribe?plan=${plan.id}&via=np-go`); }}
-                          className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
-                          style={{
-                            borderColor: isPrime ? "rgba(212,0,122,0.35)" : "rgba(255,255,255,0.1)",
-                            background: isPrime ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
-                          }}
+                          onClick={() => setHomePanelOpen(false)}
+                          className="text-[11px] text-emerald-400 hover:underline"
                         >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-white truncate">
-                              {plan.display_name || plan.name}
-                            </p>
-                            <p className="text-[10px] text-white/50">{duration}</p>
-                          </div>
-                          <p
-                            className="text-sm font-black flex-shrink-0"
-                            style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
-                          >
-                            ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}
-                          </p>
+                          {lang === "es" ? "Reintentar" : "Retry"}
                         </button>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {homePlans.map((plan) => {
+                          const days = plan.duration_days ?? plan.duration ?? 0;
+                          const duration = formatPlanDuration(days);
+                          const price = plan.priceUSD ?? plan.price ?? 0;
+                          const isPrime = plan.tier?.toLowerCase() === "prime" || !plan.id.startsWith("member");
+                          return (
+                            <button
+                              key={plan.id}
+                              type="button"
+                              onClick={() => setSelectedHomePlan(plan)}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                              style={{
+                                borderColor: isPrime ? "rgba(212,0,122,0.35)" : "rgba(255,255,255,0.1)",
+                                background: isPrime ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
+                              }}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-white truncate">
+                                  {plan.display_name || plan.name}
+                                </p>
+                                <p className="text-[10px] text-white/50">{duration}</p>
+                              </div>
+                              <p
+                                className="text-sm font-black flex-shrink-0"
+                                style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
+                              >
+                                ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
           </div>
         )}
 
-        {/* FAB — pulse animation triggers after 30s idle */}
+        {/* FAB — pulse animation starts 8s after mount, loops until first tap */}
         <style>{`
           @keyframes wallet-fab-pulse {
-            0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.7); transform: scale(1); }
-            50% { box-shadow: 0 0 0 12px rgba(16,185,129,0); transform: scale(1.07); }
-            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); transform: scale(1); }
+            0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.75); }
+            60%  { box-shadow: 0 0 0 14px rgba(16,185,129,0); }
+            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
           }
         `}</style>
         <button
           type="button"
-          onClick={() => { setPulsing(false); setHomePanelOpen((v) => !v); }}
+          onClick={() => { setPulsing(false); setHomePanelOpen((v) => !v); setSelectedHomePlan(null); }}
           aria-label={fabLabel}
           aria-expanded={homePanelOpen}
-          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
           style={{
             bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
             right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
@@ -2817,7 +2941,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
             background: "linear-gradient(135deg,#10b981,#059669)",
             color: "white",
             fontSize: 22,
-            animation: pulsing ? "wallet-fab-pulse 0.6s ease-out" : "none",
+            animation: pulsing ? "wallet-fab-pulse 1.4s ease-out infinite" : "",
           }}
         >
           {homePanelOpen ? "×" : "💎"}
@@ -3160,6 +3284,10 @@ const LazyWalletHomeSheet = lazy(async () => {
   const mod = await import("@/components/payments/PayInWalletChips");
   return { default: mod.WalletHomeSheet };
 });
+
+const LazyBuyTokensModal = lazy(() =>
+  import("@/components/BuyTokensModal").then((m) => ({ default: m.BuyTokensModal }))
+);
 
 // Lazy-load TipRushRail for the QuickTipSheet Ru$h rail — keeps the base
 // Layout bundle lean; only downloaded when a user taps a tip sub-button.

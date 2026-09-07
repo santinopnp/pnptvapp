@@ -11835,10 +11835,9 @@ app.post('/api/proxy/live/tips', requireSessionAuth, tipLimiter, asyncHandler(as
     return res.status(400).json({ success: false, error: 'performerId and amount are required' });
   }
 
-  const validAmounts = PNPLiveTipsService.TIP_AMOUNTS;
-  const numAmount = parseFloat(amount);
-  if (!validAmounts.includes(numAmount)) {
-    return res.status(400).json({ success: false, error: `Amount must be one of: ${validAmounts.join(', ')}` });
+  const numAmount = Math.round(parseFloat(amount));
+  if (!Number.isFinite(numAmount) || numAmount < 1 || numAmount > 100000) {
+    return res.status(400).json({ success: false, error: 'Amount must be a whole number of Ru$h between 1 and 100,000.' });
   }
 
   if (!['tokens'].includes(paymentMethod)) {

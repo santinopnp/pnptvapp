@@ -284,6 +284,7 @@ function StreamInner() {
   const [tipSubmitting, setTipSubmitting] = useState(false);
   const [tipError, setTipError] = useState<string | null>(null);
   const [tipSuccess, setTipSuccess] = useState<string | null>(null);
+  const [customTipInput, setCustomTipInput] = useState("");
   const [recentTips, setRecentTips] = useState<RecentTip[]>([]);
 
   // Tracked one-shot timers so unmount cancels any pending state updates and
@@ -2599,11 +2600,11 @@ function StreamInner() {
                   )}
 
                   {/* Tip bar */}
-                  <div className={`flex items-center gap-2 mt-3 ${!stream.isLive ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className={`mt-3 ${!stream.isLive ? 'opacity-50 pointer-events-none' : ''}`}>
                     {isCreatorPayLocked(stream.username) ? (
                       <p className="text-[10px] text-pnp-textSecondary text-center w-full py-1">🔒 Launches June 1st</p>
                     ) : (<>
-                      <div className="flex gap-1.5 flex-1 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+                      <div className="flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden mb-2" style={{ scrollbarWidth: "none" }}>
                         {TIP_AMOUNTS.map((amount) => (
                           <button
                             key={amount}
@@ -2617,6 +2618,27 @@ function StreamInner() {
                             {amount.toLocaleString()}
                           </button>
                         ))}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={100000}
+                          value={customTipInput}
+                          onChange={(e) => setCustomTipInput(e.target.value)}
+                          placeholder="Custom 💎"
+                          disabled={tipping || !stream.isLive}
+                          className="flex-1 min-w-0 rounded-lg px-3 py-2 text-xs font-bold text-white outline-none tabular-nums"
+                          style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}
+                        />
+                        <button
+                          onClick={() => { const n = Math.round(parseFloat(customTipInput)); if (n >= 1) { handleTip(n); setCustomTipInput(""); } }}
+                          disabled={tipping || !stream.isLive || !customTipInput || Math.round(parseFloat(customTipInput)) < 1}
+                          className="px-3 py-2 rounded-lg text-xs font-bold text-white transition active:scale-95 disabled:opacity-40 btn-gradient whitespace-nowrap"
+                        >
+                          Send
+                        </button>
                       </div>
                     </>)}
                   </div>
@@ -2988,11 +3010,11 @@ function StreamInner() {
                 )}
                 {/* Tip bar */}
                 <div>
-                  <div className={`flex items-center gap-2 ${!stream.isLive ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className={`${!stream.isLive ? 'opacity-50 pointer-events-none' : ''}`}>
                     {isCreatorPayLocked(stream.username) ? (
                       <p className="text-[10px] text-pnp-textSecondary text-center w-full py-1">🔒 Launches June 1st</p>
                     ) : (<>
-                      <div className="flex gap-1.5 flex-1 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
+                      <div className="flex gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden mb-2" style={{ scrollbarWidth: "none" }}>
                         {TIP_AMOUNTS.map((amount) => (
                           <button
                             key={amount}
@@ -3006,6 +3028,27 @@ function StreamInner() {
                             {amount.toLocaleString()}
                           </button>
                         ))}
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={100000}
+                          value={customTipInput}
+                          onChange={(e) => setCustomTipInput(e.target.value)}
+                          placeholder="Custom 💎"
+                          disabled={tipping || !stream.isLive}
+                          className="flex-1 min-w-0 rounded-lg px-3 py-2 text-xs font-bold text-white outline-none tabular-nums"
+                          style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}
+                        />
+                        <button
+                          onClick={() => { const n = Math.round(parseFloat(customTipInput)); if (n >= 1) { handleTip(n); setCustomTipInput(""); } }}
+                          disabled={tipping || !stream.isLive || !customTipInput || Math.round(parseFloat(customTipInput)) < 1}
+                          className="px-3 py-2 rounded-lg text-xs font-bold text-white transition active:scale-95 disabled:opacity-40 btn-gradient whitespace-nowrap"
+                        >
+                          Send
+                        </button>
                       </div>
                     </>)}
                   </div>

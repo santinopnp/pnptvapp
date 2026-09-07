@@ -10,26 +10,20 @@ const logger = require('../utils/logger');
 
 // Ru$h packages — 6 Ru$h 💎 = $1 USD base rate.
 //
-// Reshuffle 2026-09-05: lowered entry to $5 (was $30 — killed first-time
-// conversion), added $10 / $25 / $250 mid-steps, and rebuilt the bonus curve
-// to be visibly generous where the volume lives ($25–$100). Round totals
-// (66, 175, 360, 750, 2000, 4200, 9000) read as tempting; previous
-// calculated-looking numbers (315, 648, 3360) didn't. Retired pkg_30 and
-// pkg_5000 as deadweight. Historical purchases keep their package_key.
-//
-// Margin note: bonus % rises to 50% at pkg_1000. Platform still profitable
-// at every tier once onramp fees + 70% creator split are factored — the
-// bump comes out of platform margin, not creator payouts (creators are
-// paid on token spent, not USD paid).
+// Reshuffle 2026-09-07: tightened bonus curve — max 10% at $1000, graduated
+// 0→3→3→5→6→8→9→10%. Previous curve peaked at 50% ($1000) which was
+// unsustainable and unintentionally large. Historical purchases keep their
+// package_key. Bonus comes out of platform margin, not creator payouts
+// (creators are paid on token spent, not USD paid).
 const TOKEN_PACKAGES = [
-  { id: 'pkg_5',    tokens: 30,    usd: 5,    bonus: 0,    label: '30 Ru$h 💎' },
-  { id: 'pkg_10',   tokens: 66,    usd: 10,   bonus: 6,    label: '66 Ru$h 💎 (+10%)' },
-  { id: 'pkg_25',   tokens: 175,   usd: 25,   bonus: 25,   label: '175 Ru$h 💎 (+17%)' },
-  { id: 'pkg_50',   tokens: 360,   usd: 50,   bonus: 60,   label: '360 Ru$h 💎 (+20%)' },
-  { id: 'pkg_100',  tokens: 750,   usd: 100,  bonus: 150,  label: '750 Ru$h 💎 (+25%)' },
-  { id: 'pkg_250',  tokens: 2000,  usd: 250,  bonus: 500,  label: '2,000 Ru$h 💎 (+33%)' },
-  { id: 'pkg_500',  tokens: 4200,  usd: 500,  bonus: 1200, label: '4,200 Ru$h 💎 (+40%)' },
-  { id: 'pkg_1000', tokens: 9000,  usd: 1000, bonus: 3000, label: '9,000 Ru$h 💎 (+50%) 🔥' },
+  { id: 'pkg_5',    tokens: 30,    usd: 5,    bonus: 0,   label: '30 Ru$h 💎' },
+  { id: 'pkg_10',   tokens: 62,    usd: 10,   bonus: 2,   label: '62 Ru$h 💎 (+3%)' },
+  { id: 'pkg_25',   tokens: 155,   usd: 25,   bonus: 5,   label: '155 Ru$h 💎 (+3%)' },
+  { id: 'pkg_50',   tokens: 315,   usd: 50,   bonus: 15,  label: '315 Ru$h 💎 (+5%)' },
+  { id: 'pkg_100',  tokens: 636,   usd: 100,  bonus: 36,  label: '636 Ru$h 💎 (+6%)' },
+  { id: 'pkg_250',  tokens: 1620,  usd: 250,  bonus: 120, label: '1,620 Ru$h 💎 (+8%)' },
+  { id: 'pkg_500',  tokens: 3270,  usd: 500,  bonus: 270, label: '3,270 Ru$h 💎 (+9%)' },
+  { id: 'pkg_1000', tokens: 6600,  usd: 1000, bonus: 600, label: '6,600 Ru$h 💎 (+10%)' },
 ];
 
 class DashTokenService {
