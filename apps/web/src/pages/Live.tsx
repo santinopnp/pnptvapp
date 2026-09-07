@@ -103,6 +103,7 @@ export default function Live() {
   const [dpnsHandle, setDpnsHandle] = useState<string | null>(null);
   const [showBuyModal, setShowBuyModal] = useState(false);
 
+
   // Handle ?activate=CODE deep-link: open BuyTokensModal on the activation screen.
   // We MUST verify ownership on the backend first — otherwise an attacker could
   // craft /live?activate=THEIR_CODE and trick a victim into activating it under
@@ -691,72 +692,6 @@ export default function Live() {
         </div>
       )}
 
-      {/* ── Token wallet CTA — balance + buy + crypto-guide onramp ── */}
-      {isAuthenticated && (() => {
-        const es = t.lang === "es";
-        return (
-          <div
-            className="mb-4 rounded-2xl overflow-hidden"
-            style={{
-              background: "linear-gradient(135deg, rgba(212,0,122,0.10) 0%, rgba(0,141,228,0.10) 55%, rgba(247,147,26,0.10) 100%)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.03) inset",
-            }}
-          >
-            <div className="p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-widest text-pnp-textSecondary/70">
-                  {es ? "Tu saldo" : "Your balance"}
-                </p>
-                <p className="text-2xl font-black text-pnp-textPrimary leading-tight mt-0.5">
-                  {tokenBalance == null ? "—" : tokenBalance.toLocaleString()}
-                  <span className="ml-1.5 text-xs font-semibold text-pnp-textSecondary">
-                    {"Ru$h ⚡💲"}
-                  </span>
-                </p>
-              </div>
-              <button
-                onClick={() => setShowBuyModal(true)}
-                className="flex-shrink-0 px-4 py-2.5 rounded-xl btn-gradient text-white text-sm font-bold shadow-lg transition-transform active:scale-[0.98]"
-              >
-                {es ? "Comprar Ru$h ⚡💲" : "Buy Ru$h ⚡💲"}
-              </button>
-            </div>
-            <a
-              href="/crypto-guide"
-              className="group flex items-center gap-3 px-4 py-3 border-t border-white/10 hover:bg-white/5 transition-colors"
-            >
-              <div className="relative flex-shrink-0" style={{ width: 44, height: 28 }}>
-                {[
-                  { bg: "#F7931A", letter: "₿", offset: 0,  z: 40 },
-                  { bg: "#26A17B", letter: "₮", offset: 10, z: 30 },
-                  { bg: "#008DE4", letter: "Đ", offset: 20, z: 20 },
-                ].map((c) => (
-                  <div
-                    key={c.letter}
-                    className="absolute top-0 w-7 h-7 rounded-full flex items-center justify-center text-white font-black text-xs"
-                    style={{ left: c.offset, zIndex: c.z, background: c.bg, border: "2px solid #0D0D0D" }}
-                    aria-hidden="true"
-                  >
-                    {c.letter}
-                  </div>
-                ))}
-              </div>
-              <p className="flex-1 min-w-0 text-xs text-pnp-textPrimary leading-snug">
-                <span className="font-bold">{es ? "¿Nuevo en crypto?" : "New to crypto?"}</span>{" "}
-                <span className="text-pnp-textSecondary">
-                  {es
-                    ? "Configura una wallet (Trust o MetaMask) y paga con cripto en 7 pasos."
-                    : "Set up a wallet (Trust or MetaMask) and pay with crypto in 7 steps."}
-                </span>
-              </p>
-              <svg className="w-4 h-4 text-pnp-textSecondary group-hover:translate-x-0.5 transition-transform flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </a>
-          </div>
-        );
-      })()}
 
       {/* ── Magic Search — single sticky container: input + selected-category pill + chip rail ── */}
       <div
@@ -1324,6 +1259,7 @@ export default function Live() {
           </div>
         );
       })()}
+
 
       {/* Buy Tokens Modal */}
       <BuyTokensModal
