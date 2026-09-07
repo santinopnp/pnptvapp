@@ -2,6 +2,7 @@ const logger = require('../../../utils/logger');
 const performanceMonitor = require('../../../utils/performanceMonitor');
 const { getPool, getQueryCacheStats } = require('../../../config/postgres');
 const { cache } = require('../../../config/redis');
+const { validateServices } = require('../../core/plugins/serviceValidator');
 
 /**
  * Health check controller
@@ -47,8 +48,12 @@ class HealthController {
       const dependencyStatuses = [dbStatus, redisStatus];
       const isDegraded = dependencyStatuses.some((status) => status !== 'healthy');
 
+      const serviceValidation = (() => { try { return validateServices(); } catch (_) { return null; } })();
+      const hasStubs = serviceValidation && !serviceValidation.ok;
+      const overallDegraded = isDegraded || hasStubs;
+
       const healthData = {
-        status: isDegraded ? 'degraded' : 'healthy',
+        status: overallDegraded ? 'degraded' : 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         memoryUsage: process.memoryUsage(),
@@ -56,11 +61,14 @@ class HealthController {
         redis: redisStatus,
         responseTimeMs,
         nodeVersion: process.version,
+        services: serviceValidation
+          ? { ok: serviceValidation.ok, total: serviceValidation.totalFiles, stubs: serviceValidation.stubs, methodFailures: serviceValidation.methodFailures }
+          : null,
         performanceMetrics: (() => { try { return performanceMonitor.getAllMetrics(); } catch (_) { return null; } })(),
         queryCache: getQueryCacheStats()
       };
 
-      res.status(isDegraded ? 503 : 200).json(healthData);
+      res.status(overallDegraded ? 503 : 200).json(healthData);
     } catch (error) {
       logger.error('Health check failed:', error);
       res.status(503).json({

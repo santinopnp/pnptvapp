@@ -33,6 +33,7 @@ const { initializeRedis } = require('../../config/redis');
 const { initializeCoreTables } = require('../../config/ensureCoreTables');
 // meruLinkInitializer removed 2026-08 (Meru retired)
 const { initSentry } = require('./plugins/sentry');
+const { validateServices } = require('./plugins/serviceValidator');
 const sessionMiddleware = require('./middleware/session');
 const { userExistsMiddleware } = require('./middleware/userExistsMiddleware');
 const globalBanCheck = require('./middleware/globalBanCheck');
@@ -313,6 +314,8 @@ const startBot = async () => {
     if (hasCriticalVars) {
       logger.info('✓ Environment variables validated');
     }
+    // Scan services/ for AI-generated no-op stubs before any request is served
+    validateServices();
     // Initialize Sentry (optional)
     try {
       initSentry();

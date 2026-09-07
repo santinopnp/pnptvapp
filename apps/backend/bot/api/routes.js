@@ -1665,6 +1665,11 @@ const limiter = rateLimit({
       '/api/webapp/dm/presence',
       '/api/wallet/packages',      // read-only, fetched on every BuyTokensModal open
       '/api/wallet/presale-status', // read-only, fetched on every BuyTokensModal open
+      // Social feed: auth-gated, fires on every scroll page; per-user bucket
+      // means authenticated users could exhaust 600/15min via normal pagination.
+      '/api/webapp/social/feed',
+      '/api/webapp/social/feed/following',
+      '/api/webapp/social/home-feed',
     ];
     // Skip high-frequency streaming endpoints that poll every 2-5s while a
     // user watches a live stream — otherwise watchers exhaust their 600/15min
