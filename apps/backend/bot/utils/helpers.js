@@ -334,18 +334,35 @@ async function resolveUserId(userId) {
   const isHyphenatedId = userId.includes('-');
 
   if (isNumeric) return userId; // numeric telegram IDs / legacy numeric user IDs used as-is
+  if (isHyphenatedId && !isUuid) return userId; // non-UUID hyphenated strings are canonical
+
+  // Try Redis cache before hitting DB (5-minute TTL — usernames/pnptv_ids rarely change)
+  let redisClient = null;
+  try {
+    const { getRedis } = require('../../config/redis');
+    redisClient = getRedis();
+    const cached = await redisClient.get(`resolve_uid:${userId}`);
+    if (cached) return cached === '__null__' ? null : cached;
+  } catch { /* Redis down — fall through to DB */ }
 
   const { query } = require('../../config/postgres');
+  let resolved = null;
   if (isUuid) {
     // UUID could be either users.id (for UUID-keyed users) or pnptv_id — resolve both
     const r = await query('SELECT id FROM users WHERE id = $1 OR pnptv_id = $1 LIMIT 1', [userId]);
-    return r.rows.length ? r.rows[0].id : null;
+    resolved = r.rows.length ? r.rows[0].id : null;
+  } else {
+    // username lookup — prefer active accounts; fall back to deleted only if no active match
+    const r = await query(
+      'SELECT id FROM users WHERE lower(username) = lower($1) ORDER BY (is_deleted = false) DESC LIMIT 1',
+      [userId]
+    );
+    resolved = r.rows.length ? r.rows[0].id : null;
   }
-  if (isHyphenatedId) return userId; // non-UUID hyphenated strings are treated as canonical user IDs
-  // username lookup — prefer active accounts; fall back to deleted only if no active match
-  const r = await query(
-    'SELECT id FROM users WHERE lower(username) = lower($1) ORDER BY (is_deleted = false) DESC LIMIT 1',
-    [userId]
-  );
-  return r.rows.length ? r.rows[0].id : null;
+
+  // Cache result (store __null__ sentinel so we don't re-query for missing users)
+  if (redisClient) {
+    try { await redisClient.set(`resolve_uid:${userId}`, resolved ?? '__null__', 'EX', 300); } catch { /* non-fatal */ }
+  }
+  return resolved;
 }

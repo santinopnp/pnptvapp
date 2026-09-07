@@ -1039,7 +1039,7 @@ class SocialPostService {
          -- prime/paid/subscription channel.
          AND (
            sp.channel_id IS NULL
-           OR sp.channel_id IN (SELECT id FROM creator_channels WHERE COALESCE(access_type, 'free') = 'free')
+           OR sp.channel_id IN (SELECT id FROM creator_channels WHERE access_type IS NULL OR access_type = 'free')
          )
        ORDER BY sp.id DESC
        LIMIT $1`,
