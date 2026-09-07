@@ -8,7 +8,7 @@ class PlatformBanService {
       if (!ids.length) return null;
 
       const res = await query(
-        `SELECT * FROM banned_users WHERE user_id = ANY($1::text[]) AND active = TRUE LIMIT 1`,
+        `SELECT * FROM banned_users WHERE user_id = ANY($1::text[]) AND group_id = 'global' LIMIT 1`,
         [ids]
       ).catch(() => null);
 
@@ -29,13 +29,13 @@ class PlatformBanService {
   static async ban({ userId, reason, bannedBy, duration } = {}) {
     try {
       const res = await query(
-        `INSERT INTO banned_users (user_id, group_id, reason, banned_by, banned_at, active)
-         VALUES ($1, 'global', $2, $3, NOW(), TRUE)
-         ON CONFLICT (user_id, group_id) DO UPDATE SET active = TRUE, reason = $2, banned_at = NOW()
+        `INSERT INTO banned_users (user_id, group_id, reason, banned_by, banned_at)
+         VALUES ($1, 'global', $2, $3, NOW())
+         ON CONFLICT (user_id, group_id) DO UPDATE SET reason = $2, banned_at = NOW()
          RETURNING *`,
         [String(userId), reason || 'Platform violation', bannedBy || 'system']
       ).catch(() => null);
-      return res?.rows?.[0] || { user_id: userId, active: true };
+      return res?.rows?.[0] || { user_id: userId, group_id: 'global' };
     } catch (err) {
       logger.error('Error in PlatformBanService.ban:', err);
       return null;

@@ -264,14 +264,13 @@ class ModerationModel {
   static async banUser(userId, groupId, reason, bannedBy) {
     try {
       const result = await query(
-        `INSERT INTO banned_users (user_id, group_id, reason, banned_by, banned_at, active)
-         VALUES ($1, $2, $3, $4, NOW(), TRUE)
+        `INSERT INTO banned_users (user_id, group_id, reason, banned_by, banned_at)
+         VALUES ($1, $2, $3, $4, NOW())
          ON CONFLICT (user_id, group_id)
-         DO UPDATE SET 
+         DO UPDATE SET
             reason = EXCLUDED.reason,
             banned_by = EXCLUDED.banned_by,
-            banned_at = NOW(),
-            active = TRUE`,
+            banned_at = NOW()`,
         [userId.toString(), groupId.toString(), reason, bannedBy.toString()]
       );
 
@@ -294,9 +293,7 @@ class ModerationModel {
   static async unbanUser(userId, groupId) {
     try {
       await query(
-        `UPDATE banned_users
-         SET active = FALSE, expires_at = NOW()
-         WHERE user_id = $1 AND group_id = $2`,
+        `DELETE FROM banned_users WHERE user_id = $1 AND group_id = $2`,
         [userId.toString(), groupId.toString()]
       );
       return true;
@@ -339,7 +336,7 @@ class ModerationModel {
         `SELECT b.*, u.username as user_username
          FROM banned_users b
          LEFT JOIN users u ON b.user_id = u.id
-         WHERE b.group_id = $1 AND b.active = TRUE
+         WHERE b.group_id = $1
          ORDER BY b.banned_at DESC`,
         [groupId.toString()]
       );
@@ -510,7 +507,7 @@ class ModerationModel {
     try {
       const [warningsResult, bansResult, recentResult, usersResult] = await Promise.all([
         query(`SELECT COUNT(*) as count FROM warnings WHERE group_id = $1 AND cleared = FALSE`, [groupId.toString()]),
-        query(`SELECT COUNT(*) as count FROM banned_users WHERE group_id = $1 AND active = TRUE`, [groupId.toString()]),
+        query(`SELECT COUNT(*) as count FROM banned_users WHERE group_id = $1`, [groupId.toString()]),
         query(`SELECT COUNT(*) as count FROM moderation_logs WHERE group_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`, [groupId.toString()]),
         query(`SELECT COUNT(DISTINCT user_id) as count FROM warnings WHERE group_id = $1 AND cleared = FALSE`, [groupId.toString()])
       ]);
