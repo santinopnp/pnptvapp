@@ -1,1 +1,0 @@
-import{t as e}from"./react-D_IUpjor.js";var t=e((()=>({user:null,authenticated:!1,hasResolvedInitialUser:!1}))),n=e=>t.setState({user:e}),r=e=>t.setState({authenticated:e}),i=e=>t.setState({hasResolvedInitialUser:e});export{n as i,t as n,i as r,r as t};

@@ -1,1 +1,0 @@
-import{s as e}from"./getFormattedUsdFromLamports-De3U9GlO-Gx4_wxON.js";function t(t){let[n]=Object.entries(e[t]).find((([e,t])=>t.symbol===`USDC`))??[];return n}export{t};

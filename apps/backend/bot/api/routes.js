@@ -9692,7 +9692,7 @@ app.get('/api/webapp/discover/tags', async (req, res) => {
     const groups = await discoverService.getTagTaxonomy();
     res.json({ success: true, groups });
   } catch (err) {
-    logger.error('discoverTags error', { error: err.message });
+    console.error('discoverTags:', err);
     res.json({ success: true, groups: {} });
   }
 });
@@ -9711,7 +9711,7 @@ app.get('/api/webapp/discover', softAuth, async (req, res) => {
     logger.info(`[disc-out] q=${q} ent=${entity} tags=${JSON.stringify(_rgt)} keys=${Object.keys(results).join(',')} membersLen=${(results.members||[]).length}`);
     res.json({ success: true, ...results });
   } catch (err) {
-    logger.error('discover error', { error: err.message });
+    console.error('discover:', err);
     res.status(500).json({ success: false });
   }
 });
