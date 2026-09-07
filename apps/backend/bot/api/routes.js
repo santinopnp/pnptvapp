@@ -14046,6 +14046,20 @@ const lifetime100NpInvoiceLimiter = rateLimit({
   keyGenerator: (req) => req.ip,
 });
 
+app.get('/api/public/lifetime100/availability', asyncHandler(async (req, res) => {
+  try {
+    const TOTAL_SLOTS = 100;
+    const { rows } = await getPool().query(
+      `SELECT COUNT(*) AS sold FROM dash_subscription_orders WHERE plan_id = 'lifetime100' AND status = 'completed'`
+    );
+    const sold = parseInt(rows[0]?.sold || 0, 10);
+    return res.json({ success: true, available: Math.max(0, TOTAL_SLOTS - sold), sold, total: TOTAL_SLOTS });
+  } catch (err) {
+    logger.error('lifetime100/availability error', err);
+    return res.json({ success: true, available: null });
+  }
+}));
+
 app.post('/api/public/lifetime100/np-invoice', lifetime100NpInvoiceLimiter, asyncHandler(async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
     return res.status(503).json({ success: false, error: 'Crypto payments are temporarily unavailable.' });

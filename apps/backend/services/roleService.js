@@ -1,109 +1,293 @@
 const { query } = require('../config/postgres');
-const UserModel = require('../models/userModel');
 const logger = require('../utils/logger');
-const { ROLES, PERMISSIONS, ROLE_HIERARCHY } = require('../config/roles.config');
+const ACCESS_CONTROL_CONFIG = require('../config/accessControlConfig');
 
+/**
+ * Role Service
+ * Manages user roles for access control
+ */
 class RoleService {
-  static async initializeTables() {
-    try {
-      await query(`
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'role'
-          ) THEN
-            ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user';
-          END IF;
-        END $$;
-      `);
-      logger.info('✓ Role table/columns verified');
-    } catch (err) {
-      logger.warn('RoleService.initializeTables notice:', err.message);
+  static tableReady = false;
+
+  static tableInitPromise = null;
+
+  static async ensureTablesReady() {
+    if (this.tableReady) return;
+    if (!this.tableInitPromise) {
+      this.tableInitPromise = this.initializeTables()
+        .then(() => {
+          this.tableReady = true;
+        })
+        .finally(() => {
+          this.tableInitPromise = null;
+        });
     }
+    await this.tableInitPromise;
   }
 
-  static async setUserRole(userId, role, assignedBy = 'system') {
-    const normalizedRole = (role || 'user').toLowerCase();
-    try {
-      await UserModel.updateRole(userId, normalizedRole, assignedBy);
-      return { success: true, userId, role: normalizedRole };
-    } catch (err) {
-      logger.error('Error in RoleService.setUserRole:', err);
-      throw err;
-    }
-  }
-
-  static async removeRole(userId, roleName, actorId) {
-    return this.setUserRole(userId, 'user', actorId || 'system');
-  }
-
+  /**
+   * Get user's role
+   * @param {string} userId - User ID
+   * @returns {Promise<string>} Role name (USER, CONTRIBUTOR, PERFORMER, ADMIN)
+   */
   static async getUserRole(userId) {
     try {
-      const user = await UserModel.findById(userId);
-      return user?.role || 'user';
-    } catch (err) {
-      logger.error('Error in RoleService.getUserRole:', err);
-      return 'user';
+      await this.ensureTablesReady();
+      const result = await query(
+        'SELECT role FROM user_roles WHERE user_id = $1',
+        [userId.toString()]
+      );
+
+      if (result.rows.length === 0) {
+        return 'USER'; // Default role
+      }
+
+      return result.rows[0].role;
+    } catch (error) {
+      logger.error('Error getting user role:', error);
+      return 'USER'; // Default on error
     }
   }
 
-  static async getUserRoles(userId) {
+  /**
+   * Get user's role level (numeric value for comparison)
+   * @param {string} userId - User ID
+   * @returns {Promise<number>} Role level
+   */
+  static async getUserRoleLevel(userId) {
     const role = await this.getUserRole(userId);
-    return [role];
+    return ACCESS_CONTROL_CONFIG.ROLES[role] || ACCESS_CONTROL_CONFIG.ROLES.USER;
   }
 
-  static async getUserRoleDisplay(userId, lang = 'es') {
-    const role = await this.getUserRole(userId);
-    return role.toUpperCase();
+  /**
+   * Get user's role display name
+   * @param {string} userId - User ID
+   * @param {string} lang - Language
+   * @returns {Promise<string>} Role display name
+   */
+  static async getUserRoleDisplay(userId, lang) {
+    const roleLevel = await this.getUserRoleLevel(userId);
+    return ACCESS_CONTROL_CONFIG.ROLE_NAMES[roleLevel] || 'User';
   }
 
-  static async getUsersByRole(role) {
+  /**
+   * Set user's role
+   * @param {string} userId - User ID
+   * @param {string} role - Role name (USER, CONTRIBUTOR, PERFORMER, ADMIN)
+   * @param {string} grantedBy - Admin who granted the role
+   * @returns {Promise<{success: boolean, message: string}>} Result object
+   */
+  static async setUserRole(userId, role, grantedBy) {
     try {
-      return await UserModel.getByRole((role || '').toLowerCase());
-    } catch (err) {
-      logger.error('Error in RoleService.getUsersByRole:', err);
-      return [];
+      await this.ensureTablesReady();
+      // Normalize role to uppercase for consistency
+      const normalizedRole = role.toUpperCase();
+
+      // Validate role
+      if (!ACCESS_CONTROL_CONFIG.ROLES[normalizedRole]) {
+        logger.error('Invalid role:', role);
+        return { success: false, message: 'Rol inválido' };
+      }
+
+      // Upsert role in user_roles table
+      await query(
+        `INSERT INTO user_roles (user_id, role, granted_by, granted_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id)
+         DO UPDATE SET role = $2, granted_by = $3, granted_at = NOW()`,
+        [userId.toString(), normalizedRole, grantedBy.toString()]
+      );
+
+      // Also update the users table for consistency
+      // Keep schema-compatible updates (assigned_by/role_assigned_at may not exist)
+      await query(
+        `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`,
+        [normalizedRole.toLowerCase(), userId.toString()]
+      );
+
+      logger.info('User role updated', { userId, role: normalizedRole, grantedBy });
+      return { success: true, message: `Rol ${normalizedRole} asignado correctamente` };
+    } catch (error) {
+      logger.error('Error setting user role:', error);
+      return { success: false, message: error.message };
     }
   }
 
-  static async hasPermission(userId, permission) {
-    const role = await this.getUserRole(userId);
-    if (role === 'superadmin') return true;
-    if (role === 'admin') {
-      return permission !== 'manage_admins' && permission !== 'manage_instances';
+  /**
+   * Check if user has required role
+   * @param {string} userId - User ID
+   * @param {string} requiredRole - Required role name
+   * @returns {Promise<boolean>} Has permission
+   */
+  static async hasRole(userId, requiredRole) {
+    const userRoleLevel = await this.getUserRoleLevel(userId);
+    const requiredLevel = ACCESS_CONTROL_CONFIG.ROLES[requiredRole] || 0;
+
+    return userRoleLevel >= requiredLevel;
+  }
+
+  /**
+   * Check if user has any of the required roles
+   * @param {string} userId - User ID
+   * @param {Array<string>} requiredRoles - Array of role names
+   * @returns {Promise<boolean>} Has permission
+   */
+  static async hasAnyRole(userId, requiredRoles) {
+    const userRoleLevel = await this.getUserRoleLevel(userId);
+
+    for (const roleName of requiredRoles) {
+      const requiredLevel = ACCESS_CONTROL_CONFIG.ROLES[roleName] || 0;
+      if (userRoleLevel >= requiredLevel) {
+        return true;
+      }
     }
+
     return false;
   }
 
-  static async hasAnyRole(userId, allowedRoles = []) {
-    const role = await this.getUserRole(userId);
-    const normalized = allowedRoles.map(r => (r || '').toLowerCase());
-    return normalized.includes(role.toLowerCase());
-  }
-
-  static async isAdmin(userId) {
-    const role = await this.getUserRole(userId);
-    return role === 'admin' || role === 'superadmin';
-  }
-
-  static async getAdmins() {
+  /**
+   * Get all users with a specific role
+   * @param {string} role - Role name
+   * @returns {Promise<Array>} Array of user IDs
+   */
+  static async getUsersByRole(role) {
     try {
-      const res = await query(`SELECT id FROM users WHERE role IN ('admin', 'superadmin')`);
-      return res.rows.map(r => r.id);
-    } catch (err) {
+      await this.ensureTablesReady();
+      // Normalize role to uppercase for query
+      const normalizedRole = role.toUpperCase();
+      const result = await query(
+        'SELECT user_id FROM user_roles WHERE UPPER(role) = $1',
+        [normalizedRole]
+      );
+
+      return result.rows.map(row => row.user_id);
+    } catch (error) {
+      logger.error('Error getting users by role:', error);
       return [];
     }
   }
 
+  /**
+   * Get all admins
+   * @returns {Promise<Array>} Array of admin user IDs
+   */
+  static async getAdmins() {
+    return await this.getUsersByRole('ADMIN');
+  }
+
+  /**
+   * Get all performers
+   * @returns {Promise<Array>} Array of performer user IDs
+   */
+  static async getPerformers() {
+    return await this.getUsersByRole('PERFORMER');
+  }
+
+  /**
+   * Check if user is admin
+   * @param {string} userId - User ID
+   * @returns {Promise<boolean>} Is admin
+   */
+  static async isAdmin(userId) {
+    return await this.hasRole(userId, 'ADMIN');
+  }
+
+  /**
+   * Check if user is superadmin
+   * @param {string} userId - User ID
+   * @returns {Promise<boolean>} Is superadmin
+   */
+  static async isSuperAdmin(userId) {
+    return await this.hasRole(userId, 'SUPERADMIN');
+  }
+
+  /**
+   * Remove role from user (reset to USER)
+   * @param {string} userId - User ID
+   * @param {string} removedBy - Admin who removed the role (optional)
+   * @returns {Promise<{success: boolean, message: string}>} Result object
+   */
+  static async removeRole(userId, removedBy = null) {
+    try {
+      await this.ensureTablesReady();
+      // Remove from user_roles table
+      await query(
+        'DELETE FROM user_roles WHERE user_id = $1',
+        [userId.toString()]
+      );
+
+      // Also update the users table for consistency
+      // Keep schema-compatible updates (assigned_by/role_assigned_at may not exist)
+      await query(
+        `UPDATE users SET role = 'user', updated_at = NOW() WHERE id = $1`,
+        [userId.toString()]
+      );
+
+      logger.info('User role removed', { userId, removedBy });
+      return { success: true, message: 'Rol removido correctamente' };
+    } catch (error) {
+      logger.error('Error removing user role:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Get role statistics
+   * @returns {Promise<Object>} Role counts
+   */
   static async getRoleStats() {
     try {
-      const res = await query(`SELECT role, COUNT(*) as count FROM users GROUP BY role`);
-      const stats = {};
-      res.rows.forEach(r => { stats[r.role || 'user'] = parseInt(r.count, 10); });
+      await this.ensureTablesReady();
+      const result = await query(
+        'SELECT UPPER(role) as role, COUNT(*) as count FROM user_roles GROUP BY UPPER(role)'
+      );
+
+      const stats = {
+        USER: 0,
+        CONTRIBUTOR: 0,
+        PERFORMER: 0,
+        MODERATOR: 0,
+        ADMIN: 0,
+        SUPERADMIN: 0,
+      };
+
+      result.rows.forEach(row => {
+        if (stats.hasOwnProperty(row.role)) {
+          stats[row.role] = parseInt(row.count);
+        }
+      });
+
       return stats;
-    } catch (err) {
-      return {};
+    } catch (error) {
+      logger.error('Error getting role stats:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Initialize database tables
+   */
+  static async initializeTables() {
+    try {
+      // Create user_roles table
+      await query(`
+        CREATE TABLE IF NOT EXISTS user_roles (
+          user_id VARCHAR(255) PRIMARY KEY,
+          role VARCHAR(50) NOT NULL,
+          granted_by VARCHAR(255),
+          granted_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
+      // Create indexes
+      await query('CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role)');
+      await query('CREATE INDEX IF NOT EXISTS idx_user_roles_granted_at ON user_roles(granted_at)');
+
+      this.tableReady = true;
+      logger.info('Role service tables initialized');
+    } catch (error) {
+      logger.error('Error initializing role tables:', error);
+      throw error;
     }
   }
 }
