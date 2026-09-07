@@ -2906,7 +2906,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                                 className="text-sm font-black flex-shrink-0"
                                 style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
                               >
-                                ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}
+                                ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
                               </p>
                             </button>
                           );

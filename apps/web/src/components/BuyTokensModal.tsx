@@ -942,8 +942,8 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                       : canAfford
                         ? (rail === "eth"
                             ? `Paga con PNPtv! Wallet 💎 · Ξ ${ethNeeded.toFixed(6)}`
-                            : `Paga con PNPtv! Wallet 💎 · $${price.toFixed(2)}`)
-                        : `💳 $${grossUpForOnramp(price)} · ${es ? "Tarjeta" : "Card"}`;
+                            : `Paga con PNPtv! Wallet 💎 · $${price.toFixed(2)} +fees`)
+                        : `💳 $${grossUpForOnramp(price)} +fees · ${es ? "Tarjeta" : "Card"}`;
                     return (
                       <button
                         key={pkg.id}
@@ -1025,7 +1025,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
                             <span className="text-[9px] text-white/45 flex-shrink-0">
                               {isPaying
                                 ? "…"
-                                : `$${price.toFixed(0)} ${coinLabel}`}
+                                : `$${price.toFixed(0)} +fees ${coinLabel}`}
                             </span>
                           </button>
                         );

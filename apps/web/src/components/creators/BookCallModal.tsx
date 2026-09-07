@@ -803,7 +803,7 @@ export function BookCallModal({
                     {label}
                   </span>
                   <span className="text-xl font-extrabold" style={{ color: isSelected ? "#E69138" : "#EBEBF5" }}>
-                    ${parseFloat(price).toFixed(0)}
+                    ${parseFloat(price).toFixed(0)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
                   </span>
                 </button>
               );

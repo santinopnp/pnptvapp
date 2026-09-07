@@ -283,7 +283,7 @@ export function TipRushRail({
                   ? { background: "rgba(212,0,122,0.15)", borderColor: "rgba(212,0,122,0.55)" }
                   : { background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.10)" }}
               >
-                <span className="text-base font-black text-white">${usd}</span>
+                <span className="text-base font-black text-white">${usd}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span></span>
                 <span className="text-xs font-bold mt-0.5" style={{ color: "#10b981" }}>
                   {bonus > 0 ? `${baseRush} + ${bonus}` : `${totalRush}`} 💎
                 </span>
@@ -309,7 +309,7 @@ export function TipRushRail({
                   ? { background: "rgba(212,0,122,0.15)", borderColor: "rgba(212,0,122,0.55)" }
                   : { background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.10)" }}
               >
-                <span className="text-base font-black text-white">${usd}</span>
+                <span className="text-base font-black text-white">${usd}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span></span>
                 <span className="text-xs font-bold mt-0.5" style={{ color: "#10b981" }}>
                   {bonus > 0 ? `${baseRush} + ${bonus}` : `${totalRush}`} 💎
                 </span>
@@ -379,7 +379,7 @@ export function TipRushRail({
           style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
         >
           {topupUsd !== null && topupUsd >= 25
-            ? (es ? `Cargar $${topupUsd} en Ru$h 💎` : `Load $${topupUsd} in Ru$h 💎`)
+            ? (es ? `Cargar $${topupUsd} +fees en Ru$h 💎` : `Load $${topupUsd} +fees in Ru$h 💎`)
             : (es ? "Elige un monto" : "Choose an amount")}
         </button>
 

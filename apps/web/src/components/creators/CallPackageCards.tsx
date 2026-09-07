@@ -131,6 +131,7 @@ function PackageCard({ pkg, onBookNow }: PackageCardProps) {
         <span className="text-base font-medium ml-1 text-pnp-textSecondary opacity-60">
           USD
         </span>
+        <span className="text-[9px] font-normal opacity-50 ml-1 block">+fees</span>
       </p>
 
       {/* Name + tagline */}

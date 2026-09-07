@@ -445,7 +445,7 @@ export default function Donate() {
                             </div>
                             <span className="text-xs text-pnp-textSecondary">{durationLabel(planDays)}</span>
                           </div>
-                          <span className="text-lg font-black text-pnp-textPrimary">{fmtPrice(price)}</span>
+                          <span className="text-lg font-black text-pnp-textPrimary">{fmtPrice(price)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span></span>
                         </div>
                       </div>
 

@@ -176,7 +176,7 @@ export function CreatorCard({
           <p className="text-xs" style={{ color: "var(--pnp-text-secondary, #8E8E93)" }}>
             From{" "}
             <span className="font-semibold" style={{ color: "#EBEBF5" }}>
-              ${creator.creator_price_usd}/30 min
+              ${creator.creator_price_usd}/30 min<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
             </span>
           </p>
 

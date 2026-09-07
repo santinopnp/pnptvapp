@@ -149,7 +149,7 @@ export function VideoPaywallOverlay({
 
               {hasPass && (
                 <PaywallButton
-                  label={`Channel Pass · $${creator.channel_pass_price_usd}/mo`}
+                  label={`Channel Pass · $${creator.channel_pass_price_usd}/mo +fees`}
                   sublabel={`Unlock everything from @${creator.username} for 30 days`}
                   loading={loading === "channel_pass"}
                   disabled={isAnyLoading}
