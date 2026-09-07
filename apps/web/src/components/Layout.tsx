@@ -2374,12 +2374,10 @@ interface PanelChromeProps {
   onFullWallet: () => void;
   body: React.ReactNode;
   lang: string;
-  walletGuideOpen: boolean;
-  onToggleGuide: () => void;
 }
 
 function PanelChrome({
-  usd, rush, onClose, onFullWallet, body, lang, walletGuideOpen, onToggleGuide,
+  usd, rush, onClose, onFullWallet, body, lang,
 }: PanelChromeProps) {
   const es = lang === "es";
   return (
@@ -2455,40 +2453,13 @@ function PanelChrome({
               {es ? "Reembolsos" : "Refunds"}
             </a>
             <span className="text-white/20 text-[9px]">·</span>
-            <button
-              type="button"
-              onClick={onToggleGuide}
+            <a
+              href="/crypto-guide"
               className="py-2 text-[9px] text-white/30 hover:text-white/50 transition"
             >
               {es ? "Cómo usar la billetera" : "How to use"}
-            </button>
+            </a>
           </div>
-          {walletGuideOpen && (
-            <div className="mt-2 pt-2 border-t border-white/[0.06]">
-              <p className="text-[10px] font-semibold text-white/60 mb-1.5">
-                {es ? "Guía rápida 💎" : "Quick guide 💎"}
-              </p>
-              <ol className="space-y-1">
-                {(es
-                  ? [
-                      "Agrega Ru$h 💎 con USDC o tarjeta para desbloquear contenido.",
-                      "Envía propinas a tus creadores favoritos en tiempo real.",
-                      "Tus Ru$h no vencen. Tu saldo siempre está seguro.",
-                    ]
-                  : [
-                      "Add Ru$h 💎 with USDC or card to unlock exclusive content.",
-                      "Send real-time tips to your favorite creators.",
-                      "Your Ru$h never expire. Your balance is always safe.",
-                    ]
-                ).map((step, i) => (
-                  <li key={i} className="flex gap-1.5">
-                    <span className="text-[9px] font-black text-emerald-400 flex-shrink-0">{i + 1}.</span>
-                    <span className="text-[9px] text-white/50 leading-relaxed">{step}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -2556,7 +2527,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [livePackagesLoading, setLivePackagesLoading] = useState(false);
   const [liveBuyPackageId, setLiveBuyPackageId] = useState<string | undefined>(undefined);
   const [liveUsdcBalance, setLiveUsdcBalance] = useState<number | null>(null);
-  const [walletGuideOpen, setWalletGuideOpen] = useState(false);
   useEffect(() => {
     if (!livePanelOpen || !isAuthenticated) return;
     setLivePackagesLoading(true);
@@ -2767,8 +2737,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               onClose={() => setLivePanelOpen(false)}
               onFullWallet={() => { setLivePanelOpen(false); setOpen(true); }}
               lang={lang}
-              walletGuideOpen={walletGuideOpen}
-              onToggleGuide={() => setWalletGuideOpen((v) => !v)}
               body={
                 <div className="px-3 pt-3 pb-2">
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
@@ -2781,7 +2749,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
                       ))
                     ) : (
                       livePackages
-                        .filter((p) => [25, 50, 100, 500, 1000].includes(Number(p.usd)))
+                        .filter((p) => [25, 50, 100, 500, 1000, 5000].includes(Number(p.usd)))
                         .sort((a, b) => Number(a.usd) - Number(b.usd))
                         .map((pkg) => (
                           <button
@@ -2869,6 +2837,13 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
             />
           </Suspense>
         )}
+
+        {/* WalletHomeSheet — "Ver billetera completa" in PanelChrome header */}
+        {open && (
+          <Suspense fallback={null}>
+            <LazyWalletHomeSheet onClose={() => setOpen(false)} />
+          </Suspense>
+        )}
       </>
     );
   }
@@ -2908,8 +2883,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               onClose={() => setHomePanelOpen(false)}
               onFullWallet={() => { setHomePanelOpen(false); setOpen(true); }}
               lang={lang}
-              walletGuideOpen={walletGuideOpen}
-              onToggleGuide={() => setWalletGuideOpen((v) => !v)}
               body={
                 <div className="px-3 py-2.5">
                   {selectedHomePlan ? (

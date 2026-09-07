@@ -668,8 +668,6 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
               (or if opened manually without a preset amount). */}
           {!isAutoTriggerMode && (
             <>
-          {/* Hero — one-off marketing pitch shared with every other checkout surface. */}
-          <WalletCheckoutHero lang={t.lang as "es" | "en"} compact />
 
           {/* Wallet switcher — only visible when >1 wallet is connected so
               users with an external Trust/MetaMask holding their funds can

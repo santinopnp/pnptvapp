@@ -23,7 +23,8 @@ const TOKEN_PACKAGES = [
   { id: 'pkg_100',  tokens: 636,   usd: 100,  bonus: 36,  label: '636 Ru$h 💎 (+6%)' },
   { id: 'pkg_250',  tokens: 1620,  usd: 250,  bonus: 120, label: '1,620 Ru$h 💎 (+8%)' },
   { id: 'pkg_500',  tokens: 3270,  usd: 500,  bonus: 270, label: '3,270 Ru$h 💎 (+9%)' },
-  { id: 'pkg_1000', tokens: 6600,  usd: 1000, bonus: 600, label: '6,600 Ru$h 💎 (+10%)' },
+  { id: 'pkg_1000', tokens: 6600,  usd: 1000, bonus: 600,  label: '6,600 Ru$h 💎 (+10%)' },
+  { id: 'pkg_5000', tokens: 33000, usd: 5000, bonus: 3000, label: '33,000 Ru$h 💎 (+10%)' },
 ];
 
 class DashTokenService {
