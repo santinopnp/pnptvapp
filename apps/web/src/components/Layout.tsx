@@ -19,7 +19,7 @@ import { AdSlot } from "@/components/AdSlot";
 import { FeaturedModelInterstitial, PnpFamWelcomeGate } from "@/components/badges/PnpFamWelcomeGate";
 import { Toast } from "@/components/Toast";
 import { useNearbyToggle } from "@/components/NearbyBadge";
-import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
+import { getMessageThreads, getHangoutGroups, markThreadAsRead, getProfile, getForYouRecommendations, followUser, getCryptoGuideStatus, getPublicCreatorProfile, toggleSuperGod, getWalletUsdcBalance, getSubscriptionPlans, getWalletBalance, getTokenPackages, type MessageThread, type HangoutGroup, type ForYouRecommendations, type ForYouSuggestedCreator, type ForYouSuggestedFollow, type ForYouContextHint, type CryptoGuideStatus, type CreatorPublicProfile, type SubscriptionPlan, type TokenPackage } from "@/lib/api";
 import { useTier } from "@/hooks/useTier";
 import { useI18n } from "@/lib/i18n";
 import { connectSocket } from "@/lib/socket";
@@ -2422,15 +2422,20 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [livePackages, setLivePackages] = useState<TokenPackage[]>([]);
   const [livePackagesLoading, setLivePackagesLoading] = useState(false);
   const [liveBuyPackageId, setLiveBuyPackageId] = useState<string | undefined>(undefined);
+  const [liveUsdcBalance, setLiveUsdcBalance] = useState<number | null>(null);
+  const [walletGuideOpen, setWalletGuideOpen] = useState(false);
   useEffect(() => {
     if (!livePanelOpen || !isAuthenticated) return;
     setLivePackagesLoading(true);
+    const activeWalletAddr = (wallets.find((w) => w.walletClientType === "privy") || wallets[0])?.address;
     Promise.all([
-      import("@/lib/api").then(({ getWalletBalance }) => getWalletBalance()).catch(() => null),
-      import("@/lib/api").then(({ getTokenPackages }) => getTokenPackages()).catch(() => null),
-    ]).then(([balRes, pkgRes]) => {
+      getWalletBalance().catch(() => null),
+      getTokenPackages().catch(() => null),
+      activeWalletAddr ? getWalletUsdcBalance(activeWalletAddr).catch(() => null) : Promise.resolve(null),
+    ]).then(([balRes, pkgRes, usdcRes]) => {
       if (balRes?.success) setLiveRushBalance((balRes.regularBalance ?? 0) + (balRes.giftedBalance ?? 0));
       if (pkgRes?.success && Array.isArray(pkgRes.packages)) setLivePackages(pkgRes.packages);
+      if (usdcRes?.hasWallet) setLiveUsdcBalance(usdcRes.usdc ?? null);
     }).catch(() => {}).finally(() => setLivePackagesLoading(false));
   }, [livePanelOpen, isAuthenticated]);
   useEffect(() => { if (!isLivePage) { setLivePanelOpen(false); } }, [isLivePage]);
@@ -2444,6 +2449,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homePlanLoading, setHomePlanLoading] = useState(false);
   const [homePlans, setHomePlans] = useState<SubscriptionPlan[]>([]);
   const [homeUsdcBalance, setHomeUsdcBalance] = useState<number | null>(null);
+  const [homeRushBalance, setHomeRushBalance] = useState<number | null>(null);
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
   // Pulse animation — starts 8s after mount (or auth), loops every 2.5s until first tap.
@@ -2474,10 +2480,12 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
       activeWalletAddr
         ? getWalletUsdcBalance(activeWalletAddr).catch(() => null)
         : Promise.resolve(null),
-    ]).then(([plansRes, balRes]) => {
+      getWalletBalance().catch(() => null),
+    ]).then(([plansRes, balRes, rushRes]) => {
       const HIDDEN_IDS = new Set(["prime-trial-3d"]);
       setHomePlans((plansRes.plans || []).filter((p) => p.active && !HIDDEN_IDS.has(p.id)));
       setHomeUsdcBalance(balRes && balRes.hasWallet ? balRes.usdc : null);
+      if (rushRes?.success) setHomeRushBalance((rushRes.regularBalance ?? 0) + (rushRes.giftedBalance ?? 0));
     }).catch(() => {
       setHomePlansError("No se pudieron cargar los planes. Intenta de nuevo.");
     }).finally(() => setHomePlanLoading(false));
@@ -2571,6 +2579,134 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
     if (!isCreatorProfile) setCreatorStackOpen(false);
   }, [isCreatorProfile]);
 
+  // ── Shared helpers (defined before early returns so they're always in scope) ─
+
+  const formatPlanDuration = (days: number) => {
+    if (days >= 36500) return "Lifetime";
+    if (days >= 365) return `${Math.round(days / 365)}y`;
+    if (days >= 30) return `${Math.round(days / 30)}mo`;
+    return `${days}d`;
+  };
+
+  // Unified panel chrome: header (USD + Ru$h balances) + contextual body + footer.
+  function PanelChrome({
+    usd, rush, onClose, onFullWallet, body,
+  }: {
+    usd: number | null;
+    rush: number | null;
+    onClose: () => void;
+    onFullWallet: () => void;
+    body: React.ReactNode;
+  }) {
+    const es = lang === "es";
+    return (
+      <div
+        className="rounded-2xl overflow-hidden shadow-2xl"
+        style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.30)" }}
+      >
+        {/* ── Header ── */}
+        <div className="px-4 pt-3 pb-2 border-b border-white/[0.06]">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <span>💎</span>
+              <span className="text-sm font-bold text-white">Wallet</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar"
+              className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
+            >×</button>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-4">
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">{es ? "Saldo" : "Balance"}</p>
+                <p className="text-sm font-black text-white tabular-nums">
+                  {usd != null ? `$${usd.toFixed(2)}` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-widest text-white/40">Ru$h 💎</p>
+                <p className="text-sm font-black text-white tabular-nums">
+                  {rush != null ? rush.toLocaleString() : "—"}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onFullWallet}
+              className="text-[10px] font-semibold text-emerald-400 hover:text-emerald-300 transition text-right leading-tight"
+            >
+              {es ? "Ver billetera\ncompleta →" : "Full\nwallet →"}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Body (contextual) ── */}
+        {body}
+
+        {/* ── Footer ── */}
+        <div className="px-4 py-2 border-t border-white/[0.06]">
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Términos" : "Terms"}
+            </a>
+            <span className="text-white/20 text-[9px]">·</span>
+            <a
+              href="/refunds"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Reembolsos" : "Refunds"}
+            </a>
+            <span className="text-white/20 text-[9px]">·</span>
+            <button
+              type="button"
+              onClick={() => setWalletGuideOpen((v) => !v)}
+              className="text-[9px] text-white/30 hover:text-white/50 transition"
+            >
+              {es ? "Cómo usar la billetera" : "How to use"}
+            </button>
+          </div>
+          {walletGuideOpen && (
+            <div className="mt-2 pt-2 border-t border-white/[0.06]">
+              <p className="text-[10px] font-semibold text-white/60 mb-1.5">
+                {es ? "Guía rápida 💎" : "Quick guide 💎"}
+              </p>
+              <ol className="space-y-1">
+                {(es
+                  ? [
+                      "Agrega Ru$h 💎 con USDC o tarjeta para desbloquear contenido.",
+                      "Envía propinas a tus creadores favoritos en tiempo real.",
+                      "Tus Ru$h no vencen. Tu saldo siempre está seguro.",
+                    ]
+                  : [
+                      "Add Ru$h 💎 with USDC or card to unlock exclusive content.",
+                      "Send real-time tips to your favorite creators.",
+                      "Your Ru$h never expire. Your balance is always safe.",
+                    ]
+                ).map((step, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span className="text-[9px] font-black text-emerald-400 flex-shrink-0">{i + 1}.</span>
+                    <span className="text-[9px] text-white/50 leading-relaxed">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return null;
   if (path.startsWith("/chat/") || path.startsWith("/live/") || path.startsWith("/dm/")) return null;
   if (path === "/onboarding" || path === "/subscribe" || path === "/lifetime100") return null;
 
@@ -2608,105 +2744,76 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-label="Buy Ru$h"
+            aria-label="Wallet"
           >
-            <div
-              className="rounded-2xl overflow-hidden shadow-2xl"
-              style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(212,0,122,0.30)" }}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/[0.06]">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">💎</span>
-                  <p className="text-sm font-bold text-white">Ru$h</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setLivePanelOpen(false)}
-                  aria-label="Cerrar"
-                  className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
-                >×</button>
-              </div>
-
-              {/* Balance + "full wallet" link */}
-              <div className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-white/[0.06]">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-0.5">Ru$h 💎</p>
-                  <p className="text-base font-black text-white tabular-nums">
-                    {liveRushBalance != null ? liveRushBalance.toLocaleString() : "—"}
+            <PanelChrome
+              usd={liveUsdcBalance}
+              rush={liveRushBalance}
+              onClose={() => setLivePanelOpen(false)}
+              onFullWallet={() => { setLivePanelOpen(false); setOpen(true); }}
+              body={
+                <div className="px-3 pt-3 pb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                    {lang === "es" ? "Comprar Ru$h" : "Buy Ru$h"}
                   </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setLivePanelOpen(false); setOpen(true); }}
-                  className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition"
-                >
-                  {lang === "es" ? "Ver billetera completa →" : "Full wallet →"}
-                </button>
-              </div>
-
-              {/* Preset buttons */}
-              <div className="px-3 pt-3 pb-2">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
-                  {lang === "es" ? "Comprar Ru$h" : "Buy Ru$h"}
-                </p>
-                <div className="grid grid-cols-2 gap-1.5 mb-3">
-                  {livePackagesLoading ? (
-                    [0,1,2,3].map((i) => (
-                      <div key={i} className="h-14 rounded-xl bg-white/[0.06] animate-pulse" />
-                    ))
-                  ) : (
-                    livePackages
-                      .filter((p) => [25, 50, 100, 500, 1000].includes(Number(p.usd)))
-                      .sort((a, b) => Number(a.usd) - Number(b.usd))
-                      .map((pkg) => (
-                        <button
-                          key={pkg.id}
-                          type="button"
-                          onClick={() => openBuyPackage(pkg.id)}
-                          className="flex flex-col items-start px-3 py-2.5 rounded-xl text-left transition active:scale-95"
-                          style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.20),rgba(230,145,56,0.20))", border: "1px solid rgba(212,0,122,0.35)" }}
-                        >
-                          <span className="text-sm font-black text-white">${pkg.usd}</span>
-                          <span className="text-xs font-bold text-white/80">{Number(pkg.tokens).toLocaleString()} 💎</span>
-                          {(pkg.bonus ?? 0) > 0 && (
-                            <span className="text-[10px] font-semibold text-emerald-400">+{pkg.bonus} bonus</span>
-                          )}
-                        </button>
+                  <div className="grid grid-cols-2 gap-1.5 mb-3">
+                    {livePackagesLoading ? (
+                      [0,1,2,3].map((i) => (
+                        <div key={i} className="h-14 rounded-xl bg-white/[0.06] animate-pulse" />
                       ))
-                  )}
-                </div>
-
-                {/* Custom amount */}
-                <div className="flex gap-2 pb-3">
-                  <div
-                    className="flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2"
-                    style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}
-                  >
-                    <span className="text-xs text-white/50 font-bold">$</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min={1}
-                      value={liveCustomInput}
-                      onChange={(e) => setLiveCustomInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleCustomBuy()}
-                      placeholder={lang === "es" ? "Otro monto" : "Custom amount"}
-                      className="flex-1 min-w-0 bg-transparent text-sm font-bold text-white outline-none placeholder-white/30 tabular-nums"
-                    />
+                    ) : (
+                      livePackages
+                        .filter((p) => [25, 50, 100, 500, 1000].includes(Number(p.usd)))
+                        .sort((a, b) => Number(a.usd) - Number(b.usd))
+                        .map((pkg) => (
+                          <button
+                            key={pkg.id}
+                            type="button"
+                            onClick={() => openBuyPackage(pkg.id)}
+                            className="flex flex-col items-start px-3 py-2.5 rounded-xl text-left transition active:scale-95"
+                            style={{ background: "linear-gradient(135deg,rgba(212,0,122,0.20),rgba(230,145,56,0.20))", border: "1px solid rgba(212,0,122,0.35)" }}
+                          >
+                            <span className="text-sm font-black text-white">
+                              ${pkg.usd}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
+                            </span>
+                            <span className="text-xs font-bold text-white/80">{Number(pkg.tokens).toLocaleString()} 💎</span>
+                            {(pkg.bonus ?? 0) > 0 && (
+                              <span className="text-[10px] font-semibold text-emerald-400">+{pkg.bonus} bonus</span>
+                            )}
+                          </button>
+                        ))
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleCustomBuy}
-                    disabled={!liveCustomInput || parseFloat(liveCustomInput) < 1}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-white transition active:scale-95 disabled:opacity-40"
-                    style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
-                  >
-                    {lang === "es" ? "Comprar" : "Buy"}
-                  </button>
+                  <div className="flex gap-2 pb-1">
+                    <div
+                      className="flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2"
+                      style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }}
+                    >
+                      <span className="text-xs text-white/50 font-bold">$</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min={1}
+                        value={liveCustomInput}
+                        onChange={(e) => setLiveCustomInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleCustomBuy()}
+                        placeholder={lang === "es" ? "Otro monto" : "Custom amount"}
+                        className="flex-1 min-w-0 bg-transparent text-sm font-bold text-white outline-none placeholder-white/30 tabular-nums"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCustomBuy}
+                      disabled={!liveCustomInput || parseFloat(liveCustomInput) < 1}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white transition active:scale-95 disabled:opacity-40"
+                      style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
+                    >
+                      {lang === "es" ? "Comprar" : "Buy"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
+              }
+            />
           </div>
         )}
 
@@ -2754,13 +2861,6 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   if (isHomePanelRoute && !isMainStage && !isCreatorProfile) {
     const fabLabel = homePanelOpen ? "Cerrar billetera" : "Abrir billetera";
 
-    const formatPlanDuration = (days: number) => {
-      if (days >= 36500) return "Lifetime";
-      if (days >= 365) return `${Math.round(days / 365)}y`;
-      if (days >= 30) return `${Math.round(days / 30)}mo`;
-      return `${days}d`;
-    };
-
     return (
       <>
         {/* Home panel bottom sheet */}
@@ -2782,141 +2882,108 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
             aria-modal="true"
             aria-label="Wallet"
           >
-            <div
-              className="rounded-2xl overflow-hidden shadow-2xl"
-              style={{ background: "rgba(19,16,26,0.98)", border: "1px solid rgba(16,185,129,0.25)" }}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/[0.06]">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">💎</span>
-                  <p className="text-sm font-bold text-white">Wallet</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setHomePanelOpen(false)}
-                  aria-label="Cerrar"
-                  className="w-7 h-7 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition flex items-center justify-center text-base"
-                >
-                  ×
-                </button>
-              </div>
-
-              {/* Balance row */}
-              <div className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-white/[0.06]">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-0.5">Saldo</p>
-                  <p className="text-base font-black text-white tabular-nums">
-                    {homeUsdcBalance != null
-                      ? `$${homeUsdcBalance.toFixed(2)}`
-                      : "—"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setHomePanelOpen(false); setOpen(true); }}
-                  className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition"
-                >
-                  Ver billetera completa →
-                </button>
-              </div>
-
-              {/* Plans list OR inline checkout */}
-              <div className="px-3 py-2.5">
-                {selectedHomePlan ? (
-                  <>
-                    <div className="flex items-center gap-2 mb-3">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedHomePlan(null)}
-                        className="text-[11px] text-white/40 hover:text-white/70 transition flex items-center gap-1"
-                      >
-                        ← {lang === "es" ? "Planes" : "Plans"}
-                      </button>
-                      <span className="text-[11px] text-white/60 font-semibold truncate">
-                        {selectedHomePlan.display_name || selectedHomePlan.name}
-                      </span>
-                    </div>
-                    <Suspense fallback={<div className="h-24 rounded-xl bg-white/[0.05] animate-pulse" />}>
-                      <LazyWalletPayCard
-                        surface={
-                          (selectedHomePlan.tier?.toLowerCase() === "prime" || !selectedHomePlan.id.startsWith("member"))
-                            ? "prime"
-                            : "membership"
-                        }
-                        amountUsd={selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0}
-                        entitlementSpec={{ planId: selectedHomePlan.id }}
-                        label={`${lang === "es" ? "Pagar" : "Pay"} $${(selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0).toFixed(2)} · ${selectedHomePlan.display_name || selectedHomePlan.name}`}
-                        lang={lang === "es" ? "es" : "en"}
-                        compact
-                        onSuccess={() => {
-                          setSelectedHomePlan(null);
-                          setHomePanelOpen(false);
-                        }}
-                      />
-                    </Suspense>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
-                      Planes
-                    </p>
-                    {homePlanLoading ? (
-                      <div className="space-y-1.5">
-                        {[0, 1, 2].map((i) => (
-                          <div key={i} className="h-10 rounded-xl bg-white/[0.05] animate-pulse" />
-                        ))}
-                      </div>
-                    ) : homePlansError ? (
-                      <div className="py-2 text-center">
-                        <p className="text-xs text-red-400 mb-2">{homePlansError}</p>
+            <PanelChrome
+              usd={homeUsdcBalance}
+              rush={homeRushBalance}
+              onClose={() => setHomePanelOpen(false)}
+              onFullWallet={() => { setHomePanelOpen(false); setOpen(true); }}
+              body={
+                <div className="px-3 py-2.5">
+                  {selectedHomePlan ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-3">
                         <button
                           type="button"
-                          onClick={() => setHomePanelOpen(false)}
-                          className="text-[11px] text-emerald-400 hover:underline"
+                          onClick={() => setSelectedHomePlan(null)}
+                          className="text-[11px] text-white/40 hover:text-white/70 transition flex items-center gap-1"
                         >
-                          {lang === "es" ? "Reintentar" : "Retry"}
+                          ← {lang === "es" ? "Planes" : "Plans"}
                         </button>
+                        <span className="text-[11px] text-white/60 font-semibold truncate">
+                          {selectedHomePlan.display_name || selectedHomePlan.name}
+                        </span>
                       </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {homePlans.map((plan) => {
-                          const days = plan.duration_days ?? plan.duration ?? 0;
-                          const duration = formatPlanDuration(days);
-                          const price = plan.priceUSD ?? plan.price ?? 0;
-                          const isPrime = plan.tier?.toLowerCase() === "prime" || !plan.id.startsWith("member");
-                          return (
-                            <button
-                              key={plan.id}
-                              type="button"
-                              onClick={() => setSelectedHomePlan(plan)}
-                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
-                              style={{
-                                borderColor: isPrime ? "rgba(212,0,122,0.35)" : "rgba(255,255,255,0.1)",
-                                background: isPrime ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
-                              }}
-                            >
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-white truncate">
-                                  {plan.display_name || plan.name}
-                                </p>
-                                <p className="text-[10px] text-white/50">{duration}</p>
-                              </div>
-                              <p
-                                className="text-sm font-black flex-shrink-0"
-                                style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
+                      <Suspense fallback={<div className="h-24 rounded-xl bg-white/[0.05] animate-pulse" />}>
+                        <LazyWalletPayCard
+                          surface={
+                            (selectedHomePlan.tier?.toLowerCase() === "prime" || !selectedHomePlan.id.startsWith("member"))
+                              ? "prime"
+                              : "membership"
+                          }
+                          amountUsd={selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0}
+                          entitlementSpec={{ planId: selectedHomePlan.id }}
+                          label={`${lang === "es" ? "Pagar" : "Pay"} $${(selectedHomePlan.priceUSD ?? selectedHomePlan.price ?? 0).toFixed(2)} +fees · ${selectedHomePlan.display_name || selectedHomePlan.name}`}
+                          lang={lang === "es" ? "es" : "en"}
+                          compact
+                          onSuccess={() => {
+                            setSelectedHomePlan(null);
+                            setHomePanelOpen(false);
+                          }}
+                        />
+                      </Suspense>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">
+                        {lang === "es" ? "Planes" : "Plans"}
+                      </p>
+                      {homePlanLoading ? (
+                        <div className="space-y-1.5">
+                          {[0, 1, 2].map((i) => (
+                            <div key={i} className="h-10 rounded-xl bg-white/[0.05] animate-pulse" />
+                          ))}
+                        </div>
+                      ) : homePlansError ? (
+                        <div className="py-2 text-center">
+                          <p className="text-xs text-red-400 mb-2">{homePlansError}</p>
+                          <button
+                            type="button"
+                            onClick={() => setHomePanelOpen(false)}
+                            className="text-[11px] text-emerald-400 hover:underline"
+                          >
+                            {lang === "es" ? "Reintentar" : "Retry"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {homePlans.map((plan) => {
+                            const days = plan.duration_days ?? plan.duration ?? 0;
+                            const duration = formatPlanDuration(days);
+                            const price = plan.priceUSD ?? plan.price ?? 0;
+                            const isPrime = plan.tier?.toLowerCase() === "prime" || !plan.id.startsWith("member");
+                            return (
+                              <button
+                                key={plan.id}
+                                type="button"
+                                onClick={() => setSelectedHomePlan(plan)}
+                                className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border text-left transition active:scale-[0.98] hover:bg-white/[0.06]"
+                                style={{
+                                  borderColor: isPrime ? "rgba(212,0,122,0.35)" : "rgba(255,255,255,0.1)",
+                                  background: isPrime ? "rgba(212,0,122,0.06)" : "rgba(255,255,255,0.03)",
+                                }}
                               >
-                                ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
-                              </p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-bold text-white truncate">
+                                    {plan.display_name || plan.name}
+                                  </p>
+                                  <p className="text-[10px] text-white/50">{duration}</p>
+                                </div>
+                                <p
+                                  className="text-sm font-black flex-shrink-0"
+                                  style={{ color: isPrime ? "#D4007A" : "#5ED1C4" }}
+                                >
+                                  ${price % 1 === 0 ? price.toFixed(0) : price.toFixed(2)}<span className="text-[9px] font-normal opacity-50 ml-0.5">+fees</span>
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              }
+            />
           </div>
         )}
 
