@@ -50,19 +50,19 @@ const UPDATE_MESSAGES: RawMessage[] = [
     category: "UPDATE",
     en: "💎 Your PNPtv Wallet is live and interactive — top up, tip, pay, connect Trust or MetaMask. Explore →",
     es: "💎 Tu Billetera PNPtv ya está lista e interactiva — recarga, tipea, paga, conecta Trust o MetaMask. Explora →",
-    href: "/blog?open=pnptv-wallet-is-live",
+    href: "/blog/pnptv-wallet-is-live",
   },
   {
     category: "UPDATE",
     en: "❖ Crystal Performers now front-and-center on Main Stage — meet the roster →",
     es: "❖ Los Performers Crystal ahora al frente del Main Stage — conoce el roster →",
-    href: "/blog?open=crystal-performers-main-stage",
+    href: "/blog/crystal-performers-main-stage",
   },
   {
     category: "UPDATE",
     en: "🎬 Creators — the Crystal Creator program is coming. Get ready →",
     es: "🎬 Creadores — el programa Crystal Creator viene en camino. Prepárense →",
-    href: "/blog?open=crystal-creator-program",
+    href: "/blog/crystal-creator-program",
   },
   {
     category: "UPDATE",

@@ -16,6 +16,59 @@ const strings = {
     },
     articles: [
       {
+        slug: "pnptv-crypto-wallet-is-here",
+        title: "The 💎 Crystal Diamond Widget Helps You Pay Now — PNPtv! Wallet Is Here",
+        date: "September 7, 2026",
+        category: "platform",
+        summary: "Visa, Mastercard, PayPal, Stripe — they all hate PNP and porn. After years of being kicked off every payment processor, we built our own. Introducing the PNPtv! Wallet.",
+        content: `Building PNPtv! has been one wild ride. We've faced personal, emotional, and physical challenges — you already know — but one obstacle almost killed the project more than once: Visa and Mastercard straight-up hate PNP and porn.
+
+We're endlessly grateful for every bit of support you've given us over these four years. But because of what we do, we've been kicked by PayPal, Stripe, ePayco, and more. Thousands of dollars and countless hours lost, no matter how we structured the business.
+
+So we went crypto — independent from banks, private, fast, safe.
+
+And it sounds perfect... except crypto is still a headache for most people, even months in.
+
+But Lex and I love sex and PNP way too much to quit. So after weeks of digging, testing, and refining, we're proud to introduce the PNPtv! Wallet.
+
+WHAT IS THE PNPTV! WALLET?
+
+The PNPtv! Wallet is an exclusive payment wallet built specifically for adult content transactions — the kind that banks and traditional processors refuse to touch. It's powered by world-class crypto infrastructure trusted by major exchanges worldwide, but you don't need to know a single thing about crypto to use it. It works just like a regular dollar balance: top it up with your card, Apple Pay, or Google Pay, and spend it anywhere on the platform. The crypto part happens invisibly in the background.
+
+Every member gets their own secure wallet the moment they sign in — no new accounts, no new apps, just your existing login (email, Telegram, X, or Google). Your wallet has a unique address so we know who paid for what and can activate your plans instantly. The wallet belongs to you — even if you ever delete your PNPtv! account, your funds stay yours. Every transaction is signed with your passkey, so nobody else can touch it.
+
+Paying is simple. At any checkout, tap the 💎 diamond icon. A popup opens — pay the amount you need for your membership, a private call, or a creator subscription — and you're done. It feels exactly like any prepaid card.
+
+Hardcore fans can also pre-load the wallet with any amount and keep it ready for whenever the urge hits. Need the money back? You can withdraw to your bank account anytime. Full instructions are in the Tutorials section.
+
+WHAT ABOUT RU$H?
+
+Crypto is powerful, but fees can eat small transactions alive — and we're not about to hand money to middlemen.
+
+That's why we created Ru$h 💎, PNPtv!'s official internal currency. One dollar gets you 6 Ru$h. Use it for tips, Main Stage treats, PNP Live support, or any small gesture. Zero fees, so you can actually spoil your favorite boys without the pain.
+
+Important: you can withdraw real funds from your PNPtv! Wallet to your bank. You cannot withdraw Ru$h — it's not a public token yet. We have big plans to turn Ru$h into a real token that supports adult creators while protecting privacy and simplicity. Until then, only buy Ru$h if you're planning to spend it on the platform.
+
+QUICK START
+
+1. Tap the 💎 icon to open your PNPtv! Wallet
+2. Top it up with your card, Apple Pay, or Google Pay
+3. Head to Subscribe, Book a Call, or your favorite creator's profile
+4. Tap "Pay with PNPtv Wallet 💎"
+5. Your purchase completes instantly
+6. Load Ru$h only if you tip heavy on live streams
+
+That's it. Ready to smoke and stroke without the usual payment drama.
+
+I'll drop a detailed tutorial with step-by-step screenshots soon. In the meantime, my DMs are always open if you have questions.
+
+Thank you for riding with us through every obstacle. This wallet exists because of you.
+
+Xoxo, Santino
+
+P.S. The diamond is waiting. Go charge it up.`,
+      },
+      {
         slug: "pnptv-wallet-is-live",
         title: "The PNPtv Wallet — Card, Crypto, and Everything Between",
         date: "September 4, 2026",
@@ -191,6 +244,59 @@ Community events on PNPtv are organized by members and creators in the social fe
       platform: "Plataforma",
     },
     articles: [
+      {
+        slug: "billetera-cripto-pnptv-ya-llego",
+        title: "El Widget 💎 Crystal Diamond Ya Llegó — Tu Billetera PNPtv! Está Aquí",
+        date: "7 de septiembre de 2026",
+        category: "platform",
+        summary: "Visa, Mastercard, PayPal, Stripe — todos odian el PNP y el porno. Después de años siendo expulsados de cada procesador de pagos, construimos el nuestro. Presentamos la Billetera PNPtv!",
+        content: `Construir PNPtv! ha sido una montaña rusa. Hemos enfrentado desafíos personales, emocionales y físicos — tú ya sabes — pero hubo un obstáculo que casi mató el proyecto más de una vez: Visa y Mastercard simplemente odian el PNP y el porno.
+
+Les estamos eternamente agradecidos por cada bit de apoyo que nos han dado en estos cuatro años. Pero por lo que hacemos, nos sacaron de PayPal, Stripe, ePayco y más. Miles de dólares y horas incontables perdidas, sin importar cómo estructuramos el negocio.
+
+Entonces nos fuimos al cripto — independiente de bancos, privado, rápido, seguro.
+
+Y suena perfecto... hasta que realmente intentas usarlo. El cripto sigue siendo un dolor de cabeza para la mayoría, incluso después de meses de práctica.
+
+Pero Lex y yo amamos el sexo y el PNP demasiado como para rendirnos. Así que después de semanas investigando, probando y refinando, estamos orgullosos de presentar la Billetera PNPtv!
+
+¿QUÉ ES LA BILLETERA PNPTV!?
+
+La Billetera PNPtv! es una billetera de pago exclusiva diseñada específicamente para transacciones de contenido adulto — el tipo que los bancos y procesadores tradicionales se niegan a tocar. Está impulsada por infraestructura cripto de clase mundial, la misma en la que confían los grandes exchanges globales, pero no necesitas saber nada de cripto para usarla. Funciona exactamente como un saldo en dólares: recárgala con tu tarjeta, Apple Pay o Google Pay, y gástala donde quieras en la plataforma. La parte cripto ocurre de forma invisible en el fondo.
+
+Cada miembro tiene su propia billetera segura desde el momento en que inicia sesión — sin cuentas nuevas, sin apps nuevas, solo tu login de siempre (email, Telegram, X o Google). Tu billetera tiene una dirección única para que sepamos quién pagó qué y podamos activar tus planes al instante. La billetera es tuya — incluso si algún día eliminas tu cuenta de PNPtv!, tus fondos siguen siendo tuyos. Cada transacción se firma con tu passkey, así que nadie más puede tocarla.
+
+Pagar es simple. En cualquier checkout, toca el ícono 💎 del diamante. Se abre un popup — pagas la cantidad que necesitas para tu membresía, una llamada privada o una suscripción a un creador — y listo. Se siente exactamente como cualquier tarjeta prepago.
+
+Los fans más hardcore también pueden precargar la billetera con cualquier cantidad y tenerla lista para cuando el antojo llegue. ¿Necesitas el dinero de vuelta? Puedes retirar a tu banco cuando quieras. Las instrucciones completas están en la sección de Tutoriales.
+
+¿QUÉ HAY DEL RU$H?
+
+El cripto es poderoso, pero las comisiones pueden comerse las transacciones pequeñas — y no vamos a regalarle dinero a intermediarios.
+
+Por eso creamos el Ru$h 💎, la moneda interna oficial de PNPtv!. Un dólar te da 6 Ru$h. Úsalo para propinas, en el Main Stage, para apoyar el PNP Live o para cualquier gesto especial. Sin comisiones, para que puedas consentir a tus chicos favoritos sin el dolor de cabeza.
+
+Importante: puedes retirar fondos reales de tu Billetera PNPtv! a tu banco. No puedes retirar Ru$h — todavía no es un token público. Tenemos grandes planes para convertir el Ru$h en un token real que apoye a los creadores adultos con privacidad y simplicidad. Hasta entonces, solo compra Ru$h si planeas gastarlo en la plataforma.
+
+CÓMO EMPEZAR
+
+1. Toca el ícono 💎 para abrir tu Billetera PNPtv!
+2. Recárgala con tu tarjeta, Apple Pay o Google Pay
+3. Ve a Suscribirse, Reservar una Llamada, o el perfil de tu creador favorito
+4. Toca "Pagar con Billetera PNPtv! 💎"
+5. Tu compra se completa al instante
+6. Carga Ru$h solo si das propinas generosas en streams en vivo
+
+Eso es todo. Listo para fumar y disfrutar sin el drama de siempre con los pagos.
+
+Pronto subo un tutorial detallado con capturas de pantalla paso a paso. Mientras tanto, mis DMs siempre están abiertos si tienes preguntas.
+
+Gracias por aguantar con nosotros en cada obstáculo. Esta billetera existe por ustedes.
+
+Xoxo, Santino
+
+P.D. El diamante está esperando. Ve a cargarlo.`,
+      },
       {
         slug: "la-billetera-pnptv-ya-esta-lista",
         title: "La Billetera PNPtv — Tarjeta, Cripto y Todo lo del Medio",

@@ -1306,6 +1306,14 @@ export const router = createBrowserRouter([
     ),
   },
   {
+    path: "/blog/:slug",
+    element: (
+      <ModuleLoader>
+        <BlogPage />
+      </ModuleLoader>
+    ),
+  },
+  {
     path: "/about",
     element: (
       <ModuleLoader>

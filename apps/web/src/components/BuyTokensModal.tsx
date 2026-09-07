@@ -97,6 +97,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // every render or React #310 fires when the modal opens/closes.
   const [npCoin, setNpCoin] = useState<'usdcerc20' | 'btc' | 'eth'>('btc');
   const [npFallbackPackageId, setNpFallbackPackageId] = useState<string | null>(null);
+  // Tracks when the auto-trigger path has explicitly exited to show the full UI
+  // (non-cancel errors). Until this is true, keep showing the spinner so a
+  // silent Privy cancel doesn't flash the old NowPayments panel.
+  const [autoTriggerDone, setAutoTriggerDone] = useState(false);
 
   // Activation-code redemption (users who received a code out-of-band, e.g. via
   // support, ops top-up, or a legacy card checkout). Not a purchase path we
@@ -515,6 +519,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       }
       if (bal >= usd) {
         await _executeIntent("usdc", { tokens: actualTokens, ...(pkgId ? { packageId: pkgId } : {}) }, actualTokens, usd);
+      } else if (closeOnCancel) {
+        // Auto-trigger mode: user closed Privy onramp (or it resolved silently).
+        // Close the modal so the old NowPayments UI never flashes.
+        onClose();
       } else {
         setError(es
           ? "El pago se está procesando. Cuando llegue el USDC toca el botón nuevamente."
@@ -524,6 +532,12 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
       const msg = err instanceof Error ? err.message : String(err);
       if (/cancel|closed|reject/i.test(msg)) {
         if (closeOnCancel) onClose();
+        return;
+      }
+      if (closeOnCancel) {
+        // Auto-trigger mode: close on any non-cancel error too, rather than
+        // flashing the full NowPayments UI. User can re-tap to retry.
+        onClose();
         return;
       }
       setError(es ? `No se pudo abrir el pago: ${msg}` : `Could not open payment: ${msg}`);
@@ -538,7 +552,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // is used so the bonus is never silently dropped.
   const autoTriggeredRef = useRef(false);
   useEffect(() => {
-    if (!isOpen) { autoTriggeredRef.current = false; }
+    if (!isOpen) { autoTriggeredRef.current = false; setAutoTriggerDone(false); }
   }, [isOpen]);
   useEffect(() => {
     if (!initialPackageId && !initialAmountUsd) return;
@@ -571,6 +585,7 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
           const msg = err instanceof Error ? err.message : String(err);
           if (/cancel|closed|reject/i.test(msg)) { onClose(); return; }
           setError(msg);
+          setAutoTriggerDone(true); // unlock full UI so error is visible
         })
         .finally(() => setPayingCustom(false));
     } else {
@@ -607,7 +622,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   // loading screen while auto-trigger fires OR while payment is in flight.
   // Keep spinner visible until checkout fully resolves so the full UI never
   // flashes in mid-transaction.
-  const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && (!autoTriggeredRef.current || payingCustom);
+  // Auto-trigger mode: show spinner instead of the full NowPayments UI.
+  // Stays active until autoTriggerDone (non-cancel error unlocks full UI)
+  // or success is set. Cancels call onClose() which unmounts the modal cleanly.
+  const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && !autoTriggerDone && !success;
 
   return (
     <div

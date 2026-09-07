@@ -1524,16 +1524,6 @@ class SocialPostService {
   // ── Toggle Like ───────────────────────────────────────────────────────────
 
   static async toggleLike(postId, userId) {
-    // Super-god: skip the INSERT/DELETE so the count trigger never fires.
-    // Return synthetic liked=true + current count so the heart animates in UI.
-    const EntitlementAccessService = require('./entitlementAccessService');
-    if (EntitlementAccessService.isSuperGod(userId)) {
-      const { rows } = await query(
-        `SELECT likes_count FROM social_posts WHERE id=$1`,
-        [postId]
-      );
-      return { liked: true, likes_count: rows[0]?.likes_count ?? 0, superGod: true };
-    }
     // likes_count is maintained by trigger trg_social_post_likes_count
     // (migration 222). We only insert/delete the row here; the trigger
     // keeps social_posts.likes_count in sync on INSERT and DELETE.
@@ -1567,17 +1557,6 @@ class SocialPostService {
   // post row for fast read-time boost application; the true source of truth
   // is `SELECT SUM(weight) FROM post_hypes WHERE post_id=$1 AND expires_at>NOW()`.
   static async toggleHype(postId, userId) {
-    const EntitlementAccessService = require('./entitlementAccessService');
-    // Super-god actors don't move real numbers (mirrors toggleLike behavior).
-    if (EntitlementAccessService.isSuperGod(userId)) {
-      const { rows } = await query(
-        `SELECT COALESCE(hype_score, 0) AS hype_score FROM social_posts WHERE id=$1 AND is_deleted=false`,
-        [postId]
-      );
-      if (!rows[0]) return { hyped: false, hype_score: 0, superGod: true };
-      return { hyped: true, hype_score: rows[0].hype_score, superGod: true };
-    }
-
     // Reject hyping deleted posts, exclusive posts (paywall bypass surface),
     // or posts whose author has disabled sharing.
     const { rows: chk } = await query(

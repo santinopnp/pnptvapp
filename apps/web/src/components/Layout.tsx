@@ -2478,6 +2478,24 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const creatorMatch = useMatch("/c/:username");
   const creatorUsername = creatorMatch?.params?.username ?? null;
   const [open, setOpen] = useState(false);
+  // Desktop detection — lg breakpoint (1024px). On desktop the BottomNav is
+  // hidden so the FAB doesn't need to clear it; sit closer to the viewport edge.
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 1024 : false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  const fabBottom = isDesktop
+    ? "calc(1.5rem + env(safe-area-inset-bottom, 0px))"
+    : "calc(5rem + env(safe-area-inset-bottom, 0px))";
+  const panelBottom = isDesktop
+    ? "calc(2.5rem + env(safe-area-inset-bottom, 0px))"
+    : "calc(6rem + env(safe-area-inset-bottom, 0px))";
+  const stackBottom = isDesktop
+    ? "calc(1.5rem + env(safe-area-inset-bottom, 0px) + 60px)"
+    : "calc(5rem + env(safe-area-inset-bottom, 0px) + 60px)";
   // Active wallet detection — used to badge the FAB so users see which wallet
   // is signing without having to open the sheet. Mirrors WalletHomeSheet's
   // preferred → embedded → first external order.
@@ -2555,21 +2573,29 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
   const [homeRushBalance, setHomeRushBalance] = useState<number | null>(null);
   const [homePlansError, setHomePlansError] = useState<string | null>(null);
   const [selectedHomePlan, setSelectedHomePlan] = useState<SubscriptionPlan | null>(null);
-  // Pulse animation — starts 8s after mount (or auth), loops every 2.5s until first tap.
-  const [pulsing, setPulsing] = useState(false);
-  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Morph animation — FAB expands into a pill showing contextual CTA text, then
+  // contracts back. Cycles every ~12s, stops on first user interaction.
+  const [fabExpanded, setFabExpanded] = useState(false);
+  const fabCycleTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const fabCta = isLivePage ? "Buy Ru$h" : isHomePanelRoute ? "Get PRIME" : "Tap to Pay";
   useEffect(() => {
     if (!isAuthenticated) return;
-    idleTimerRef.current = setTimeout(() => setPulsing(true), 8000);
-    const stopPulse = () => {
-      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
-      setPulsing(false);
+    const clearAll = () => { fabCycleTimers.current.forEach(clearTimeout); fabCycleTimers.current = []; };
+    const schedule = (initialDelay: number) => {
+      const t1 = setTimeout(() => {
+        setFabExpanded(true);
+        const t2 = setTimeout(() => {
+          setFabExpanded(false);
+          schedule(12000);
+        }, 2800);
+        fabCycleTimers.current.push(t2);
+      }, initialDelay);
+      fabCycleTimers.current.push(t1);
     };
-    window.addEventListener("click", stopPulse, { passive: true, capture: true });
-    return () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      window.removeEventListener("click", stopPulse, { capture: true });
-    };
+    schedule(5000);
+    const stop = () => { clearAll(); setFabExpanded(false); window.removeEventListener("click", stop, { capture: true }); };
+    window.addEventListener("click", stop, { passive: true, capture: true });
+    return () => { clearAll(); window.removeEventListener("click", stop, { capture: true }); };
   }, [isAuthenticated]);
 
   // Fetch subscription plans + wallet balance when home panel opens.
@@ -2725,7 +2751,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         {livePanelOpen && (
           <div
             className="fixed left-3 right-3 z-[49] sm:left-auto sm:right-3 sm:w-[420px] max-w-full"
-            style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+            style={{ bottom: panelBottom }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -2806,23 +2832,34 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         {/* FAB */}
         <button
           type="button"
-          onClick={() => { setPulsing(false); setLivePanelOpen((v) => !v); }}
+          onClick={() => setLivePanelOpen((v) => !v)}
           aria-label={livePanelOpen ? "Cerrar" : "Comprar Ru$h"}
           aria-expanded={livePanelOpen}
-          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
+          className="fixed z-[50] flex items-center shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
           style={{
-            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            bottom: fabBottom,
             ...(avoidRightEdge
               ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
               : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
-            width: 52, height: 52,
+            width: fabExpanded && !livePanelOpen ? 148 : 52,
+            height: 52,
+            borderRadius: 26,
+            overflow: "hidden",
             background: "linear-gradient(135deg,#D4007A,#E69138)",
             color: "white",
-            fontSize: 22,
-            animation: pulsing ? "wallet-fab-pulse 1.4s ease-out infinite" : "",
+            transition: "width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)",
+            justifyContent: "center",
           }}
         >
-          {livePanelOpen ? "×" : "💎"}
+          <span style={{
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+            maxWidth: fabExpanded && !livePanelOpen ? 90 : 0,
+            opacity: fabExpanded && !livePanelOpen ? 1 : 0,
+            overflow: "hidden", whiteSpace: "nowrap",
+            transition: "max-width 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.22s linear 0.18s",
+            marginRight: fabExpanded && !livePanelOpen ? 5 : 0,
+          }}>Buy Ru$h</span>
+          <span style={{ fontSize: livePanelOpen ? 18 : 22, flexShrink: 0, lineHeight: 1 }}>{livePanelOpen ? "×" : "💎"}</span>
         </button>
 
         {/* BuyTokensModal — mounted outside panel so it persists after panel closes */}
@@ -2871,7 +2908,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         {homePanelOpen && (
           <div
             className="fixed left-3 right-3 z-[49] sm:left-auto sm:right-3 sm:w-[420px] max-w-full"
-            style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+            style={{ bottom: panelBottom }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -2983,33 +3020,37 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           </div>
         )}
 
-        {/* FAB — pulse animation starts 8s after mount, loops until first tap */}
-        <style>{`
-          @keyframes wallet-fab-pulse {
-            0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.75); }
-            60%  { box-shadow: 0 0 0 14px rgba(16,185,129,0); }
-            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
-          }
-        `}</style>
+        {/* FAB */}
         <button
           type="button"
-          onClick={() => { setPulsing(false); setHomePanelOpen((v) => !v); setSelectedHomePlan(null); }}
+          onClick={() => { setHomePanelOpen((v) => !v); setSelectedHomePlan(null); }}
           aria-label={fabLabel}
           aria-expanded={homePanelOpen}
-          className="fixed z-[50] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
+          className="fixed z-[50] flex items-center shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
           style={{
-            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            bottom: fabBottom,
             ...(avoidRightEdge
               ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
               : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
-            width: 52, height: 52,
+            width: fabExpanded && !homePanelOpen ? 148 : 52,
+            height: 52,
+            borderRadius: 26,
+            overflow: "hidden",
             background: "linear-gradient(135deg,#10b981,#059669)",
             color: "white",
-            fontSize: 22,
-            animation: pulsing ? "wallet-fab-pulse 1.4s ease-out infinite" : "",
+            transition: "width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)",
+            justifyContent: "center",
           }}
         >
-          {homePanelOpen ? "×" : "💎"}
+          <span style={{
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+            maxWidth: fabExpanded && !homePanelOpen ? 90 : 0,
+            opacity: fabExpanded && !homePanelOpen ? 1 : 0,
+            overflow: "hidden", whiteSpace: "nowrap",
+            transition: "max-width 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.22s linear 0.18s",
+            marginRight: fabExpanded && !homePanelOpen ? 5 : 0,
+          }}>Get PRIME</span>
+          <span style={{ fontSize: homePanelOpen ? 18 : 22, flexShrink: 0, lineHeight: 1 }}>{homePanelOpen ? "×" : "💎"}</span>
           {showFabBadge && !homePanelOpen && (
             <span
               aria-hidden="true"
@@ -3070,7 +3111,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         <div
           className="fixed z-[45] flex flex-col-reverse items-end gap-2.5"
           style={{
-            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px) + 60px)",
+            bottom: stackBottom,
             right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
             // Pointer events only when open so taps-through work while collapsed.
             pointerEvents: stackOpen ? "auto" : "none",
@@ -3118,7 +3159,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
           aria-expanded={stackOpen}
           className="fixed z-[46] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
           style={{
-            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            bottom: fabBottom,
             right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
             width: 52, height: 52,
             background: "linear-gradient(135deg,#10b981,#059669)",
@@ -3230,7 +3271,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
             <div
               className="fixed z-[45] flex flex-col-reverse items-end gap-2.5"
               style={{
-                bottom: "calc(5rem + env(safe-area-inset-bottom, 0px) + 60px)",
+                bottom: stackBottom,
                 right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
                 pointerEvents: creatorStackOpen ? "auto" : "none",
               }}
@@ -3273,7 +3314,7 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
               aria-expanded={creatorStackOpen}
               className="fixed z-[46] flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
               style={{
-                bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+                bottom: fabBottom,
                 right: "calc(0.75rem + env(safe-area-inset-right, 0px))",
                 width: 52, height: 52,
                 background: "linear-gradient(135deg,#10b981,#059669)",
@@ -3304,21 +3345,31 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         type="button"
         onClick={() => setOpen(true)}
         aria-label={showFabBadge ? `Open wallet (using ${activeFabWallet?.walletClientType})` : "Open wallet"}
-        className="fixed z-40 flex items-center justify-center rounded-full shadow-lg backdrop-blur-md border border-white/15 active:scale-95 transition-transform"
+        className="fixed z-40 flex items-center shadow-lg backdrop-blur-md border border-white/15 active:scale-95"
         style={{
-          bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
-          // Mismo offset, lado opuesto: en el reproductor móvil la derecha la
-          // ocupan los controles del directo.
+          bottom: fabBottom,
           ...(avoidRightEdge
             ? { left: "calc(0.75rem + env(safe-area-inset-left, 0px))" }
             : { right: "calc(0.75rem + env(safe-area-inset-right, 0px))" }),
-          width: 52, height: 52,
+          width: fabExpanded ? 148 : 52,
+          height: 52,
+          borderRadius: 26,
+          overflow: "hidden",
           background: "linear-gradient(135deg,#10b981,#059669)",
           color: "white",
-          fontSize: 22,
+          transition: "width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)",
+          justifyContent: "center",
         }}
       >
-        💎
+        <span style={{
+          fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+          maxWidth: fabExpanded ? 90 : 0,
+          opacity: fabExpanded ? 1 : 0,
+          overflow: "hidden", whiteSpace: "nowrap",
+          transition: "max-width 0.4s cubic-bezier(0.34,1.56,0.64,1), opacity 0.22s linear 0.18s",
+          marginRight: fabExpanded ? 5 : 0,
+        }}>Tap to Pay</span>
+        <span style={{ fontSize: 22, flexShrink: 0, lineHeight: 1 }}>💎</span>
         {showFabBadge && (
           <span
             aria-hidden="true"

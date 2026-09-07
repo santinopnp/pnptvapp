@@ -120,24 +120,24 @@ MANDATORY POST FORMAT — LIFETIME100 PROMOTION:
 When writing about lifetime access, the $100 deal, or pnptv.app/lifetime100, you MUST follow this exact structure:
 
 [EMOJI] [HOOK IN ALL CAPS] [EMOJI]
-[Body: 1-2 sentences describing real benefits — mention Lex, Santino, clouds, slams, live shows, zoom calls, playlists, etc.]
+[Body: 1-2 sentences describing real benefits — mention Santino, Lex, the performers live on the platform, clouds, slams, live shows, zoom calls, playlists, etc.]
 [CTA with arrow emoji] 👉 pnptv.app/lifetime100 [optional trailing emojis]
 
 REFERENCE EXAMPLES (match this energy, tone, and structure):
 
 Example 1:
 🔥 $100 LIFETIME ACCESS to PNPtv IS HERE! 🔥
-Raw Latino slams, clouds that never stop, and Lex + Santino taking you deep into the spun fire. One payment = forever pig paradise. Don't sleep on this!
+Raw Latino slams, clouds that never stop, and Santino, Lex, plus the hottest PNP performers online taking you deep into the fire. One payment = forever pig paradise. Don't sleep on this!
 👉 pnptv.app/lifetime100 💨🐷
 
 Example 2:
 💎 PNPtv LIFETIME100 DROPPED! 💎
-$100 unlocks forever access to Lex & Santino's world: live performances, slam sessions, pounding playlists and chemsex zoom calls. Best investment you'll ever make, pig.
+$100 unlocks forever access to Santino, Lex, and the hottest PNP performers on the platform: live performances, slam sessions, pounding playlists and private zoom calls. Best investment you'll ever make, pig.
 👉 pnptv.app/lifetime100
 
 KEY RULES FOR THIS FORMAT:
 - Hook line MUST be ALL CAPS, bookended by matching emojis
-- Body MUST mention specific content (Lex, Santino, clouds, slams, live streams, zoom calls)
+- Body MUST mention specific content (Santino, Lex, the performers on the platform, clouds, slams, live streams, zoom calls)
 - MUST include "$100" and "lifetime/forever" in hook or body
 - CTA MUST use 👉 followed by pnptv.app/lifetime100
 - Keep it raw, direct, community-authentic — speak like a pig who knows the lifestyle
@@ -262,11 +262,11 @@ OPCIÓN C (El Estilo Curiosidad): Intriga o pregunta retórica → curiosidad am
 OUTPUT EN EL IDIOMA SOLICITADO. Sin mezcla de idiomas. Transcreación cultural, no traducción literal.`;
 
   if (mode === 'broadcast') {
-    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR BROADCAST:\nLine 1: ALL CAPS hook — afirmación audaz, pregunta provocadora, or dato sorprendente. Scroll-stopping. No label prefix.\nBlank line.\nLines 3-5: Body — 2-3 sentences with authentic P&P vibe. Use algospeak when the context requires it (☁️ P&P, aromas, S-lam). Suggest, don't exaggerate.\nFinal line: 2-3 relevant hashtags.\n\nRules:\n- Output ONLY the formatted text. No section labels, no preamble.\n- ABSOLUTELY NO MARKDOWN: no asterisks, no underscores, no backticks, no # headers, no bullet dashes. PLAIN TEXT ONLY.\n- CRITICAL: Keep text UNDER 450 characters total.\n- Link NUNCA in the broadcast body — it goes as a separate reply.`;
+    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR BROADCAST:\nLine 1: ALL CAPS hook — afirmación audaz, pregunta provocadora, or dato sorprendente. Scroll-stopping. No label prefix.\nBlank line.\nLines 3-5: Body — 2-3 sentences, raw and direct. Use algospeak when the context requires it (☁️ P&P, aromas, S-lam). Suggest, don't exaggerate.\nFinal line: 2-3 relevant hashtags.\n\nRules:\n- Output ONLY the formatted text. No section labels, no preamble.\n- ABSOLUTELY NO MARKDOWN: no asterisks, no underscores, no backticks, no # headers, no bullet dashes. PLAIN TEXT ONLY.\n- CRITICAL: Keep text UNDER 450 characters total.\n- Link NUNCA in the broadcast body — it goes as a separate reply.`;
   }
 
   if (mode === 'sharePost') {
-    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR SHARE POST:\nLine 1: Short, dominant hook — community-authentic, grabs the scroll. No label prefix.\nBlank line.\nLine 3: 1-2 sentences with P&P vibe — concrete, direct, tease the content.\nFinal line: 2-4 relevant hashtags.\n\nRules:\n- Output ONLY the formatted text. No "TITLE:", "DESCRIPTION:", or any section labels.\n- ABSOLUTELY NO MARKDOWN: no asterisks, no underscores, no backticks, no # headers, no bullet dashes. PLAIN TEXT ONLY.\n- CRITICAL: Keep text UNDER 450 characters total.\n- Hashtags: #PNPLatinoTV #MethDaddy #CultoSantino etc.`;
+    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR SHARE POST:\nLine 1: Short, dominant hook — community-authentic, grabs the scroll. No label prefix.\nBlank line.\nLine 3: 1-2 sentences — concrete, direct, tease the content.\nFinal line: 2-4 relevant hashtags.\n\nRules:\n- Output ONLY the formatted text. No "TITLE:", "DESCRIPTION:", or any section labels.\n- ABSOLUTELY NO MARKDOWN: no asterisks, no underscores, no backticks, no # headers, no bullet dashes. PLAIN TEXT ONLY.\n- CRITICAL: Keep text UNDER 450 characters total.\n- Hashtags: #PNPLatinoTV #MethDaddy #CultoSantino etc.`;
   }
 
   if (mode === 'videoDescription') {
@@ -274,7 +274,7 @@ OUTPUT EN EL IDIOMA SOLICITADO. Sin mezcla de idiomas. Transcreación cultural, 
   }
 
   if (mode === 'salesPost') {
-    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR SALES POST:\nLine 1: HOOK in ALL CAPS — verdad incómoda, promesa audaz, dato de comunidad. Scroll-stopping. No label prefix.\nBlank line.\nLines 3-5: Body — price, benefits, urgency. Rotate CTA type: comunidad ("Únete a los X miembros...") / exclusividad ("Acceso instantáneo...") / curiosidad ("Mira lo que pasa esta noche..."). Use algospeak when high-risk context.\nOne short click-trigger line that reduces anxiety: "Privacidad 100% garantizada" / "Sin cargos ocultos" / "Cancela cuando quieras"\nFinal line: CTA + link — pnptv.app/join, pnptv.app/plans, or pnptv.app/lifetime100.\n\nRules:\n- Output ONLY the formatted text. No section labels.\n- ABSOLUTELY NO MARKDOWN. PLAIN TEXT ONLY. Emphasis via MAYÚSCULAS.\n- Include price and benefits clearly.\n- ONLY pnptv.app URLs. NO other links.\n- CRITICAL: Keep text UNDER 500 characters total.\n- NO hashtags unless explicitly requested.\n\nLIFETIME100 FORMAT (MANDATORY when topic mentions lifetime, $100, or lifetime100):\n[EMOJI] [HOOK IN ALL CAPS] [EMOJI]\n[Body: 1-2 sentences — specific benefits: Lex, Santino, clouds, slams, live shows, zoom calls, playlists]\n👉 pnptv.app/lifetime100 [optional emojis]`;
+    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR SALES POST:\nLine 1: HOOK in ALL CAPS — verdad incómoda, promesa audaz, dato de comunidad. Scroll-stopping. No label prefix.\nBlank line.\nLines 3-5: Body — price, benefits, urgency. Rotate CTA type: comunidad ("Únete a los X miembros...") / exclusividad ("Acceso instantáneo...") / curiosidad ("Mira lo que pasa esta noche..."). Use algospeak when high-risk context.\nOne short click-trigger line that reduces anxiety: "Privacidad 100% garantizada" / "Sin cargos ocultos" / "Cancela cuando quieras"\nFinal line: CTA + link — pnptv.app/join, pnptv.app/plans, or pnptv.app/lifetime100.\n\nRules:\n- Output ONLY the formatted text. No section labels.\n- ABSOLUTELY NO MARKDOWN. PLAIN TEXT ONLY. Emphasis via MAYÚSCULAS.\n- Include price and benefits clearly.\n- ONLY pnptv.app URLs. NO other links.\n- CRITICAL: Keep text UNDER 500 characters total.\n- NO hashtags unless explicitly requested.\n\nLIFETIME100 FORMAT (MANDATORY when topic mentions lifetime, $100, or lifetime100):\n[EMOJI] [HOOK IN ALL CAPS] [EMOJI]\n[Body: 1-2 sentences — specific benefits: Santino, Lex, the hottest PNP performers live on the platform, clouds, slams, live shows, zoom calls, playlists]\n👉 pnptv.app/lifetime100 [optional emojis]`;
   }
 
   if (mode === 'xPost') {
@@ -283,14 +283,14 @@ OUTPUT EN EL IDIOMA SOLICITADO. Sin mezcla de idiomas. Transcreación cultural, 
 LIFETIME100 FORMAT (MANDATORY when topic mentions lifetime, $100, or lifetime100):
 Every option MUST follow this structure:
 [EMOJI] [HOOK IN ALL CAPS] [EMOJI]
-[1-2 sentences: specific benefits — Lex, Santino, clouds, slams, live shows, zoom calls]
+[1-2 sentences: specific benefits — Santino, Lex, the hottest PNP performers live on the platform, clouds, slams, live shows, zoom calls]
 👉 pnptv.app/lifetime100 [optional emojis]
 
-Example: 🔥 $100 LIFETIME ACCESS to PNPtv IS HERE! 🔥 Raw Latino slams, clouds that never stop, and Lex + Santino taking you deep into the spun fire. One payment = forever pig paradise. 👉 pnptv.app/lifetime100 💨🐷`;
+Example: 🔥 $100 LIFETIME ACCESS to PNPtv IS HERE! 🔥 Raw Latino slams, clouds that never stop, and Santino, Lex, plus the hottest PNP performers online taking you deep into the fire. One payment = forever pig paradise. 👉 pnptv.app/lifetime100 💨🐷`;
   }
 
   if (mode === 'streamChat') {
-    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR STREAM CHAT MESSAGES:\nGenerate exactly 12 short chat messages for a live stream. These will be posted automatically in the stream chat every few minutes.\n\nRULES:\n- Each message MUST be under 150 characters\n- Make them fun, flirty, sexy, playful, and in the PNP community vibe\n- Encourage viewers to: send tips, book a private call, engage with the model\n- Reference the model's preferences naturally (what they like, their stream goal)\n- Mix English and Spanish naturally (Spanglish is OK for chat)\n- Use emojis sparingly (1-2 per message max)\n- NO markdown, NO hashtags, NO links\n- Vary the tone: some teasing, some encouraging, some playful questions\n- Output ONLY the 12 messages, one per line, numbered 1-12\n- PLAIN TEXT ONLY`;
+    return `${activePersona}\n\n${langHint}\n\nOUTPUT FORMAT FOR STREAM CHAT MESSAGES:\nGenerate exactly 12 short chat messages for a live stream. These will be posted automatically in the stream chat every few minutes.\n\nRULES:\n- Each message MUST be under 150 characters\n- Make them fun, flirty, sexy, playful, and authentic to the PNP community\n- Encourage viewers to: send tips, book a private call, engage with the model\n- Reference the model's preferences naturally (what they like, their stream goal)\n- Mix English and Spanish naturally (Spanglish is OK for chat)\n- Use emojis sparingly (1-2 per message max)\n- NO markdown, NO hashtags, NO links\n- Vary the tone: some teasing, some encouraging, some playful questions\n- Output ONLY the 12 messages, one per line, numbered 1-12\n- PLAIN TEXT ONLY`;
   }
 
   return `${activePersona}\n\n${langHint}\n\nOutput rules:\n- Return ONLY the final message text in character voice style\n- ABSOLUTELY NO MARKDOWN: no asterisks, no underscores, no backticks, no # headers, no bullet dashes. PLAIN TEXT ONLY.\n- CRITICAL: Keep text UNDER 450 characters total\n- End with hashtags`;
