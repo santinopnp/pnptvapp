@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Not Available · PNPtv</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg-color: #120d14; --text-main: #fff; --text-muted: #8E8E93; --neon-pink: #D4007A; --neon-amber: #E69138; --glass-bg: rgba(44,44,46,0.7); --glass-border: rgba(255,255,255,0.08); }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background-color: var(--bg-color); color: var(--text-main); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.7; padding: 24px 16px 48px; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { max-width: 560px; margin: 0 auto; text-align: center; }
+        .icon { font-size: 56px; margin-bottom: 24px; opacity: 0.9; }
+        h1 { font-size: 28px; font-weight: 700; background: linear-gradient(135deg, var(--neon-pink), var(--neon-amber)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 12px; }
+        .subtitle { font-size: 14px; color: var(--text-muted); margin-bottom: 32px; }
+        .card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 16px; padding: 24px; margin-bottom: 24px; text-align: left; backdrop-filter: blur(20px); }
+        .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-main); }
+        .card p { font-size: 14px; color: rgba(255,255,255,0.8); margin-bottom: 12px; }
+        .card p:last-child { margin-bottom: 0; }
+        .card ul { padding-left: 20px; margin-bottom: 12px; }
+        .card li { font-size: 14px; color: rgba(255,255,255,0.8); margin-bottom: 6px; }
+        a { color: var(--neon-pink); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .footer { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--glass-border); font-size: 12px; color: var(--text-muted); }
+        /* Bypass card */
+        .bypass-card { background: rgba(212,0,122,0.08); border: 1px solid rgba(212,0,122,0.25); border-radius: 16px; padding: 24px; margin-bottom: 24px; text-align: left; backdrop-filter: blur(20px); }
+        .bypass-card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-main); }
+        .bypass-card p { font-size: 14px; color: rgba(255,255,255,0.8); margin-bottom: 16px; }
+        .bypass-btn { display: inline-block; background: linear-gradient(135deg, var(--neon-pink), var(--neon-amber)); color: #fff; font-size: 14px; font-weight: 600; border: none; border-radius: 10px; padding: 12px 24px; cursor: pointer; width: 100%; text-align: center; transition: opacity 0.15s; }
+        .bypass-btn:hover:not(:disabled) { opacity: 0.88; }
+        .bypass-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .bypass-note { font-size: 12px; color: var(--text-muted); margin-top: 10px; margin-bottom: 0; }
+        .bypass-error { font-size: 13px; color: #ff6b6b; margin-top: 8px; display: none; }
+        /* Invite card (CO/VE) */
+        .invite-card { background: rgba(230,145,56,0.08); border: 1px solid rgba(230,145,56,0.30); border-radius: 16px; padding: 24px; margin-bottom: 24px; text-align: left; backdrop-filter: blur(20px); }
+        .invite-card h2 { font-size: 16px; font-weight: 600; margin-bottom: 10px; color: var(--text-main); }
+        .invite-card p { font-size: 14px; color: rgba(255,255,255,0.8); margin-bottom: 14px; }
+        .invite-input-row { display: flex; gap: 8px; }
+        .invite-input { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 11px 14px; color: #fff; font-size: 14px; font-family: monospace; outline: none; }
+        .invite-input::placeholder { color: rgba(255,255,255,0.3); }
+        .invite-input:focus { border-color: rgba(230,145,56,0.6); }
+        .invite-submit { background: linear-gradient(135deg, var(--neon-amber), var(--neon-pink)); color: #fff; font-size: 14px; font-weight: 600; border: none; border-radius: 10px; padding: 11px 20px; cursor: pointer; white-space: nowrap; transition: opacity 0.15s; }
+        .invite-submit:hover:not(:disabled) { opacity: 0.88; }
+        .invite-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+        .invite-error { font-size: 13px; color: #ff9f43; margin-top: 8px; display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="icon">&#9888;&#65039;</div>
+    <h1>Service Not Available in Your Jurisdiction</h1>
+    <p class="subtitle" id="subtitle-text">We're not able to serve users from your location due to local age-verification laws.</p>
+
+    <div id="bypass-card-self" class="bypass-card">
+        <h2>Not actually in a restricted area?</h2>
+        <p>Mobile carriers (T-Mobile, AT&T, Verizon) and some VPNs route traffic through exit nodes in restricted states, causing our location detection to misidentify you. If you are <strong>not physically located</strong> in a restricted jurisdiction, you can continue by confirming your actual location below.</p>
+        <button class="bypass-btn" id="bypass-btn" onclick="requestBypass()">I am not in a restricted jurisdiction &mdash; Continue</button>
+        <p class="bypass-note">By clicking, you confirm under penalty of perjury that you are not physically located in a jurisdiction whose age-verification laws apply to PNPtv. This acknowledgement is logged.</p>
+        <p class="bypass-error" id="bypass-error">Something went wrong. Please try again or contact support@pnptv.app.</p>
+    </div>
+
+    <div id="invite-card" class="invite-card" style="display:none">
+        <h2>Have an invite link?</h2>
+        <p>PNPtv access from your region is currently by invitation only. If someone shared an invite link with you, paste the code below to continue.</p>
+        <div class="invite-input-row">
+            <input class="invite-input" id="invite-input" type="text" placeholder="Paste your invite code here" maxlength="32" autocomplete="off" spellcheck="false" />
+            <button class="invite-submit" id="invite-submit" onclick="redeemInvite()">Enter</button>
+        </div>
+        <p class="invite-error" id="invite-error">Invalid or expired invite code. Contact the person who shared it with you.</p>
+    </div>
+
+    <div class="card">
+        <h2>Why is PNPtv restricted here?</h2>
+        <p id="why-blocked-text">PNPtv is an adult content platform. Several US states and the United Kingdom have enacted laws requiring adult platforms to collect, verify, and retain government-issued identification for every user. PNPtv has chosen <strong>not to collect that data</strong> &mdash; protecting user privacy is a core platform value. Rather than comply with these identification mandates, we block access from those jurisdictions entirely.</p>
+        <p>This is a temporary measure. PNPtv is exploring privacy-preserving age verification solutions (such as zero-knowledge proofs) that would allow access without identity exposure. When that system is available, affected users will be notified. See <a href="/2257" target="_blank">18 U.S.C. &sect; 2257 records</a> for compliance documentation.</p>
+    </div>
+
+    <div class="card">
+        <h2>Which jurisdictions are restricted?</h2>
+        <ul>
+            <li><strong>United States:</strong> Texas, Louisiana, Utah, Virginia, Indiana, Arkansas, Mississippi, North Carolina, Tennessee, Florida</li>
+            <li><strong>United Kingdom</strong> (Online Safety Act 2023 / Ofcom HEAA)</li>
+            <li><strong>Colombia</strong> &mdash; invite only</li>
+            <li><strong>Venezuela</strong> &mdash; invite only</li>
+        </ul>
+        <p>Colombia and Venezuela require an admin-issued invitation to join. US states and UK are blocked due to active age-verification laws.</p>
+    </div>
+
+    <div class="card">
+        <h2>Your membership is safe</h2>
+        <p>If you have an active PRIME or Member subscription, <strong>it has not been cancelled, paused, or revoked</strong>. Your entitlements remain in our system exactly as you paid for them. The block only prevents HTTP access from your current location.</p>
+        <p>Your membership will resume working the moment you access PNPtv from a non-blocked location. Lifetime memberships stay lifetime. Time-bound memberships are not pausing or extending &mdash; the clock keeps running.</p>
+        <p>For refund requests due to a genuine jurisdictional block, email <a href="mailto:support@pnptv.app">support@pnptv.app</a> &mdash; we handle these case-by-case.</p>
+    </div>
+
+    <div class="card">
+        <h2>Learn more about the laws that affect you</h2>
+        <ul>
+            <li><strong>Texas &mdash; HB 1181</strong>: <a href="https://capitol.texas.gov/tlodocs/88R/billtext/html/HB01181F.htm" target="_blank" rel="noopener">Bill text</a> &mdash; AG has actively sued Pornhub</li>
+            <li><strong>Louisiana &mdash; RS 14:91.14</strong>: First US state to enact and actively enforce age-verification law</li>
+            <li><strong>Utah &mdash; SB 287</strong>: <a href="https://le.utah.gov/~2023/bills/static/SB0287.html" target="_blank" rel="noopener">Bill text</a></li>
+            <li><strong>Virginia &mdash; HB 1515</strong>: Active enforcement</li>
+            <li><strong>Tennessee &mdash; Protect Tennessee Minors Act</strong>: Requires hourly re-verification + 7-year data retention</li>
+            <li><strong>Florida &mdash; HB 3</strong>: <a href="https://www.flsenate.gov/Session/Bill/2024/3" target="_blank" rel="noopener">Bill text</a></li>
+            <li><strong>United Kingdom &mdash; Online Safety Act 2023 / Ofcom HEAA</strong>: <a href="https://www.ofcom.org.uk/online-safety" target="_blank" rel="noopener">ofcom.org.uk</a> &mdash; fines up to 10% of global revenue</li>
+        </ul>
+        <p>If you'd like these laws changed, contact your elected representatives.</p>
+    </div>
+
+    <div class="footer">
+        <p>PNPtv &middot; Operated under the laws of Colombia &middot; <a href="mailto:support@pnptv.app">support@pnptv.app</a></p>
+    </div>
+</div>
+<script>
+    var INVITE_ONLY_COUNTRIES = ['CO', 'VE'];
+    var currentCountry = null;
+
+    var _colombiaInviteMode = false;
+
+    (function() {
+        var params = new URLSearchParams(window.location.search);
+        var j = params.get('j');
+        var err = params.get('err');
+        var reason = params.get('reason');
+
+        // Colombia Socio program gate — different message from legal geo-blocks
+        if (reason === 'colombia') {
+            _colombiaInviteMode = true;
+            var h1 = document.querySelector('h1');
+            var subtitle = document.getElementById('subtitle-text');
+            var whyText = document.getElementById('why-blocked-text');
+            if (h1) h1.textContent = 'PNPtv! no está disponible en Colombia';
+            if (subtitle) subtitle.textContent = 'PNPtv! no está disponible para el público en Colombia en este momento.';
+            if (whyText) whyText.innerHTML = 'Estamos desarrollando el programa <strong>Socio Colombia</strong> — acceso especial para creadores e influenciadores colombianos. Si recibiste una invitación personal, ingresa tu código abajo para activar tu membresía.';
+            document.querySelector('.icon').textContent = '🇨🇴';
+            document.getElementById('invite-card').style.display = 'block';
+            document.getElementById('invite-card').querySelector('h2').textContent = '¿Tienes un código de invitación?';
+            document.getElementById('invite-card').querySelector('p').textContent = 'Los socios reciben un enlace personal. Ingresa tu código aquí para activar tu acceso.';
+            document.getElementById('invite-input').placeholder = 'Pega tu código de invitación';
+            document.getElementById('invite-submit').textContent = 'Activar';
+            document.getElementById('bypass-card-self').style.display = 'none';
+            return;
+        }
+
+        var stateNames = {
+            TX: 'Texas', TN: 'Tennessee', FL: 'Florida', LA: 'Louisiana',
+            UT: 'Utah', VA: 'Virginia', IN: 'Indiana', AR: 'Arkansas',
+            MS: 'Mississippi', NC: 'North Carolina', GB: 'the United Kingdom',
+            CO: 'Colombia', VE: 'Venezuela'
+        };
+
+        if (j) {
+            currentCountry = j;
+            var displayName = stateNames[j] || j;
+            var subtitle = document.getElementById('subtitle-text');
+            var whyText = document.getElementById('why-blocked-text');
+            var isInviteOnly = INVITE_ONLY_COUNTRIES.indexOf(j) !== -1;
+
+            if (isInviteOnly) {
+                if (subtitle) subtitle.textContent = 'PNPtv access from ' + displayName + ' is currently by invitation only. You need an admin-issued invite link to join.';
+                if (whyText) whyText.textContent = 'PNPtv is an invite-only platform for users from ' + displayName + ' at this time. If you received an invite from a friend or creator, enter your code above to get access.';
+                // Show invite card, hide self-cert card
+                document.getElementById('invite-card').style.display = 'block';
+                document.getElementById('bypass-card-self').style.display = 'none';
+            } else {
+                if (subtitle) subtitle.textContent = 'Our records show your connection is routing through ' + displayName + ', which has active age-verification laws that prevent us from serving users there.';
+            }
+        }
+
+        // Handle error codes from invite redemption redirects
+        if (err) {
+            var errMap = {
+                invalid_invite: 'Invalid invite code. Double-check the link and try again.',
+                expired_invite: 'This invite link has expired. Contact the person who shared it.',
+                invite_used: 'This invite link has already been used. Contact support for a new one.'
+            };
+            var errMsg = errMap[err];
+            if (errMsg) {
+                document.getElementById('invite-card').style.display = 'block';
+                document.getElementById('bypass-card-self').style.display = 'none';
+                var invErrEl = document.getElementById('invite-error');
+                invErrEl.textContent = errMsg;
+                invErrEl.style.display = 'block';
+            }
+        }
+    })();
+
+    function redeemInvite() {
+        var input = document.getElementById('invite-input');
+        var btn = document.getElementById('invite-submit');
+        var errEl = document.getElementById('invite-error');
+        var code = (input.value || '').trim();
+        if (!code) return;
+        btn.disabled = true;
+        btn.textContent = '…';
+        errEl.style.display = 'none';
+        // Colombia Socio program: invite codes go through the /invite SPA route
+        if (_colombiaInviteMode) {
+            window.location.href = '/invite/' + encodeURIComponent(code);
+            return;
+        }
+        // Legal geo-blocks: geo-invite token grants session bypass
+        window.location.href = '/api/public/geo-invite/' + encodeURIComponent(code);
+    }
+
+    // Allow Enter key in the invite input
+    document.addEventListener('DOMContentLoaded', function() {
+        var input = document.getElementById('invite-input');
+        if (input) {
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') redeemInvite();
+            });
+        }
+    });
+
+    function requestBypass() {
+        var btn = document.getElementById('bypass-btn');
+        var errEl = document.getElementById('bypass-error');
+        btn.disabled = true;
+        btn.textContent = 'Processing…';
+        errEl.style.display = 'none';
+
+        fetch('/api/public/geo-bypass', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+        })
+        .then(function(data) {
+            if (data.success) {
+                btn.textContent = 'Access granted — redirecting…';
+                window.location.href = '/';
+            } else {
+                throw new Error('Unexpected response');
+            }
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = 'I am not in a restricted jurisdiction — Continue';
+            errEl.style.display = 'block';
+        });
+    }
+</script>
+</body>
+</html>
