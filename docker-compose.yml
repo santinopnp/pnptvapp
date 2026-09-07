@@ -1,0 +1,1199 @@
+# ============================================
+# PNPTVAPP - Docker Compose Stack v5
+# "Moat & Castle" Zero-Trust Architecture
+# 3 networks | named volumes | resource limits
+# ============================================
+#
+# Network topology (databases NEVER on proxy_net):
+#   proxy_net  → NPM ↔ app services (internet-facing)
+#   app_net    → inter-service communication
+#   db_net     → database isolation (no proxy access)
+#
+# Named volumes backed by existing host paths for
+# zero-downtime migration and WAL-G readiness.
+# ============================================
+
+networks:
+  pnptvapp_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================
+# Named volumes — backed by existing host dirs
+# for zero-downtime migration from bind mounts.
+# docker volume ls now shows all data stores.
+# ============================================
+volumes:
+  vol_pg_pnptv:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/pnptv/postgres
+  vol_pg_pnptv_wal:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/pnptv/wal
+  vol_redis_pnptv:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/pnptv/redis
+  vol_pg_authentik:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/authentik/postgres
+  vol_redis_authentik:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/authentik/redis
+  vol_pg_directus:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/directus/postgres
+  vol_pg_pnptv_walg_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/pnptv/walg-backups
+#  vol_pg_btcpay:
+#    driver: local
+#    driver_opts:
+#      type: none
+#      o: bind
+#      device: /opt/pnptvapp/infrastructure/data/btcpay/postgres
+  vol_uptime_kuma:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/uptime-kuma
+  vol_metabase:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/metabase
+  vol_healthchecks:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/healthchecks
+  vol_n8n:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/pnptvapp/infrastructure/data/n8n
+services:
+
+
+  # ===========================================
+  # BLOCK A - Reverse Proxy (Entry Point)
+  # ONLY container exposing HTTP/S ports.
+  # Lives exclusively on proxy_net — cannot
+  # reach any database directly.
+  # ===========================================
+
+  npm-proxy:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "127.0.0.1:81:81"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infrastructure/data/npm/data:/data
+      - ./infrastructure/data/npm/letsencrypt:/etc/letsencrypt
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:81/api/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # BLOCK B - Identity & SSO (Authentik)
+  # Redis required for cache/sessions
+  # ===========================================
+
+  redis-authentik:
+    image: redis:7-alpine
+    container_name: redis-authentik
+    restart: unless-stopped
+    volumes:
+      - vol_redis_authentik:/data
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  pg-authentik:
+    image: postgres:16-alpine
+    container_name: pg-authentik
+    restart: unless-stopped
+    volumes:
+      - vol_pg_authentik:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PG_AUTH_DB}
+      POSTGRES_USER: ${PG_AUTH_USER}
+      POSTGRES_PASSWORD: ${PG_AUTH_PASSWORD}
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_AUTH_USER} -d ${PG_AUTH_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    container_name: authentik-server
+    restart: unless-stopped
+    command: server
+    volumes:
+      - ./infrastructure/data/authentik/media:/media
+      - ./infrastructure/data/authentik/custom-templates:/templates
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: pg-authentik
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_AUTH_DB}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_AUTH_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_AUTH_PASSWORD}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING}
+      AUTHENTIK_REDIS__HOST: redis-authentik
+      AUTHENTIK_EMAIL__HOST: smtp.hostinger.com
+      AUTHENTIK_EMAIL__PORT: "587"
+      AUTHENTIK_EMAIL__USERNAME: noreply@pnptv.app
+      AUTHENTIK_EMAIL__PASSWORD: ${AUTHENTIK_EMAIL_PASSWORD}
+      AUTHENTIK_EMAIL__FROM: "PNPtv! <noreply@pnptv.app>"
+      AUTHENTIK_EMAIL__USE_TLS: "true"
+      AUTHENTIK_EMAIL__USE_SSL: "false"
+      AUTHENTIK_EMAIL__TIMEOUT: "30"
+    networks:
+      - pnptvapp_net
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "pnptvapp_pnptvapp_net"
+      traefik.http.routers.authentik.rule: "Host(`auth.pnptv.app`)"
+      traefik.http.routers.authentik.entrypoints: "websecure"
+      traefik.http.routers.authentik.tls.certresolver: "letsencrypt"
+      traefik.http.services.authentik.loadbalancer.server.port: "9000"
+    depends_on:
+      pg-authentik:
+        condition: service_healthy
+      redis-authentik:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/-/health/live/')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    container_name: authentik-worker
+    restart: unless-stopped
+    command: worker
+    volumes:
+      - ./infrastructure/data/authentik/media:/media
+      - ./infrastructure/data/authentik/custom-templates:/templates
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: pg-authentik
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_AUTH_DB}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_AUTH_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_AUTH_PASSWORD}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING}
+      AUTHENTIK_REDIS__HOST: redis-authentik
+      AUTHENTIK_EMAIL__HOST: smtp.hostinger.com
+      AUTHENTIK_EMAIL__PORT: "587"
+      AUTHENTIK_EMAIL__USERNAME: noreply@pnptv.app
+      AUTHENTIK_EMAIL__PASSWORD: ${AUTHENTIK_EMAIL_PASSWORD}
+      AUTHENTIK_EMAIL__FROM: "PNPtv! <noreply@pnptv.app>"
+      AUTHENTIK_EMAIL__USE_TLS: "true"
+      AUTHENTIK_EMAIL__USE_SSL: "false"
+      AUTHENTIK_EMAIL__TIMEOUT: "30"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-authentik:
+        condition: service_healthy
+      redis-authentik:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+
+  # Authentik proxy outpost (forward auth for NPM admin + Ampache)
+  authentik-outpost:
+    image: ghcr.io/goauthentik/proxy:2026.5.6
+    container_name: authentik-outpost
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9000"
+      - "127.0.0.1:9444:9443"
+    environment:
+      AUTHENTIK_HOST: https://auth.pnptv.app
+      AUTHENTIK_INSECURE: "false"
+      AUTHENTIK_TOKEN: ${AUTHENTIK_OUTPOST_TOKEN}
+      AUTHENTIK_REDIS__HOST: redis-authentik
+    networks:
+      - pnptvapp_net
+    depends_on:
+      authentik-server:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000/outpost.goauthentik.io/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================
+  # BLOCK C - Data & CRM (Directus)
+  # Separate PostgreSQL for security isolation
+  # ===========================================
+
+  pg-directus:
+    image: postgres:16-alpine
+    container_name: pg-directus
+    restart: unless-stopped
+    volumes:
+      - vol_pg_directus:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PG_DIRECTUS_DB}
+      POSTGRES_USER: ${PG_DIRECTUS_USER}
+      POSTGRES_PASSWORD: ${PG_DIRECTUS_PASSWORD}
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_DIRECTUS_USER} -d ${PG_DIRECTUS_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  directus:
+    image: directus/directus:latest
+    container_name: directus
+    restart: unless-stopped
+    volumes:
+      - ./infrastructure/data/directus/uploads:/directus/uploads
+      - ./infrastructure/configs/directus-extensions:/directus/extensions
+    environment:
+      DB_CLIENT: pg
+      DB_HOST: pg-directus
+      DB_PORT: "5432"
+      DB_DATABASE: ${PG_DIRECTUS_DB}
+      DB_USER: ${PG_DIRECTUS_USER}
+      DB_PASSWORD: ${PG_DIRECTUS_PASSWORD}
+      KEY: ${DIRECTUS_KEY}
+      SECRET: ${DIRECTUS_SECRET}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASS}
+      PUBLIC_URL: https://cms.${DOMAIN_ROOT}
+      AUTH_PROVIDERS: "authentik"
+      AUTH_AUTHENTIK_DRIVER: "openid"
+      AUTH_AUTHENTIK_CLIENT_ID: ${DIRECTUS_OIDC_CLIENT_ID}
+      AUTH_AUTHENTIK_CLIENT_SECRET: ${DIRECTUS_OIDC_CLIENT_SECRET}
+      AUTH_AUTHENTIK_ISSUER_URL: "https://auth.${DOMAIN_ROOT}/application/o/directus/.well-known/openid-configuration"
+      AUTH_AUTHENTIK_IDENTIFIER_KEY: "sub"
+      AUTH_AUTHENTIK_ALLOW_PUBLIC_REGISTRATION: "false"
+      AUTH_AUTHENTIK_ICON: "lock"
+      AUTH_AUTHENTIK_LABEL: "Sign in with PNPTV"
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: "https://cms.pnptv.app,https://pnptv.app"
+      FILES_MAX_SIZE: "2147483648"
+      MAX_PAYLOAD_SIZE: "2gb"
+      # Cloud-only since 2026-09-01 — all 501 legacy files migrated to R2 and
+      # local uploads dir moved to /opt/pnptvapp/backup/directus-uploads-pre-r2-*.
+      # New uploads write directly to R2; nothing should hit local disk.
+      STORAGE_LOCATIONS: "cloud"
+      TUS_ENABLED: "true"
+      STORAGE_CLOUD_DRIVER: "s3"
+      STORAGE_CLOUD_KEY: ${S3_ACCESS_KEY_ID}
+      STORAGE_CLOUD_SECRET: ${S3_SECRET_ACCESS_KEY}
+      STORAGE_CLOUD_BUCKET: ${S3_BUCKET}
+      STORAGE_CLOUD_REGION: ${S3_REGION}
+      STORAGE_CLOUD_ENDPOINT: ${S3_ENDPOINT}
+      STORAGE_CLOUD_FORCE_PATH_STYLE: "true"
+      NODE_OPTIONS: "--max-old-space-size=3584"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-directus:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8055/server/ping',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit-pnptv
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "7881:7881"
+      - "50000-50060:50000-50060/udp"
+      - "3478:3478/udp"
+    volumes:
+      - ./infrastructure/configs/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed -e "s|__LIVEKIT_API_KEY__|$${LIVEKIT_API_KEY}|g" \
+            -e "s|__LIVEKIT_API_SECRET__|$${LIVEKIT_API_SECRET}|g" \
+            -e "s|__REDIS_PNPTV_PASSWORD__|$${REDIS_PNPTV_PASSWORD}|g" \
+            /etc/livekit.yaml > /tmp/livekit.yaml && \
+        exec /livekit-server --config /tmp/livekit.yaml
+    networks:
+      - pnptvapp_net
+    depends_on:
+      redis-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048m
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "pnptvapp_pnptvapp_net"
+      traefik.http.routers.livekit.rule: "Host(`livekit.pnptv.app`)"
+      traefik.http.routers.livekit.entrypoints: "websecure"
+      traefik.http.routers.livekit.tls.certresolver: "letsencrypt"
+      traefik.http.services.livekit.loadbalancer.server.port: "7880"
+
+  # ===========================================
+  # BLOCK H - Live Streaming (Restreamer)
+  # Port 1935 exposed for RTMP ingestion
+  # ===========================================
+
+  restreamer:
+    image: datarhei/restreamer:2.10.0
+    container_name: restreamer
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+    volumes:
+      - ./infrastructure/data/restreamer/config:/core/config
+      - ./infrastructure/data/restreamer/data:/core/data
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2g
+        reservations:
+          cpus: '0.5'
+          memory: 512m
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================
+  # BLOCK I - Frontend Web App
+  # Static SPA served by nginx, proxied via NPM
+  # ===========================================
+
+  pnptv-web:
+    image: nginx:alpine
+    container_name: pnptv-web
+    restart: unless-stopped
+    volumes:
+      - ./apps/web/dist:/usr/share/nginx/html:ro
+      - ./infrastructure/configs/web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - pnptvapp_net
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "pnptvapp_pnptvapp_net"
+      traefik.http.routers.pnptv-web.rule: "Host(`pnptv.app`)"
+      traefik.http.routers.pnptv-web.entrypoints: "websecure"
+      traefik.http.routers.pnptv-web.tls.certresolver: "letsencrypt"
+      traefik.http.services.pnptv-web.loadbalancer.server.port: "80"
+      traefik.http.routers.pnptv-app-redirect.rule: "Host(`app.pnptv.app`)"
+      traefik.http.routers.pnptv-app-redirect.entrypoints: "websecure"
+      traefik.http.routers.pnptv-app-redirect.tls.certresolver: "letsencrypt"
+      traefik.http.routers.pnptv-app-redirect.middlewares: "app-to-main@docker"
+      traefik.http.routers.pnptv-app-redirect.service: "pnptv-web"
+      traefik.http.middlewares.app-to-main.redirectregex.regex: '^https://app\.pnptv\.app(.*)'
+      traefik.http.middlewares.app-to-main.redirectregex.replacement: "https://pnptv.app$${1}"
+      traefik.http.middlewares.app-to-main.redirectregex.permanent: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  pnptv-studio:
+    image: nginx:alpine
+    container_name: pnptv-studio
+    restart: unless-stopped
+    volumes:
+      - ./apps/studio/dist:/usr/share/nginx/html:ro
+      - ./infrastructure/configs/studio/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ===========================================
+  # BLOCK J - Backend Bot + API (Node.js)
+  # Dedicated PostgreSQL + Redis for bot/API
+  # pg-pnptv has WAL-G continuous backup:
+  #   - wal_level=replica + archive_mode=on
+  #   - Separate WAL volume (vol_pg_pnptv_wal)
+  #   - WAL-G backup volume (vol_pg_pnptv_walg_backups)
+  #   - archive_command gracefully no-ops if wal-g
+  #     hasn't been bootstrapped yet (first run).
+  #     Run scripts/walg-backup.sh once to bootstrap.
+  # ===========================================
+
+  pg-pnptv:
+    image: postgres:16-alpine
+    container_name: pg-pnptv
+    restart: unless-stopped
+    volumes:
+      - vol_pg_pnptv:/var/lib/postgresql/data
+      - vol_pg_pnptv_wal:/var/lib/postgresql/wal
+      - vol_pg_pnptv_walg_backups:/var/lib/postgresql/walg-backups
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_WALDIR: /var/lib/postgresql/wal
+      # WAL-G environment — used by archive_command and wal-g backup-push
+      WALG_FILE_PREFIX: /var/lib/postgresql/walg-backups
+      WALG_COMPRESSION_METHOD: brotli
+    command: >
+      postgres
+      -c wal_level=replica
+      -c archive_mode=on
+      -c "archive_command=test -f /usr/local/bin/wal-g && WALG_FILE_PREFIX=/var/lib/postgresql/walg-backups /usr/local/bin/wal-g wal-push %p || true"
+      -c max_wal_senders=3
+      -c wal_keep_size=256MB
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis-pnptv:
+    image: redis:7-alpine
+    container_name: redis-pnptv
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PNPTV_PASSWORD} --maxmemory 384mb --maxmemory-policy noeviction --appendonly yes --appendfsync everysec
+    volumes:
+      - vol_redis_pnptv:/data
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PNPTV_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  pnptv-bot:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    image: pnptv-bot:latest
+    container_name: pnptv-bot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"  # Bind to localhost only — no direct external access
+    volumes:
+      - ./public/uploads:/app/public/uploads
+      - /var/www/pnptvbot-sandbox/public/media:/media
+      - ./logs:/app/logs
+      - ./config/jaas-private-key.pem:/app/config/jaas-private-key.pem:ro
+      - ./config/yoti-private-key.pem:/app/config/yoti-private-key.pem:ro
+      - ./infrastructure/data/directus/uploads:/directus-uploads
+      - ./tmp/chunks:/tmp/pnp-chunks
+    env_file:
+      - .env
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # Force IPv4 first — host has broken IPv6 routing (egress is v4-only).
+      # Without this, Telegram, Stripe, and other external APIs ETIMEDOUT
+      # because Node20 picks the v6 record first.
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+      # /app is root:root:755, so pnptv user can't write $HOME/.cache.
+      # Point fontconfig/xdg cache to /tmp to silence "No writable cache directories".
+      XDG_CACHE_HOME: /tmp
+      FONTCONFIG_PATH: /etc/fonts
+      POSTGRES_HOST: pg-pnptv
+      REDIS_HOST: redis-pnptv
+      PG_AUTH_HOST: pg-authentik
+      PG_AUTH_PORT: 5432
+      PG_AUTH_DB: ${PG_AUTH_DB}
+      PG_AUTH_USER: ${PG_AUTH_USER}
+      PG_AUTH_PASSWORD: ${PG_AUTH_PASSWORD}
+      DIRECTUS_UPLOADS_DIR: /directus-uploads
+      BOT_LOCK_ENABLED: "false"
+      # Enable the Telegram DM onboarding wizard (language → age → terms → email).
+      # This is INDEPENDENT of BOT_ONBOARDING_ENABLED, which is the "secondary
+      # instance" flag that disables all schedulers/workers.
+      BOT_WIZARD_ENABLED: "true"
+      RESTREAMER_URL: http://restreamer:8080
+      RESTREAMER_PUBLIC_URL: https://live.pnptv.app
+      RESTREAMER_USER: admin
+      RESTREAMER_PASSWORD: ${RESTREAMER_PASSWORD}
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+      redis-pnptv:
+        condition: service_healthy
+      authentik-server:
+        condition: service_healthy
+      directus:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ===========================================
+  # LiveKit Ingress — RTMP/WHIP/URL pull ingest
+  # for Main Stage media playback. Requires
+  # Redis to coordinate with livekit-server.
+  # ===========================================
+
+  livekit-ingress:
+    image: livekit/ingress:latest
+    container_name: livekit-ingress
+    restart: unless-stopped
+    environment:
+      INGRESS_CONFIG_BODY: |
+        log_level: info
+        api_key: ${LIVEKIT_API_KEY}
+        api_secret: ${LIVEKIT_API_SECRET}
+        ws_url: ws://livekit-pnptv:7880
+        redis:
+          address: redis-pnptv:6379
+          password: ${REDIS_PNPTV_PASSWORD}
+        rtmp_port: 1936
+        whip_port: 8090
+        http_relay_port: 9090
+    networks:
+      - pnptvapp_net
+    depends_on:
+      livekit:
+        condition: service_started
+      redis-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1500m
+
+#  pg-btcpay:
+#    image: postgres:16-alpine
+#    container_name: pg-btcpay
+#    restart: unless-stopped
+#    volumes:
+#      - vol_pg_btcpay:/var/lib/postgresql/data
+#    environment:
+#      POSTGRES_DB: btcpayserver
+#      POSTGRES_USER: btcpay
+#      POSTGRES_PASSWORD: ${BTCPAY_POSTGRES_PASSWORD}
+#    networks:
+#      - pnptvapp_net
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '0.5'
+#          memory: 512m
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U btcpay -d btcpayserver"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#      start_period: 30s
+
+#  dashd:
+#    image: dashpay/dashd:21
+#    container_name: dashd
+#    restart: unless-stopped
+#    command: dashd
+#    volumes:
+#      - ./infrastructure/data/btcpay/dashd:/home/dash/.dashcore
+#    networks:
+#      - pnptvapp_net
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '1.0'
+#          memory: 2g
+#    healthcheck:
+#      test: ["CMD-SHELL", "dash-cli -conf=/home/dash/.dashcore/dash.conf getblockchaininfo || exit 1"]
+#      interval: 60s
+#      timeout: 15s
+#      retries: 5
+#      start_period: 120s
+
+#  btcpay-nbxplorer:
+#    image: nicolasdorier/nbxplorer:2.5.30
+#    container_name: btcpay-nbxplorer
+#    restart: unless-stopped
+#    volumes:
+#      - ./infrastructure/data/btcpay/nbxplorer:/datadir
+#    environment:
+#      NBXPLORER_NETWORK: mainnet
+#      NBXPLORER_CHAINS: "DASH"
+#      NBXPLORER_BIND: 0.0.0.0:24444
+#      NBXPLORER_DASHNODEENDPOINT: dashd:9999
+#      NBXPLORER_DASHNODERPCURL: http://dashd:9998/
+#      NBXPLORER_DASHNODERPCAUTH: ${NBXPLORER_DASH_RPC_AUTH:-}
+#      NBXPLORER_POSTGRES: "Host=pg-btcpay;Database=nbxplorer;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
+#    networks:
+#      - pnptvapp_net
+#    depends_on:
+#      pg-btcpay:
+#        condition: service_healthy
+#      dashd:
+#        condition: service_started
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '0.5'
+#          memory: 512m
+#    # No healthcheck — nbxplorer .NET runtime image has no curl/wget
+
+#  btcpay-server:
+#    image: btcpayserver/btcpayserver:2.3.5
+#    container_name: btcpay-server
+#    restart: unless-stopped
+#    expose:
+#      - "23000"
+#    volumes:
+#      - ./infrastructure/data/btcpay/server:/datadir
+#      - ./infrastructure/data/btcpay/nbxplorer:/root/.nbxplorer:ro
+#    environment:
+#      BTCPAY_POSTGRES: "Host=pg-btcpay;Database=btcpayserver;Username=btcpay;Password=${BTCPAY_POSTGRES_PASSWORD}"
+#      BTCPAY_NETWORK: mainnet
+#      BTCPAY_ROOTPATH: /
+#      BTCPAY_DASHEXPLORERURL: http://btcpay-nbxplorer:24444/
+#      BTCPAY_BIND: 0.0.0.0:23000
+#      BTCPAY_CHAINS: "DASH"
+#      BTCPAY_NBXPLORERDEFAULTCOOKIEFILE: /root/.nbxplorer/Main/.cookie
+#      BTCPAY_OIDC__ENABLED: "true"
+#      BTCPAY_OIDC__PROVIDERURL: https://auth.pnptv.app/application/o/btcpay/
+#      BTCPAY_OIDC__CLIENTID: btcpay
+#      BTCPAY_OIDC__CLIENTSECRET: "${BTCPAY_OIDC_CLIENT_SECRET:-}"
+#      BTCPAY_EXTERNALURL: "https://btcpay.pnptv.app"
+#    networks:
+#      - pnptvapp_net
+#    depends_on:
+#      - pg-btcpay
+#      - btcpay-nbxplorer
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '1.0'
+#          memory: 1g
+#    # No healthcheck — BTCPay .NET runtime image has no curl/wget
+
+
+#  # ===========================================
+#  # UPTIME KUMA — Status page & uptime monitoring
+#  # https://status.pnptv.app
+#  # ===========================================
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - vol_uptime_kuma:/app/data
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+
+  # ===========================================
+  # HEALTHCHECKS — Cron job monitoring
+  # https://checks.pnptv.app
+  # ===========================================
+  healthchecks:
+    image: healthchecks/healthchecks:latest
+    container_name: healthchecks
+    restart: unless-stopped
+    environment:
+      DB: postgres
+      DB_HOST: pg-pnptv
+      DB_PORT: 5432
+      DB_NAME: healthchecks
+      DB_USER: pnptvbot
+      DB_PASSWORD: "Apelo801050#"
+      SECRET_KEY: "2d189c9ec881bef0570bd13a683e2b625f506288853c516d3f555ae193b32aa1"
+      SITE_ROOT: https://checks.pnptv.app
+      SITE_NAME: PNPtv Healthchecks
+      DEFAULT_FROM_EMAIL: noreply@pnptv.app
+      EMAIL_HOST: smtp.hostinger.com
+      EMAIL_PORT: 587
+      EMAIL_USE_TLS: "True"
+      EMAIL_HOST_USER: noreply@pnptv.app
+      EMAIL_HOST_PASSWORD: "Apelo801050)"
+      REGISTRATION_OPEN: "False"
+      PING_ENDPOINT: https://checks.pnptv.app/ping/
+      ALLOWED_HOSTS: checks.pnptv.app
+    volumes:
+      - vol_healthchecks:/data
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+
+  # ===========================================
+  # N8N — Automation backbone (self-hosted)
+  # https://n8n.pnptv.app
+  # ===========================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.production
+    environment:
+      N8N_HOST: n8n.pnptv.app
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.pnptv.app/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-}
+      GENERIC_TIMEZONE: America/Bogota
+      TZ: America/Bogota
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: pg-pnptv
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - vol_n8n:/home/node/.n8n
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # UMAMI — Privacy-friendly web analytics
+  # https://analytics.pnptv.app
+  # ===========================================
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: umami
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/umami"
+      DATABASE_TYPE: postgresql
+      APP_SECRET: "b4daaf3ada9965acf5f3df76254f5e316887833012cf88af8a4652001b55c23e"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/heartbeat || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+
+  # ===========================================
+  # METABASE — BI dashboards (H2 embedded DB)
+  # https://metabase.pnptv.app
+  # Connect to pnptvbot DB via metabase_ro user
+  # ===========================================
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    restart: unless-stopped
+    environment:
+      MB_DB_TYPE: h2
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_OPTS: "-Xmx1g -Xms256m"
+    volumes:
+      - vol_metabase:/metabase-data
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+          cpus: '1.0'
+    # No healthcheck — Java startup takes 3+ min
+
+
+  # ===========================================
+  # CAL.COM — Booking & scheduling
+  # https://booking.pnptv.app
+  # ===========================================
+  calcom:
+    image: calcom/cal.com:latest
+    container_name: calcom
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connection_limit=5&pool_timeout=30&connect_timeout=10"
+      DATABASE_DIRECT_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/calcom?connect_timeout=10"
+      NEXTAUTH_SECRET: "b968f9535372ec2a1ad3ffa16c6782ecf7ce286aeca7f95be231f3ab8608274e"
+      NEXTAUTH_URL: https://booking.pnptv.app
+      CALENDSO_ENCRYPTION_KEY: "b46d7aec2df70c8c3d268a9399cbde29f9a8f4f8cdf007a70eb62049fba8a29f"
+      NEXT_PUBLIC_WEBAPP_URL: https://booking.pnptv.app
+      NEXT_PUBLIC_APP_URL: https://booking.pnptv.app
+      EMAIL_FROM: "PNPtv Booking <noreply@pnptv.app>"
+      EMAIL_SERVER_HOST: smtp.hostinger.com
+      EMAIL_SERVER_PORT: 587
+      EMAIL_SERVER_USER: noreply@pnptv.app
+      EMAIL_SERVER_PASSWORD: "Apelo801050)"
+      NEXT_PUBLIC_IS_E2E: "0"
+      CALCOM_LICENSE_KEY: ""
+      NEXT_PUBLIC_DISABLE_SIGNUP: "true"
+      GOOGLE_API_CREDENTIALS: ""
+      NEXT_PUBLIC_TELEMETRY_KEY: ""
+      PAYMENT_FEE_FIXED: "0"
+      PAYMENT_FEE_PERCENTAGE: "0"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+          cpus: '1.0'
+    # No healthcheck — Next.js startup takes 2+ min
+  # ============================================
+  # MCP Gateway — Lex's Claude connectors
+  # ============================================
+  # Three MCP servers (Postgres/Filesystem/Slack) exposed as HTTP StreamableHttp
+  # for Anthropic Claude custom connectors. Auth is enforced upstream at
+  # nginx (bearer token). See feedback_mcp_gateway_lex.md and /opt/mcp/README.
+  # ============================================
+
+  mcp-postgres:
+    image: pnptv-mcp:latest
+    container_name: mcp-postgres
+    restart: unless-stopped
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-postgres/dist/index.js postgresql://lex_readonly:${LEX_DB_PASS}@pg-pnptv:5432/pnptvbot
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3010"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-filesystem:
+    image: pnptv-mcp:latest
+    container_name: mcp-filesystem
+    restart: unless-stopped
+    volumes:
+      - /opt/pnptvapp:/repo:ro
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js /repo
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3011"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-slack:
+    image: pnptv-mcp:latest
+    container_name: mcp-slack
+    restart: unless-stopped
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_TEAM_ID: T0BLXGDDLDV
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@modelcontextprotocol/server-slack/dist/index.js
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3012"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  mcp-oauth:
+    image: mcp-oauth:latest
+    container_name: mcp-oauth
+    restart: unless-stopped
+    environment:
+      PORT: "3013"
+      LEX_MCP_CLIENT_ID: ${LEX_MCP_CLIENT_ID}
+      LEX_MCP_CLIENT_SECRET: ${LEX_MCP_CLIENT_SECRET}
+      LEX_MCP_TOKEN: ${LEX_MCP_TOKEN}
+      PUBLIC_BASE: https://pnptv.app
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.15'
+
+  mcp-admin:
+    image: mcp-admin:latest
+    container_name: mcp-admin
+    restart: unless-stopped
+    environment:
+      PORT: "3015"
+      PG_URL: "postgresql://pnptvbot:Apelo801050%23@pg-pnptv:5432/pnptvbot"
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      OFFICIAL_USER_ID: "8552451957"
+      LEX_USER_ID: "8f5f4dd1-7bdb-4571-b026-e09d91113c91"
+      OPS_ADMIN_CHANNEL: "C0BP14DLNHJ"
+    networks:
+      - pnptvapp_net
+    depends_on:
+      pg-pnptv:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  deploy-webhook:
+    build:
+      context: /opt/deploy-webhook
+    container_name: deploy-webhook
+    restart: unless-stopped
+    environment:
+      PORT: "3016"
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_OPS_ADMIN_CHANNEL: ${SLACK_OPS_ADMIN_CHANNEL}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/pnptvapp:/opt/pnptvapp
+      - /usr/libexec/docker/cli-plugins/docker-buildx:/usr/libexec/docker/cli-plugins/docker-buildx:ro
+      - /root/.ssh/pnptvapp_deploy_key:/root/.ssh/pnptvapp_deploy_key:ro
+      - /root/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.15'
+
+  mcp-notion:
+    image: pnptv-mcp:latest
+    container_name: mcp-notion
+    restart: unless-stopped
+    environment:
+      OPENAPI_MCP_HEADERS: '{"Authorization":"Bearer ${NOTION_TOKEN}","Notion-Version":"2022-06-28"}'
+    command:
+      - /app/node_modules/.bin/supergateway
+      - --stdio
+      - node /app/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "3014"
+      - --streamableHttpPath
+      - /mcp
+      - --cors
+      - --healthEndpoint
+      - /health
+      - --logLevel
+      - info
+    networks:
+      - pnptvapp_net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
