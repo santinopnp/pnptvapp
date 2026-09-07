@@ -600,8 +600,10 @@ export function BuyTokensModal({ isOpen, onClose, onSuccess, dpnsHandle: _dpnsHa
   const eligiblePackages = packages.filter((p) => Number(p.usd) >= 1);
 
   // When opened from a preset (initialAmountUsd or initialPackageId set), show a minimal
-  // loading screen while auto-trigger fires — avoids flashing the full wallet UI.
-  const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && !autoTriggeredRef.current;
+  // loading screen while auto-trigger fires OR while payment is in flight.
+  // Keep spinner visible until checkout fully resolves so the full UI never
+  // flashes in mid-transaction.
+  const isAutoTriggerMode = (!!initialAmountUsd || !!initialPackageId) && (!autoTriggeredRef.current || payingCustom);
 
   return (
     <div
