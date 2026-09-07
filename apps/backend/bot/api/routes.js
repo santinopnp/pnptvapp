@@ -1663,8 +1663,13 @@ const limiter = rateLimit({
       '/api/auth-status',
       '/api/webapp/notifications/counts',
       '/api/webapp/dm/presence',
-      '/api/wallet/packages',      // read-only, fetched on every BuyTokensModal open
-      '/api/wallet/presale-status', // read-only, fetched on every BuyTokensModal open
+      '/api/wallet/packages',           // read-only, fetched on every BuyTokensModal open
+      '/api/wallet/presale-status',     // read-only, fetched on every BuyTokensModal open
+      '/api/wallet/balance',            // Ru$h balance — polled by WalletFloater + checkout
+      '/api/wallet/balance/usdc',       // USDC on-chain balance — polled every 3s during card onramp
+      '/api/wallet/balance/eth',        // ETH balance — shown in wallet widget
+      '/api/wallet/balance/eth-mainnet',// ETH mainnet — shown in wallet widget
+      '/api/wallet/balance/usdc-mainnet',// USDC mainnet — shown in wallet widget
       // Social feed: auth-gated, fires on every scroll page; per-user bucket
       // means authenticated users could exhaust 600/15min via normal pagination.
       '/api/webapp/social/feed',
