@@ -207,7 +207,7 @@ const startApiServer = (modeLabel) => {
     return apiServer;
   }
 
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT) || 3000;
   const server = http.createServer(apiApp);
 
   // Attach Socket.IO for real-time chat/DM
