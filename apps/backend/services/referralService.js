@@ -1,0 +1,525 @@
+'use strict';
+
+const { query } = require('../config/postgres');
+const crypto = require('crypto');
+const logger = require('../utils/logger');
+
+// PNP Live token reward by plan_id. Anything not listed gets the default.
+// Updated 2026-04-25: switched from "3 days PRIME" to PNP Live tokens.
+//   • week pass + any monthly pass (PRIME or Basic)  → 1 token
+//   • everything longer (quarterly, half-year, year, lifetime, Colombia) → 3
+// IDs come from the active rows in the `plans` table; keep in sync with init-plans.js.
+const REFERRAL_TOKEN_REWARD = {
+  'prime-week-pass-7d': 1,  // PRIME Week Pass
+  'monthly-pass':       1,  // PRIME Monthly Pass
+  'member_monthly':     1,  // PNP Stans Basic Plan (Basic monthly)
+  'pnp_col_monthly':    1,  // PNP Col — Monthly
+};
+const REFERRAL_TOKEN_REWARD_DEFAULT = 3;
+
+/**
+ * Resolve the PNP Live token reward for a given plan_id.
+ * @param {string} planId
+ * @returns {number} number of tokens to credit the referrer
+ */
+function tokenRewardForPlan(planId) {
+  if (!planId) return 0;
+  // creator_monthly is a per-creator payment, not a platform plan — no referral reward
+  if (planId === 'creator_monthly') return 0;
+  if (Object.prototype.hasOwnProperty.call(REFERRAL_TOKEN_REWARD, planId)) {
+    return REFERRAL_TOKEN_REWARD[planId];
+  }
+  return REFERRAL_TOKEN_REWARD_DEFAULT;
+}
+
+function generateCode(userId) {
+  return crypto.createHash('md5').update(userId + 'pnptv2026ref').digest('hex').slice(0, 8).toUpperCase();
+}
+
+async function getOrCreateRefCode(userId) {
+  const { rows } = await query('SELECT ref_code FROM users WHERE id=$1', [userId]);
+  if (rows[0]?.ref_code) return rows[0].ref_code;
+  const code = generateCode(userId);
+  await query('UPDATE users SET ref_code=$1 WHERE id=$2', [code, userId]);
+  return code;
+}
+
+async function getReferralStats(userId) {
+  const code = await getOrCreateRefCode(userId);
+  const { rows } = await query(
+    `SELECT
+       COUNT(*)                                       AS total,
+       COUNT(*) FILTER (WHERE status='completed')     AS completed,
+       COALESCE(SUM(reward_tokens), 0)                AS tokens_earned
+     FROM referrals WHERE referrer_id=$1`,
+    [userId]
+  );
+  return {
+    code,
+    total:        parseInt(rows[0].total, 10),
+    completed:    parseInt(rows[0].completed, 10),
+    tokensEarned: parseInt(rows[0].tokens_earned, 10),
+  };
+}
+
+/**
+ * Attribute a referral. Called when a referee enters/clicks a referral code.
+ *
+ * Inserts a `referrals` row with status='pending'. The actual reward
+ * (PNP Live tokens to the referrer) is granted later, ONCE, when the referee
+ * makes their first paid plan purchase — see PaymentService.grantEntitlementsForPlan.
+ *
+ * Returns:
+ *   { success: true, pending: true }   — newly attributed
+ *   { alreadyRedeemed: true }          — referee already linked to this code
+ *
+ * Throws:
+ *   400 'Invalid referral code'         — code doesn't match a user
+ *   400 'Cannot use your own referral code'
+ *
+ * @param {string} code
+ * @param {string} refereeId
+ * @returns {Promise<object>}
+ */
+async function redeemReferral(code, refereeId, refereeIp = null) {
+  const upperCode = String(code || '').toUpperCase();
+  const { rows: refRows } = await query(
+    'SELECT id FROM users WHERE ref_code=$1',
+    [upperCode]
+  );
+  if (!refRows.length) {
+    const err = new Error('Invalid referral code');
+    err.status = 400;
+    throw err;
+  }
+  const referrerId = refRows[0].id;
+  if (String(referrerId) === String(refereeId)) {
+    const err = new Error('Cannot use your own referral code');
+    err.status = 400;
+    throw err;
+  }
+
+  // IP-based duplicate detection — one redemption per network per 30 days.
+  if (refereeIp) {
+    const { rows: ipRows } = await query(
+      `SELECT id FROM referrals WHERE referee_ip = $1 AND created_at > NOW() - INTERVAL '30 days' LIMIT 1`,
+      [refereeIp]
+    );
+    if (ipRows.length > 0) {
+      const err = new Error('Referral already claimed from this network');
+      err.status = 429;
+      throw err;
+    }
+  }
+
+  // Check if this is the referee's first-ever referral redemption (any code).
+  // Used to gate the one-time 24h PRIME trial — prevents stacking multiple codes.
+  const { rows: existingReferrals } = await query(
+    'SELECT id FROM referrals WHERE referee_id = $1 LIMIT 1',
+    [String(refereeId)]
+  );
+  const isFirstReferral = existingReferrals.length === 0;
+
+  // Idempotent attribution. Reward stays at 0 until the referee buys a plan.
+  const { rows: inserted } = await query(
+    `INSERT INTO referrals (code, referrer_id, referee_id, status, reward_tokens, reward_days, referee_ip)
+     VALUES ($1, $2, $3, 'pending', 0, 0, $4)
+     ON CONFLICT (code, referee_id) DO NOTHING
+     RETURNING id`,
+    [upperCode, referrerId, String(refereeId), refereeIp || null]
+  );
+
+  if (!inserted.length) {
+    return { alreadyRedeemed: true };
+  }
+
+  logger.info('Referral attributed (pending reward)', { referrerId, refereeId, code: upperCode });
+
+  const EntitlementModel = require('../models/entitlementModel');
+
+  // Grant 24h PRIME trial to referee on their first-ever referral redemption.
+  // Gated on isFirstReferral to prevent stacking multiple codes.
+  let primeGranted = false;
+  if (isFirstReferral) {
+    try {
+      await EntitlementModel.grantEntitlement(String(refereeId), 'prime', {
+        isLifetime: false,
+        durationDays: 1,
+        sourcePlanId: null,
+        source: 'system',
+        actorId: 'system',
+        reason: `Referral 24h trial — code ${upperCode}`,
+      });
+      await EntitlementModel.grantEntitlement(String(refereeId), 'pnp-member', {
+        isLifetime: false,
+        durationDays: 1,
+        sourcePlanId: null,
+        source: 'system',
+        actorId: 'system',
+        reason: `Referral 24h trial — code ${upperCode}`,
+      });
+      primeGranted = true;
+      logger.info('Referral 24h PRIME granted to referee', { refereeId, code: upperCode });
+    } catch (err) {
+      logger.warn('Referral PRIME grant to referee failed (non-fatal)', { refereeId, code: upperCode, error: err.message });
+    }
+  }
+
+  // Grant 24h PRIME to the referrer every time someone signs up with their code.
+  // Unconditional — each new signup extends or refreshes their PRIME by 1 day.
+  let referrerPrimeGranted = false;
+  try {
+    await EntitlementModel.grantEntitlement(String(referrerId), 'prime', {
+      isLifetime: false,
+      durationDays: 1,
+      sourcePlanId: null,
+      source: 'system',
+      actorId: 'system',
+      reason: `Referral reward — user ${refereeId} joined with code ${upperCode}`,
+    });
+    await EntitlementModel.grantEntitlement(String(referrerId), 'pnp-member', {
+      isLifetime: false,
+      durationDays: 1,
+      sourcePlanId: null,
+      source: 'system',
+      actorId: 'system',
+      reason: `Referral reward — user ${refereeId} joined with code ${upperCode}`,
+    });
+    referrerPrimeGranted = true;
+    logger.info('Referral 24h PRIME granted to referrer', { referrerId, refereeId, code: upperCode });
+  } catch (err) {
+    logger.warn('Referral PRIME grant to referrer failed (non-fatal)', { referrerId, code: upperCode, error: err.message });
+  }
+
+  return { success: true, pending: true, referrerId, primeGranted, referrerPrimeGranted };
+}
+
+/**
+ * Grant the referral reward when the referee buys their first paid plan.
+ * Called from PaymentService.grantEntitlementsForPlan after entitlements are
+ * granted on a successful payment. Idempotent — only the first pending
+ * attribution per referee fires; subsequent purchases do nothing.
+ *
+ * Reward (credited to the referrer's PNP Live wallet):
+ *   • week_pass or member-monthly  → 1 token
+ *   • any other paid plan           → 3 tokens
+ *
+ * Failure here MUST NOT block the payment — caller should swallow exceptions.
+ *
+ * @param {string} refereeId  user who just purchased a plan
+ * @param {string} planId     the plan they purchased
+ * @returns {Promise<{credited: boolean, referrerId?: string, tokens?: number, planId?: string}>}
+ */
+async function grantReferralReward(refereeId, planId) {
+  if (!refereeId || !planId) return { credited: false };
+
+  // Find the single pending attribution for this referee, if any.
+  const { rows } = await query(
+    `SELECT id, code, referrer_id
+       FROM referrals
+       WHERE referee_id = $1 AND status = 'pending'
+       ORDER BY created_at ASC
+       LIMIT 1`,
+    [String(refereeId)]
+  );
+  if (!rows.length) return { credited: false };
+
+  const referralRow = rows[0];
+  const tokens = tokenRewardForPlan(planId);
+  if (tokens <= 0) return { credited: false };
+
+  // Credit the referrer's wallet. Use the existing tokenService so the wallet
+  // is created lazily and the cache is invalidated correctly.
+  const tokenService = require('./tokenService');
+  const credited = await tokenService.creditTokens(
+    referralRow.referrer_id,
+    tokens,
+    `referral_reward_${planId}`
+  );
+  if (!credited) {
+    logger.warn('grantReferralReward: tokenService.creditTokens returned false', {
+      referrerId: referralRow.referrer_id, refereeId, planId, tokens,
+    });
+    return { credited: false };
+  }
+
+  // Mark the referral completed. Concurrent payments for the same referee
+  // are de-duped by the WHERE status='pending' clause + the row's PK.
+  await query(
+    `UPDATE referrals
+       SET status = 'completed',
+           completed_at = NOW(),
+           reward_tokens = $2
+       WHERE id = $1 AND status = 'pending'`,
+    [referralRow.id, tokens]
+  );
+
+  logger.info('Referral reward credited', {
+    referrerId: referralRow.referrer_id,
+    refereeId,
+    planId,
+    tokens,
+  });
+
+  // Notify the referrer — non-fatal.
+  try {
+    const { rows: people } = await query(
+      `SELECT u.telegram, u.language,
+              r.username AS referee_username
+       FROM users u
+       LEFT JOIN users r ON r.id = $2
+       WHERE u.id = $1`,
+      [referralRow.referrer_id, String(refereeId)]
+    );
+    const referrer = people[0];
+    if (referrer) {
+      const isEn = typeof referrer.language === 'string' && referrer.language.toLowerCase().startsWith('en');
+      const refName = referrer.referee_username ? `@${referrer.referee_username}` : (isEn ? 'Someone' : 'Alguien');
+      const tokenWord = tokens === 1 ? (isEn ? 'token' : 'token') : (isEn ? 'tokens' : 'tokens');
+      const msg = isEn
+        ? `🎁 ${refName} subscribed via your referral link — you just earned ${tokens} PNP Live ${tokenWord}! Check your balance at pnptv.app/referrals`
+        : `🎁 ${refName} se suscribió con tu enlace de referido — ¡acabas de ganar ${tokens} token${tokens > 1 ? 's' : ''} PNP Live! Revisa tu saldo en pnptv.app/referrals`;
+
+      // In-app bell
+      await query(
+        `INSERT INTO notifications (type, category, priority, actor_id, target_user_id, entity_type, entity_id, message, metadata)
+         VALUES ('announcement', 'system', 'high', NULL, $1, 'referral', $2, $3, $4::jsonb)
+         ON CONFLICT DO NOTHING`,
+        [
+          referralRow.referrer_id,
+          `referral_reward_${referralRow.id}`,
+          msg,
+          JSON.stringify({ url: 'https://pnptv.app/referrals', tokens }),
+        ]
+      ).catch(() => {});
+
+      // Telegram DM
+      if (referrer.telegram) {
+        const { Telegram } = require('telegraf');
+        const tg = new Telegram(process.env.BOT_TOKEN);
+        await tg.sendMessage(referrer.telegram, msg, { disable_web_page_preview: true }).catch(() => {});
+      }
+    }
+  } catch (notifyErr) {
+    logger.warn('grantReferralReward: notification failed (non-fatal)', { error: notifyErr.message });
+  }
+
+  return { credited: true, referrerId: referralRow.referrer_id, tokens, planId };
+}
+
+/**
+ * List individual referral rows for a user, newest first.
+ * @param {string} userId
+ * @param {number} [limit=20]
+ * @returns {Promise<object[]>}
+ */
+async function getReferralList(userId, limit = 20) {
+  const { rows } = await query(
+    `SELECT
+       u.username            AS referee_username,
+       r.status,
+       r.reward_tokens,
+       r.created_at,
+       r.completed_at
+     FROM referrals r
+     LEFT JOIN users u ON u.id = r.referee_id
+     WHERE r.referrer_id = $1
+     ORDER BY r.created_at DESC
+     LIMIT $2`,
+    [userId, limit]
+  );
+  return rows;
+}
+
+// ─── PNP PARTNERS NETWORK ────────────────────────────────────────────────
+
+const PARTNER_EXCLUDED_PLANS = new Set([
+  'call_package',   // private calls — already split 70/30
+  'token_purchase', // Ru$h tips on Live streams
+]);
+
+async function getPartnerGroupBySlug(slug) {
+  const { rows } = await query(
+    'SELECT id, slug, name, badge_color, status, tg_group_id FROM partner_groups WHERE slug = $1',
+    [slug]
+  );
+  return rows[0] || null;
+}
+
+// Called after login/registration when pnp_partner_group cookie is present.
+// Idempotent — silently does nothing if user already attributed or group inactive.
+async function attributePartnerGroup(userId, slug) {
+  if (!userId || !slug) return { attributed: false };
+  const group = await getPartnerGroupBySlug(slug);
+  if (!group || group.status !== 'active') return { attributed: false, reason: 'group_inactive' };
+
+  const { rows: userRows } = await query(
+    'SELECT partner_group_id FROM users WHERE id = $1',
+    [String(userId)]
+  );
+  if (!userRows.length || userRows[0].partner_group_id) {
+    return { attributed: false, reason: 'already_attributed' };
+  }
+
+  try {
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 6);
+
+    await query(
+      `INSERT INTO partner_group_referrals (group_id, user_id, expires_at)
+       VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`,
+      [group.id, String(userId), expiresAt.toISOString()]
+    );
+    await query(
+      'UPDATE users SET partner_group_id = $1, partner_badge_color = $2 WHERE id = $3',
+      [group.id, group.badge_color, String(userId)]
+    );
+    logger.info('[PartnerGroup] Attributed', { userId, groupId: group.id, slug });
+    return { attributed: true, group };
+  } catch (err) {
+    logger.warn('[PartnerGroup] Attribution failed (non-fatal)', { userId, slug, error: err.message });
+    return { attributed: false };
+  }
+}
+
+// Called from paymentService.grantEntitlementsForPlan after the payment is settled.
+// Credits 10% of gross to each group admin based on their split %.
+// Excludes private calls and Ru$h Live tips. Enforces 7-day account age gate.
+async function creditPartnerRevenue(userId, planId, orderId, grossUsd) {
+  if (!userId || !planId || !orderId) return;
+  if (PARTNER_EXCLUDED_PLANS.has(planId)) return;
+
+  try {
+    const { rows: refRows } = await query(
+      `SELECT pgr.id, pgr.group_id, pgr.expires_at
+       FROM partner_group_referrals pgr
+       WHERE pgr.user_id = $1 AND pgr.expires_at > NOW()`,
+      [String(userId)]
+    );
+    if (!refRows.length) return;
+    const referral = refRows[0];
+
+    // Anti-gaming: account must be ≥7 days old
+    const { rows: ageRows } = await query(
+      'SELECT created_at FROM users WHERE id = $1',
+      [String(userId)]
+    );
+    if (!ageRows.length) return;
+    const ageDays = (Date.now() - new Date(ageRows[0].created_at).getTime()) / 86400000;
+    if (ageDays < 7) return;
+
+    // Resolve gross if not supplied — fall back to plan price_usd
+    let resolvedGross = parseFloat(grossUsd) || 0;
+    if (resolvedGross <= 0) {
+      const { rows: planRows } = await query(
+        'SELECT price_usd FROM plans WHERE id = $1',
+        [planId]
+      );
+      resolvedGross = parseFloat(planRows[0]?.price_usd) || 0;
+    }
+    if (resolvedGross <= 0) return;
+
+    const { rows: admins } = await query(
+      'SELECT user_id, revenue_share_pct FROM partner_group_admins WHERE group_id = $1',
+      [referral.group_id]
+    );
+    if (!admins.length) return;
+
+    // 10% of gross goes to admins total, split by their configured percentages
+    const ADMIN_POOL_PCT = 10;
+    for (const admin of admins) {
+      const shareUsd = resolvedGross * (ADMIN_POOL_PCT / 100) * (parseFloat(admin.revenue_share_pct) / 100);
+      await query(
+        `INSERT INTO partner_group_ledger
+           (group_id, admin_id, referral_id, order_id, gross_usd, share_pct, share_usd, entry_type, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'revenue_share', 'pending')
+         ON CONFLICT (order_id, admin_id) DO NOTHING`,
+        [referral.group_id, admin.user_id, referral.id, orderId, resolvedGross, admin.revenue_share_pct, shareUsd.toFixed(2)]
+      );
+    }
+    logger.info('[PartnerGroup] Revenue credited', { userId, planId, orderId, resolvedGross, groupId: referral.group_id });
+  } catch (err) {
+    logger.warn('[PartnerGroup] creditPartnerRevenue failed (non-fatal)', { userId, planId, orderId, error: err.message });
+  }
+}
+
+// Called when a creator payout is processed. One-time $25 bonus when referred
+// creator crosses $500 net total earnings for the first time.
+async function checkCreatorMilestone(creatorId) {
+  if (!creatorId) return;
+  try {
+    const { rows: refRows } = await query(
+      `SELECT id, group_id FROM partner_group_referrals
+       WHERE user_id = $1 AND expires_at > NOW() AND milestone_paid = FALSE`,
+      [String(creatorId)]
+    );
+    if (!refRows.length) return;
+    const referral = refRows[0];
+
+    const { rows: earningsRows } = await query(
+      `SELECT COALESCE(SUM(net_amount), 0) AS total_net
+       FROM creator_earnings WHERE creator_id = $1 AND status = 'paid'`,
+      [String(creatorId)]
+    );
+    const totalNet = parseFloat(earningsRows[0]?.total_net || 0);
+    if (totalNet < 500) return;
+
+    await query('UPDATE partner_group_referrals SET milestone_paid = TRUE WHERE id = $1', [referral.id]);
+
+    const MILESTONE_BONUS = 25.00;
+    const { rows: admins } = await query(
+      'SELECT user_id, revenue_share_pct FROM partner_group_admins WHERE group_id = $1',
+      [referral.group_id]
+    );
+    for (const admin of admins) {
+      const adminBonus = MILESTONE_BONUS * (parseFloat(admin.revenue_share_pct) / 100);
+      await query(
+        `INSERT INTO partner_group_ledger
+           (group_id, admin_id, referral_id, order_id, gross_usd, share_pct, share_usd, entry_type, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'milestone_bonus', 'pending')
+         ON CONFLICT (order_id, admin_id) DO NOTHING`,
+        [referral.group_id, admin.user_id, referral.id, `milestone_${creatorId}`, MILESTONE_BONUS, admin.revenue_share_pct, adminBonus.toFixed(2)]
+      );
+    }
+    logger.info('[PartnerGroup] Creator milestone bonus credited', { creatorId, groupId: referral.group_id });
+  } catch (err) {
+    logger.warn('[PartnerGroup] checkCreatorMilestone failed (non-fatal)', { creatorId, error: err.message });
+  }
+}
+
+async function getPartnerGroupStats(groupId, requestingUserId) {
+  const { rows: authRows } = await query(
+    'SELECT id FROM partner_group_admins WHERE group_id = $1 AND user_id = $2',
+    [groupId, String(requestingUserId)]
+  );
+  if (!authRows.length) {
+    const err = new Error('Forbidden'); err.status = 403; throw err;
+  }
+  const { rows: group } = await query(
+    'SELECT id, slug, name, badge_color, status FROM partner_groups WHERE id = $1',
+    [groupId]
+  );
+  const { rows: stats } = await query(
+    `SELECT
+       (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1) AS total_referred,
+       (SELECT COUNT(*) FROM partner_group_referrals WHERE group_id = $1 AND expires_at > NOW()) AS active_referred,
+       (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'pending') AS pending_usd,
+       (SELECT COALESCE(SUM(share_usd), 0) FROM partner_group_ledger WHERE group_id = $1 AND status = 'paid') AS paid_usd`,
+    [groupId]
+  );
+  return { group: group[0], ...stats[0] };
+}
+
+module.exports = {
+  getOrCreateRefCode,
+  getReferralStats,
+  getReferralList,
+  redeemReferral,
+  grantReferralReward,
+  tokenRewardForPlan,
+  getPartnerGroupBySlug,
+  attributePartnerGroup,
+  creditPartnerRevenue,
+  checkCreatorMilestone,
+  getPartnerGroupStats,
+};
