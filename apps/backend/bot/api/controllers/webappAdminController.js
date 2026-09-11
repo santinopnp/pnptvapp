@@ -2061,6 +2061,9 @@ const makeCreator = async (req, res) => {
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
+    if (!userCheck.rows[0].username || !userCheck.rows[0].username.trim()) {
+      return res.status(422).json({ success: false, error: 'Cannot activate creator — user has no username set. Set a username first.' });
+    }
 
     // If a channelRef is being assigned, check it is not already taken by another user
     if (channelRef) {
@@ -2244,6 +2247,9 @@ const activateCreator = async (req, res) => {
     }
 
     const target = userCheck.rows[0];
+    if (!target.username || !target.username.trim()) {
+      return res.status(422).json({ success: false, error: 'Cannot activate creator — user has no username set. Set a username first.' });
+    }
     if (target.creator_status !== 'approved_hold') {
       return res.status(409).json({
         success: false,

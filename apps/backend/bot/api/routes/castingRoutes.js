@@ -204,6 +204,9 @@ router.post('/review', roleGuard('admin', 'superadmin'), async (req, res) => {
       );
       const user = userRows[0];
       if (user) {
+        if (!user.username || !user.username.trim()) {
+          return res.status(422).json({ success: false, error: 'Cannot approve casting — user has no username set. Set a username first.' });
+        }
         const displayName = user.first_name || user.username || `Performer-${user.id}`;
 
         // Update user role and creator fields
