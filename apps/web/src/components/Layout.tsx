@@ -1818,8 +1818,7 @@ export function Layout() {
           of the viewport (desktop). Kill switch: pnpapp:ads:enabled=0 in Redis. */}
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
         <>
-          <AdSlot slot="popunder_desktop" />
-          <AdSlot slot="popunder_mobile" />
+          {isMobile ? <AdSlot slot="popunder_mobile" /> : <AdSlot slot="popunder_desktop" />}
           <AdSlot slot="push_inpage" />
           <AdSlot slot="inpage_push_v2" />
           <div className="fixed left-0 right-0 z-30 pointer-events-none flex justify-center lg:hidden"
