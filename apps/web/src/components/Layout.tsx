@@ -1819,8 +1819,8 @@ export function Layout() {
       {isAuthenticated && user?.ageVerified && user?.termsAccepted && (
         <>
           {isMobile ? <AdSlot slot="popunder_mobile" /> : <AdSlot slot="popunder_desktop" />}
-          <AdSlot slot="push_inpage" />
-          <AdSlot slot="inpage_push_v2" />
+          {!isMobile && <AdSlot slot="push_inpage" showChip={false} />}
+          {!isMobile && <AdSlot slot="inpage_push_v2" showChip={false} />}
           <div className="fixed left-0 right-0 z-30 pointer-events-none flex justify-center lg:hidden"
                style={{ bottom: `calc(4rem + env(safe-area-inset-bottom,0px) + 3.25rem)` }}>
             <div className="pointer-events-auto"><AdSlot slot="sticky_footer_mobile" /></div>
