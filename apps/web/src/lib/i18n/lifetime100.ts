@@ -65,7 +65,7 @@ export const strings = {
     ctaGetAccess: "CLAIM YOUR SPOT — $100",
     ctaPayWithCrypto: "💎 PAY WITH CRYPTO — $100",
     ctaPayWithCard: "💳 PAY WITH CARD — $100",
-    ctaPayWithWallet: "💳 PAY WITH WALLET (USDC) — $100",
+    ctaPayWithWallet: "💳 PAY WITH CARD — $100",
     ctaPayWithDash: "🐎 PAY WITH DASH — $100",
     ctaLoading: "Checking availability...",
     ctaSoldOut: "Sold Out",
@@ -76,7 +76,7 @@ export const strings = {
     cardModalOpenButton: "Open Payment Link →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
-    walletModalTitle: "Pay with Wallet — USDC on Base",
+    walletModalTitle: "Pay with Card — USDC on Base",
     walletModalSubtitle: "Pay with your credit/debit card, Apple Pay, Google Pay, or connect Trust / MetaMask. Settles instantly as USDC on Base — PRIME activates the moment the payment confirms.",
     walletPayLabel: "Pay $100 · Lifetime PRIME",
 
@@ -245,7 +245,7 @@ export const strings = {
     ctaGetAccess: "RECLAMA TU LUGAR — $100",
     ctaPayWithCrypto: "💎 PAGAR CON CRIPTO — $100",
     ctaPayWithCard: "💳 PAGAR CON TARJETA — $100",
-    ctaPayWithWallet: "💳 PAGAR CON BILLETERA (USDC) — $100",
+    ctaPayWithWallet: "💳 PAGAR CON TARJETA — $100",
     ctaPayWithDash: "🐎 PAGAR CON DASH — $100",
     ctaLoading: "Verificando disponibilidad...",
     ctaSoldOut: "Agotado",
@@ -256,7 +256,7 @@ export const strings = {
     cardModalOpenButton: "Abrir Enlace de Pago →",
 
     // ── Wallet (USDC on Base via Privy) modal ─────────────────────────────────
-    walletModalTitle: "Pagar con Billetera — USDC en Base",
+    walletModalTitle: "Pagar con Tarjeta — USDC en Base",
     walletModalSubtitle: "Paga con tu tarjeta de crédito/débito, Apple Pay, Google Pay, o conecta Trust / MetaMask. Se acredita al instante como USDC en Base — PRIME se activa apenas confirme el pago.",
     walletPayLabel: "Pagar $100 · PRIME de por vida",
 

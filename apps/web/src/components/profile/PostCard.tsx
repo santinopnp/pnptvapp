@@ -255,7 +255,7 @@ export interface PostCardProps {
   currentUserId: string;
   userLang: string;
   onLike: (id: number) => void;
-  onDelete: (id: number) => void;
+  onDelete: (id: number) => void | Promise<void>;
   onAuthorTap?: (userId: string) => void;
   onSubscribeCta?: () => void;
   onReport?: (postId: number) => void;
@@ -328,6 +328,18 @@ export default function PostCard({
     setCreatorUpsellDismissed(true);
   };
   const [deleting, setDeleting] = useState(false);
+  const handleDeleteClick = useCallback(async () => {
+    if (deleting) return;
+    setShowMenu(false);
+    setDeleting(true);
+    try {
+      await onDelete(post.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete post");
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleting, onDelete, post.id]);
   // Edit post state (owner only) — mirrors SocialPostCard
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content || "");
@@ -656,8 +668,8 @@ export default function PostCard({
     <div
       className="group relative glass-card-sm p-4 transition-all duration-300 lg:hover:border-white/15 lg:hover:bg-white/[0.02]"
       style={hypeCount > 0
-        ? { borderLeft: "3px solid transparent", borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1", background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)" }
-        : undefined}
+        ? { borderLeft: "3px solid transparent", borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1", background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)", opacity: deleting ? 0.5 : 1, pointerEvents: deleting ? "none" : undefined }
+        : deleting ? { opacity: 0.5, pointerEvents: "none" } : undefined}
     >
       {/* ── Exclusive lock overlay (non-owner, non-subscriber) ── */}
       {isExclusiveLocked && (
@@ -901,7 +913,7 @@ export default function PostCard({
                       <button
                         className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-white/10 transition-colors text-left"
                         style={{ color: "#ef4444" }}
-                        onClick={() => { setShowMenu(false); setDeleting(true); onDelete(post.id); }}
+                        onClick={handleDeleteClick}
                         disabled={deleting}
                       >
                         <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

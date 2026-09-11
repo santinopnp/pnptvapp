@@ -1244,8 +1244,8 @@ export function Layout() {
               </div>
               <div className="space-y-0.5">
                 {section.items.map((item) => {
-                  const isItemActive = item.checkActive
-                    ? item.checkActive(location.pathname, location.search)
+                  const isItemActive = (item as any).checkActive
+                    ? (item as any).checkActive(location.pathname, location.search)
                     : location.pathname === item.to || location.pathname.startsWith(item.to + "/");
                   const baseClasses = "flex items-center gap-3 w-full px-2.5 py-2 rounded-lg text-sm font-medium transition-colors";
                   const activeClasses = "nav-active";
@@ -2586,16 +2586,14 @@ function WalletFloater({ avoidRightEdge = false }: { avoidRightEdge?: boolean } 
         setFabExpanded(true);
         const t2 = setTimeout(() => {
           setFabExpanded(false);
-          schedule(12000);
-        }, 2800);
+          schedule(6000);
+        }, 3500);
         fabCycleTimers.current.push(t2);
       }, initialDelay);
       fabCycleTimers.current.push(t1);
     };
-    schedule(5000);
-    const stop = () => { clearAll(); setFabExpanded(false); window.removeEventListener("click", stop, { capture: true }); };
-    window.addEventListener("click", stop, { passive: true, capture: true });
-    return () => { clearAll(); window.removeEventListener("click", stop, { capture: true }); };
+    schedule(2000);
+    return () => { clearAll(); };
   }, [isAuthenticated]);
 
   // Fetch subscription plans + wallet balance when home panel opens.

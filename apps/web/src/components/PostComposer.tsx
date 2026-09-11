@@ -262,7 +262,7 @@ export function PostComposer({
   initialTaggedPerformers,
 }: PostComposerProps) {
   const { user, isAuthenticated } = useAuth();
-  const { feed: tFeed, profile: tProfile } = useI18n();
+  const { feed: tFeed, profile: tProfile, lang } = useI18n();
   const navigate = useNavigate();
 
   // ── Unique IDs for ARIA ────────────────────────────────────────────────────
@@ -1419,7 +1419,7 @@ export function PostComposer({
               onChange={setIsAiGenerated}
               disabled={isPosting}
               activeColor="#A78BFA"
-              label={tFeed.lang === "es" ? "Contiene contenido generado por IA" : "Contains AI-generated content"}
+              label={lang === "es" ? "Contiene contenido generado por IA" : "Contains AI-generated content"}
               icon={<span className="text-base leading-none" aria-hidden="true">🤖</span>}
             />
           </div>

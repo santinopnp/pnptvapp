@@ -327,8 +327,8 @@ const startCronJobs = async (bot = null) => {
         logger.info('Running daily membership cleanup...');
         const results = await MembershipCleanupService.runFullCleanup();
         logger.info('Membership cleanup completed', {
-          statusUpdates: results.statusUpdates,
-          channelKicks: results.channelKicks
+          statusUpdates: results?.statusUpdates,
+          channelKicks: results?.channelKicks
         });
       } catch (error) {
         logger.error('Error in membership cleanup cron:', error);
@@ -342,10 +342,8 @@ const startCronJobs = async (bot = null) => {
         logger.info('Running membership status sync (twice daily)...');
         const results = await MembershipCleanupService.syncAllMembershipStatuses();
         logger.info('Membership status sync completed', {
-          toActive: results.toActive,
-          toChurned: results.toChurned,
-          toFree: results.toFree,
-          errors: results.errors
+          synced: results?.synced,
+          errors: results?.errors
         });
       } catch (error) {
         logger.error('Error in membership sync cron:', error);

@@ -15,7 +15,7 @@ interface Props {
   channelId: number;
   channelName: string;
   channelSlug: string;
-  accessType: "free" | "subscription" | "prime" | "paid";
+  accessType: "free" | "subscription" | "prime" | "paid" | "bts";
   pricePerMonth: number | null;
   creatorUsername: string | null;
   /** Optional: receive the published ChannelVideo for parent-side state refresh. */

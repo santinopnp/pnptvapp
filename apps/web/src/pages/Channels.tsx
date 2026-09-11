@@ -278,7 +278,7 @@ function ChannelDetailView({
     setCreatorUpsellDismissed(true);
   };
 
-  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ url: string | null; fallbackUrl?: string | null; title?: string; videoId: number; channelId: number; promoPostId: number | null; taggedCreators: { id: string; username: string; first_name: string | null; avatar_url: string | null }[]; uploaderDisplayName?: string | null; durationSec?: number | null; viewCount?: number } | null>(null);
   const [videoPlayerError, setVideoPlayerError] = useState(false);
   // Set to true once the <video> metadata reveals a landscape aspect ratio.
   // Only landscape videos get the wider modal + taller player (semi-fullscreen);
@@ -776,8 +776,31 @@ function ChannelDetailView({
       taggedCreators: v.tagged_creators || [],
       uploaderDisplayName: v.uploader_display_name || v.uploader_username || null,
       durationSec: v.duration_sec ?? null,
+      viewCount: v.view_count ?? 0,
     });
   }, [videos, searchParams, playingVideo, channel]);
+
+  const openVideoInPlayer = useCallback((v: ChannelVideo) => {
+    if (!channel) return;
+    setVideoPlayerError(false);
+    const muxUsable = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
+    const muxUrl = muxUsable ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : null;
+    const directusUrl = v.video_url || null;
+    const playUrl = muxUrl || directusUrl;
+    const fallbackUrl = muxUrl && directusUrl && muxUrl !== directusUrl ? directusUrl : null;
+    setPlayingVideo({
+      url: playUrl,
+      fallbackUrl,
+      title: v.title,
+      videoId: v.id,
+      channelId: channel.id,
+      promoPostId: v.promo_post_id ?? null,
+      taggedCreators: v.tagged_creators || [],
+      uploaderDisplayName: v.uploader_display_name || v.uploader_username || null,
+      durationSec: v.duration_sec ?? null,
+      viewCount: v.view_count ?? 0,
+    });
+  }, [channel]);
 
   // ── Video card renderer ──────────────────────────────────────────────────
   // Extracted from inline JSX so the thumbnail logic, badge overlays, and
@@ -827,23 +850,7 @@ function ChannelDetailView({
           className="relative w-full aspect-video bg-pnp-surfaceHover group cursor-pointer overflow-hidden"
           onClick={() => {
             if (isProcessing || isUnavailable) return;
-            setVideoPlayerError(false);
-            const muxUsable = !!v.mux_playback_id && v.mux_status !== "errored" && v.mux_status !== "cancelled";
-            const muxUrl = muxUsable ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : null;
-            const directusUrl = v.video_url || null;
-            const playUrl = muxUrl || directusUrl;
-            const fallbackUrl = muxUrl && directusUrl && muxUrl !== directusUrl ? directusUrl : null;
-            setPlayingVideo({
-              url: playUrl,
-              fallbackUrl,
-              title: v.title,
-              videoId: v.id,
-              channelId: channel!.id,
-              promoPostId: v.promo_post_id ?? null,
-              taggedCreators: v.tagged_creators || [],
-              uploaderDisplayName: v.uploader_display_name || v.uploader_username || null,
-              durationSec: v.duration_sec ?? null,
-            });
+            openVideoInPlayer(v);
           }}
         >
           {/* Thumbnail image with hover-to-gif swap */}
@@ -980,25 +987,32 @@ function ChannelDetailView({
 
           {/* Action buttons */}
           <div className="flex items-center gap-1 flex-shrink-0">
-            {user && v.promo_post_id && (() => {
+            {user && (() => {
               const likeState = videoLikes[v.id] ?? { liked: v.liked_by_me ?? false, count: v.likes_count ?? 0 };
               const hyped = videoHypeToggles[v.id] ?? v.hype_posted_by_me ?? false;
               return (
                 <>
+                  {v.promo_post_id && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleVideoLike(v); }}
+                      title={likeState.liked ? "Unlike" : "Like"}
+                      aria-label={likeState.liked ? "Unlike" : "Like"}
+                      className="flex items-center gap-0.5 p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] justify-center"
+                      style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.1)" : "transparent" }}
+                    >
+                      <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                      </svg>
+                      {likeState.count > 0 && <span className="text-[10px] tabular-nums">{likeState.count}</span>}
+                    </button>
+                  )}
+                  {/* Hype — shown for all videos. Toggles via promo_post_id when available; opens compose panel otherwise. */}
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleVideoLike(v); }}
-                    title={likeState.liked ? "Unlike" : "Like"}
-                    aria-label={likeState.liked ? "Unlike" : "Like"}
-                    className="flex items-center gap-0.5 p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] justify-center"
-                    style={{ color: likeState.liked ? "#D4007A" : "rgba(255,255,255,0.35)", background: likeState.liked ? "rgba(212,0,122,0.1)" : "transparent" }}
-                  >
-                    <svg className="w-3.5 h-3.5" fill={likeState.liked ? "currentColor" : "none"} stroke="currentColor" strokeWidth={likeState.liked ? 0 : 2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-                    </svg>
-                    {likeState.count > 0 && <span className="text-[10px] tabular-nums">{likeState.count}</span>}
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleVideoHypeToggle(v); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (v.promo_post_id) handleVideoHypeToggle(v);
+                      else { openVideoInPlayer(v); setTimeout(() => openHypeModal(v), 120); }
+                    }}
                     title={hyped ? "Hyped!" : "Hype this video"}
                     aria-label={hyped ? "Hyped!" : "Hype this video"}
                     className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
@@ -1008,17 +1022,19 @@ function ChannelDetailView({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
                     </svg>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); openShareSheet(v.promo_post_id!, v.title); }}
-                    title="Share"
-                    aria-label="Share"
-                    className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                    style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                    </svg>
-                  </button>
+                  {v.promo_post_id && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openShareSheet(v.promo_post_id!, v.title); }}
+                      title="Share"
+                      aria-label="Share"
+                      className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                      style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                      </svg>
+                    </button>
+                  )}
                 </>
               );
             })()}
@@ -1940,6 +1956,7 @@ function ChannelDetailView({
                   playsInline
                   controlsList="nodownload"
                   creatorDisclaimer
+                  viewCount={playingVideo.viewCount}
                   intro={intro}
                   onContextMenu={(e) => e.preventDefault()}
                   onError={() => {
@@ -2057,8 +2074,8 @@ function ChannelDetailView({
               </div>
             )}
 
-            {/* Comments */}
-            {playingVideo.promoPostId && (
+            {/* Comments — always shown for all channel videos */}
+            {(
               <div className="flex flex-col flex-1 min-h-0">
                 {/* Comment input */}
                 <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>

@@ -22,7 +22,7 @@ import {
   type ChannelVideo,
 } from "@/lib/api";
 
-type AccessType = "free" | "subscription" | "prime" | "paid";
+type AccessType = "free" | "subscription" | "prime" | "paid" | "bts";
 type Step = "pick" | "uploading" | "metadata" | "publish" | "done";
 
 interface Props {
@@ -327,7 +327,8 @@ export default function UploadVideoModal({
     subscription: { label: "PAGO", color: "#FBBF24" },
     prime: { label: "PRIME", color: "#FFB454" },
     paid: { label: "PAGO", color: "#FBBF24" },
-  }[accessType];
+    bts: { label: "CRYSTAL", color: "#A78BFA" },
+  }[accessType]!;
 
   // ── Step renders ─────────────────────────────────────────────────────────────
 

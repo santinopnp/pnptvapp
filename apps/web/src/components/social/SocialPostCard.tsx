@@ -749,14 +749,16 @@ export default function SocialPostCard({
           ? {
               borderLeft: "3px solid transparent",
               borderImage: "linear-gradient(180deg, #D4007A, #E69138) 1",
+              ...(deleting ? { opacity: 0.5, pointerEvents: "none" as const } : {}),
             }
           : (!post.is_carousel && hypeCount > 0)
           ? {
               borderLeft: "3px solid transparent",
               borderImage: "linear-gradient(180deg, #FF9500, #FF3B30) 1",
               background: "linear-gradient(90deg, rgba(255,149,0,0.05) 0%, transparent 45%)",
+              ...(deleting ? { opacity: 0.5, pointerEvents: "none" as const } : {}),
             }
-          : undefined
+          : deleting ? { opacity: 0.5, pointerEvents: "none" as const } : undefined
       }
     >
       {/* 🔁 Reposted-by banner — X-style, shows above the header when this

@@ -24,7 +24,7 @@ interface Props {
   creatorUsername: string | null;
 }
 
-const TYPE_ICON: Record<ServiceType, React.ComponentType<{ size?: number }>> = {
+const TYPE_ICON: Record<ServiceType, React.ElementType> = {
   private_call: Phone,
   custom_content: Camera,
   priority_dm: MessageSquareHeart,

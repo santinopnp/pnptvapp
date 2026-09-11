@@ -55,6 +55,8 @@ type VideoPlayerProps = React.VideoHTMLAttributes<HTMLVideoElement> & {
    * is bypassed even if `has_grant` is false (owners always see their content).
    */
   uploaderId?: string;
+  /** When provided, shows a view count badge overlay in the top-left corner. */
+  viewCount?: number;
 };
 
 function isHlsSource(src: string | undefined | null): boolean {
@@ -79,6 +81,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       autoPlay,
       videoId,
       uploaderId,
+      viewCount,
       ...rest
     },
     ref
@@ -287,6 +290,30 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       onPlay?.(e);
     };
 
+    const castSupported = typeof window !== "undefined" && "remote" in HTMLVideoElement.prototype;
+    const pipSupported = typeof window !== "undefined" && !!document.pictureInPictureEnabled;
+    const showOverlayControls = !showPaywall && !accessLoading && introDone && !playbackError;
+
+    const handleCast = useCallback(async () => {
+      const video = localRef.current;
+      if (!video) return;
+      try {
+        await (video as HTMLVideoElement & { remote: { prompt(): Promise<void> } }).remote.prompt();
+      } catch { /* user cancelled */ }
+    }, []);
+
+    const handlePiP = useCallback(async () => {
+      const video = localRef.current;
+      if (!video) return;
+      try {
+        if (document.pictureInPictureElement === video) {
+          await document.exitPictureInPicture();
+        } else {
+          await video.requestPictureInPicture();
+        }
+      } catch { /* not supported or user declined */ }
+    }, []);
+
     const containerClasses = [
       "relative overflow-hidden bg-black/90 rounded-xl transition-all duration-300 flex items-center justify-center",
       isPortrait ? "max-h-[72vh] md:max-h-[680px]" : "max-h-[520px] lg:max-h-[640px]",
@@ -402,6 +429,58 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           </div>
         )}
 
+        {/* View count badge — top-left, only when video is active */}
+        {showOverlayControls && viewCount != null && viewCount > 0 && (
+          <div
+            className="absolute top-2 left-2 z-[15] flex items-center gap-1 px-2 py-1 rounded-full text-[11px] text-white/80 pointer-events-none select-none"
+            style={{ background: "rgba(0,0,0,0.52)", backdropFilter: "blur(6px)" }}
+          >
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            {fmtViews(viewCount)}
+          </div>
+        )}
+
+        {/* Cast / PiP controls — top-right, only when video is active */}
+        {showOverlayControls && (castSupported || pipSupported) && (
+          <div className="absolute top-2 right-2 z-[15] flex items-center gap-1">
+            {castSupported && (
+              <button
+                type="button"
+                onClick={handleCast}
+                title="Cast to another screen"
+                aria-label="Cast to another screen"
+                className="w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white transition-colors"
+                style={{ background: "rgba(0,0,0,0.52)", backdropFilter: "blur(6px)" }}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 12a9 9 0 019 9"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 16a5 5 0 015 5"/>
+                  <circle cx="2" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+                </svg>
+              </button>
+            )}
+            {pipSupported && (
+              <button
+                type="button"
+                onClick={handlePiP}
+                title="Picture in picture"
+                aria-label="Picture in picture"
+                className="w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white transition-colors"
+                style={{ background: "rgba(0,0,0,0.52)", backdropFilter: "blur(6px)" }}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 19H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v5"/>
+                  <rect x="13" y="13" width="8" height="6" rx="1"/>
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* End-of-video Creator Compliance Overlay */}
         {showDisclaimer && (
           <VideoDisclaimerOverlay
@@ -417,6 +496,12 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
   }
 );
 VideoPlayer.displayName = "VideoPlayer";
+
+function fmtViews(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
 
 function VideoDisclaimerOverlay({ onReplay, onDismiss }: { onReplay: () => void; onDismiss: () => void }) {
   const t = useI18n();

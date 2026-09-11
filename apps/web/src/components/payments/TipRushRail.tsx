@@ -235,7 +235,7 @@ export function TipRushRail({
           <button
             type="button"
             onClick={send}
-            disabled={!tipAmount || sending || insufficient || result === "success"}
+            disabled={!tipAmount || sending || insufficient}
             className="w-full py-2 rounded-xl text-sm font-bold text-white transition active:scale-95 disabled:opacity-40"
             style={{ background: "linear-gradient(135deg,#D4007A,#E69138)" }}
           >

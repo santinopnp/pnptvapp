@@ -401,7 +401,7 @@ export default function CreatorStudioWizard() {
                   <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{t.wizStep3EcosystemXPre}<span className="text-white font-medium">{t.wizStep3EcosystemXBold}</span>{t.wizStep3EcosystemXPost}</p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <span className="text-sm flex-shrink-0">✈️</span>
+                  <span className="text-sm flex-shrink-0">👥</span>
                   <p className="text-[11px] text-pnp-textSecondary leading-relaxed">{t.wizStep3EcosystemSubPre}<span className="text-white font-medium">{t.wizStep3EcosystemSubBold}</span>{t.wizStep3EcosystemSubPost}</p>
                 </div>
                 <div className="flex items-start gap-2">
@@ -478,7 +478,7 @@ export default function CreatorStudioWizard() {
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <span className="text-sm mt-px">✈️</span>
+                  <span className="text-sm mt-px">👥</span>
                   <p className="text-[11px] text-pnp-textSecondary leading-relaxed">
                     {t.wizStep4WhyBody2Pre}<span className="text-white font-medium">{t.wizStep4WhyBody2Bold}</span>{t.wizStep4WhyBody2Post}
                   </p>

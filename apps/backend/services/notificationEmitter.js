@@ -484,9 +484,14 @@ const NotificationEmitter = {
       });
     }
 
-    await Promise.allSettled(
-      recipients.map((uid) => this.emit({ ...opts, targetUserId: uid }))
-    );
+    // Process in chunks to avoid exhausting the DB connection pool (max 30 connections).
+    // Firing all 500 concurrently causes 5s+ query pile-ups and pool timeouts.
+    const CHUNK = 10;
+    for (let i = 0; i < recipients.length; i += CHUNK) {
+      await Promise.allSettled(
+        recipients.slice(i, i + CHUNK).map((uid) => this.emit({ ...opts, targetUserId: uid }))
+      );
+    }
   },
 };
 

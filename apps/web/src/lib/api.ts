@@ -1704,7 +1704,7 @@ export async function uploadAvatar(file: File): Promise<{ success: boolean; phot
 }
 
 export type WalletCheckoutRail = "usdc" | "rush" | "eth";
-export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip" | "crystal_self" | "crystal_gift";
+export type WalletCheckoutSurface = "membership" | "prime" | "creator_sub" | "call" | "rush" | "channel" | "hangout" | "donation" | "tip" | "crystal_self" | "crystal_gift" | "crystal_service" | "channel_pass";
 
 export interface WalletCheckoutInitiateResult {
   ok: true;
@@ -4604,7 +4604,7 @@ export function createCreatorChannel(data: {
   description?: string;
   tags?: string[];
   isPremium?: boolean;
-  accessType?: 'free' | 'prime' | 'subscription' | 'paid';
+  accessType?: 'free' | 'prime' | 'subscription' | 'paid' | 'bts';
   priceUsd?: number;
   linkedHangoutGroupId?: number | null;
   telegramChannelId?: string | null;
@@ -9637,7 +9637,7 @@ export interface ChannelVideo {
   mux_upload_id: string | null;
   mux_asset_id: string | null;
   mux_playback_id: string | null;
-  mux_status: "waiting" | "preparing" | "ready" | "errored" | null;
+  mux_status: "waiting" | "preparing" | "ready" | "errored" | "cancelled" | null;
   status: "processing" | "published" | "draft" | "failed" | "removed";
   is_featured: boolean;
   post_to_feed: boolean;

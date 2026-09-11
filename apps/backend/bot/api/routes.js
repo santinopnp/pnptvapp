@@ -1638,7 +1638,7 @@ app.use((req, res, next) => {
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 600, // ~40 requests per minute — handles rapid page navigation
-  message: 'Too many requests, please try again later.',
+  handler: (req, res) => res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' }),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
@@ -1675,6 +1675,10 @@ const limiter = rateLimit({
       '/api/webapp/social/feed',
       '/api/webapp/social/feed/following',
       '/api/webapp/social/home-feed',
+      // Mux upload URL endpoints: auth+2257-gated, just minting an upload URL;
+      // skip global bucket so an active session doesn't block a creator upload.
+      // Each has its own dedicated muxUrlLimiter below.
+      '/api/webapp/social/mux-upload-url',
     ];
     // Skip high-frequency streaming endpoints that poll every 2-5s while a
     // user watches a live stream — otherwise watchers exhaust their 600/15min
@@ -1684,7 +1688,10 @@ const limiter = rateLimit({
       '/api/webapp/streams/',   // stream health checks (~every 5s)
     ];
     const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
-    return skipPaths.includes(pathOnly) || skipPrefixes.some((p) => pathOnly.startsWith(p));
+    if (skipPaths.includes(pathOnly) || skipPrefixes.some((p) => pathOnly.startsWith(p))) return true;
+    // Channel video mux URL has a dynamic segment: /api/webapp/channels/:id/videos/mux-upload-url
+    if (/^\/api\/webapp\/channels\/[^/]+\/videos\/mux-upload-url$/.test(pathOnly)) return true;
+    return false;
   },
 });
 app.use('/api/', limiter);
@@ -2328,6 +2335,17 @@ const uploadLimiter = rateLimit({
   max: 20,
   keyGenerator: (req) => req.session?.user?.id || req.ip,
   handler: (req, res) => res.status(429).json({ error: 'Upload rate limit exceeded.' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Dedicated limiter for Mux upload URL minting (auth-gated, skipped from global limiter).
+// Generous window since each call only mints a signed URL — negligible server load.
+const muxUrlLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5-minute window
+  max: 15,                  // 3 per minute on average — plenty for retries
+  keyGenerator: (req) => `user:${req.session?.user?.id || req.ip}`,
+  handler: (req, res) => res.status(429).json({ error: 'Too many upload attempts. Please wait a moment and try again.' }),
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -9504,7 +9522,7 @@ app.post('/api/webapp/social/posts/bulk-videos', requireSessionAuth, bulkVideoLi
 // ── Creator Mux upload path for social feed videos ──────────────────────────
 // Direct browser→Mux upload — offloads storage/transcoding/CDN from the VPS
 // and lets creators post video posts up to 50 GB. Active creators only.
-app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, require2257ForCreators, asyncHandler(async (req, res) => {
+app.post('/api/webapp/social/mux-upload-url', requireSessionAuth, muxUrlLimiter, require2257ForCreators, asyncHandler(async (req, res) => {
   const socialPostMuxService = require('../../services/socialPostMuxService');
   const userId = req.session?.user?.id;
   if (!userId) return res.status(401).json({ success: false, error: 'unauthorized' });
@@ -20241,6 +20259,7 @@ app.post('/api/creators/:id/services/:serviceId/book',
   app.post(
     '/api/webapp/channels/:channelId/videos/mux-upload-url',
     requireSessionAuth,
+    muxUrlLimiter,
     asyncHandler(async (req, res) => {
       const channelId = parseInt(req.params.channelId, 10);
       if (!Number.isFinite(channelId)) return res.status(400).json({ success: false, error: 'Invalid channel id' });

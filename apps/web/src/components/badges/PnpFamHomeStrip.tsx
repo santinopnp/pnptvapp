@@ -6,7 +6,7 @@ import { useI18n } from "@/lib/i18n";
 import { CRYSTAL_UI_ENABLED, getProfile } from "@/lib/api";
 import { PnpFamFeedCustomizer, type Shortcut, type ShortcutType } from "./PnpFamFeedCustomizer";
 
-const TYPE_ICON: Record<ShortcutType, React.ComponentType<{ size?: number }>> = {
+const TYPE_ICON: Record<ShortcutType, React.ElementType> = {
   hangout: HomeIcon,
   creator: User,
   wellness: Heart,

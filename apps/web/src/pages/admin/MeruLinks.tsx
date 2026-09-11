@@ -48,7 +48,8 @@ function truncateUrl(url: string, max = 40): string {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function MeruLinks() {
-  const t = useI18n().admin;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const t = useI18n().admin as any;
   const [stats, setStats] = useState<MeruLinkStat[]>([]);
   const [links, setLinks] = useState<MeruLink[]>([]);
   const [loading, setLoading] = useState(true);

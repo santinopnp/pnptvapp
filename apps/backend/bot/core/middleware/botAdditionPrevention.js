@@ -45,38 +45,35 @@ function botAdditionPreventionMiddleware() {
             );
 
             if (isUnauthorized) {
-              // Remove the unauthorized bot
               try {
                 await ctx.telegram.banChatMember(groupId, newMember.id);
-                
-                // Notify the user
-                const warningMessage = `⚠️ **Bot Addition Blocked**\n\n` +
-                  `Only admins can add bots to this group. ` +
-                  `Your attempt to add @${botUsername} has been blocked.`;
-                
-                await ctx.reply(warningMessage, { parse_mode: 'Markdown' });
-                
-                // Log the incident
+                try {
+                  const warningMessage = `⚠️ **Bot Addition Blocked**\n\n` +
+                    `Only admins can add bots to this group. ` +
+                    `Your attempt to add @${botUsername} has been blocked.`;
+                  await ctx.reply(warningMessage, { parse_mode: 'Markdown' });
+                } catch (_) { /* group may no longer be active */ }
                 logger.warn(`Unauthorized bot addition attempt: User ${userId} tried to add bot @${botUsername} to group ${groupId}`);
-                
-                // Add warning to user
                 await ModerationService.addWarning(
-                  userId, 
-                  groupId.toString(), 
+                  userId,
+                  groupId.toString(),
                   'unauthorized_bot_addition',
                   `Attempted to add bot @${botUsername}`
                 );
-                
               } catch (error) {
-                logger.error('Error removing unauthorized bot:', error);
-                await ctx.reply('⚠️ An error occurred while processing bot addition.');
+                // 400 = bot lacks permissions in group (expected for inactive groups)
+                if (error?.response?.error_code !== 400) {
+                  logger.error('Error removing unauthorized bot:', error);
+                }
               }
             }
           }
         }
       }
     } catch (error) {
-      logger.error('Error in bot addition prevention middleware:', error);
+      if (error?.response?.error_code !== 400) {
+        logger.error('Error in bot addition prevention middleware:', error);
+      }
     }
 
     // Continue with normal processing
