@@ -302,9 +302,8 @@ export function AdSlot({ slot, className, style, onVastUrl, showChip = true }: P
   if (cfg.format === "vast") return modalPortal;
   if (POPUNDER_FORMATS.has(cfg.format)) return modalPortal;
 
-  const [w, h] = (cfg.size || "").split("x").map((n) => parseInt(n, 10));
-  const dimStyle: React.CSSProperties =
-    Number.isFinite(w) && Number.isFinite(h) ? { minWidth: w, minHeight: h } : {};
+  const [w] = (cfg.size || "").split("x").map((n) => parseInt(n, 10));
+  const dimStyle: React.CSSProperties = Number.isFinite(w) ? { minWidth: w } : {};
 
   return (
     <>
