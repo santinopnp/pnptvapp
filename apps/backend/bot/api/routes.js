@@ -22653,15 +22653,19 @@ app.get('/api/public/creator/:username',
     } catch (_) { /* non-fatal */ }
 
     // 11. Creator's active channels — displayed as covers on the public profile
-    // in place of the individual-video grid.
+    // in place of the individual-video grid. Includes channels where the creator
+    // is a collaborator (e.g. PRIME shows on pnplatinoboy's profile).
     let channels = [];
     try {
       const { rows: chRows } = await pool.query(
         `SELECT id, name, slug, cover_image_url, access_type, price_usd,
                 post_count, subscriber_count
          FROM creator_channels
-         WHERE creator_id = $1 AND is_active = true
-         ORDER BY sort_order ASC, id ASC`,
+         WHERE is_active = true
+           AND (creator_id = $1 OR $1 = ANY(collaborators))
+         ORDER BY
+           (CASE WHEN creator_id = $1 THEN 0 ELSE 1 END) ASC,
+           sort_order ASC, id ASC`,
         [creatorId]
       );
       channels = chRows.map((c) => ({
