@@ -1809,7 +1809,7 @@ function ChannelDetailView({
             </>
           )}
         </div>
-      ) : videos.length === 0 && posts.length === 0 ? (
+      ) : videos.length === 0 && (posts.length === 0 || channelIsPrime) ? (
         <div className="py-12 text-center text-pnp-textSecondary text-sm">
           No content in this channel yet
         </div>
@@ -1822,8 +1822,8 @@ function ChannelDetailView({
             {videos.map((v) => renderVideoCard(v))}
           </div>
         )}
-        {/* Posts section */}
-        {posts.length > 0 && (
+        {/* Posts section — hidden for PRIME channel */}
+        {posts.length > 0 && !channelIsPrime && (
           <div className="mt-4 space-y-3">
             {videos.length > 0 && (
               <h3 className="text-xs font-semibold text-pnp-textSecondary uppercase tracking-wider px-1">Posts</h3>
