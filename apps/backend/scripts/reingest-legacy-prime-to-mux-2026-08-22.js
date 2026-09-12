@@ -42,14 +42,37 @@ try { require('dotenv').config({ path: path.join(BACKEND, '../../.env.production
 const { query } = require('../config/postgres');
 const muxService = require('../services/muxService');
 const Mux = require('@mux/mux-node');
+const { S3Client, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const LIVE       = process.argv.includes('--live');
 const POLL_ONLY  = process.argv.includes('--poll-only');
 const POLL_INTERVAL_MS = 30_000;
 const POLL_TIMEOUT_MS  = 60 * 60 * 1000; // 60 min per batch
 
-function directusUrl(fileId) {
-  return `https://cms.pnptv.app/assets/${fileId}`;
+// R2 client — presigned URLs bypass Directus and avoid the AWS SDK pool-stall issue
+const r2 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.STORAGE_CLOUD_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.STORAGE_CLOUD_KEY,
+    secretAccessKey: process.env.STORAGE_CLOUD_SECRET,
+  },
+  forcePathStyle: true,
+});
+const R2_BUCKET = process.env.STORAGE_CLOUD_BUCKET || 'pnptv-videos-prod';
+
+// Returns a 2-hour presigned GET URL for the R2 object, or null if not found.
+// Directus stores files as "{uuid}.{ext}" in the bucket.
+async function r2PresignedUrl(fileId, ext = 'mp4') {
+  const key = `${fileId}.${ext}`;
+  try {
+    await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  } catch (err) {
+    if (err.$metadata?.httpStatusCode === 404 || err.name === 'NotFound') return null;
+    throw err;
+  }
+  return getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }), { expiresIn: 7200 });
 }
 
 function nowIso() {
@@ -61,20 +84,32 @@ function log(msg) {
 
 async function fetchTargets() {
   const { rows } = await query(
-    `SELECT id, title, directus_file_id, video_url, thumbnail_url,
-            mux_asset_id, mux_status, duration_sec
-       FROM channel_videos
-      WHERE channel_id = 209
-        AND status = 'published'
-        AND mux_playback_id IS NULL
-        AND directus_file_id IS NOT NULL
-      ORDER BY id ASC`
+    `SELECT cv.id, cv.title, cv.directus_file_id, cv.video_url, cv.thumbnail_url,
+            cv.mux_asset_id, cv.mux_status, cv.duration_sec
+       FROM channel_videos cv
+      WHERE cv.channel_id = 209
+        AND cv.status = 'published'
+        AND cv.mux_playback_id IS NULL
+        AND cv.directus_file_id IS NOT NULL
+      ORDER BY cv.id ASC`
   );
   return rows;
 }
 
+async function resolveIngestUrl(row) {
+  // Try R2 presigned URL first (bypasses Directus pool-stall issue).
+  // Directus stores files as "{uuid}.{ext}" — try mp4 first, then mov/m4v.
+  for (const ext of ['mp4', 'mov', 'm4v', 'mkv']) {
+    const url = await r2PresignedUrl(row.directus_file_id, ext);
+    if (url) return { url, source: 'r2' };
+  }
+  // Fall back to Directus public URL for files not in R2.
+  return { url: `https://cms.pnptv.app/assets/${row.directus_file_id}`, source: 'directus' };
+}
+
 async function createAsset(mux, row) {
-  const url = directusUrl(row.directus_file_id);
+  const { url, source } = await resolveIngestUrl(row);
+  log(`  row=${row.id} source=${source} url=${url.slice(0, 80)}…`);
   const asset = await mux.video.assets.create({
     input: [{ url }],
     playback_policy: ['public'],
@@ -100,7 +135,7 @@ async function markReady(row, playbackId, durationSec, thumbUrl) {
         SET mux_playback_id = $1,
             mux_status      = 'ready',
             duration_sec    = COALESCE(duration_sec, $2),
-            thumbnail_url   = COALESCE(thumbnail_url, $3),
+            thumbnail_url   = $3,
             updated_at      = NOW()
       WHERE id = $4`,
     [playbackId, durationSec, thumbUrl, row.id]
@@ -109,7 +144,7 @@ async function markReady(row, playbackId, durationSec, thumbUrl) {
 
 async function markErrored(row, reason) {
   await query(
-    `UPDATE channel_videos SET mux_status = 'errored', updated_at = NOW() WHERE id = $1`,
+    `UPDATE channel_videos SET mux_status = 'errored', mux_asset_id = NULL, updated_at = NOW() WHERE id = $1`,
     [row.id]
   );
   log(`  row=${row.id} → mux_status='errored' (${reason})`);
@@ -120,9 +155,8 @@ async function ingestPhase(mux, targets) {
   log(`Ingest phase — ${toCreate.length} row(s) need Mux asset creation (${targets.length - toCreate.length} already have one)`);
 
   for (const row of toCreate) {
-    const url = directusUrl(row.directus_file_id);
     if (!LIVE) {
-      log(`  [DRY] row=${row.id} title="${(row.title || '').slice(0, 40)}" → would ingest ${url}`);
+      log(`  [DRY] row=${row.id} title="${(row.title || '').slice(0, 40)}" → would resolve R2/Directus URL and ingest`);
       continue;
     }
     try {
