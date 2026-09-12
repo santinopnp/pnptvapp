@@ -6,7 +6,7 @@ import { sanitizeReturnTo } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { StickyHeader } from "@/components/landing/StickyHeader";
 import { PublicHero, type PublicStats } from "@/components/landing/PublicHero";
-import { FeaturedCreators, type PublicCreator } from "@/components/landing/FeaturedCreators";
+import { FeaturedCreators } from "@/components/landing/FeaturedCreators";
 import { HowItWorks } from "@/components/landing/HowItWorks";
 import { Testimonials } from "@/components/landing/Testimonials";
 import { SafeSaneCommunity } from "@/components/landing/SafeSaneCommunity";
@@ -388,9 +388,6 @@ export function LandingPage() {
   // ── Public data — no auth required ───────────────────────────────────────
   const [stats, setStats] = useState<PublicStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [creators, setCreators] = useState<PublicCreator[]>([]);
-  const [creatorsLoading, setCreatorsLoading] = useState(true);
-  const [creatorsError, setCreatorsError] = useState(false);
 
   // Scroll targets
   const authRef = useRef<HTMLDivElement>(null);
@@ -406,18 +403,6 @@ export function LandingPage() {
       .finally(() => setStatsLoading(false));
   }, []);
 
-  const fetchCreators = useCallback(() => {
-    setCreatorsError(false);
-    setCreatorsLoading(true);
-    fetch("/api/public/featured-creators")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.creators)) setCreators(data.creators);
-        else setCreatorsError(true);
-      })
-      .catch(() => setCreatorsError(true))
-      .finally(() => setCreatorsLoading(false));
-  }, []);
 
   const scrollToAuth = useCallback(() => {
     authRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -428,7 +413,6 @@ export function LandingPage() {
   }, []);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
-  useEffect(() => { fetchCreators(); }, [fetchCreators]);
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
@@ -996,10 +980,8 @@ export function LandingPage() {
       <div className="my-4 flex justify-center px-4"><AdSlot slot="outstream_video" /></div>
       <FeaturedCreators
         lang={t.lang}
-        creators={creators}
-        loading={creatorsLoading}
-        error={creatorsError}
-        onRetry={fetchCreators}
+        creatorCount={stats?.creators_plus ?? null}
+        loading={statsLoading}
         ref={creatorsRef}
       />
       <Testimonials lang={t.lang} />

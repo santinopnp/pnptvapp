@@ -1,305 +1,241 @@
 import React from "react";
 
-export interface PublicCreator {
-  username: string;
-  display_name: string;
-  bio: string | null;
-  avatar_url: string | null;
-  followers_count: number;
-  is_verified: boolean;
-  is_fam: boolean;
-  profile_url: string;
+interface CommunityShowcaseProps {
+  lang: "en" | "es" | string;
+  creatorCount: number | null;
+  loading: boolean;
 }
 
-interface FeaturedCreatorsProps {
-  lang: "en" | "es" | string;
-  creators: PublicCreator[];
-  loading: boolean;
-  error: boolean;
-  onRetry: () => void;
-}
+const modes = {
+  en: [
+    {
+      icon: "stage" as const,
+      title: "Main Stage",
+      body: "Live group broadcasts open to the whole community. Watch performers in real time, chat, and send tips — any time of day.",
+      color: "#D4007A",
+      bg: "rgba(212,0,122,0.10)",
+      border: "rgba(212,0,122,0.22)",
+    },
+    {
+      icon: "hangout" as const,
+      title: "Hangouts",
+      body: "Private video rooms where PRIME members hang out with creators in smaller, more intimate groups.",
+      color: "#7B61FF",
+      bg: "rgba(123,97,255,0.10)",
+      border: "rgba(123,97,255,0.22)",
+    },
+    {
+      icon: "call" as const,
+      title: "Private Calls",
+      body: "Book a 1-on-1 video session directly with a creator. Your schedule, your vibe — no audience.",
+      color: "#E69138",
+      bg: "rgba(230,145,56,0.10)",
+      border: "rgba(230,145,56,0.22)",
+    },
+    {
+      icon: "vod" as const,
+      title: "Videorama",
+      body: "On-demand exclusive video library. Premium content from your favorite creators, available any time for PRIME members.",
+      color: "#22D3EE",
+      bg: "rgba(34,211,238,0.10)",
+      border: "rgba(34,211,238,0.22)",
+    },
+  ],
+  es: [
+    {
+      icon: "stage" as const,
+      title: "Main Stage",
+      body: "Transmisiones en grupo abiertas a toda la comunidad. Mira performers en tiempo real, chatea y manda propinas — a cualquier hora.",
+      color: "#D4007A",
+      bg: "rgba(212,0,122,0.10)",
+      border: "rgba(212,0,122,0.22)",
+    },
+    {
+      icon: "hangout" as const,
+      title: "Hangouts",
+      body: "Salas de video privadas donde los miembros PRIME conviven con creadores en grupos más pequeños e íntimos.",
+      color: "#7B61FF",
+      bg: "rgba(123,97,255,0.10)",
+      border: "rgba(123,97,255,0.22)",
+    },
+    {
+      icon: "call" as const,
+      title: "Llamadas Privadas",
+      body: "Reserva una sesión de video 1-a-1 directamente con un creador. Tu horario, tu vibra — sin audiencia.",
+      color: "#E69138",
+      bg: "rgba(230,145,56,0.10)",
+      border: "rgba(230,145,56,0.22)",
+    },
+    {
+      icon: "vod" as const,
+      title: "Videorama",
+      body: "Biblioteca de video exclusiva bajo demanda. Contenido premium de tus creadores favoritos, disponible cuando quieras para miembros PRIME.",
+      color: "#22D3EE",
+      bg: "rgba(34,211,238,0.10)",
+      border: "rgba(34,211,238,0.22)",
+    },
+  ],
+};
 
 const copy = {
   en: {
-    heading: "Featured creators",
-    sub: "Verified queer creators building community right now.",
-    followers: "followers",
-    error: "Couldn't load creators.",
-    retry: "Try again",
-    empty: "",
-    viewProfile: "View profile →",
+    eyebrow: "//community",
+    headingFn: (n: number | null) => (n ? `${n}+ creators` : "Our creators"),
+    sub: "Verified queer creators from LATAM and beyond — connecting with you through multiple live formats.",
   },
   es: {
-    heading: "Creadores destacados",
-    sub: "Creadores queer verificados construyendo comunidad ahora mismo.",
-    followers: "seguidores",
-    error: "No se pudieron cargar los creadores.",
-    retry: "Intentar de nuevo",
-    empty: "",
-    viewProfile: "Ver perfil →",
+    eyebrow: "//comunidad",
+    headingFn: (n: number | null) => (n ? `${n}+ creadores` : "Nuestros creadores"),
+    sub: "Creadores queer verificados de LATAM y más — conectando contigo a través de múltiples formatos en vivo.",
   },
 };
 
 function pick(lang: string) {
-  return lang === "es" ? copy.es : copy.en;
+  return lang === "es"
+    ? { ...copy.es, modes: modes.es }
+    : { ...copy.en, modes: modes.en };
 }
 
-function formatFollowers(n: number): string {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(n);
-}
-
-export const FeaturedCreators = React.forwardRef<HTMLElement, FeaturedCreatorsProps>(
-  function FeaturedCreators({ lang, creators, loading, error, onRetry }, ref) {
-  const c = pick(lang);
-
-  // Don't render section at all if loaded successfully but zero creators
-  if (!loading && !error && creators.length === 0) return null;
-
+function StageIcon() {
   return (
-    <section
-      ref={ref}
-      id="creators"
-      aria-labelledby="featured-creators-heading"
-      className="w-full px-4 py-16 sm:px-6 lg:px-8"
-      style={{ background: "#0A0A0F" }}
-    >
-      {/* Desktop: max-w bumped to 7xl on xl+ */}
-      <div className="max-w-5xl xl:max-w-7xl mx-auto">
+    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125V5.625m0 12.75H3.75M3.75 5.625a2.625 2.625 0 015.25 0v13.125m-5.25-13.125A2.625 2.625 0 006 3h12a2.625 2.625 0 012.625 2.625v.375M15 19.5v-3.75A2.25 2.25 0 0012.75 13.5h-1.5A2.25 2.25 0 009 15.75V19.5" />
+    </svg>
+  );
+}
 
-        {/* Section header — sticky on lg+ (left-anchored) */}
-        <div className="text-center lg:text-left mb-10 lg:sticky lg:top-24 lg:self-start">
-          <p
-            className="text-[10px] font-bold uppercase tracking-[0.3em] mb-3"
-            style={{
-              fontFamily: "'Roboto Mono', monospace",
-              color: "#7B61FF",
-            }}
-          >
-            //community
-          </p>
-          <h2
-            id="featured-creators-heading"
-            className="text-2xl sm:text-3xl font-bold text-white mb-3"
-            style={{ fontFamily: "'Ethnocentric Rg', 'Roboto Mono', monospace" }}
-          >
-            {c.heading}
-          </h2>
-          <p className="text-pnp-textSecondary text-sm sm:text-base max-w-lg mx-auto lg:mx-0">{c.sub}</p>
-        </div>
+function HangoutIcon() {
+  return (
+    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+    </svg>
+  );
+}
 
-        {/* Error state */}
-        {error && (
-          <div className="flex flex-col items-center gap-3 py-12 text-center">
-            <svg className="w-8 h-8 text-pnp-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-            </svg>
-            <p className="text-pnp-textSecondary text-sm">{c.error}</p>
-            <button
-              type="button"
-              onClick={onRetry}
-              className="px-4 py-2 rounded-lg text-xs font-semibold text-white border border-pnp-border hover:border-white/30 hover:bg-pnp-surfaceHover transition-colors min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent"
+function CallIcon() {
+  return (
+    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+  );
+}
+
+function VodIcon() {
+  return (
+    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0c0 .621.504 1.125 1.125 1.125h15A1.125 1.125 0 0020.625 8.25m-16.875 0A2.25 2.25 0 006 10.5v9m12-9a2.25 2.25 0 00-2.25 2.25v9" />
+    </svg>
+  );
+}
+
+function renderIcon(type: "stage" | "hangout" | "call" | "vod") {
+  if (type === "stage") return <StageIcon />;
+  if (type === "hangout") return <HangoutIcon />;
+  if (type === "call") return <CallIcon />;
+  return <VodIcon />;
+}
+
+function SkeletonPill() {
+  return (
+    <div className="h-8 w-24 rounded-full animate-pulse" style={{ background: "#1E1E1E" }} aria-hidden="true" />
+  );
+}
+
+export const FeaturedCreators = React.forwardRef<HTMLElement, CommunityShowcaseProps>(
+  function FeaturedCreators({ lang, creatorCount, loading }, ref) {
+    const c = pick(lang);
+
+    return (
+      <section
+        ref={ref}
+        id="creators"
+        aria-labelledby="community-modes-heading"
+        className="w-full px-4 py-16 sm:px-6 lg:px-8"
+        style={{ background: "#0A0A0F" }}
+      >
+        <div className="max-w-5xl xl:max-w-6xl mx-auto">
+
+          {/* Section header */}
+          <div className="text-center mb-12">
+            <p
+              className="text-[10px] font-bold uppercase tracking-[0.3em] mb-3"
+              style={{ fontFamily: "'Roboto Mono', monospace", color: "#7B61FF" }}
             >
-              {c.retry}
-            </button>
-          </div>
-        )}
+              {c.eyebrow}
+            </p>
 
-        {/* Loading skeleton grid */}
-        {loading && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
+            {/* Creator count pill or skeleton */}
+            <div className="flex justify-center mb-4">
+              {loading ? (
+                <SkeletonPill />
+              ) : (
+                <span
+                  className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold"
+                  style={{
+                    background: "rgba(212,0,122,0.12)",
+                    border: "1px solid rgba(212,0,122,0.3)",
+                    color: "#D4007A",
+                    fontFamily: "'Roboto Mono', monospace",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="w-2 h-2 rounded-full animate-pulse"
+                    style={{ background: "#D4007A" }}
+                  />
+                  {c.headingFn(creatorCount)}
+                </span>
+              )}
+            </div>
+
+            <h2
+              id="community-modes-heading"
+              className="text-2xl sm:text-3xl font-bold text-white mb-3"
+              style={{ fontFamily: "'Ethnocentric Rg', 'Roboto Mono', monospace" }}
+            >
+              {lang === "es" ? "Formatos de conexión" : "Ways to connect"}
+            </h2>
+            <p className="text-pnp-textSecondary text-sm sm:text-base max-w-lg mx-auto">
+              {c.sub}
+            </p>
+          </div>
+
+          {/* Mode cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            {c.modes.map((mode) => (
               <div
-                key={i}
-                aria-hidden="true"
-                className="rounded-2xl p-4 flex flex-col items-center gap-3 animate-pulse"
-                style={{ background: "#1E1E1E", border: "1px solid #2A2A2A" }}
+                key={mode.icon}
+                className="rounded-2xl p-5 flex flex-col gap-3"
+                style={{
+                  background: mode.bg,
+                  border: `1px solid ${mode.border}`,
+                }}
               >
-                <div className="w-20 h-20 rounded-full bg-pnp-surfaceHover" />
-                <div className="space-y-2 w-full">
-                  <div className="h-3 rounded bg-pnp-surfaceHover w-3/4 mx-auto" />
-                  <div className="h-2.5 rounded bg-pnp-surfaceHover w-1/2 mx-auto" />
-                  <div className="h-2 rounded bg-pnp-surfaceHover w-full" />
-                  <div className="h-2 rounded bg-pnp-surfaceHover w-4/5 mx-auto" />
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: mode.bg, border: `1px solid ${mode.border}`, color: mode.color }}
+                >
+                  {renderIcon(mode.icon)}
                 </div>
+                <h3
+                  className="text-sm font-bold text-white"
+                  style={{ fontFamily: "'Roboto Mono', monospace" }}
+                >
+                  {mode.title}
+                </h3>
+                <p className="text-xs text-pnp-textSecondary leading-relaxed">
+                  {mode.body}
+                </p>
+                <div
+                  className="h-px w-8 mt-auto"
+                  style={{ background: mode.color, opacity: 0.4 }}
+                  aria-hidden="true"
+                />
               </div>
             ))}
           </div>
-        )}
-
-        {/* Creator grid — mosaic on xl+, standard 4-col on lg, 2/3-col below */}
-        {!loading && !error && creators.length > 0 && (
-          <>
-            {/* ── XL+ mosaic grid ── */}
-            <div className="hidden xl:grid xl:grid-cols-4 gap-4 auto-rows-auto">
-              {creators.map((creator, i) => (
-                <CreatorCard
-                  key={creator.username}
-                  creator={creator}
-                  followersLabel={c.followers}
-                  viewProfileLabel={c.viewProfile}
-                  hero={i === 0}
-                />
-              ))}
-            </div>
-
-            {/* ── Below xl: standard grid (untouched) ── */}
-            <div className="xl:hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-              {creators.map((creator) => (
-                <CreatorCard
-                  key={creator.username}
-                  creator={creator}
-                  followersLabel={c.followers}
-                  viewProfileLabel={c.viewProfile}
-                  hero={false}
-                />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </section>
-  );
-});
-
-interface CreatorCardProps {
-  creator: PublicCreator;
-  followersLabel: string;
-  viewProfileLabel: string;
-  hero: boolean;
-}
-
-function CreatorCard({ creator, followersLabel, viewProfileLabel, hero }: CreatorCardProps) {
-  const ringColor = creator.is_fam
-    ? "linear-gradient(135deg, #FFB454, #E69138)"
-    : "linear-gradient(135deg, #D4007A, #7B61FF)";
-
-  const ringColorHover = creator.is_fam
-    ? "linear-gradient(135deg, #FFC97A, #F5A340)"
-    : "linear-gradient(135deg, #FF1A94, #9B7FFF)";
-
-  return (
-    <a
-      href={creator.profile_url || `/c/${creator.username}`}
-      className={[
-        "group relative rounded-2xl flex flex-col items-center gap-3 transition-all duration-200",
-        "hover:-translate-y-1 hover:scale-[1.02]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pnp-accent focus-visible:ring-offset-2 focus-visible:ring-offset-pnp-background",
-        // xl hero card: 2x2 span, more padding, larger layout
-        hero ? "xl:col-span-2 xl:row-span-2 xl:p-8 p-4" : "p-4",
-      ].join(" ")}
-      style={{
-        background: "#1A1A1A",
-        border: "1px solid #2A2A2A",
-        textDecoration: "none",
-      }}
-      aria-label={`Visit ${creator.display_name}'s profile`}
-    >
-      {/* Avatar with gradient ring — larger in hero mode */}
-      <div
-        className={[
-          "relative flex-shrink-0 p-[2px] rounded-full transition-all duration-200",
-          "group-hover:[--ring-bg:var(--ring-hover)]",
-        ].join(" ")}
-        style={{
-          background: ringColor,
-          boxShadow: "0 0 0 2px #0A0A0F",
-        }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = ringColorHover; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ringColor; }}
-      >
-        <div
-          className={[
-            "rounded-full overflow-hidden bg-pnp-surface",
-            hero ? "w-20 h-20 sm:w-24 sm:h-24 xl:w-64 xl:h-64" : "w-20 h-20 sm:w-24 sm:h-24",
-          ].join(" ")}
-          style={{ border: "2px solid #0A0A0F" }}
-        >
-          {creator.avatar_url ? (
-            <img
-              src={creator.avatar_url}
-              alt={`${creator.display_name}'s avatar`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <div
-              className="w-full h-full flex items-center justify-center text-2xl font-bold text-white"
-              style={{ background: "linear-gradient(135deg, #D4007A33, #7B61FF33)" }}
-              aria-hidden="true"
-            >
-              {creator.display_name.charAt(0).toUpperCase()}
-            </div>
-          )}
         </div>
-
-        {/* Live indicator dot */}
-        <div
-          aria-hidden="true"
-          className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 border-pnp-background"
-          style={{ background: creator.is_fam ? "#E69138" : "#D4007A" }}
-        />
-      </div>
-
-      {/* Name + badges */}
-      <div className="w-full text-center space-y-0.5 min-w-0">
-        <div className="flex items-center justify-center gap-1 flex-wrap">
-          <span
-            className={["font-bold text-white leading-tight truncate max-w-full", hero ? "xl:text-xl text-xs sm:text-sm" : "text-xs sm:text-sm"].join(" ")}
-            title={creator.display_name}
-          >
-            {creator.display_name}
-          </span>
-          {creator.is_verified && (
-            <svg
-              className="w-3.5 h-3.5 flex-shrink-0"
-              style={{ color: creator.is_fam ? "#E69138" : "#60A5FA" }}
-              fill="currentColor"
-              viewBox="0 0 20 20"
-              aria-label={creator.is_fam ? "PNPtv Fam" : "Verified creator"}
-            >
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
-            </svg>
-          )}
-        </div>
-
-        <p
-          className="text-[10px] sm:text-xs"
-          style={{ color: "#A1A1A3", fontFamily: "'Roboto Mono', monospace" }}
-        >
-          @{creator.username}
-        </p>
-
-        <p
-          className="text-[10px] font-semibold"
-          style={{ color: creator.is_fam ? "#E69138" : "#D4007A", fontFamily: "'Roboto Mono', monospace" }}
-        >
-          {formatFollowers(creator.followers_count)} {followersLabel}
-        </p>
-      </div>
-
-      {/* Bio — hero shows more lines on xl */}
-      {creator.bio && (
-        <p
-          className={["text-pnp-textSecondary text-center leading-relaxed w-full min-w-0", hero ? "text-[10px] sm:text-xs xl:text-sm xl:line-clamp-4 line-clamp-2" : "text-[10px] sm:text-xs line-clamp-2"].join(" ")}
-          title={creator.bio}
-        >
-          {creator.bio}
-        </p>
-      )}
-
-      {/* "View profile →" — slides in from right on xl hover */}
-      <span
-        className={[
-          "text-xs font-semibold transition-all duration-200 mt-auto",
-          hero ? "xl:opacity-0 xl:translate-x-2 xl:group-hover:opacity-100 xl:group-hover:translate-x-0 opacity-0 hidden xl:block" : "hidden",
-        ].join(" ")}
-        style={{ color: creator.is_fam ? "#E69138" : "#D4007A", fontFamily: "'Roboto Mono', monospace" }}
-        aria-hidden="true"
-      >
-        {viewProfileLabel}
-      </span>
-    </a>
-  );
-}
+      </section>
+    );
+  }
+);
