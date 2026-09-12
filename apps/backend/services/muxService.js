@@ -39,14 +39,14 @@ function getPlaybackUrl(playbackId) {
 }
 
 function getThumbnailUrl(playbackId, opts = {}) {
-  const { time, percentage = 25, width = 640 } = opts;
+  const { time, percentage = 25, width = 320 } = opts;
   const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=${width}&fit_mode=smartcrop`;
   if (time != null) return `${base}&time=${time}`;
   return `${base}&percentage=${percentage}`;
 }
 
 function getThumbnailOptions(playbackId) {
-  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&fit_mode=smartcrop`;
+  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=320&fit_mode=smartcrop`;
   return [
     { label: 'Inicio', url: `${base}&percentage=10` },
     { label: 'Medio',  url: `${base}&percentage=50` },
