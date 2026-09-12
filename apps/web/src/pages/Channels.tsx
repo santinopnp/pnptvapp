@@ -306,6 +306,7 @@ function ChannelDetailView({
   const [videoDeleteLoading, setVideoDeleteLoading] = useState(false);
 
   const [videoAiBusy, setVideoAiBusy] = useState<"title" | "description" | "tags" | null>(null);
+  const [thumbErrors, setThumbErrors] = useState<Set<number>>(new Set());
 
   const [taggedCreators, setTaggedCreators] = useState<MentionUser[]>([]);
   const [creatorTagSearch, setCreatorTagSearch] = useState("");
@@ -827,7 +828,7 @@ function ChannelDetailView({
     // Thumbnail fallback chain: gif_url (hover only) → thumbnail_url → placeholder
     const staticThumb = v.thumbnail_url || null;
     const animatedThumb = v.gif_url || null;
-    const hasThumb = !!staticThumb || !!animatedThumb;
+    const hasThumb = (!!staticThumb || !!animatedThumb) && !thumbErrors.has(v.id);
 
     // Uploader chip: show only when this channel has a different owner than the video uploader
     const channelOwnerIds = new Set<string>();
@@ -864,7 +865,7 @@ function ChannelDetailView({
               ].join(" ")}
               onMouseEnter={(e) => { if (animatedThumb && !isProcessing && !isUnavailable) (e.currentTarget as HTMLImageElement).src = animatedThumb; }}
               onMouseLeave={(e) => { if (staticThumb && animatedThumb && !isProcessing && !isUnavailable) (e.currentTarget as HTMLImageElement).src = staticThumb; }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              onError={() => setThumbErrors((prev) => new Set(prev).add(v.id))}
             />
           ) : (
             // Film-icon placeholder when both thumbnail and gif are null
@@ -1022,19 +1023,6 @@ function ChannelDetailView({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
                     </svg>
                   </button>
-                  {v.promo_post_id && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openShareSheet(v.promo_post_id!, v.title); }}
-                      title="Share"
-                      aria-label="Share"
-                      className="p-1.5 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-                      style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                      </svg>
-                    </button>
-                  )}
                 </>
               );
             })()}
@@ -1826,18 +1814,6 @@ function ChannelDetailView({
                         <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46" />
                       </svg>
                     </button>
-                    {pv?.promo_post_id && (
-                      <button
-                        onClick={() => openShareSheet(pv.promo_post_id!, pv.title)}
-                        title="Share"
-                        className="w-11 h-11 rounded-full flex items-center justify-center transition-all flex-shrink-0"
-                        style={{ color: "rgba(255,255,255,0.35)", background: "transparent" }}
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                        </svg>
-                      </button>
-                    )}
                     {/* Tip the uploader — collab channels may have a video
                         uploaded by someone other than the channel owner, so
                         we prefer uploader_* fields with a channel-owner
