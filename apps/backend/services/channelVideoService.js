@@ -914,8 +914,14 @@ async function publishVideo({ videoId, userId, isAdmin }) {
         // Also fire tag_post notifications so tagged creators know their video
         // was promoted — with channel_video_id in metadata so the UI can link
         // back to the actual video, not just the promo post wrapper.
-        const taggedIds = [ch.creator_id, ...(final.tagged_creator_ids || [])].filter(Boolean);
-        const uniqueTagged = [...new Set(taggedIds)];
+        const rawTaggedIds = [ch.creator_id, ...(final.tagged_creator_ids || [])].filter(Boolean);
+        const uniqueRaw = [...new Set(rawTaggedIds)];
+        // Filter out deleted users so their names never appear in post content or mentions.
+        const { rows: activeTagRows } = await query(
+          `SELECT id FROM users WHERE id = ANY($1::bigint[]) AND (is_deleted IS NOT TRUE)`,
+          [uniqueRaw]
+        ).catch(() => ({ rows: uniqueRaw.map(id => ({ id })) }));
+        const uniqueTagged = activeTagRows.map(r => r.id);
         let NotificationEmitter = null;
         try { NotificationEmitter = require('./notificationEmitter'); } catch { /* ignore */ }
         for (const uid of uniqueTagged) {

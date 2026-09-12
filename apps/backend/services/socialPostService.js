@@ -137,6 +137,7 @@ const _hydrateResolvedMentions = async (posts) => {
          JOIN users u ON u.id = pm.mentioned_user_id
         WHERE pm.post_id = ANY($1::int[])
           AND pm.mention_type IN ('mention', 'tag')
+          AND (u.is_deleted IS NOT TRUE)
         ORDER BY pm.post_id, pm.created_at ASC`,
       [ids]
     );
@@ -164,7 +165,7 @@ const _hydrateResolvedMentions = async (posts) => {
       const parsed = content.match(usernameRe) || [];
       for (const m of parsed) {
         const uname = m.slice(1).toLowerCase();
-        if (!seen.has(uname)) {
+        if (!seen.has(uname) && !uname.startsWith('deleted_user_')) {
           seen.add(uname);
           merged.push({ username: uname, user_id: null });
         }
